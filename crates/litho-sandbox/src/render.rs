@@ -18,7 +18,17 @@ use litho_core::version::GenVersion;
 use crate::palette;
 use crate::png::RgbImage;
 
-pub const LAYERS: [&str; 6] = ["noise", "warp", "plates", "boundaries", "jacobian", "hash"];
+pub const LAYERS: [&str; 9] = [
+    "noise",
+    "warp",
+    "plates",
+    "boundaries",
+    "jacobian",
+    "hash",
+    "crust",
+    "height",
+    "mpi",
+];
 
 #[derive(Clone, Debug)]
 pub struct RenderOptions {
@@ -84,6 +94,18 @@ pub fn render_layer(opts: &RenderOptions, layer: &str) -> Result<RgbImage, Strin
                 "plates" => plates_color(&generator, x, z, params, false),
                 "boundaries" => plates_color(&generator, x, z, params, true),
                 "jacobian" => palette::jacobian(generator.jacobian(x, z)),
+                "crust" => match generator.crust_sample(x, z) {
+                    Some(s) => palette::kappa(s.kappa_l),
+                    None => [0, 0, 0],
+                },
+                "height" => match generator.crust_sample(x, z) {
+                    Some(s) => palette::hypsometric(s.e_km),
+                    None => [0, 0, 0],
+                },
+                "mpi" => match generator.crust_sample(x, z) {
+                    Some(s) => palette::mpi(s.mountain, s.plateau, s.iota_l),
+                    None => [0, 0, 0],
+                },
                 "hash" => {
                     let i = (p.x / 4.0).floor() as i64;
                     let j = (p.z / 4.0).floor() as i64;
@@ -142,13 +164,25 @@ pub fn probe_text(opts: &RenderOptions, x: f64, z: f64) -> Result<String, String
     let bt = sample
         .b
         .map(|b| boundary_type(&sample.a, &b, sample.q, sample.n_ab, params));
+    let crust_line = match generator.crust_sample(x, z) {
+        Some(cs) => format!(
+            "κ={kappa} L, e={e} км, M={m}, Pl={pl}, ι={iota} L, k={k:?}\n",
+            kappa = cs.kappa_l,
+            e = cs.e_km,
+            m = cs.mountain,
+            pl = cs.plateau,
+            iota = cs.iota_l,
+            k = cs.boundary_weights,
+        ),
+        None => String::new(),
+    };
     Ok(format!(
         "seed={seed} mode={mode} version={version} params={params_hash:016x}\n\
          блок ({x}, {z}) → макро p=({px}, {pz})\n\
          плита A id={id:#018x} ячейка=({ci}, {cj}) материк={continent} R={radius} age={age}\n\
          d_AB={d_ab} L, d_AC={d_ac} L, w_B={w_b}, w_C={w_c}\n\
          граница={bt:?}\n\
-         якобиан искажения={jac}\n",
+         якобиан искажения={jac}\n{crust_line}",
         seed = opts.seed,
         mode = opts.mode.as_str(),
         version = opts.version.as_str(),
@@ -167,5 +201,6 @@ pub fn probe_text(opts: &RenderOptions, x: f64, z: f64) -> Result<String, String
         w_c = sample.w_c,
         bt = bt,
         jac = generator.jacobian(x, z),
+        crust_line = crust_line,
     ))
 }

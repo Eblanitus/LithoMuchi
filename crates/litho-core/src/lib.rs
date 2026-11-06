@@ -10,6 +10,7 @@
 
 #![forbid(unsafe_code)]
 
+pub mod crust;
 pub mod generator;
 pub mod hash;
 pub mod math;
@@ -21,6 +22,7 @@ pub mod plates;
 pub mod seed;
 pub mod version;
 
+pub use crust::CrustSample;
 pub use generator::{GenError, Generator};
 pub use math::Vec2;
 pub use mode::{BlockParams, Mode};

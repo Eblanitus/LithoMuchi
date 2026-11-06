@@ -54,6 +54,50 @@ pub const CONVERGENT: [u8; 3] = [220, 60, 60];
 pub const DIVERGENT: [u8; 3] = [60, 110, 230];
 pub const TRANSFORM: [u8; 3] = [70, 200, 110];
 
+/// Гипсометрическая палитра: абиссаль → шельф → суша → горы → снег.
+pub fn hypsometric(e_km: f64) -> [u8; 3] {
+    const STOPS: [(f64, [u8; 3]); 10] = [
+        (-8.0, [6, 14, 48]),
+        (-4.5, [16, 48, 112]),
+        (-2.0, [32, 92, 168]),
+        (-0.2, [86, 166, 202]),
+        (0.0, [214, 205, 145]),
+        (0.2, [96, 152, 82]),
+        (1.0, [112, 132, 70]),
+        (2.5, [146, 116, 84]),
+        (4.5, [126, 112, 104]),
+        (7.0, [242, 246, 250]),
+    ];
+    if e_km <= STOPS[0].0 {
+        return STOPS[0].1;
+    }
+    for pair in STOPS.windows(2) {
+        if e_km <= pair[1].0 {
+            let t = (e_km - pair[0].0) / (pair[1].0 - pair[0].0);
+            return mix(pair[0].1, pair[1].1, t);
+        }
+    }
+    STOPS[STOPS.len() - 1].1
+}
+
+/// Поле материка κ: синий океан, зелёная суша, светлая береговая линия.
+pub fn kappa(value_l: f64) -> [u8; 3] {
+    if value_l < 0.0 {
+        mix([18, 52, 112], [96, 176, 206], clamp01(1.0 + value_l / 6.0))
+    } else {
+        mix([196, 206, 150], [54, 128, 62], clamp01(value_l / 8.0))
+    }
+}
+
+/// Горность M (красный), плато Pl (зелёный), удалённость ι (синий).
+pub fn mpi(mountain: f64, plateau: f64, iota_l: f64) -> [u8; 3] {
+    [
+        (30.0 + 220.0 * clamp01(mountain)) as u8,
+        (30.0 + 200.0 * clamp01(plateau)) as u8,
+        (40.0 + 210.0 * clamp01(iota_l / 5.0)) as u8,
+    ]
+}
+
 #[cfg(test)]
 mod tests {
     use super::from_hash;

@@ -17,6 +17,10 @@ pub const SALT_POLES_SEED: &str = "poles.seed";
 pub const SALT_POLES_WARP_X: &str = "warp.poles.x";
 pub const SALT_POLES_WARP_Z: &str = "warp.poles.z";
 pub const SALT_NOISE_DETAIL: &str = "noise.detail";
+pub const SALT_CRUST_KAPPA: &str = "crust.kappa";
+pub const SALT_CRUST_DETAIL: &str = "crust.detail";
+pub const SALT_HOTSPOT: &str = "crust.hotspot";
+pub const SALT_BOUNDARY_SIDE: &str = "boundary.side";
 pub const SALT_SPAWN: &str = "spawn";
 
 /// Сид Minecraft знаковый 64-битный; биты переносятся без изменения.

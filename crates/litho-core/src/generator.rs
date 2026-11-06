@@ -4,6 +4,7 @@
 //! домена. Полный `FullSample` (рельеф, климат, биомы, C/E/W/T/H) появится в
 //! T55, но песочница и мод уже вызывают один и тот же `Generator`.
 
+use crate::crust::{CrustSample, crust_from_sample};
 use crate::math::Vec2;
 use crate::mode::Mode;
 use crate::params::Params;
@@ -68,6 +69,13 @@ impl Generator {
     /// Плита и границы в блочной точке.
     pub fn plate_sample(&self, x: f64, z: f64) -> Option<PlateSample> {
         plate_query(self.macro_point(x, z), self.seed, &self.params)
+    }
+
+    /// Кора и макрорельеф в блочной точке (T22–T24).
+    pub fn crust_sample(&self, x: f64, z: f64) -> Option<CrustSample> {
+        let point = self.macro_point(x, z);
+        let sample = plate_query(point, self.seed, &self.params)?;
+        Some(crust_from_sample(point, &sample, self.seed, &self.params))
     }
 
     /// Диагностика искажения домена (слой `jacobian`).

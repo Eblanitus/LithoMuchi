@@ -63,6 +63,48 @@ pub struct CrustParams {
     pub h_rift_km: f64,
     pub w_rift_l: f64,
     pub h_shoulder_km: f64,
+    pub ocean_kappa_l: f64,
+    pub kappa_noise_amplitude_l: f64,
+    pub kappa_noise_lambda_l: f64,
+    pub kappa_noise_octaves: usize,
+    pub kappa_noise_gain: f64,
+    pub blend_width_l: f64,
+    pub boundary_mix_factor: f64,
+    pub shelf_start_l: f64,
+    pub shelf_end_l: f64,
+    pub continent_scale_l: f64,
+    pub slope_drop_km: f64,
+    pub plateau_factor: f64,
+    pub island_noise_lambda_l: f64,
+    pub island_noise_base: f64,
+    pub island_noise_amp: f64,
+    pub rift_shoulder_offset: f64,
+    pub u6_offset_l: f64,
+    pub u6_width_l: f64,
+    pub u6_drop_km: f64,
+    pub u7_amplitude_km: f64,
+    pub u7_width_l: f64,
+    pub u7_noise_lambda_l: f64,
+    pub mountain_edge_l: f64,
+    pub mountain_scale_km: f64,
+    pub mountain_transform_factor: f64,
+    pub detail_land_km: f64,
+    pub detail_ocean_km: f64,
+    pub detail_mountain_km: f64,
+    pub detail_land_lambda_l: f64,
+    pub detail_ocean_lambda_l: f64,
+    pub detail_mountain_lambda_l: f64,
+    pub detail_octaves: usize,
+    pub detail_gain: f64,
+    pub iota_height_factor: f64,
+    pub iota_max_l: f64,
+    pub hotspot_inset: f64,
+    pub hotspot_chain_count: usize,
+    pub hotspot_chain_step_l: f64,
+    pub hotspot_chain_decay: f64,
+    pub hotspot_radius_growth: f64,
+    pub hotspot_continental_factor: f64,
+    pub hotspot_consider_radius_l: f64,
     pub hotspot_cell_l: f64,
     pub hotspot_probability: f64,
     pub h_hotspot_km: f64,
@@ -79,6 +121,147 @@ pub struct PolesParams {
     pub warp_gain: f64,
     pub query_radius_cells: i64,
     pub phi_noise_degrees: f64,
+}
+
+impl CrustParams {
+    /// Дополнительные числа слоя L2: участвуют в `params_hash` (9.5).
+    pub fn extra_text(&self) -> String {
+        let mut out = String::new();
+        let w = &mut out;
+        writeln!(w, "crust.ocean_kappa_l={v}", v = self.ocean_kappa_l).unwrap();
+        writeln!(
+            w,
+            "crust.kappa_noise_amplitude_l={v}",
+            v = self.kappa_noise_amplitude_l
+        )
+        .unwrap();
+        writeln!(
+            w,
+            "crust.kappa_noise_lambda_l={v}",
+            v = self.kappa_noise_lambda_l
+        )
+        .unwrap();
+        writeln!(
+            w,
+            "crust.kappa_noise_octaves={v}",
+            v = self.kappa_noise_octaves
+        )
+        .unwrap();
+        writeln!(w, "crust.kappa_noise_gain={v}", v = self.kappa_noise_gain).unwrap();
+        writeln!(w, "crust.blend_width_l={v}", v = self.blend_width_l).unwrap();
+        writeln!(
+            w,
+            "crust.boundary_mix_factor={v}",
+            v = self.boundary_mix_factor
+        )
+        .unwrap();
+        writeln!(w, "crust.shelf_start_l={v}", v = self.shelf_start_l).unwrap();
+        writeln!(w, "crust.shelf_end_l={v}", v = self.shelf_end_l).unwrap();
+        writeln!(w, "crust.continent_scale_l={v}", v = self.continent_scale_l).unwrap();
+        writeln!(w, "crust.slope_drop_km={v}", v = self.slope_drop_km).unwrap();
+        writeln!(w, "crust.plateau_factor={v}", v = self.plateau_factor).unwrap();
+        writeln!(
+            w,
+            "crust.island_noise_lambda_l={v}",
+            v = self.island_noise_lambda_l
+        )
+        .unwrap();
+        writeln!(w, "crust.island_noise_base={v}", v = self.island_noise_base).unwrap();
+        writeln!(w, "crust.island_noise_amp={v}", v = self.island_noise_amp).unwrap();
+        writeln!(
+            w,
+            "crust.rift_shoulder_offset={v}",
+            v = self.rift_shoulder_offset
+        )
+        .unwrap();
+        writeln!(w, "crust.u6_offset_l={v}", v = self.u6_offset_l).unwrap();
+        writeln!(w, "crust.u6_width_l={v}", v = self.u6_width_l).unwrap();
+        writeln!(w, "crust.u6_drop_km={v}", v = self.u6_drop_km).unwrap();
+        writeln!(w, "crust.u7_amplitude_km={v}", v = self.u7_amplitude_km).unwrap();
+        writeln!(w, "crust.u7_width_l={v}", v = self.u7_width_l).unwrap();
+        writeln!(w, "crust.u7_noise_lambda_l={v}", v = self.u7_noise_lambda_l).unwrap();
+        writeln!(w, "crust.mountain_edge_l={v}", v = self.mountain_edge_l).unwrap();
+        writeln!(w, "crust.mountain_scale_km={v}", v = self.mountain_scale_km).unwrap();
+        writeln!(
+            w,
+            "crust.mountain_transform_factor={v}",
+            v = self.mountain_transform_factor
+        )
+        .unwrap();
+        writeln!(w, "crust.detail_land_km={v}", v = self.detail_land_km).unwrap();
+        writeln!(w, "crust.detail_ocean_km={v}", v = self.detail_ocean_km).unwrap();
+        writeln!(
+            w,
+            "crust.detail_mountain_km={v}",
+            v = self.detail_mountain_km
+        )
+        .unwrap();
+        writeln!(
+            w,
+            "crust.detail_land_lambda_l={v}",
+            v = self.detail_land_lambda_l
+        )
+        .unwrap();
+        writeln!(
+            w,
+            "crust.detail_ocean_lambda_l={v}",
+            v = self.detail_ocean_lambda_l
+        )
+        .unwrap();
+        writeln!(
+            w,
+            "crust.detail_mountain_lambda_l={v}",
+            v = self.detail_mountain_lambda_l
+        )
+        .unwrap();
+        writeln!(w, "crust.detail_octaves={v}", v = self.detail_octaves).unwrap();
+        writeln!(w, "crust.detail_gain={v}", v = self.detail_gain).unwrap();
+        writeln!(
+            w,
+            "crust.iota_height_factor={v}",
+            v = self.iota_height_factor
+        )
+        .unwrap();
+        writeln!(w, "crust.iota_max_l={v}", v = self.iota_max_l).unwrap();
+        writeln!(w, "crust.hotspot_inset={v}", v = self.hotspot_inset).unwrap();
+        writeln!(
+            w,
+            "crust.hotspot_chain_count={v}",
+            v = self.hotspot_chain_count
+        )
+        .unwrap();
+        writeln!(
+            w,
+            "crust.hotspot_chain_step_l={v}",
+            v = self.hotspot_chain_step_l
+        )
+        .unwrap();
+        writeln!(
+            w,
+            "crust.hotspot_chain_decay={v}",
+            v = self.hotspot_chain_decay
+        )
+        .unwrap();
+        writeln!(
+            w,
+            "crust.hotspot_radius_growth={v}",
+            v = self.hotspot_radius_growth
+        )
+        .unwrap();
+        writeln!(
+            w,
+            "crust.hotspot_continental_factor={v}",
+            v = self.hotspot_continental_factor
+        )
+        .unwrap();
+        writeln!(
+            w,
+            "crust.hotspot_consider_radius_l={v}",
+            v = self.hotspot_consider_radius_l
+        )
+        .unwrap();
+        out
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -208,6 +391,48 @@ impl Params {
                 h_rift_km: 0.9,
                 w_rift_l: 0.25,
                 h_shoulder_km: 0.7,
+                ocean_kappa_l: -6.0,
+                kappa_noise_amplitude_l: 1.5,
+                kappa_noise_lambda_l: 6.0,
+                kappa_noise_octaves: 4,
+                kappa_noise_gain: 0.5,
+                blend_width_l: 1.0,
+                boundary_mix_factor: 0.5,
+                shelf_start_l: 0.5,
+                shelf_end_l: 1.5,
+                continent_scale_l: 1.5,
+                slope_drop_km: 4.3,
+                plateau_factor: 0.4,
+                island_noise_lambda_l: 1.2,
+                island_noise_base: 0.55,
+                island_noise_amp: 0.45,
+                rift_shoulder_offset: 1.6,
+                u6_offset_l: 0.8,
+                u6_width_l: 0.5,
+                u6_drop_km: 0.2,
+                u7_amplitude_km: 0.35,
+                u7_width_l: 0.12,
+                u7_noise_lambda_l: 2.0,
+                mountain_edge_l: 0.3,
+                mountain_scale_km: 3.0,
+                mountain_transform_factor: 0.25,
+                detail_land_km: 0.25,
+                detail_ocean_km: 0.3,
+                detail_mountain_km: 0.6,
+                detail_land_lambda_l: 3.0,
+                detail_ocean_lambda_l: 4.0,
+                detail_mountain_lambda_l: 0.4,
+                detail_octaves: 3,
+                detail_gain: 0.5,
+                iota_height_factor: 0.5,
+                iota_max_l: 1.0,
+                hotspot_inset: 0.1,
+                hotspot_chain_count: 6,
+                hotspot_chain_step_l: 0.9,
+                hotspot_chain_decay: 0.17,
+                hotspot_radius_growth: 0.1,
+                hotspot_continental_factor: 0.7,
+                hotspot_consider_radius_l: 2.0,
                 hotspot_cell_l: 24.0,
                 hotspot_probability: 0.3,
                 h_hotspot_km: 4.8,
@@ -387,6 +612,7 @@ impl Params {
             v = c.hotspot_probability
         )
         .unwrap();
+        w.push_str(&self.crust.extra_text());
         let pol = &self.poles;
         writeln!(w, "poles.cell_g_p_l={v}", v = pol.cell_g_p_l).unwrap();
         writeln!(w, "poles.warp_lambda0_l={v}", v = pol.warp_lambda0_l).unwrap();

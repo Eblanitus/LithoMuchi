@@ -155,6 +155,20 @@ mod invariants {
         }
     }
 
+    /// 14.2: макро-рельеф одной планеты побитово равен в двух режимах.
+    #[test]
+    fn crust_matches_across_scales() {
+        let scientific = Generator::new(42, Mode::Scientific, GenVersion::V0).unwrap();
+        let gameplay = Generator::new(42, Mode::Gameplay, GenVersion::V0).unwrap();
+        for (x, z) in points(200) {
+            let a = gameplay.crust_sample(x, z).unwrap();
+            let b = scientific.crust_sample(4.0 * x, 4.0 * z).unwrap();
+            assert_eq!(a.e_km.to_bits(), b.e_km.to_bits());
+            assert_eq!(a.kappa_l.to_bits(), b.kappa_l.to_bits());
+            assert_eq!(a.mountain.to_bits(), b.mountain.to_bits());
+        }
+    }
+
     #[test]
     fn noise_is_bounded_on_a_large_grid() {
         for k in 0..50_000 {
