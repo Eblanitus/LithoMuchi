@@ -145,12 +145,12 @@ fn boundary_contrib(
     d_l: f64,
     normal: Vec2,
     weight: f64,
-    chi_a: f64,
     seed: u64,
     params: &Params,
 ) -> BoundaryContrib {
     let c = &params.crust;
     let bt: BoundaryType = boundary_type(&sample.a, neighbor, sample.q, normal, params);
+    let chi_a = continent_fraction(kappa_plate(&sample.a, sample.q, seed, params));
     let chi_n = continent_fraction(kappa_plate(neighbor, sample.q, seed, params));
     let k = boundary_weights(bt, chi_a, chi_n);
     let sigma_l = if upper_is_a(&sample.a, neighbor, chi_a, chi_n, seed) {
@@ -286,7 +286,6 @@ pub fn crust_from_sample(
             sample.d_ab_l,
             sample.n_ab,
             sample.w_b,
-            chi,
             seed,
             params,
         );
@@ -302,7 +301,6 @@ pub fn crust_from_sample(
             sample.d_ac_l,
             sample.n_ac,
             sample.w_c,
-            chi,
             seed,
             params,
         ));
