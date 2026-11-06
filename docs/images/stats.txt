@@ -1,0 +1,17 @@
+[1m[92m   Compiling[0m litho-sandbox v0.1.0 (/home/runner/work/LithoMuchi/LithoMuchi/crates/litho-sandbox)
+[1m[92m    Finished[0m `release` profile [optimized] target(s) in 0.70s
+[1m[92m     Running[0m `target/release/litho-sandbox stats --seed 42 --mode gameplay`
+сид=42 режим=gameplay область=200×200 L точек=4096
+доля суши                31.2 %  (цель 25–40)
+горы на суше              5.5 %  (цель 5–20)
+пустыни на суше         258.2 %  (цель 15–30)
+леса на суше              9.5 %  (цель 30–50)
+полярные пояса на суше   41.8 %  (цель 10–25)
+max ΔC/ΔE/ΔW по сетке  1.2953 / 1.2551 / 1.1090
+[1m[92m    Finished[0m `release` profile [optimized] target(s) in 0.00s
+[1m[92m     Running[0m `target/release/litho-sandbox seams --seed 42 --mode gameplay`
+seams: max |ΔC|=0.00312 |ΔE|=0.03657 |ΔW|=0.00655, порог 0.02
+seams: ЕСТЬ РАЗРЫВЫ
+[1m[92m    Finished[0m `release` profile [optimized] target(s) in 0.00s
+[1m[92m     Running[0m `target/release/litho-sandbox bench --seed 42 --mode gameplay`
+bench: эталон 328.6 мкс/точку, быстрый путь 274.1 мкс/поле, ускорение 1.2× (sink=-1408.778)

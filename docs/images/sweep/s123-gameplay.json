@@ -1,0 +1,11 @@
+{
+  "layer": "height",
+  "seed": 123,
+  "mode": "gameplay",
+  "version": "v0",
+  "params_hash": "9408b9cc1424def0",
+  "center": [0, 0],
+  "size": 192,
+  "blocks_per_pixel": 260.4166666666667,
+  "path": "reference"
+}
