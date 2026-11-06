@@ -4,7 +4,7 @@
 //! есть локально (6.4). Здесь эталонный путь с `Vec` кандидатов; быстрый путь с
 //! кэшем тайлов появится в T13/T14/T55, формулы при этом не изменятся.
 
-use crate::hash::{hash3, unit};
+use crate::hash::{hash3, splitmix64, unit};
 use crate::math::{Vec2, clamp01, dexp};
 use crate::noise::warp2;
 use crate::noise_tables::DIRS;
@@ -370,11 +370,13 @@ pub fn continent_fraction(kappa_l: f64) -> f64 {
 
 /// Случайный цвет плиты для слоя `plates` песочницы.
 pub fn plate_color(id: u64) -> [u8; 3] {
-    let h = hash3(id, 0, 0, 0);
+    let h0 = hash3(id, 0, 0, 0);
+    let h1 = splitmix64(h0);
+    let h2 = splitmix64(h1);
     [
-        100 + (unit(h) * 145.0) as u8,
-        100 + (unit(h >> 17) * 145.0) as u8,
-        100 + (unit(h >> 34) * 145.0) as u8,
+        100 + (unit(h0) * 145.0) as u8,
+        100 + (unit(h1) * 145.0) as u8,
+        100 + (unit(h2) * 145.0) as u8,
     ]
 }
 
@@ -453,6 +455,22 @@ mod tests {
         }
         assert_eq!(continent_fraction(-6.0), 0.0);
         assert_eq!(continent_fraction(6.0), 1.0);
+    }
+
+    #[test]
+    fn plate_colors_are_not_all_the_same() {
+        let mut colors = std::collections::BTreeSet::new();
+        for k in 0..64_u64 {
+            colors.insert(super::plate_color(k * 0x9E37_79B9_7F4A_7C15));
+        }
+        assert!(colors.len() > 50, "уникальных цветов: {}", colors.len());
+        let mut channel_varies = false;
+        for color in &colors {
+            if color[1] != color[0] || color[2] != color[0] {
+                channel_varies = true;
+            }
+        }
+        assert!(channel_varies, "все каналы цвета одинаковы");
     }
 
     #[test]
