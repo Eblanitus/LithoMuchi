@@ -5,6 +5,7 @@ edition = "2024"
 rust-version = "1.85"
 description = "Задачи разработки Litospherity: документация параметров, позже — бандл и паки"
 publish = false
+license = "MIT OR Apache-2.0"
 
 [dependencies]
 litho-core = { path = "../../crates/litho-core" }

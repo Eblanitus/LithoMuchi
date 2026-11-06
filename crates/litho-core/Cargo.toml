@@ -8,6 +8,7 @@ edition = "2024"
 rust-version = "1.85"
 description = "Ядро генерации мира Litospherity: наука без зависимостей от игры"
 publish = false
+license = "MIT OR Apache-2.0"
 
 [dependencies]
 
