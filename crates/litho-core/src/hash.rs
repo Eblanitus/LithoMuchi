@@ -81,7 +81,7 @@ mod tests {
         assert!(unit(u64::MAX) < 1.0);
         for k in 0..10_000_u64 {
             let value = unit(splitmix64(k));
-            assert!(value >= 0.0 && value < 1.0, "unit = {value}");
+            assert!((0.0..1.0).contains(&value), "unit = {value}");
         }
     }
 }

@@ -7,6 +7,7 @@
 
 use std::path::Path;
 
+#[derive(Default)]
 pub struct RgbImage {
     pub width: usize,
     pub height: usize,

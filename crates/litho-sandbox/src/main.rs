@@ -68,7 +68,7 @@ fn options_from(args: &[String]) -> Result<RenderOptions, String> {
             Mode::Gameplay => 16.0,
         },
     };
-    if size == 0 || !(bpp > 0.0) {
+    if size == 0 || !bpp.is_finite() || bpp <= 0.0 {
         return Err("--size должен быть > 0, --bpp строго > 0".to_string());
     }
     Ok(RenderOptions {
