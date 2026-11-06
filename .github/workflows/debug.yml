@@ -35,7 +35,7 @@ jobs:
       - name: Карты песочницы для автора
         run: |
           cargo run -p litho-sandbox --release -- render \
-            --seed 42 --mode gameplay --size 512 \
+            --seed 42 --mode gameplay --size 512 --bpp 64 \
             --layers plates,boundaries,jacobian,noise \
             --out docs/images/v0-seed42-gameplay
           git config user.name "Arena Agent"

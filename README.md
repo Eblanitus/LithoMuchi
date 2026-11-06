@@ -32,7 +32,7 @@
 ```bash
 # карта плит, стыков и диагностики искажения для сида 42
 cargo run -p litho-sandbox --release -- render \
-  --seed 42 --mode gameplay --layers all --size 512 --out out/seed42
+  --seed 42 --mode gameplay --layers all --size 512 --bpp 64 --out out/seed42
 
 # все доступные поля в точке
 cargo run -p litho-sandbox --release -- probe --seed 42 --mode scientific --at 1200,-3400
@@ -41,6 +41,8 @@ cargo run -p litho-sandbox --release -- probe --seed 42 --mode scientific --at 1
 cargo run -p xtask -- params-doc
 cargo run -p xtask -- params-hash
 ```
+
+Масштаб: по умолчанию 16 блоков на пиксель в геймплейном режиме (обзор планеты — это 2048×2048 px). При `--size 512` ставьте `--bpp 64`, иначе получится крупный план в пару ячеек плит. Готовые картинки для оценки лежат в `docs/images/v0-seed42-gameplay/`.
 
 У каждого PNG рядом лежит `.json` с сидом, режимом, версией, `params_hash` и масштабом (подпись по 12.3). Все расчёты идут эталонным путём, без кэша и решётки: T13/T55 ещё впереди, поэтому флаг `--path fast` пока предупреждает и работает как `reference`.
 

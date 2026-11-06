@@ -372,9 +372,9 @@ pub fn continent_fraction(kappa_l: f64) -> f64 {
 pub fn plate_color(id: u64) -> [u8; 3] {
     let h = hash3(id, 0, 0, 0);
     [
-        60 + (unit(h) * 170.0) as u8,
-        60 + (unit(h >> 17) * 170.0) as u8,
-        60 + (unit(h >> 34) * 170.0) as u8,
+        100 + (unit(h) * 145.0) as u8,
+        100 + (unit(h >> 17) * 145.0) as u8,
+        100 + (unit(h >> 34) * 145.0) as u8,
     ]
 }
 
