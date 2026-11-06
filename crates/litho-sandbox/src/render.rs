@@ -85,7 +85,7 @@ pub fn options_for_layer(opts: &RenderOptions, layer: &str) -> RenderOptions {
 /// Лежит рядом с PNG в отдельном `.json`, чтобы не тащить в песочницу шрифты.
 pub fn metadata(opts: &RenderOptions, layer: &str, params_hash: u64) -> String {
     format!(
-        "{{\n  \"layer\": \"{layer}\",\n  \"seed\": {seed},\n  \"mode\": \"{mode}\",\n  \"version\": \"{version}\",\n  \"params_hash\": \"{params_hash:016x}\",\n  \"center\": [{cx}, {cz}],\n  \"size\": {size},\n  \"blocks_per_pixel\": {bpp},\n  \"path\": \"reference\"\n}}\n",
+        "{{\n  \"layer\": \"{layer}\",\n  \"seed\": {seed},\n  \"mode\": \"{mode}\",\n  \"version\": \"{version}\",\n  \"params_hash\": \"{params_hash:016x}\",\n  \"center\": [{cx}, {cz}],\n  \"size\": {size},\n  \"blocks_per_pixel\": {bpp},\n  \"path\": \"{path}\"\n}}\n",
         seed = opts.seed,
         mode = opts.mode.as_str(),
         version = opts.version.as_str(),

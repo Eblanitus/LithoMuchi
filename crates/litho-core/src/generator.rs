@@ -305,9 +305,7 @@ impl Generator {
     /// Быстрый путь (T55): рельеф, реки, лава и пять ванильных чисел считаются
     /// точно в блоке, а дорогой климат берётся интерполяцией по грубой решётке.
     pub fn sample(&self, x: f64, z: f64) -> Option<FullSample> {
-        let Some(plates) = self.plate_sample(x, z) else {
-            return None;
-        };
+        let plates = self.plate_sample(x, z)?;
         let point = self.macro_point(x, z);
         let crust = crust_from_sample(point, &plates, self.seed, &self.params);
         let surface = SurfaceSample {
