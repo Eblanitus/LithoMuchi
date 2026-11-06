@@ -1,0 +1,64 @@
+name: CI
+
+# План, T01 / 14.3: Linux + Windows msvc + Windows gnu, побитовые эталоны на
+# всех трёх целях, проверка MSRV 1.85 (минимум workspace Horizon).
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  linux:
+    name: Linux · fmt, clippy, tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - name: rustfmt
+        run: cargo fmt --all -- --check
+      - name: clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: tests
+        run: cargo test --workspace
+      - name: sandbox smoke test
+        run: cargo run -p litho-sandbox --release -- render --seed 42 --mode gameplay --layers plates,boundaries,jacobian --size 64 --out out/ci-smoke
+
+  msrv:
+    name: Linux · MSRV 1.85
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.85.0
+      # +1.85.0 явно перекрывает rust-toolchain.toml (там канал stable).
+      - name: litho-core на минимальной версии Rust
+        run: cargo +1.85.0 check -p litho-core
+
+  windows-msvc:
+    name: Windows msvc · tests
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: tests
+        run: cargo test --workspace
+
+  windows-gnu:
+    name: Windows gnu (MinGW) · tests
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          install: mingw-w64-x86_64-gcc
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-gnu
+      - name: tests
+        shell: bash
+        run: |
+          export PATH="/c/msys64/mingw64/bin:$PATH"
+          cargo test --workspace --target x86_64-pc-windows-gnu

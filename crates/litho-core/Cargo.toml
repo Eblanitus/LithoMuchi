@@ -1,0 +1,14 @@
+# ВАЖНО (план 5.4, 9.2): этот крейт копируется в workspace Horizon как
+# [[crate]]. Здесь нельзя использовать `*.workspace = true`, path-/git-зависимости,
+# build.rs и внешние крейты, которых нет в Cargo.lock Horizon.
+[package]
+name = "litho-core"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+description = "Ядро генерации мира Litospherity: наука без зависимостей от игры"
+publish = false
+
+[dependencies]
+
+[dev-dependencies]

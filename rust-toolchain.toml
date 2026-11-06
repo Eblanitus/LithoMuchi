@@ -1,0 +1,8 @@
+# План, 9.2: для разработки желателен тот же Rust, что у лаунчера Horizon
+# (1.99.1). Пока берём stable и отдельно проверяем MSRV 1.85 в CI
+# (`cargo +1.85.0 check -p litho-core`). Когда 1.99.1 станет доступен всем
+# участникам, закрепить его здесь (запись в docs/DECISIONS.md).
+[toolchain]
+channel = "stable"
+profile = "minimal"
+components = ["rustfmt", "clippy"]
