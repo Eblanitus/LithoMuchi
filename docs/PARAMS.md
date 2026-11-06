@@ -41,6 +41,7 @@
 | `climate.c_sea` | `[-0.98, -0.7, -0.52, -0.45, -0.4, -0.3, -0.17]` | `[-0.98, -0.7, -0.52, -0.45, -0.4, -0.3, -0.17]` |
 | `climate.c_sea_e_km` | `[-8.0, -4.5, -3.5, -2.5, -1.5, -0.2, 0.0]` | `[-8.0, -4.5, -3.5, -2.5, -1.5, -0.2, 0.0]` |
 | `climate.cold_desert_sand` | `true` | `true` |
+| `climate.cold_desert_winter_c` | `0.0` | `0.0` |
 | `climate.coldest_cos` | `0.9659258` | `0.9659258` |
 | `climate.cont_decay_l` | `3.0` | `3.0` |
 | `climate.cont_polar_c` | `6.0` | `6.0` |
@@ -213,4 +214,4 @@
 | `wind.knot7.phi_deg` | `90` | `90` |
 | `wind.knot7.s` | `0.3` | `0.3` |
 
-params_hash: scientific = 399f261229d837fe, gameplay = e1a9491b85f63f3b
+params_hash: scientific = e0aea9c794c4dae4, gameplay = cd9380810416bfc9
