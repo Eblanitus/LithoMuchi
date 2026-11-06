@@ -83,11 +83,11 @@ pub fn biome_cell(belt: u8, province: u8, ratio: f64, t_min: f64, params: &Param
     let cold = severe_winter(belt, t_min, params);
     match (belt, province) {
         (0, _) => cell(0, 0, "snowy_plains"),
-        (1, 1 | 2 | 3) => cell(0, 1, "snowy_plains"),
-        (1, 4 | 5 | 6) => cell(0, 2, "snowy_taiga"),
-        (2, 1 | 2) => cell(1, 0, "plains"),
+        (1, 1..=3) => cell(0, 1, "snowy_plains"),
+        (1, 4..=6) => cell(0, 2, "snowy_taiga"),
+        (2, 1..=2) => cell(1, 0, "plains"),
         (2, 3) => cell(1, 1, "plains"),
-        (2, 4 | 5) => {
+        (2, 4..=5) => {
             if cold {
                 cell(0, 3, "snowy_taiga")
             } else {
@@ -101,7 +101,7 @@ pub fn biome_cell(belt: u8, province: u8, ratio: f64, t_min: f64, params: &Param
                 cell(1, 4, "old_growth_spruce_taiga")
             }
         }
-        (3, 1 | 2) => desert(params),
+        (3, 1..=2) => desert(params),
         (3, 3) => {
             if cold {
                 cell(1, 1, "plains")
@@ -134,17 +134,17 @@ pub fn biome_cell(belt: u8, province: u8, ratio: f64, t_min: f64, params: &Param
                 cell(1, 4, "old_growth_spruce_taiga")
             }
         }
-        (4, 1 | 2) => desert(params),
+        (4, 1..=2) => desert(params),
         (4, 3) => cell(3, 0, "savanna"),
         (4, 4) => cell(3, 2, "forest"),
         (4, 5) => cell(2, 3, "birch_forest"),
         (4, 6) => cell(2, 4, "dark_forest"),
-        (5, 1 | 2) => desert(params),
+        (5, 1..=2) => desert(params),
         (5, 3) => cell(3, 0, "savanna"),
         (5, 4) => cell(3, 1, "savanna"),
         (5, 5) => cell(3, 2, "forest"),
         (5, 6) => cell(3, 3, "jungle"),
-        (6, 1 | 2) => desert(params),
+        (6, 1..=2) => desert(params),
         (6, 3) => cell(3, 0, "savanna"),
         (6, 4) => cell(3, 1, "savanna"),
         (6, 5) => cell(3, 3, "jungle"),

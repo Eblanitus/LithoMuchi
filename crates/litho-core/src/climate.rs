@@ -161,16 +161,16 @@ pub fn temperature(phi_deg: f64, e_km: f64, cont: f64, params: &Params) -> Tempe
     // cos(2π(m + 0,5)/12), каждое значение дважды. Константы, а не системный cos.
     const MONTH_COS: [f64; 12] = [
         0.965_925_8,
-        0.707_106_8,
+        std::f64::consts::FRAC_1_SQRT_2,
         0.258_819,
         -0.258_819,
-        -0.707_106_8,
+        -std::f64::consts::FRAC_1_SQRT_2,
         -0.965_925_8,
         -0.965_925_8,
-        -0.707_106_8,
+        -std::f64::consts::FRAC_1_SQRT_2,
         -0.258_819,
         0.258_819,
-        0.707_106_8,
+        std::f64::consts::FRAC_1_SQRT_2,
         0.965_925_8,
     ];
     let mut bio = 0.0;
@@ -437,6 +437,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::type_complexity)] // таблица контрольных точек 7.7.6
     fn control_points_a_to_f_match_plan_7_7_6() {
         let p = params();
         let cases: [(&str, (f64, f64, f64, f64, f64, f64), (f64, f64, f64), &str); 7] = [
