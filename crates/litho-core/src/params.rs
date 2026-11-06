@@ -358,7 +358,9 @@ impl Params {
                 speed_max: 1.0,
                 omega_max: 0.03,
                 warp_lambda0_l: 24.0,
-                warp_amplitude_l: 1.6,
+                // Д-011: 1.6 L давало почти прямые многоугольники («сетку»).
+                // 4.0 L сохраняет якобиан > 0.2 на контрольной сетке.
+                warp_amplitude_l: 4.0,
                 warp_octaves: 4,
                 warp_gain: 0.45,
                 query_radius_cells: 2,
@@ -392,8 +394,10 @@ impl Params {
                 w_rift_l: 0.25,
                 h_shoulder_km: 0.7,
                 ocean_kappa_l: -6.0,
-                kappa_noise_amplitude_l: 1.5,
-                kappa_noise_lambda_l: 6.0,
+                // Д-011: береговая линия должна быть изрезанной, а не повторять
+                // границы ячеек Вороного.
+                kappa_noise_amplitude_l: 2.2,
+                kappa_noise_lambda_l: 5.0,
                 kappa_noise_octaves: 4,
                 kappa_noise_gain: 0.5,
                 blend_width_l: 1.0,

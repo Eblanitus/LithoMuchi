@@ -485,4 +485,25 @@ mod tests {
             assert!(det > 0.0, "якобиан = {det} в ({x}, {z})");
         }
     }
+
+    /// Порог 0,2 из 7.3.2: на контрольной сетке искажение не должно
+    /// приближаться к вырождению ни для одного из тестовых сидов.
+    #[test]
+    fn warp_jacobian_stays_above_threshold() {
+        let p = params();
+        let seeds = [42_u64, 1, 12345, u64::MAX - 6];
+        let mut lowest = f64::INFINITY;
+        for seed in seeds {
+            for i in (0..=128).step_by(2) {
+                for j in (0..=128).step_by(2) {
+                    let x = i as f64 + 0.37;
+                    let z = j as f64 + 0.71;
+                    let det = warp_jacobian(Vec2::new(x, z), seed, &p);
+                    lowest = lowest.min(det);
+                    assert!(det > 0.2, "якобиан = {det} при сиде {seed} в ({x}, {z})");
+                }
+            }
+        }
+        assert!(lowest > 0.2, "минимум якобиана = {lowest}");
+    }
 }
