@@ -22,6 +22,9 @@ pub struct PlatesParams {
     pub continent_probability: f64,
     pub continent_radius_min_l: f64,
     pub continent_radius_max_l: f64,
+    /// Показатель степени для разброса размеров материков (Д-021).
+    /// При 1 — равномерно, при > 1 — много мелких и единицы крупных.
+    pub continent_radius_skew: f64,
     pub aspect_min: f64,
     pub aspect_max: f64,
     pub speed_min: f64,
@@ -123,6 +126,10 @@ pub struct PolesParams {
     pub warp_gain: f64,
     pub query_radius_cells: i64,
     pub phi_noise_degrees: f64,
+    /// Масштаб и октавы дрожания псевдошироты (Д-021): рваные кольца.
+    pub phi_noise_lambda_l: f64,
+    pub phi_noise_octaves: usize,
+    pub phi_noise_gain: f64,
 }
 
 impl CrustParams {
@@ -576,16 +583,19 @@ impl Params {
             plates: PlatesParams {
                 cell_g_l: 16.0,
                 inset_fraction: 0.08,
-                empty_probability: 0.35,
-                double_probability: 0.25,
+                // Д-021: больше плит с материком, разброс размеров вместо
+                // россыпи равновеликих «Грендландий».
+                empty_probability: 0.22,
+                double_probability: 0.35,
                 min_seed_distance_fraction: 0.35,
                 seed_attempts: 4,
                 center_offset_fraction: 0.25,
-                // Д-012: меньше плит с материком, но сами материки крупнее —
-                // «один океан с крошками» из 12.6 уходит, суша ~27–29 %.
-                continent_probability: 0.20,
-                continent_radius_min_l: 9.0,
-                continent_radius_max_l: 17.0,
+                // Д-021: вместо равновеликих «Грендландий» — степенной разброс:
+                // единицы крупных, несколько средних, россыпь мелких.
+                continent_probability: 0.45,
+                continent_radius_min_l: 2.5,
+                continent_radius_max_l: 17.5,
+                continent_radius_skew: 2.2,
                 aspect_min: 1.0,
                 aspect_max: 2.0,
                 speed_min: 0.2,
@@ -617,8 +627,8 @@ impl Params {
                 h_arc_km: 4.0,
                 d_arc_l: 0.9,
                 w_arc_l: 0.45,
-                h_island_km: 4.2,
-                d_island_l: 0.6,
+                h_island_km: 4.3,
+                d_island_l: 0.55,
                 w_island_l: 0.18,
                 h_ridge_km: 2.2,
                 w_ridge_l: 1.8,
@@ -628,23 +638,29 @@ impl Params {
                 w_rift_l: 0.25,
                 h_shoulder_km: 0.7,
                 ocean_kappa_l: -6.0,
-                continent_query_radius_cells: 3,
+                // Д-021: вытянутые эллипсы (r до 17,5 L, aspect до 2) на краю
+                // окна 7×7 давали вклад выше уровня океана и прямой шов;
+                // окно 9×9 возвращает тест Д-012 (< 1e-3).
+                continent_query_radius_cells: 4,
                 // Д-011: береговая линия должна быть изрезанной, а не повторять
                 // границы ячеек Вороного.
-                kappa_noise_amplitude_l: 2.2,
-                kappa_noise_lambda_l: 5.0,
+                // Д-021: прибрежная рябь — четыре октавы от 4 L до 0,5 L.
+                // Берег перестаёт быть гладким эллипсом; частоты не уходят
+                // ниже блока, чтобы 14.2 (|dC|,|dE| <= 0,02) оставался честным.
+                kappa_noise_amplitude_l: 2.4,
+                kappa_noise_lambda_l: 4.0,
                 kappa_noise_octaves: 4,
                 kappa_noise_gain: 0.5,
-                blend_width_l: 1.0,
+                blend_width_l: 0.7,
                 boundary_mix_factor: 0.5,
                 shelf_start_l: 0.5,
                 shelf_end_l: 1.5,
-                continent_scale_l: 1.5,
+                continent_scale_l: 1.1,
                 slope_drop_km: 4.3,
                 plateau_factor: 0.4,
-                island_noise_lambda_l: 1.2,
-                island_noise_base: 0.55,
-                island_noise_amp: 0.45,
+                island_noise_lambda_l: 1.0,
+                island_noise_base: 0.45,
+                island_noise_amp: 0.50,
                 rift_shoulder_offset: 1.6,
                 u6_offset_l: 0.8,
                 u6_width_l: 0.5,
@@ -666,26 +682,33 @@ impl Params {
                 iota_height_factor: 0.5,
                 iota_max_l: 1.0,
                 hotspot_inset: 0.1,
-                hotspot_chain_count: 6,
+                hotspot_chain_count: 4,
                 hotspot_chain_step_l: 0.9,
                 hotspot_chain_decay: 0.17,
                 hotspot_radius_growth: 0.1,
-                hotspot_continental_factor: 0.7,
-                hotspot_consider_radius_l: 2.0,
-                hotspot_cell_l: 24.0,
-                hotspot_probability: 0.3,
-                h_hotspot_km: 4.8,
-                r_hotspot_l: 0.5,
+                // Д-021: короткие цепочки в мелкой сетке = отдельные острова.
+                hotspot_continental_factor: 0.85,
+                hotspot_consider_radius_l: 2.5,
+                hotspot_cell_l: 20.0,
+                hotspot_probability: 0.45,
+                h_hotspot_km: 4.6,
+                r_hotspot_l: 0.7,
             },
             poles: PolesParams {
-                cell_g_p_l: 64.0,
+                // Д-021: полюса в два раза дальше (128 L вместо 64 L):
+                // на кадре 32,8 км больше не стоят четыре шапки подряд.
+                cell_g_p_l: 128.0,
                 inset_fraction: 0.1,
-                warp_lambda0_l: 40.0,
-                warp_amplitude_l: 4.0,
-                warp_octaves: 3,
+                // Рваные, изогнутые границы холода вместо концентрических кругов.
+                warp_lambda0_l: 24.0,
+                warp_amplitude_l: 6.0,
+                warp_octaves: 4,
                 warp_gain: 0.5,
                 query_radius_cells: 2,
-                phi_noise_degrees: 3.0,
+                phi_noise_degrees: 6.0,
+                phi_noise_lambda_l: 8.0,
+                phi_noise_octaves: 3,
+                phi_noise_gain: 0.5,
             },
             wind: WindParams {
                 strength_phi_deg: [0.0, 5.0, 15.0, 30.0, 45.0, 60.0, 75.0, 90.0],
@@ -730,9 +753,11 @@ impl Params {
                 boundary_factor: 0.6,
             },
             spawn: SpawnParams {
-                candidates: 256,
-                radius_l: 100.0,
-                fallback_grid: 32,
+                // Д-021: полюса раздвинулись, поэтому ищем спавн в 200 L
+                // и берём больше проб, чтобы кольцо 25…55° гарантированно нашлось.
+                candidates: 384,
+                radius_l: 200.0,
+                fallback_grid: 48,
                 min_e_km: 0.1,
                 max_e_km: 1.5,
                 min_kappa_l: 1.0,
@@ -768,7 +793,8 @@ impl Params {
                 polar_e: -0.87,
                 belt_trade_deg: [25.0, 35.0],
                 belt_west_deg: [25.0, 35.0],
-                belt_polar_deg: [55.0, 65.0],
+                // Д-021: полярный пояс уже, шапки меньше.
+                belt_polar_deg: [68.0, 78.0],
                 wind_fallback_dir: [-0.87, 0.5],
                 w_sat_base: 0.3,
                 w_sat_per_c: 0.035,
@@ -918,6 +944,12 @@ impl Params {
             v = p.continent_radius_max_l
         )
         .unwrap();
+        writeln!(
+            w,
+            "plates.continent_radius_skew={v}",
+            v = p.continent_radius_skew
+        )
+        .unwrap();
         writeln!(w, "plates.aspect_min={v}", v = p.aspect_min).unwrap();
         writeln!(w, "plates.aspect_max={v}", v = p.aspect_max).unwrap();
         writeln!(w, "plates.speed_min={v}", v = p.speed_min).unwrap();
@@ -968,6 +1000,14 @@ impl Params {
         )
         .unwrap();
         writeln!(w, "poles.phi_noise_degrees={v}", v = pol.phi_noise_degrees).unwrap();
+        writeln!(
+            w,
+            "poles.phi_noise_lambda_l={v}",
+            v = pol.phi_noise_lambda_l
+        )
+        .unwrap();
+        writeln!(w, "poles.phi_noise_octaves={v}", v = pol.phi_noise_octaves).unwrap();
+        writeln!(w, "poles.phi_noise_gain={v}", v = pol.phi_noise_gain).unwrap();
         for (i, (phi, s)) in self
             .wind
             .strength_phi_deg

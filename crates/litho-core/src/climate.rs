@@ -115,13 +115,15 @@ pub fn pole_sample(point: Vec2, seed: u64, params: &Params) -> Option<PoleSample
     let total = f1 + f2;
     let t = if total > 0.0 { f1 / total } else { 0.0 };
     let phi0 = 90.0 * (1.0 - 2.0 * t);
+    // Д-021: дрожь псевдошироты стала многооктавной и настраиваемой —
+    // границы холода рваные, а не концентрические окружности.
     let jitter = fbm2(
         subseed(seed, SALT_PHI_NOISE),
         point.x,
         point.z,
-        10.0,
-        3,
-        0.5,
+        pol.phi_noise_lambda_l,
+        pol.phi_noise_octaves,
+        pol.phi_noise_gain,
     );
     let phi_deg = clamp(phi0 + pol.phi_noise_degrees * jitter, 0.0, 90.0);
 
