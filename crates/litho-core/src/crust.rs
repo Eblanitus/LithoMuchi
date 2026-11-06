@@ -11,7 +11,7 @@ use crate::noise::{fbm2, ridged2};
 use crate::params::Params;
 use crate::plates::{
     BoundaryType, Plate, PlateSample, boundary_type, boundary_weights, continent_field,
-    continent_fraction, plate_query,
+    continent_fraction, plate_query, seeds_in_cell,
 };
 use crate::seed::{
     CellRng, SALT_BOUNDARY_SIDE, SALT_CRUST_DETAIL, SALT_CRUST_KAPPA, SALT_HOTSPOT, cell_hash,
@@ -72,6 +72,46 @@ pub fn kappa_mix(sample: &PlateSample, seed: u64, params: &Params) -> f64 {
         let kc = kappa_plate(&c_plate, sample.q, seed, params);
         let blend = 1.0 - smoothstep(0.0, c.blend_width_l, sample.d_ac_l);
         result += c.boundary_mix_factor * sample.w_c * blend * (kc - result);
+    }
+    result
+}
+
+/// Поле материка как максимум вкладов ближайших плит с материком (Д-012).
+///
+/// В 7.4.1 `κ` привязано к ближайшей плите, поэтому материк обрезается
+/// границами ячеек Вороного и мир выглядит как «один океан с крошками»
+/// (12.6). Здесь берутся все центры материков в окне ячеек: континент может
+/// лежать на нескольких плитах, как в реальности, а береговая линия больше не
+/// повторяет прямолинейные швы. Вклад далёкой плиты ограничен уровнем океана,
+/// поэтому смена окна не даёт разрывов на границах ячеек.
+pub fn kappa_global(q: Vec2, seed: u64, params: &Params) -> f64 {
+    let c = &params.crust;
+    let g = params.plates.cell_g_l;
+    let radius = c.continent_query_radius_cells;
+    let ci = (q.x / g).floor() as i64;
+    let cj = (q.z / g).floor() as i64;
+    let noise = fbm2(
+        subseed(seed, SALT_CRUST_KAPPA),
+        q.x,
+        q.z,
+        c.kappa_noise_lambda_l,
+        c.kappa_noise_octaves,
+        c.kappa_noise_gain,
+    );
+    let mut result = c.ocean_kappa_l;
+    for dj in -radius..=radius {
+        for di in -radius..=radius {
+            for plate in seeds_in_cell(seed, ci + di, cj + dj, params) {
+                if !plate.has_continent {
+                    continue;
+                }
+                let value = (continent_field(&plate, q) + c.kappa_noise_amplitude_l * noise)
+                    .max(c.ocean_kappa_l);
+                if value > result {
+                    result = value;
+                }
+            }
+        }
     }
     result
 }
@@ -219,7 +259,7 @@ fn boundary_contrib(
 }
 
 /// Горячие точки и цепочки затонувших гор (7.4.4). Смотрим ячейки 3×3 вокруг
-/// точки, но для каждой候选 точки, которая действительно близка, один раз
+/// точки, но для каждой близкой точки, которая действительно близка, один раз
 /// запрашиваем плиту — так стоимость остаётся локальной и небольшой.
 pub fn hotspot_height(point: Vec2, seed: u64, params: &Params) -> f64 {
     let c = &params.crust;
@@ -275,7 +315,7 @@ pub fn crust_from_sample(
     params: &Params,
 ) -> CrustSample {
     let c = &params.crust;
-    let kappa_l = kappa_mix(sample, seed, params);
+    let kappa_l = kappa_global(sample.q, seed, params);
     let chi = continent_fraction(kappa_l);
     let mut bc = BoundaryContrib::default();
     let mut weights = [0.0; 7];
@@ -359,9 +399,10 @@ pub fn crust_from_sample(
 
 #[cfg(test)]
 mod tests {
-    use super::{e_base, gauss, plateau_shape};
+    use super::{e_base, gauss, kappa_global, plateau_shape};
     use crate::Generator;
     use crate::hash::{splitmix64, unit};
+    use crate::math::Vec2;
     use crate::mode::Mode;
     use crate::version::GenVersion;
 
@@ -418,5 +459,21 @@ mod tests {
         // Гипсометрия должна быть двумодальной: есть и суша, и абиссаль.
         assert!(land > 20, "суши слишком мало: {land}");
         assert!(abyss > 100, "абиссали слишком мало: {abyss}");
+    }
+
+    /// Д-012: смена окна ячеек не должна рисовать прямую линию на карте.
+    #[test]
+    fn kappa_global_has_no_cell_window_seams() {
+        let p = params();
+        let g = p.plates.cell_g_l;
+        for k in 0..40 {
+            let z = k as f64 * 1.7 - 30.0;
+            let a = kappa_global(Vec2::new(g - 1e-6, z), 42, &p);
+            let b = kappa_global(Vec2::new(g + 1e-6, z), 42, &p);
+            assert!(
+                (a - b).abs() < 1e-9,
+                "разрыв на границе ячеек: {a} и {b} при z = {z}"
+            );
+        }
     }
 }

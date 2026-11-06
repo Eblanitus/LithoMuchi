@@ -64,6 +64,8 @@ pub struct CrustParams {
     pub w_rift_l: f64,
     pub h_shoulder_km: f64,
     pub ocean_kappa_l: f64,
+    /// Радиус окна поиска центров материков в ячейках плит (Д-012).
+    pub continent_query_radius_cells: i64,
     pub kappa_noise_amplitude_l: f64,
     pub kappa_noise_lambda_l: f64,
     pub kappa_noise_octaves: usize,
@@ -129,6 +131,12 @@ impl CrustParams {
         let mut out = String::new();
         let w = &mut out;
         writeln!(w, "crust.ocean_kappa_l={v}", v = self.ocean_kappa_l).unwrap();
+        writeln!(
+            w,
+            "crust.continent_query_radius_cells={v}",
+            v = self.continent_query_radius_cells
+        )
+        .unwrap();
         writeln!(
             w,
             "crust.kappa_noise_amplitude_l={v}",
@@ -349,9 +357,11 @@ impl Params {
                 min_seed_distance_fraction: 0.35,
                 seed_attempts: 4,
                 center_offset_fraction: 0.25,
-                continent_probability: 0.5,
-                continent_radius_min_l: 4.0,
-                continent_radius_max_l: 9.0,
+                // Д-012: меньше плит с материком, но сами материки крупнее —
+                // «один океан с крошками» из 12.6 уходит, суша ~29 %.
+                continent_probability: 0.15,
+                continent_radius_min_l: 7.0,
+                continent_radius_max_l: 13.0,
                 aspect_min: 1.0,
                 aspect_max: 2.0,
                 speed_min: 0.2,
@@ -394,6 +404,7 @@ impl Params {
                 w_rift_l: 0.25,
                 h_shoulder_km: 0.7,
                 ocean_kappa_l: -6.0,
+                continent_query_radius_cells: 3,
                 // Д-011: береговая линия должна быть изрезанной, а не повторять
                 // границы ячеек Вороного.
                 kappa_noise_amplitude_l: 2.2,
