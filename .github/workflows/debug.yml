@@ -18,16 +18,14 @@ jobs:
           components: rustfmt, clippy
       - name: Собрать вывод тестов и clippy
         run: |
-          {
-            echo "=== cargo test --workspace ==="
-            cargo test --workspace 2>&1 || true
-            echo "=== cargo clippy --workspace --all-targets -- -D warnings ==="
-            cargo clippy --workspace --all-targets -- -D warnings 2>&1 || true
-            echo "=== cargo fmt --all -- --check ==="
-            cargo fmt --all -- --check 2>&1 || true
-          } > /tmp/debug.txt
+          cargo test --workspace > /tmp/test.txt 2>&1 || true
+          cargo clippy --workspace --all-targets -- -D warnings > /tmp/clippy.txt 2>&1 || true
+          cargo fmt --all -- --check > /tmp/fmt.txt 2>&1 || true
           python3 - <<'PY'
-          text = open('/tmp/debug.txt', encoding='utf-8', errors='replace').read()[:60000]
-          esc = text.replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A')
-          print('::error::' + esc)
+          import re
+          for label, name in [('TEST', 'test'), ('CLIPPY', 'clippy'), ('FMT', 'fmt')]:
+              text = open(f'/tmp/{name}.txt', encoding='utf-8', errors='replace').read()
+              text = re.sub(r'\x1b\[[0-9;]*m', '', text)[:55000]
+              esc = text.replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A')
+              print(f'::error::{label}: ' + esc)
           PY
