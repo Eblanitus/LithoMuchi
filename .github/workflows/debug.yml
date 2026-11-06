@@ -1,0 +1,48 @@
+# ВРЕМЕННЫЙ workflow: диагностика Э1g и сборка атласа. Удалить после проверки.
+name: Debug build
+on:
+  push:
+    branches: ["arena/**"]
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  collect:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - name: Проверить сборку
+        run: |
+          cargo test --workspace > /tmp/test.txt 2>&1 || true
+          cargo clippy --workspace --all-targets -- -D warnings > /tmp/clippy.txt 2>&1 || true
+          python3 - <<'PY'
+          import re
+          for label, name in [('TEST', 'test'), ('CLIPPY', 'clippy')]:
+              text = open(f'/tmp/{name}.txt', encoding='utf-8', errors='replace').read()
+              text = re.sub(r'\x1b\[[0-9;]*m', '', text)[:55000]
+              esc = text.replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A')
+              print(f'::error::{label}: ' + esc)
+          PY
+      - name: Таблица параметров
+        run: cargo run -p xtask --release -- params-doc > docs/PARAMS.md
+      - name: Метрики, швы, скорость
+        run: |
+          cargo run -p litho-sandbox --release -- stats --seed 42 --mode gameplay > docs/images/stats.txt 2>&1
+          cargo run -p litho-sandbox --release -- seams --seed 42 --mode gameplay >> docs/images/stats.txt 2>&1
+          cargo run -p litho-sandbox --release -- bench --seed 42 --mode gameplay >> docs/images/stats.txt 2>&1
+          cat docs/images/stats.txt
+      - name: Атлас и карта быстрого пути
+        run: |
+          cargo run -p litho-sandbox --release -- sweep --out docs/images/sweep
+          cargo run -p litho-sandbox --release -- render --seed 42 --mode gameplay \
+            --path fast --layers biomes --size 128 --bpp 256 --out docs/images/fast-path
+      - name: Сохранить артефакты
+        run: |
+          git config user.name "Arena Agent"
+          git config user.email "agent@arena.ai"
+          git add docs/images docs/PARAMS.md
+          git diff --cached --quiet || git commit -m "Атлас, метрики и карта быстрого пути [skip ci]"
+          git push origin HEAD:arena/248c0181-lithomuchi || true

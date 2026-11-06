@@ -179,3 +179,112 @@ mod invariants {
         }
     }
 }
+
+#[cfg(test)]
+mod fast_path {
+    use litho_core::hash::{splitmix64, unit};
+    use litho_core::{Field, GenVersion, Generator, Mode};
+
+    /// Маленькая область: грубая решётка считается тайлами целиком, поэтому
+    /// для проверки соответствия достаточно нескольких соседних тайлов (14.2).
+    fn points(count: usize) -> Vec<(f64, f64)> {
+        (0..count)
+            .map(|k| {
+                (
+                    unit(splitmix64(k as u64 + 11)) * 800.0 - 400.0,
+                    unit(splitmix64(k as u64 + 900_001)) * 800.0 - 400.0,
+                )
+            })
+            .collect()
+    }
+
+    fn generator() -> Generator {
+        Generator::new(42, Mode::Gameplay, GenVersion::V0).unwrap()
+    }
+
+    /// 14.2: быстрый путь близок к эталону по C/E/W и классу зоны.
+    #[test]
+    fn fast_path_matches_reference() {
+        let generator = generator();
+        let pts = points(300);
+        let mut same_zone = 0_usize;
+        for (x, z) in &pts {
+            let reference = generator.sample_reference(*x, *z).unwrap();
+            let fast = generator.sample(*x, *z).unwrap();
+            for (name, a, b) in [
+                ("C", reference.vanilla.c, fast.vanilla.c),
+                ("E", reference.vanilla.e, fast.vanilla.e),
+                ("W", reference.vanilla.w, fast.vanilla.w),
+            ] {
+                assert!(
+                    (a - b).abs() <= 0.03,
+                    "{name}: эталон {a}, быстрый {b} в ({x}, {z})"
+                );
+            }
+            if reference.zone == fast.zone {
+                same_zone += 1;
+            }
+        }
+        let share = same_zone as f64 / pts.len() as f64;
+        assert!(
+            share >= 0.97,
+            "совпадение зон {share:.3}, нужно не меньше 0.97"
+        );
+    }
+
+    /// 14.2: кэш не меняет ответ, результаты не зависят от порядка.
+    #[test]
+    fn cache_does_not_change_the_answer() {
+        let generator = generator();
+        let pts = points(120);
+        let forward: Vec<u64> = pts
+            .iter()
+            .map(|(x, z)| generator.field(Field::Continents, *x, 64.0, *z).to_bits())
+            .collect();
+        let backward: Vec<u64> = pts
+            .iter()
+            .rev()
+            .map(|(x, z)| generator.field(Field::Continents, *x, 64.0, *z).to_bits())
+            .rev()
+            .collect();
+        assert_eq!(forward, backward);
+        let cold: Vec<u64> = pts
+            .iter()
+            .map(|(x, z)| {
+                let fresh = Generator::new(42, Mode::Gameplay, GenVersion::V0).unwrap();
+                fresh.field(Field::Continents, *x, 64.0, *z).to_bits()
+            })
+            .collect();
+        assert_eq!(forward, cold);
+    }
+
+    /// 14.2: между соседними блоками нет скачков C/E/W больше 0,02.
+    #[test]
+    fn adjacent_blocks_are_continuous() {
+        let generator = generator();
+        for (x, z) in points(100) {
+            for field in [Field::Continents, Field::Erosion, Field::Ridges] {
+                let here = generator.field(field, x, 64.0, z);
+                let east = generator.field(field, x + 1.0, 64.0, z);
+                let south = generator.field(field, x, 64.0, z + 1.0);
+                assert!((here - east).abs() <= 0.02, "{field:?} на восток");
+                assert!((here - south).abs() <= 0.02, "{field:?} на юг");
+            }
+        }
+    }
+
+    /// 14.2: ни NaN, ни бесконечности, в том числе на краю мира.
+    #[test]
+    fn fields_are_finite_at_the_world_edge() {
+        let generator = generator();
+        for x in [-30_000_000.0_f64, -1.0, 0.0, 1.0, 30_000_000.0] {
+            for z in [-30_000_000.0_f64, -1.0, 0.0, 1.0, 30_000_000.0] {
+                for field in Field::ALL {
+                    let value = generator.field(field, x, -54.0, z);
+                    assert!(value.is_finite(), "{field:?} в ({x}, {z}) = {value}");
+                    assert!(generator.field_f32(field, x, -54.0, z).is_finite());
+                }
+            }
+        }
+    }
+}

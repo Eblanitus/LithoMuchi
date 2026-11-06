@@ -1,9 +1,8 @@
 //! Отрисовка слоёв (план 12.2, 12.3).
 //!
-//! Пока все слои идут эталонным путём `Generator` без решётки и кэша: они и
-//! должны совпадать с будущим быстрым путём с точностью допуска 14.2, но сетка
-//! ещё не реализована (T13/T55). Поэтому флаг `--path` принят, но оба значения
-//! сейчас дают эталонный путь.
+//! По умолчанию слои идут эталонным путём `Generator`; `--path fast`
+//! переключает климатические слои на решётку и кэш (T55), чтобы картинки
+//! песочницы совпадали с тем, что увидит игра.
 
 use litho_core::Generator;
 use litho_core::hash::hash2;
@@ -55,6 +54,7 @@ pub struct RenderOptions {
     pub center_z: f64,
     pub size: usize,
     pub bpp: f64,
+    pub path_fast: bool,
 }
 
 impl RenderOptions {
@@ -93,6 +93,7 @@ pub fn metadata(opts: &RenderOptions, layer: &str, params_hash: u64) -> String {
         cz = opts.center_z,
         size = opts.size,
         bpp = opts.bpp,
+        path = if opts.path_fast { "fast" } else { "reference" },
     )
 }
 
@@ -113,7 +114,11 @@ pub fn render_layer(opts: &RenderOptions, layer: &str) -> Result<RgbImage, Strin
             let (x, z) = effective.block_at_pixel(px, py);
             let p = generator.macro_point(x, z);
             let world = if CLIMATE_LAYERS.contains(&layer) {
-                generator.world_sample(x, z)
+                if opts.path_fast {
+                    generator.world_sample_fast(x, z)
+                } else {
+                    generator.world_sample(x, z)
+                }
             } else {
                 None
             };
