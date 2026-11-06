@@ -22,8 +22,11 @@ jobs:
           import re
           for label, name in [('TEST', 'test'), ('CLIPPY', 'clippy')]:
               text = open(f'/tmp/{name}.txt', encoding='utf-8', errors='replace').read()
-              text = re.sub(r'\x1b\[[0-9;]*m', '', text)[:55000]
-              esc = text.replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A')
+              text = re.sub(r'\x1b\[[0-9;]*m', '', text)
+              keep = ('FAILED', 'panicked', 'assertion', 'error[', 'error:', 'failures:', 'test result', 'left:', 'right:', 'warning:')
+              lines = [line for line in text.splitlines() if any(key in line for key in keep)]
+              snippet = '\n'.join(lines)[:50000]
+              esc = snippet.replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A')
               print(f'::error::{label}: ' + esc)
           PY
       - name: Таблица параметров
