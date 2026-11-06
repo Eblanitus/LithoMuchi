@@ -1,6 +1,6 @@
 [1m[92m   Compiling[0m litho-core v0.1.0 (/home/runner/work/LithoMuchi/LithoMuchi/crates/litho-core)
 [1m[92m   Compiling[0m litho-sandbox v0.1.0 (/home/runner/work/LithoMuchi/LithoMuchi/crates/litho-sandbox)
-[1m[92m    Finished[0m `release` profile [optimized] target(s) in 1.94s
+[1m[92m    Finished[0m `release` profile [optimized] target(s) in 2.09s
 [1m[92m     Running[0m `target/release/litho-sandbox stats --seed 42 --mode gameplay`
 сид=42 режим=gameplay область=200×200 L точек=4096
 доля суши                31.2 %  (цель 25–40)
@@ -17,4 +17,30 @@ seams: max |ΔC|=0.00312 |ΔE|=0.03657 |ΔW|=0.00655, порог 0.02
 seams: ЕСТЬ РАЗРЫВЫ
 [1m[92m    Finished[0m `release` profile [optimized] target(s) in 0.00s
 [1m[92m     Running[0m `target/release/litho-sandbox bench --seed 42 --mode gameplay`
-bench: эталон 316.4 мкс/точку, быстрый путь 262.9 мкс/поле, ускорение 1.2× (sink=-1408.778)
+bench: эталон 269.8 мкс/точку, быстрый путь 217.8 мкс/поле, ускорение 1.2× (sink=-1408.778)
+[1m[92m    Finished[0m `release` profile [optimized] target(s) in 0.00s
+[1m[92m     Running[0m `target/release/litho-sandbox probe --seed 42 --mode gameplay --at -192,192`
+seed=42 mode=gameplay version=v0 params=9408b9cc1424def0
+блок (-192, 192) → макро p=(-0.768, 0.768)
+плита A id=0x6b519f822aeae929 ячейка=(-1, 0) материк=false R=15.53504210743534 age=0.10402145357272241
+d_AB=0.7215468926444432 L, d_AC=2.054961291627004 L, w_B=0.9655615440480319, w_C=0.03443845595196811
+граница=Some(BoundaryType { conv: 0.5323214583093017, div: 0.0, tr: 0.04255176853079135 })
+якобиан искажения=1.1563119164957796
+κ=-6 L, e=-3.2083020619893015 км, M=0.3766289146072364, Pl=0, ι=0 L, k=[0.0, 0.0, 0.5323214583093017, 0.0, 0.0, 0.0, 0.04255176853079135]
+φ=21.475441478804516° T_bio=22.748024524941595 °C T_min=21.694519227837315 °C |V|=0.6978127309891228 μ=1.0862977889653445 c=0 P=1463.5014646421712 мм R=0.9159820592202639
+зона=П3/К1 биом=lukewarm_ocean (3,0) океан=true
+C=-0.4995811443392511 E=-0.4290452074933344 W=-0.1273201994550187 T=0.37 H=0
+
+[1m[92m    Finished[0m `release` profile [optimized] target(s) in 0.00s
+[1m[92m     Running[0m `target/release/litho-sandbox probe --seed 42 --mode gameplay --at -192,193`
+seed=42 mode=gameplay version=v0 params=9408b9cc1424def0
+блок (-192, 193) → макро p=(-0.768, 0.772)
+плита A id=0x6b519f822aeae929 ячейка=(-1, 0) материк=false R=15.53504210743534 age=0.10402145357272241
+d_AB=0.725918282774717 L, d_AC=2.059164340045006 L, w_B=0.9655475468703415, w_C=0.034452453129658535
+граница=Some(BoundaryType { conv: 0.5321851990475481, div: 0.0, tr: 0.04238615443575864 })
+якобиан искажения=1.1553754802664844
+κ=-6 L, e=-3.24736284170317 км, M=0.3639938378941163, Pl=0, ι=0 L, k=[0.0, 0.0, 0.5321851990475481, 0.0, 0.0, 0.0, 0.04238615443575864]
+φ=21.46957652704252° T_bio=22.7503192435183 °C T_min=21.69733821426974 °C |V|=0.6980864287380157 μ=1.0863767771010642 c=0 P=1289.806919522676 мм R=1.039439541475466
+зона=П3/К1 биом=lukewarm_ocean (3,0) океан=true
+C=-0.502315398919222 E=-0.3924719539225111 W=-0.12237827136038147 T=0.37 H=0
+
