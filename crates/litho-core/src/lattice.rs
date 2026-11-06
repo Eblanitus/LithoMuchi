@@ -116,7 +116,7 @@ pub fn catmull_rom<const N: usize>(values: &Nodes<N>, u: f64, v: f64) -> [f64; N
 
 #[cfg(test)]
 mod tests {
-    use super::{CELLS, NODES, catmull_rom, local, node_coords, smooth, tile_key};
+    use super::{CELLS, HALO, NODES, catmull_rom, local, node_coords, smooth, tile_key};
 
     #[test]
     fn smoothing_preserves_a_constant_field() {
@@ -133,7 +133,10 @@ mod tests {
         let mut values = vec![[0.0_f64]; CELLS];
         for i in 0..NODES {
             for j in 0..NODES {
-                values[i * NODES + j][0] = 2.0 * j as f64 + 3.0 * i as f64;
+                // Локальная координата узла = индекс минус поле.
+                let u = j as f64 - HALO as f64;
+                let v = i as f64 - HALO as f64;
+                values[i * NODES + j][0] = 2.0 * u + 3.0 * v;
             }
         }
         let got = catmull_rom(&values, 7.25, 11.75);
