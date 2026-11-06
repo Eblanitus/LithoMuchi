@@ -13,7 +13,9 @@ use crate::math::Vec2;
 use crate::mode::Mode;
 use crate::params::Params;
 use crate::plates::{PlateSample, plate_query, warp_jacobian};
+use crate::rivers::{RiverCache, local_r, traced_r};
 use crate::seed::from_world_seed;
+use crate::spawn::{self, SpawnQuality};
 use crate::vanilla::{VanillaSample, continentalness};
 use crate::version::GenVersion;
 
