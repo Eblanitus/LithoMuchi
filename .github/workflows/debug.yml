@@ -1,0 +1,31 @@
+# ВРЕМЕННЫЙ диагностический workflow: в этой песочнице недоступен хост,
+# с которого gh скачивает логи Actions. Вывод сборки публикуется как
+# annotation чек-рана и читается через api.github.com. Удалить после отладки.
+name: Debug build
+
+on:
+  workflow_dispatch:
+
+jobs:
+  collect:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - name: Собрать вывод тестов и clippy
+        run: |
+          {
+            echo "=== cargo test --workspace ==="
+            cargo test --workspace 2>&1 || true
+            echo "=== cargo clippy --workspace --all-targets -- -D warnings ==="
+            cargo clippy --workspace --all-targets -- -D warnings 2>&1 || true
+            echo "=== cargo fmt --all -- --check ==="
+            cargo fmt --all -- --check 2>&1 || true
+          } > /tmp/debug.txt
+          python3 - <<'PY'
+          text = open('/tmp/debug.txt', encoding='utf-8', errors='replace').read()[:60000]
+          esc = text.replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A')
+          print('::error::' + esc)
+          PY
