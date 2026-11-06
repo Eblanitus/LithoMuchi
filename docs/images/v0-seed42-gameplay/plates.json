@@ -6,6 +6,6 @@
   "params_hash": "0cba504ea76eeb55",
   "center": [0, 0],
   "size": 512,
-  "blocks_per_pixel": 16,
+  "blocks_per_pixel": 64,
   "path": "reference"
 }
