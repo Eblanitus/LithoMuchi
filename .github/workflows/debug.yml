@@ -37,7 +37,6 @@ jobs:
         if: false
         run: cargo run -p xtask --release -- params-doc > docs/PARAMS.md
       - name: Метрики, швы, скорость
-        if: false
         run: |
           cargo run -p litho-sandbox --release -- stats --seed 42 --mode gameplay > docs/images/stats.txt 2>&1
           cargo run -p litho-sandbox --release -- seams --seed 42 --mode gameplay >> docs/images/stats.txt 2>&1
@@ -50,7 +49,6 @@ jobs:
           cargo run -p litho-sandbox --release -- render --seed 42 --mode gameplay \
             --path fast --layers biomes --size 128 --bpp 256 --out docs/images/fast-path
       - name: Сохранить артефакты
-        if: false
         run: |
           git config user.name "Arena Agent"
           git config user.email "agent@arena.ai"

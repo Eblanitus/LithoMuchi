@@ -196,30 +196,40 @@ fn cmd_seams(args: &[String]) -> Result<(), String> {
     let generator = generator(&opts)?;
     let n = 48_usize;
     let step = 32.0;
-    let mut max_c = 0.0_f64;
-    let mut max_e = 0.0_f64;
-    let mut max_w = 0.0_f64;
+    let mut worst_c = (0.0_f64, 0.0_f64, 0.0_f64, 0.0_f64, 0.0_f64);
+    let mut worst_e = worst_c;
+    let mut worst_w = worst_c;
     for i in 0..n {
         for j in 0..n {
             let x = (i as f64 - n as f64 * 0.5) * step;
             let z = (j as f64 - n as f64 * 0.5) * step;
-            let (dc, de, dw) = (
-                (generator.field(Field::Continents, x + 1.0, 64.0, z)
-                    - generator.field(Field::Continents, x, 64.0, z))
-                .abs(),
-                (generator.field(Field::Erosion, x, 64.0, z + 1.0)
-                    - generator.field(Field::Erosion, x, 64.0, z))
-                .abs(),
-                (generator.field(Field::Ridges, x, 64.0, z + 1.0)
-                    - generator.field(Field::Ridges, x, 64.0, z))
-                .abs(),
-            );
-            max_c = max_c.max(dc);
-            max_e = max_e.max(de);
-            max_w = max_w.max(dw);
+            let hc = generator.field(Field::Continents, x, 64.0, z);
+            let ec = generator.field(Field::Continents, x + 1.0, 64.0, z);
+            let he = generator.field(Field::Erosion, x, 64.0, z);
+            let ee = generator.field(Field::Erosion, x, 64.0, z + 1.0);
+            let hw = generator.field(Field::Ridges, x, 64.0, z);
+            let ew = generator.field(Field::Ridges, x, 64.0, z + 1.0);
+            let dc = (ec - hc).abs();
+            let de = (ee - he).abs();
+            let dw = (ew - hw).abs();
+            if dc > worst_c.0 {
+                worst_c = (dc, x, z, hc, ec);
+            }
+            if de > worst_e.0 {
+                worst_e = (de, x, z, he, ee);
+            }
+            if dw > worst_w.0 {
+                worst_w = (dw, x, z, hw, ew);
+            }
         }
     }
+    let (max_c, cx, cz, ch, cn) = worst_c;
+    let (max_e, ex, ez, eh, en) = worst_e;
+    let (max_w, wx, wz, wh, wn) = worst_w;
     println!("seams: max |ΔC|={max_c:.5} |ΔE|={max_e:.5} |ΔW|={max_w:.5}, порог 0.02");
+    println!("  C: ({cx:.0},{cz:.0}) {ch:.5} → {cn:.5}");
+    println!("  E: ({ex:.0},{ez:.0}) {eh:.5} → {en:.5}");
+    println!("  W: ({wx:.0},{wz:.0}) {wh:.5} → {wn:.5}");
     if max_c <= 0.02 && max_e <= 0.02 && max_w <= 0.02 {
         println!("seams: пусто");
     } else {
@@ -235,7 +245,6 @@ fn cmd_stats(args: &[String]) -> Result<(), String> {
     let params = generator.params();
     let n = 64_usize;
     let step = 200.0 * params.block.l_blocks / n as f64;
-    let mut cells = Vec::with_capacity(n * n);
     let mut land = 0_usize;
     let mut mountains = 0_usize;
     let mut deserts = 0_usize;
@@ -246,7 +255,6 @@ fn cmd_stats(args: &[String]) -> Result<(), String> {
             let x = (i as f64 - n as f64 * 0.5) * step;
             let z = (j as f64 - n as f64 * 0.5) * step;
             let Some(world) = generator.world_sample(x, z) else {
-                cells.push((0.0, 0.0, 0.0));
                 continue;
             };
             if !world.is_ocean {
@@ -254,40 +262,20 @@ fn cmd_stats(args: &[String]) -> Result<(), String> {
                 if world.climate.surface.mountain > 0.5 {
                     mountains += 1;
                 }
+                let zone = world.class.zone;
+                if zone.province <= 2 {
+                    deserts += 1;
+                }
+                if zone.province >= 5 && (2..=6).contains(&zone.belt) {
+                    forests += 1;
+                }
+                if zone.belt <= 1 {
+                    polar += 1;
+                }
             }
-            let zone = world.class.zone;
-            if zone.province <= 2 {
-                deserts += 1;
-            }
-            if zone.province >= 5 && (2..=6).contains(&zone.belt) {
-                forests += 1;
-            }
-            if zone.belt <= 1 {
-                polar += 1;
-            }
-            cells.push((world.vanilla.c, world.vanilla.e, world.vanilla.w));
         }
     }
-    let mut max_c = 0.0_f64;
-    let mut max_e = 0.0_f64;
-    let mut max_w = 0.0_f64;
-    for i in 1..n {
-        for j in 1..n {
-            let here = cells[i * n + j];
-            let left = cells[(i - 1) * n + j];
-            let up = cells[i * n + j - 1];
-            max_c = max_c
-                .max((here.0 - left.0).abs())
-                .max((here.0 - up.0).abs());
-            max_e = max_e
-                .max((here.1 - left.1).abs())
-                .max((here.1 - up.1).abs());
-            max_w = max_w
-                .max((here.2 - left.2).abs())
-                .max((here.2 - up.2).abs());
-        }
-    }
-    let total = cells.len().max(1) as f64;
+    let total = (n * n).max(1) as f64;
     let land_n = land.max(1) as f64;
     println!(
         "сид={seed} режим={mode} область=200×200 L точек={count}\n\
@@ -295,19 +283,15 @@ fn cmd_stats(args: &[String]) -> Result<(), String> {
          горы на суше           {mnt:6.1} %  (цель 5–20)\n\
          пустыни на суше        {dst:6.1} %  (цель 15–30)\n\
          леса на суше           {frs:6.1} %  (цель 30–50)\n\
-         полярные пояса на суше {pol:6.1} %  (цель 10–25)\n\
-         max ΔC/ΔE/ΔW по сетке  {mc:.4} / {me:.4} / {mw:.4}",
+         полярные пояса на суше {pol:6.1} %  (цель 10–25)",
         seed = opts.seed,
         mode = opts.mode.as_str(),
-        count = cells.len(),
+        count = n * n,
         land = 100.0 * land as f64 / total,
         mnt = 100.0 * mountains as f64 / land_n,
         dst = 100.0 * deserts as f64 / land_n,
         frs = 100.0 * forests as f64 / land_n,
         pol = 100.0 * polar as f64 / land_n,
-        mc = max_c,
-        me = max_e,
-        mw = max_w,
     );
     Ok(())
 }
