@@ -1,0 +1,11 @@
+[package]
+name = "litho-sandbox"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+description = "Песочница Litospherity: карты мира в PNG без запуска игры"
+publish = false
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+litho-core = { path = "../../crates/litho-core" }

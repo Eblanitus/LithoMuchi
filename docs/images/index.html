@@ -1,0 +1,153 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Карты мира — сид 42</title>
+<style>
+  body { margin:0; background:#10151d; color:#eef3f8; font:16px/1.55 system-ui, "Segoe UI", Arial, sans-serif; }
+  header { padding:28px 24px 12px; max-width:1100px; margin:0 auto; }
+  h1 { margin:0 0 6px; font-size:28px; }
+  header p { margin:0; color:#a9bacb; font-size:17px; }
+  .legend { max-width:1100px; margin:14px auto 0; padding:14px 20px; background:#1b2532; border-radius:12px; color:#d7e4f0; }
+  .grid { max-width:1100px; margin:22px auto 60px; padding:0 24px; display:grid; grid-template-columns:repeat(auto-fit,minmax(320px,1fr)); gap:22px; }
+  .card { background:#1b2532; border-radius:14px; overflow:hidden; border:1px solid #2c3b4d; }
+  .card.best { border:2px solid #ffd166; }
+  .card a { display:block; }
+  .card img { width:100%; height:auto; display:block; }
+  .txt { padding:14px 16px 18px; }
+  .txt h2 { margin:0 0 6px; font-size:19px; }
+  .txt p { margin:0; color:#bdcddd; font-size:15px; }
+  .tag.new { background:#6fd3a0; }
+  .tag { display:inline-block; background:#ffd166; color:#20262e; font-size:12px; font-weight:700; padding:2px 8px; border-radius:20px; margin-bottom:8px; }
+  footer { max-width:1100px; margin:0 auto; padding:0 24px 50px; color:#a9bacb; }
+  footer b { color:#eef3f8; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Карты мира · сид 42</h1>
+  <p>Восемнадцать картинок одного и того же мира, вид сверху. Нажми на любую — откроется в полный размер.</p>
+  <p style="margin-top:8px;color:#ffd166">Обновлено: материки крупные, берега изогнутые; добавлены климат, биомы, реки, лава у стыков плит и место появления.</p>
+</header>
+
+<div class="legend">
+  <b>Цвета на главной карте:</b> тёмно-синий — глубокий океан · светло-синий — мелководье · зелёный — суша · коричневый и белый — горы. Тонкие светлые линии в океане — подводные хребты.
+</div>
+
+<div class="grid">
+  <div class="card best">
+    <a href="v0-seed42-gameplay/height.png"><img src="v0-seed42-gameplay/height.png" alt="Карта высот"></a>
+    <div class="txt"><span class="tag">СМОТРЕТЬ ПЕРВОЙ</span><h2>1. Высота · height.png</h2>
+    <p>Главная карта: где море, где суша, где горы. Острова зелёные с неровными берегами, по краям некоторых — коричневые горные пояса, в океане — светлые хребты.</p></div>
+  </div>
+
+  <div class="card">
+    <a href="v0-seed42-gameplay/crust.png"><img src="v0-seed42-gameplay/crust.png" alt="Карта коры"></a>
+    <div class="txt"><h2>2. Кора и материки · crust.png</h2>
+    <p>Та самая картинка, которую ты прислал, но уже с крупными материками. Зелёное пятно — суша, голубой ореол — её подводный край, тёмно-синий — океан. Гор здесь ещё нет.</p></div>
+  </div>
+
+  <div class="card">
+    <a href="v0-seed42-gameplay/plates.png"><img src="v0-seed42-gameplay/plates.png" alt="Мозаика плит"></a>
+    <div class="txt"><h2>3. Плиты · plates.png</h2>
+    <p>Да, это мозаика — и это нормально: так устроен внутренний каркас планеты, в игре этих цветов не будет. Важно, что швы изогнутые, а не прямая сетка.</p></div>
+  </div>
+
+  <div class="card">
+    <a href="v0-seed42-gameplay/boundaries.png"><img src="v0-seed42-gameplay/boundaries.png" alt="Границы плит"></a>
+    <div class="txt"><h2>4. Швы · boundaries.png</h2>
+    <p>Что происходит на границах: красное — плиты сталкиваются (там вырастают горы), синее и зелёное — расходятся или скользят.</p></div>
+  </div>
+
+  <div class="card">
+    <a href="v0-seed42-gameplay/mpi.png"><img src="v0-seed42-gameplay/mpi.png" alt="Активность коры"></a>
+    <div class="txt"><h2>5. Активность коры · mpi.png</h2>
+    <p>Красные полосы — самые «живые», горные границы; синие пятна — спокойные середины плит. Вспомогательная карта.</p></div>
+  </div>
+
+  <div class="card">
+    <a href="v0-seed42-gameplay/jacobian.png"><img src="v0-seed42-gameplay/jacobian.png" alt="Техническая проверка"></a>
+    <div class="txt"><h2>6. Проверка · jacobian.png</h2>
+    <p>Техническая: следим, чтобы карта нигде не «помялась» и не сложилась складкой. Можно не смотреть.</p></div>
+  </div>
+
+  <div class="card">
+    <a href="v0-seed42-gameplay/noise.png"><img src="v0-seed42-gameplay/noise.png" alt="Случайная основа"></a>
+    <div class="txt"><h2>7. Основа · noise.png</h2>
+    <p>Случайное поле, из которого всё выросло. Тоже можно не смотреть.</p></div>
+  </div>
+
+  <div class="card">
+    <a href="v0-seed42-gameplay/biomes.png"><img src="v0-seed42-gameplay/biomes.png" alt="Биомы"></a>
+    <div class="txt"><span class="tag new">НОВОЕ</span><h2>8. Биомы · biomes.png</h2>
+    <p>Какая точка станет лесом, степью, пустыней или тайгой; океаны раскрашены по температуре воды. Песок — только там, где зимой нет мороза; сухие холодные места стали равнинами. Это уже «целевая» карта для игры.</p></div>
+  </div>
+
+  <div class="card">
+    <a href="v0-seed42-gameplay/precip.png"><img src="v0-seed42-gameplay/precip.png" alt="Осадки"></a>
+    <div class="txt"><span class="tag new">НОВОЕ</span><h2>9. Дожди · precip.png</h2>
+    <p>Синее — много осадков, рыжее — сухо. Смотрим, есть ли влажные наветренные берега, сухие субтропики и дождевая тень за горами.</p></div>
+  </div>
+
+  <div class="card">
+    <a href="v0-seed42-gameplay/poles.png"><img src="v0-seed42-gameplay/poles.png" alt="Климатические пояса"></a>
+    <div class="txt"><span class="tag new">НОВОЕ</span><h2>10. Пояса · poles.png</h2>
+    <p>Тепло и холод задаются не сверху и снизу, а множеством полюсов-точек: вокруг каждого холодно, между ними широкие тёплые зоны. Светлые линии — каждые 10°.</p></div>
+  </div>
+
+  <div class="card">
+    <a href="v0-seed42-gameplay/temp.png"><img src="v0-seed42-gameplay/temp.png" alt="Температура"></a>
+    <div class="txt"><span class="tag new">НОВОЕ</span><h2>11. Тепло · temp.png</h2>
+    <p>Синее — холод, красное — жара. В горах холоднее, а в глубине материков зима резче, чем у берега.</p></div>
+  </div>
+
+  <div class="card">
+    <a href="v0-seed42-gameplay/moisture.png"><img src="v0-seed42-gameplay/moisture.png" alt="Влага"></a>
+    <div class="txt"><span class="tag new">НОВОЕ</span><h2>12. Влага · moisture.png</h2>
+    <p>Синее — воздух пришёл с океана и несёт воду, рыжее — он уже высушился над сушей. Этот слой объясняет, почему океан рядом не гарантирует дождь.</p></div>
+  </div>
+
+  <div class="card">
+    <a href="v0-seed42-gameplay/zones.png"><img src="v0-seed42-gameplay/zones.png" alt="Жизненные зоны"></a>
+    <div class="txt"><span class="tag new">НОВОЕ</span><h2>13. Зоны · zones.png</h2>
+    <p>Классификация по теплу и сухости: от полярных пустошей через тундру и тайгу до степей и тропических лесов.</p></div>
+  </div>
+
+  <div class="card">
+    <a href="v0-seed42-gameplay/wind.png"><img src="v0-seed42-gameplay/wind.png" alt="Ветер"></a>
+    <div class="txt"><span class="tag new">НОВОЕ</span><h2>14. Ветер · wind.png</h2>
+    <p>Три пояса постоянных ветров; у экватора штиль. Вспомогательная карта: она решает, откуда к нам придёт влага.</p></div>
+  </div>
+
+  <div class="card">
+    <a href="v0-seed42-gameplay/vanilla.png"><img src="v0-seed42-gameplay/vanilla.png" alt="Параметры для игры"></a>
+    <div class="txt"><span class="tag new">НОВОЕ</span><h2>15. Что отдаём игре · vanilla.png</h2>
+    <p>Три числа, которыми ваниль строит рельеф и биомы. Техническая проверка: резких скачков и «стен» здесь быть не должно.</p></div>
+  </div>
+
+  <div class="card">
+    <a href="v0-seed42-gameplay/rivers.png"><img src="v0-seed42-gameplay/rivers.png" alt="Реки"></a>
+    <div class="txt"><span class="tag new">НОВОЕ</span><h2>16. Реки · rivers.png</h2>
+    <p>Голубые линии — русла. Часть идёт вдоль разломов и подножий гор, часть проложена вниз по склону от горных истоков. В океане реки заканчиваются.</p></div>
+  </div>
+
+  <div class="card">
+    <a href="v0-seed42-gameplay/lava.png"><img src="v0-seed42-gameplay/lava.png" alt="Лава"></a>
+    <div class="txt"><span class="tag new">НОВОЕ</span><h2>17. Глубинная лава · lava.png</h2>
+    <p>Тёплое — места, где глубоко под землёй должна быть лава. Она привязана к швам плит, а не разбросана где попало; вдали от швов остаётся слабый фон.</p></div>
+  </div>
+
+  <div class="card">
+    <a href="v0-seed42-gameplay/spawn.png"><img src="v0-seed42-gameplay/spawn.png" alt="Точка появления"></a>
+    <div class="txt"><span class="tag new">НОВОЕ</span><h2>18. Место появления · spawn.png</h2>
+    <p>Карта центрирована на том месте планеты, где окажется блок (0, 0). Светлое — суша умеренного климата без высоких гор; белое кольцо — радиус 2048 блоков, в котором игра ищет точку спавна.</p></div>
+  </div>
+</div>
+
+<footer>
+  <p><b>Что уже понятно по картам.</b> Материки крупные и неровные, суши около 28 % — почти как у Земли (29 %). Климат, реки, лава и точка появления посчитаны и видны на картах. Если покажется, что континентов мало, пустынь слишком много или леса стоят не там, где хочется, скажи по-человечески — подкручу.</p>
+  <p><b>Что дальше по плану.</b> Ускорение расчётов для игры (решётка и кэш), проверка швов и скорости, потом набор картинок на 16 сидах для твоей оценки; и только после неё — сам мод в Horizon. Код читать не нужно: достаточно «нравится / не нравится / хочу вот так».</p>
+</footer>
+</body>
+</html>

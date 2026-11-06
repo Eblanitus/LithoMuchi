@@ -1,0 +1,13 @@
+# Тяжёлые тесты и golden вынесены в отдельный крейт (план 14.2): у
+# litho-core нет даже dev-зависимостей, чтобы он спокойно собирался внутри
+# workspace Horizon с его ограниченным Cargo.lock (5.4).
+[package]
+name = "litho-tests"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+publish = false
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+litho-core = { path = "../litho-core" }

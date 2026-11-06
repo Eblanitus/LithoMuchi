@@ -1,0 +1,14 @@
+# Workspace РАЗРАБОТКИ. Нативный мод Horizon этот файл не использует:
+# crates/litho-core копируется в workspace Horizon как отдельный крейт.
+[workspace]
+members = [
+    "crates/litho-core",
+    "crates/litho-sandbox",
+    "crates/litho-tests",
+    "tools/xtask",
+]
+resolver = "3"
+
+[workspace.package]
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/Eblanitus/LithoMuchi"
