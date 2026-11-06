@@ -15,6 +15,7 @@ pub mod climate;
 pub mod crust;
 pub mod generator;
 pub mod hash;
+pub mod lattice;
 pub mod lava;
 pub mod math;
 pub mod mode;
