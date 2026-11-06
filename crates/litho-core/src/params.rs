@@ -358,10 +358,10 @@ impl Params {
                 seed_attempts: 4,
                 center_offset_fraction: 0.25,
                 // Д-012: меньше плит с материком, но сами материки крупнее —
-                // «один океан с крошками» из 12.6 уходит, суша ~29 %.
-                continent_probability: 0.15,
-                continent_radius_min_l: 7.0,
-                continent_radius_max_l: 13.0,
+                // «один океан с крошками» из 12.6 уходит, суша ~27–29 %.
+                continent_probability: 0.20,
+                continent_radius_min_l: 9.0,
+                continent_radius_max_l: 15.0,
                 aspect_min: 1.0,
                 aspect_max: 2.0,
                 speed_min: 0.2,
