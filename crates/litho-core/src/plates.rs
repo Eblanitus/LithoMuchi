@@ -384,7 +384,7 @@ mod tests {
         boundary_type, continent_field, continent_fraction, plate_query, plate_query_window,
         seeds_in_cell, warp_jacobian,
     };
-    use crate::hash::splitmix64;
+    use crate::hash::{splitmix64, unit};
     use crate::math::Vec2;
     use crate::mode::Mode;
     use crate::params::Params;
