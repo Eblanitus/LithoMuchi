@@ -461,7 +461,7 @@ mod tests {
     fn plate_colors_are_not_all_the_same() {
         let mut colors = std::collections::BTreeSet::new();
         for k in 0..64_u64 {
-            colors.insert(super::plate_color(k * 0x9E37_79B9_7F4A_7C15));
+            colors.insert(super::plate_color(k.wrapping_mul(0x9E37_79B9_7F4A_7C15)));
         }
         assert!(colors.len() > 50, "уникальных цветов: {}", colors.len());
         let mut channel_varies = false;
