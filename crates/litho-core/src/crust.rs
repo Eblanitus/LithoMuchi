@@ -440,8 +440,10 @@ mod tests {
         let mut land = 0;
         let mut abyss = 0;
         for k in 0..400 {
-            let x = unit(splitmix64(k)) * 8000.0 - 4000.0;
-            let z = unit(splitmix64(k + 999_999)) * 8000.0 - 4000.0;
+            // Область ±160 L: при доле плит с материком 0,15 маленькое
+            // окошко ±16 L может случайно не содержать ни одного материка.
+            let x = unit(splitmix64(k)) * 80_000.0 - 40_000.0;
+            let z = unit(splitmix64(k + 999_999)) * 80_000.0 - 40_000.0;
             let s = generator.crust_sample(x, z).unwrap();
             assert!(s.e_km.is_finite(), "e = {}", s.e_km);
             assert!(s.kappa_l.is_finite());
@@ -470,8 +472,10 @@ mod tests {
             let z = k as f64 * 1.7 - 30.0;
             let a = kappa_global(Vec2::new(g - 1e-6, z), 42, &p);
             let b = kappa_global(Vec2::new(g + 1e-6, z), 42, &p);
+            // Поле гладкое, поэтому между двумя близкими точками допустим
+            // небольшой наклон; разрыв окна дал бы скачок порядка 0,1–2 L.
             assert!(
-                (a - b).abs() < 1e-9,
+                (a - b).abs() < 1e-3,
                 "разрыв на границе ячеек: {a} и {b} при z = {z}"
             );
         }
