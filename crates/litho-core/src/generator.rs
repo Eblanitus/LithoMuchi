@@ -1,15 +1,18 @@
 //! Точка входа в ядро (эскиз публичного API 9.4).
 //!
-//! Сейчас здесь собрано то, что уже реализовано: примитивы, плиты, искажение
-//! домена. Полный `FullSample` (рельеф, климат, биомы, C/E/W/T/H) появится в
-//! T55, но песочница и мод уже вызывают один и тот же `Generator`.
+//! Здесь собраны примитивы, плиты, кора, климат, классификация и пять
+//! ванильных параметров. Полный быстрый путь с решёткой и кэшем появится в
+//! T13/T55, но песочница и будущий мод уже вызывают один и тот же `Generator`.
 
+use crate::classify::{ClassSample, classify};
+use crate::climate::{ClimateSample, SurfaceSample};
 use crate::crust::{CrustSample, crust_from_sample};
 use crate::math::Vec2;
 use crate::mode::Mode;
 use crate::params::Params;
 use crate::plates::{PlateSample, plate_query, warp_jacobian};
 use crate::seed::from_world_seed;
+use crate::vanilla::{VanillaSample, continentalness};
 use crate::version::GenVersion;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -27,6 +30,15 @@ impl std::fmt::Display for GenError {
 }
 
 impl std::error::Error for GenError {}
+
+/// Всё, что известно о точке мира после слоёв L2, L3, L5 и L6 (T30–T43).
+#[derive(Clone, Debug)]
+pub struct WorldSample {
+    pub climate: ClimateSample,
+    pub class: ClassSample,
+    pub vanilla: VanillaSample,
+    pub is_ocean: bool,
+}
 
 #[derive(Clone, Debug)]
 pub struct Generator {
@@ -82,6 +94,43 @@ impl Generator {
     pub fn jacobian(&self, x: f64, z: f64) -> f64 {
         warp_jacobian(self.macro_point(x, z), self.seed, &self.params)
     }
+
+    /// Поверхность в произвольной macro-точке: нужно линии тока влаги (7.7).
+    fn surface_at(&self, point: Vec2) -> SurfaceSample {
+        match plate_query(point, self.seed, &self.params) {
+            Some(sample) => {
+                let crust = crust_from_sample(point, &sample, self.seed, &self.params);
+                SurfaceSample {
+                    e_km: crust.e_km,
+                    iota_l: crust.iota_l,
+                    mountain: crust.mountain,
+                    plateau: crust.plateau,
+                }
+            }
+            None => SurfaceSample::default(),
+        }
+    }
+
+    /// Климат в блочной точке (T30–T33).
+    pub fn climate_sample(&self, x: f64, z: f64) -> Option<ClimateSample> {
+        let point = self.macro_point(x, z);
+        crate::climate::sample(point, self.seed, &self.params, &|q| self.surface_at(q))
+    }
+
+    /// Климат, жизненная зона и пять ванильных чисел (T40–T43).
+    pub fn world_sample(&self, x: f64, z: f64) -> Option<WorldSample> {
+        let climate = self.climate_sample(x, z)?;
+        let c = continentalness(climate.surface.e_km, climate.surface.iota_l, &self.params);
+        let is_ocean = c < self.params.climate.ocean_c_threshold;
+        let class = classify(&climate, is_ocean, x, z, self.seed, &self.params);
+        let vanilla = crate::vanilla::sample(&climate, &class, x, z, self.seed, &self.params);
+        Some(WorldSample {
+            climate,
+            class,
+            vanilla,
+            is_ocean,
+        })
+    }
 }
 
 #[cfg(test)]
@@ -96,6 +145,31 @@ mod tests {
             Generator::new(1, Mode::Gameplay, GenVersion::V1).unwrap_err(),
             GenError::UnsupportedVersion(GenVersion::V1)
         );
+    }
+
+    #[test]
+    fn world_sample_is_finite_and_bounded() {
+        let generator = Generator::new(42, Mode::Gameplay, GenVersion::V0).unwrap();
+        for k in 0..12 {
+            let x = k as f64 * 137.0 - 800.0;
+            let z = k as f64 * -83.0 + 400.0;
+            let w = generator.world_sample(x, z).unwrap();
+            assert!(w.climate.temperature.t_bio.is_finite());
+            assert!(w.climate.precip.p_mm.is_finite() && w.climate.precip.p_mm >= 0.0);
+            assert!(w.climate.precip.ratio.is_finite() && w.climate.precip.ratio > 0.0);
+            for value in [
+                w.vanilla.c,
+                w.vanilla.e,
+                w.vanilla.w,
+                w.vanilla.t,
+                w.vanilla.h,
+            ] {
+                assert!(
+                    (-1.0..=1.0).contains(&value),
+                    "значение {value} вне [-1, 1]"
+                );
+            }
+        }
     }
 
     #[test]

@@ -131,7 +131,7 @@ fn cmd_probe(args: &[String]) -> Result<(), String> {
 }
 
 fn usage() -> &'static str {
-    "Litospherity sandbox (этап Э1a/Э1b)\n\n\
+    "Litospherity sandbox (этап Э1a–Э1e)\n\n\
      Команды:\n\
        render   карты PNG в папку --out\n\
        probe    все доступные поля в точке --at x,z\n\
@@ -140,7 +140,9 @@ fn usage() -> &'static str {
      Общие флаги: --seed N (42), --mode scientific|gameplay (gameplay),\n\
        --version v0|v1 (v0), --center x,z (0,0), --size N (512),\n\
        --bpp N (64 научный / 16 геймплейный), --path reference|fast,\n\
-       --layers plates|all|список через запятую, --out ПАПКА\n\n\
+       --layers plates|all|список через запятую, --out ПАПКА\n\
+     Слои: шум/плиты/кора, климат (poles,temp,wind,moisture,precip),\n\
+       зоны, биомы и пять ванильных чисел (zones,biomes,vanilla).\n\n\
      Пример:\n\
        cargo run -p litho-sandbox --release -- render --seed 42 --mode gameplay \\\n\
          --layers plates,boundaries,jacobian --size 512 --out out/seed42\n"

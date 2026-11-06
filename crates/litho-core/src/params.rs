@@ -325,6 +325,196 @@ pub struct LatticeParams {
 }
 
 #[derive(Clone, Debug, PartialEq)]
+pub struct ClimateParams {
+    pub t_equator_c: f64,
+    pub t_pole_drop_c: f64,
+    pub t_lat_exponent: f64,
+    pub lapse_c_per_km: f64,
+    pub cont_tropical_c: f64,
+    pub cont_polar_c: f64,
+    pub amp_base_c: f64,
+    pub amp_lat_c: f64,
+    pub amp_sea_factor: f64,
+    pub amp_land_factor: f64,
+    pub sst_min_c: f64,
+    pub bio_min_c: f64,
+    pub bio_max_c: f64,
+    pub coldest_cos: f64,
+    pub trade_n: f64,
+    pub trade_e: f64,
+    pub west_n: f64,
+    pub west_e: f64,
+    pub polar_n: f64,
+    pub polar_e: f64,
+    pub belt_trade_deg: [f64; 2],
+    pub belt_west_deg: [f64; 2],
+    pub belt_polar_deg: [f64; 2],
+    pub wind_fallback_dir: [f64; 2],
+    pub w_sat_base: f64,
+    pub w_sat_per_c: f64,
+    pub w_sat_min: f64,
+    pub w_sat_max: f64,
+    pub w_land_start: f64,
+    pub cont_decay_l: f64,
+    pub c_iso_end_l: f64,
+    pub c_ray_wind_lo: f64,
+    pub c_ray_wind_hi: f64,
+    pub pet_per_bio_c: f64,
+    pub p_min_mm: f64,
+    pub slope_probe_l: f64,
+    pub uplift_base: f64,
+    pub uplift_per_slope: f64,
+    pub uplift_slope_max: f64,
+    pub advection_wind_min: f64,
+    pub local_fraction_equator: f64,
+    pub local_fraction_width_deg: f64,
+    pub belt_edges_c: [f64; 6],
+    pub province_edges_r: [f64; 5],
+    pub winter_boreal_c: f64,
+    pub winter_temperate_c: f64,
+    pub cold_desert_sand: bool,
+    pub jitter_lambda_blocks: f64,
+    pub jitter_octaves: usize,
+    pub jitter_gain: f64,
+    pub sst_bands_c: [f64; 4],
+    pub c_sea_e_km: [f64; 7],
+    pub c_sea: [f64; 7],
+    pub c_land_iota_l: [f64; 7],
+    pub c_land: [f64; 7],
+    pub c_coast_e_km: f64,
+    pub c_coast: f64,
+    pub ocean_c_threshold: f64,
+    pub e_base: f64,
+    pub e_noise: f64,
+    pub e_mnt: f64,
+    pub e_mnt_noise: f64,
+    pub e_plateau: f64,
+    pub m_e_lo: f64,
+    pub m_e_hi: f64,
+    pub w_plain_base: f64,
+    pub w_plain_noise: f64,
+    pub w_mnt_base: f64,
+    pub w_mnt_noise: f64,
+    pub w_plateau: f64,
+    pub w_max: f64,
+    pub w_sign_scale: f64,
+    pub t_centers: [f64; 5],
+    pub h_centers: [f64; 5],
+    pub h4_base: f64,
+    pub h4_gain: f64,
+}
+
+impl ClimateParams {
+    /// Все числа слоёв L3–L6 участвуют в `params_hash` (9.5).
+    pub fn extra_text(&self) -> String {
+        let mut out = String::new();
+        let w = &mut out;
+        writeln!(w, "climate.t_equator_c={:?}", self.t_equator_c).unwrap();
+        writeln!(w, "climate.t_pole_drop_c={:?}", self.t_pole_drop_c).unwrap();
+        writeln!(w, "climate.t_lat_exponent={:?}", self.t_lat_exponent).unwrap();
+        writeln!(w, "climate.lapse_c_per_km={:?}", self.lapse_c_per_km).unwrap();
+        writeln!(w, "climate.cont_tropical_c={:?}", self.cont_tropical_c).unwrap();
+        writeln!(w, "climate.cont_polar_c={:?}", self.cont_polar_c).unwrap();
+        writeln!(w, "climate.amp_base_c={:?}", self.amp_base_c).unwrap();
+        writeln!(w, "climate.amp_lat_c={:?}", self.amp_lat_c).unwrap();
+        writeln!(w, "climate.amp_sea_factor={:?}", self.amp_sea_factor).unwrap();
+        writeln!(w, "climate.amp_land_factor={:?}", self.amp_land_factor).unwrap();
+        writeln!(w, "climate.sst_min_c={:?}", self.sst_min_c).unwrap();
+        writeln!(w, "climate.bio_min_c={:?}", self.bio_min_c).unwrap();
+        writeln!(w, "climate.bio_max_c={:?}", self.bio_max_c).unwrap();
+        writeln!(w, "climate.coldest_cos={:?}", self.coldest_cos).unwrap();
+        writeln!(w, "climate.trade_n={:?}", self.trade_n).unwrap();
+        writeln!(w, "climate.trade_e={:?}", self.trade_e).unwrap();
+        writeln!(w, "climate.west_n={:?}", self.west_n).unwrap();
+        writeln!(w, "climate.west_e={:?}", self.west_e).unwrap();
+        writeln!(w, "climate.polar_n={:?}", self.polar_n).unwrap();
+        writeln!(w, "climate.polar_e={:?}", self.polar_e).unwrap();
+        writeln!(w, "climate.belt_trade_deg={:?}", self.belt_trade_deg).unwrap();
+        writeln!(w, "climate.belt_west_deg={:?}", self.belt_west_deg).unwrap();
+        writeln!(w, "climate.belt_polar_deg={:?}", self.belt_polar_deg).unwrap();
+        writeln!(w, "climate.wind_fallback_dir={:?}", self.wind_fallback_dir).unwrap();
+        writeln!(w, "climate.w_sat_base={:?}", self.w_sat_base).unwrap();
+        writeln!(w, "climate.w_sat_per_c={:?}", self.w_sat_per_c).unwrap();
+        writeln!(w, "climate.w_sat_min={:?}", self.w_sat_min).unwrap();
+        writeln!(w, "climate.w_sat_max={:?}", self.w_sat_max).unwrap();
+        writeln!(w, "climate.w_land_start={:?}", self.w_land_start).unwrap();
+        writeln!(w, "climate.cont_decay_l={:?}", self.cont_decay_l).unwrap();
+        writeln!(w, "climate.c_iso_end_l={:?}", self.c_iso_end_l).unwrap();
+        writeln!(w, "climate.c_ray_wind_lo={:?}", self.c_ray_wind_lo).unwrap();
+        writeln!(w, "climate.c_ray_wind_hi={:?}", self.c_ray_wind_hi).unwrap();
+        writeln!(w, "climate.pet_per_bio_c={:?}", self.pet_per_bio_c).unwrap();
+        writeln!(w, "climate.p_min_mm={:?}", self.p_min_mm).unwrap();
+        writeln!(w, "climate.slope_probe_l={:?}", self.slope_probe_l).unwrap();
+        writeln!(w, "climate.uplift_base={:?}", self.uplift_base).unwrap();
+        writeln!(w, "climate.uplift_per_slope={:?}", self.uplift_per_slope).unwrap();
+        writeln!(w, "climate.uplift_slope_max={:?}", self.uplift_slope_max).unwrap();
+        writeln!(
+            w,
+            "climate.advection_wind_min={:?}",
+            self.advection_wind_min
+        )
+        .unwrap();
+        writeln!(
+            w,
+            "climate.local_fraction_equator={:?}",
+            self.local_fraction_equator
+        )
+        .unwrap();
+        writeln!(
+            w,
+            "climate.local_fraction_width_deg={:?}",
+            self.local_fraction_width_deg
+        )
+        .unwrap();
+        writeln!(w, "climate.belt_edges_c={:?}", self.belt_edges_c).unwrap();
+        writeln!(w, "climate.province_edges_r={:?}", self.province_edges_r).unwrap();
+        writeln!(w, "climate.winter_boreal_c={:?}", self.winter_boreal_c).unwrap();
+        writeln!(
+            w,
+            "climate.winter_temperate_c={:?}",
+            self.winter_temperate_c
+        )
+        .unwrap();
+        writeln!(w, "climate.cold_desert_sand={:?}", self.cold_desert_sand).unwrap();
+        writeln!(
+            w,
+            "climate.jitter_lambda_blocks={:?}",
+            self.jitter_lambda_blocks
+        )
+        .unwrap();
+        writeln!(w, "climate.jitter_octaves={:?}", self.jitter_octaves).unwrap();
+        writeln!(w, "climate.jitter_gain={:?}", self.jitter_gain).unwrap();
+        writeln!(w, "climate.sst_bands_c={:?}", self.sst_bands_c).unwrap();
+        writeln!(w, "climate.c_sea_e_km={:?}", self.c_sea_e_km).unwrap();
+        writeln!(w, "climate.c_sea={:?}", self.c_sea).unwrap();
+        writeln!(w, "climate.c_land_iota_l={:?}", self.c_land_iota_l).unwrap();
+        writeln!(w, "climate.c_land={:?}", self.c_land).unwrap();
+        writeln!(w, "climate.c_coast_e_km={:?}", self.c_coast_e_km).unwrap();
+        writeln!(w, "climate.c_coast={:?}", self.c_coast).unwrap();
+        writeln!(w, "climate.ocean_c_threshold={:?}", self.ocean_c_threshold).unwrap();
+        writeln!(w, "climate.e_base={:?}", self.e_base).unwrap();
+        writeln!(w, "climate.e_noise={:?}", self.e_noise).unwrap();
+        writeln!(w, "climate.e_mnt={:?}", self.e_mnt).unwrap();
+        writeln!(w, "climate.e_mnt_noise={:?}", self.e_mnt_noise).unwrap();
+        writeln!(w, "climate.e_plateau={:?}", self.e_plateau).unwrap();
+        writeln!(w, "climate.m_e_lo={:?}", self.m_e_lo).unwrap();
+        writeln!(w, "climate.m_e_hi={:?}", self.m_e_hi).unwrap();
+        writeln!(w, "climate.w_plain_base={:?}", self.w_plain_base).unwrap();
+        writeln!(w, "climate.w_plain_noise={:?}", self.w_plain_noise).unwrap();
+        writeln!(w, "climate.w_mnt_base={:?}", self.w_mnt_base).unwrap();
+        writeln!(w, "climate.w_mnt_noise={:?}", self.w_mnt_noise).unwrap();
+        writeln!(w, "climate.w_plateau={:?}", self.w_plateau).unwrap();
+        writeln!(w, "climate.w_max={:?}", self.w_max).unwrap();
+        writeln!(w, "climate.w_sign_scale={:?}", self.w_sign_scale).unwrap();
+        writeln!(w, "climate.t_centers={:?}", self.t_centers).unwrap();
+        writeln!(w, "climate.h_centers={:?}", self.h_centers).unwrap();
+        writeln!(w, "climate.h4_base={:?}", self.h4_base).unwrap();
+        writeln!(w, "climate.h4_gain={:?}", self.h4_gain).unwrap();
+        out
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
 pub struct Params {
     pub version: GenVersion,
     pub mode: Mode,
@@ -338,6 +528,7 @@ pub struct Params {
     pub lava: LavaParams,
     pub spawn: SpawnParams,
     pub lattice: LatticeParams,
+    pub climate: ClimateParams,
 }
 
 impl Params {
@@ -496,6 +687,84 @@ impl Params {
                 candidates: 256,
                 radius_l: 100.0,
             },
+            climate: ClimateParams {
+                t_equator_c: 28.0,
+                t_pole_drop_c: 52.0,
+                t_lat_exponent: 1.6,
+                lapse_c_per_km: 6.5,
+                cont_tropical_c: 2.0,
+                cont_polar_c: 6.0,
+                amp_base_c: 1.0,
+                amp_lat_c: 24.0,
+                amp_sea_factor: 0.25,
+                amp_land_factor: 0.75,
+                sst_min_c: -1.8,
+                bio_min_c: 0.0,
+                bio_max_c: 30.0,
+                coldest_cos: 0.965_925_8,
+                trade_n: -0.5,
+                trade_e: -0.87,
+                west_n: 0.35,
+                west_e: 0.94,
+                polar_n: -0.5,
+                polar_e: -0.87,
+                belt_trade_deg: [25.0, 35.0],
+                belt_west_deg: [25.0, 35.0],
+                belt_polar_deg: [55.0, 65.0],
+                wind_fallback_dir: [-0.87, 0.5],
+                w_sat_base: 0.3,
+                w_sat_per_c: 0.035,
+                w_sat_min: 0.3,
+                w_sat_max: 1.25,
+                w_land_start: 0.5,
+                cont_decay_l: 3.0,
+                c_iso_end_l: 5.0,
+                c_ray_wind_lo: 0.1,
+                c_ray_wind_hi: 0.4,
+                pet_per_bio_c: 58.93,
+                p_min_mm: 10.0,
+                slope_probe_l: 0.25,
+                uplift_base: 0.6,
+                uplift_per_slope: 0.5,
+                uplift_slope_max: 3.0,
+                advection_wind_min: 0.6,
+                local_fraction_equator: 0.55,
+                local_fraction_width_deg: 15.0,
+                belt_edges_c: [1.5, 3.0, 6.0, 12.0, 18.0, 24.0],
+                province_edges_r: [0.5, 1.0, 2.0, 4.0, 8.0],
+                winter_boreal_c: -12.0,
+                winter_temperate_c: -8.0,
+                cold_desert_sand: true,
+                jitter_lambda_blocks: 240.0,
+                jitter_octaves: 3,
+                jitter_gain: 0.5,
+                sst_bands_c: [0.0, 10.0, 18.0, 24.0],
+                c_sea_e_km: [-8.0, -4.5, -3.5, -2.5, -1.5, -0.2, 0.0],
+                c_sea: [-0.98, -0.70, -0.52, -0.45, -0.40, -0.30, -0.17],
+                c_land_iota_l: [0.0, 0.05, 0.5, 2.0, 5.0, 10.0, 20.0],
+                c_land: [-0.17, -0.11, 0.03, 0.30, 0.60, 0.85, 1.00],
+                c_coast_e_km: 0.15,
+                c_coast: -0.17,
+                ocean_c_threshold: -0.19,
+                e_base: 0.25,
+                e_noise: 0.15,
+                e_mnt: -0.85,
+                e_mnt_noise: 0.25,
+                e_plateau: -0.30,
+                m_e_lo: 0.05,
+                m_e_hi: 0.6,
+                w_plain_base: 0.18,
+                w_plain_noise: 0.10,
+                w_mnt_base: 0.30,
+                w_mnt_noise: 0.40,
+                w_plateau: 0.33,
+                w_max: 0.75,
+                w_sign_scale: 3.0,
+                t_centers: [-0.70, -0.30, 0.00, 0.37, 0.77],
+                h_centers: [-0.65, -0.22, 0.00, 0.20, 0.45],
+                h4_base: 0.45,
+                h4_gain: 0.40,
+            },
             lattice: LatticeParams {
                 fine_divisor: 16.0,
                 coarse_divisor: 4.0,
@@ -628,6 +897,7 @@ impl Params {
         )
         .unwrap();
         w.push_str(&self.crust.extra_text());
+        w.push_str(&self.climate.extra_text());
         let pol = &self.poles;
         writeln!(w, "poles.cell_g_p_l={v}", v = pol.cell_g_p_l).unwrap();
         writeln!(w, "poles.warp_lambda0_l={v}", v = pol.warp_lambda0_l).unwrap();
@@ -698,6 +968,7 @@ mod tests {
         assert_eq!(sci.crust, game.crust);
         assert_eq!(sci.poles, game.poles);
         assert_eq!(sci.precip, game.precip);
+        assert_eq!(sci.climate, game.climate);
         assert_ne!(sci.block, game.block);
     }
 

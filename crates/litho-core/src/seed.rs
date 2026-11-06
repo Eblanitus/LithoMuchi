@@ -22,6 +22,11 @@ pub const SALT_CRUST_DETAIL: &str = "crust.detail";
 pub const SALT_HOTSPOT: &str = "crust.hotspot";
 pub const SALT_BOUNDARY_SIDE: &str = "boundary.side";
 pub const SALT_SPAWN: &str = "spawn";
+pub const SALT_PHI_NOISE: &str = "poles.phi_noise";
+pub const SALT_CLASS_JITTER: &str = "classify.jitter";
+pub const SALT_VANILLA_E: &str = "vanilla.erosion";
+pub const SALT_VANILLA_W: &str = "vanilla.weirdness";
+pub const SALT_VANILLA_S: &str = "vanilla.sign";
 
 /// Сид Minecraft знаковый 64-битный; биты переносятся без изменения.
 pub const fn from_world_seed(seed: i64) -> u64 {

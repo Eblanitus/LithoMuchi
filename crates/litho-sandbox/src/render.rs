@@ -18,7 +18,12 @@ use litho_core::version::GenVersion;
 use crate::palette;
 use crate::png::RgbImage;
 
-pub const LAYERS: [&str; 9] = [
+/// Слои климата и выхода (12.3) считаются через `Generator::world_sample`.
+pub const CLIMATE_LAYERS: [&str; 8] = [
+    "poles", "temp", "wind", "moisture", "precip", "zones", "biomes", "vanilla",
+];
+
+pub const LAYERS: [&str; 17] = [
     "noise",
     "warp",
     "plates",
@@ -28,6 +33,14 @@ pub const LAYERS: [&str; 9] = [
     "crust",
     "height",
     "mpi",
+    "poles",
+    "temp",
+    "wind",
+    "moisture",
+    "precip",
+    "zones",
+    "biomes",
+    "vanilla",
 ];
 
 #[derive(Clone, Debug)]
@@ -81,6 +94,11 @@ pub fn render_layer(opts: &RenderOptions, layer: &str) -> Result<RgbImage, Strin
         for px in 0..opts.size {
             let (x, z) = opts.block_at_pixel(px, py);
             let p = generator.macro_point(x, z);
+            let world = if CLIMATE_LAYERS.contains(&layer) {
+                generator.world_sample(x, z)
+            } else {
+                None
+            };
             let rgb = match layer {
                 "noise" => {
                     let n = fbm2(noise_seed, p.x, p.z, 24.0, 4, 0.45);
@@ -106,6 +124,30 @@ pub fn render_layer(opts: &RenderOptions, layer: &str) -> Result<RgbImage, Strin
                     Some(s) => palette::mpi(s.mountain, s.plateau, s.iota_l),
                     None => [0, 0, 0],
                 },
+                "poles" => world
+                    .as_ref()
+                    .map_or([0, 0, 0], |w| palette::latitude(w.climate.pole.phi_deg)),
+                "temp" => world
+                    .as_ref()
+                    .map_or([0, 0, 0], |w| palette::thermal(w.climate.temperature.t_bio)),
+                "wind" => world.as_ref().map_or([0, 0, 0], |w| {
+                    palette::wind_field(w.climate.wind, w.climate.wind.len())
+                }),
+                "moisture" => world.as_ref().map_or([0, 0, 0], |w| {
+                    palette::moisture_field(w.climate.precip.mu, w.climate.precip.cont)
+                }),
+                "precip" => world.as_ref().map_or([0, 0, 0], |w| {
+                    palette::precip_field(w.climate.precip.p_mm, w.climate.precip.ratio)
+                }),
+                "zones" => world.as_ref().map_or([0, 0, 0], |w| {
+                    palette::zone_field(w.class.zone.belt, w.class.zone.province, w.class.is_ocean)
+                }),
+                "biomes" => world
+                    .as_ref()
+                    .map_or([0, 0, 0], |w| palette::biome_field(w.class.cell.biome)),
+                "vanilla" => world.as_ref().map_or([0, 0, 0], |w| {
+                    palette::vanilla_field(w.vanilla.c, w.vanilla.e, w.vanilla.w)
+                }),
                 "hash" => {
                     let i = (p.x / 4.0).floor() as i64;
                     let j = (p.z / 4.0).floor() as i64;
@@ -176,13 +218,40 @@ pub fn probe_text(opts: &RenderOptions, x: f64, z: f64) -> Result<String, String
         ),
         None => String::new(),
     };
+    let world_line = match generator.world_sample(x, z) {
+        Some(w) => format!(
+            "φ={phi}° T_bio={t_bio} °C T_min={t_min} °C |V|={wind} μ={mu} c={cont} P={p_mm} мм R={ratio}\n\
+             зона=П{belt}/К{province} биом={biome} ({vt},{vh}) океан={ocean}\n\
+             C={c} E={e} W={wv} T={vt_value} H={h}\n",
+            phi = w.climate.pole.phi_deg,
+            t_bio = w.climate.temperature.t_bio,
+            t_min = w.climate.temperature.t_min,
+            wind = w.climate.wind.len(),
+            mu = w.climate.precip.mu,
+            cont = w.climate.precip.cont,
+            p_mm = w.climate.precip.p_mm,
+            ratio = w.climate.precip.ratio,
+            belt = w.class.zone.belt,
+            province = w.class.zone.province,
+            biome = w.class.cell.biome,
+            vt = w.class.cell.t,
+            vh = w.class.cell.h,
+            ocean = w.is_ocean,
+            c = w.vanilla.c,
+            e = w.vanilla.e,
+            wv = w.vanilla.w,
+            vt_value = w.vanilla.t,
+            h = w.vanilla.h,
+        ),
+        None => String::new(),
+    };
     Ok(format!(
         "seed={seed} mode={mode} version={version} params={params_hash:016x}\n\
          блок ({x}, {z}) → макро p=({px}, {pz})\n\
          плита A id={id:#018x} ячейка=({ci}, {cj}) материк={continent} R={radius} age={age}\n\
          d_AB={d_ab} L, d_AC={d_ac} L, w_B={w_b}, w_C={w_c}\n\
          граница={bt:?}\n\
-         якобиан искажения={jac}\n{crust_line}",
+         якобиан искажения={jac}\n{crust_line}{world_line}",
         seed = opts.seed,
         mode = opts.mode.as_str(),
         version = opts.version.as_str(),
@@ -202,5 +271,6 @@ pub fn probe_text(opts: &RenderOptions, x: f64, z: f64) -> Result<String, String
         bt = bt,
         jac = generator.jacobian(x, z),
         crust_line = crust_line,
+        world_line = world_line,
     ))
 }
