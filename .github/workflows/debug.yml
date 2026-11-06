@@ -41,6 +41,8 @@ jobs:
           cargo run -p litho-sandbox --release -- stats --seed 42 --mode gameplay > docs/images/stats.txt 2>&1
           cargo run -p litho-sandbox --release -- seams --seed 42 --mode gameplay >> docs/images/stats.txt 2>&1
           cargo run -p litho-sandbox --release -- bench --seed 42 --mode gameplay >> docs/images/stats.txt 2>&1
+          cargo run -p litho-sandbox --release -- probe --seed 42 --mode gameplay --at -192,192 >> docs/images/stats.txt 2>&1
+          cargo run -p litho-sandbox --release -- probe --seed 42 --mode gameplay --at -192,193 >> docs/images/stats.txt 2>&1
           cat docs/images/stats.txt
       - name: Атлас и карта быстрого пути
         if: false
