@@ -160,8 +160,46 @@ pub fn zone_field(belt: u8, province: u8, is_ocean: bool) -> [u8; 3] {
     mix([216, 188, 128], base, wetness)
 }
 
-/// Целевой ванильный биом: устойчивый цвет от хэша названия.
+/// Целевой ванильный биом: своя палитра по смыслу названия, чтобы океан
+/// читался синим, пустыня песчаной, а леса зелёными. Хэш — только запасной
+/// вариант для неизвестного имени.
 pub fn biome_field(name: &str) -> [u8; 3] {
+    if name.contains("ocean") {
+        return match name {
+            "frozen_ocean" => [206, 226, 240],
+            "cold_ocean" => [72, 132, 190],
+            "lukewarm_ocean" => [46, 152, 186],
+            "warm_ocean" => [30, 176, 190],
+            _ => [24, 84, 158],
+        };
+    }
+    if name.contains("snowy") || name.contains("ice") {
+        return [226, 236, 244];
+    }
+    if name.contains("desert") {
+        return [214, 186, 112];
+    }
+    if name.contains("taiga") {
+        return [86, 128, 104];
+    }
+    if name.contains("jungle") {
+        return [38, 132, 66];
+    }
+    if name.contains("dark_forest") {
+        return [44, 104, 62];
+    }
+    if name.contains("birch") {
+        return [126, 176, 92];
+    }
+    if name.contains("forest") || name.contains("flower") {
+        return [76, 152, 78];
+    }
+    if name.contains("savanna") {
+        return [172, 176, 86];
+    }
+    if name.contains("plains") {
+        return [142, 180, 96];
+    }
     from_hash(fnv1a64(name))
 }
 
