@@ -47,7 +47,7 @@
 | `climate.cont_polar_c` | `6.0` | `6.0` |
 | `climate.cont_tropical_c` | `2.0` | `2.0` |
 | `climate.e_base` | `0.25` | `0.25` |
-| `climate.e_mnt` | `-0.85` | `-0.85` |
+| `climate.e_mnt` | `-0.75` | `-0.75` |
 | `climate.e_mnt_noise` | `0.25` | `0.25` |
 | `climate.e_noise` | `0.15` | `0.15` |
 | `climate.e_plateau` | `-0.3` | `-0.3` |
@@ -60,7 +60,7 @@
 | `climate.lapse_c_per_km` | `6.5` | `6.5` |
 | `climate.local_fraction_equator` | `0.55` | `0.55` |
 | `climate.local_fraction_width_deg` | `15.0` | `15.0` |
-| `climate.m_e_hi` | `0.6` | `0.6` |
+| `climate.m_e_hi` | `1.2` | `1.2` |
 | `climate.m_e_lo` | `0.05` | `0.05` |
 | `climate.ocean_c_threshold` | `-0.19` | `-0.19` |
 | `climate.p_min_mm` | `10.0` | `10.0` |
@@ -241,4 +241,4 @@
 | `wind.knot7.phi_deg` | `90` | `90` |
 | `wind.knot7.s` | `0.3` | `0.3` |
 
-params_hash: scientific = 1afb0f75328be359, gameplay = 9408b9cc1424def0
+params_hash: scientific = 064fb44b489356fb, gameplay = 8cd60458847fda7e
