@@ -361,7 +361,7 @@ impl Params {
                 // «один океан с крошками» из 12.6 уходит, суша ~27–29 %.
                 continent_probability: 0.20,
                 continent_radius_min_l: 9.0,
-                continent_radius_max_l: 15.0,
+                continent_radius_max_l: 17.0,
                 aspect_min: 1.0,
                 aspect_max: 2.0,
                 speed_min: 0.2,
