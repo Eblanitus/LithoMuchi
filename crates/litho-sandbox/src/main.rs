@@ -38,7 +38,7 @@ fn parse_pair(text: &str) -> Result<(f64, f64), String> {
 
 fn options_from(args: &[String]) -> Result<RenderOptions, String> {
     let seed = match value(args, "--seed") {
-        Some(text) => text.parse::<i64>().map_err(|e| format("--seed: {e}"))?,
+        Some(text) => text.parse::<i64>().map_err(|e| format!("--seed: {e}"))?,
         None => 42,
     };
     let mode = match value(args, "--mode") {
@@ -95,7 +95,7 @@ fn cmd_render(args: &[String]) -> Result<(), String> {
         }
     }
     let layers = match value(args, "--layers") {
-        Some(text) if text == "all" => LAYERS.to_vec(),
+        Some(text) if text == "all" => LAYERS.iter().map(|layer| (*layer).to_string()).collect(),
         Some(text) => text.split(',').map(|s| s.trim().to_string()).collect(),
         None => vec!["plates".to_string()],
     };

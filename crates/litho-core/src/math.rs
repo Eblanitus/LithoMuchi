@@ -175,7 +175,7 @@ pub fn dpow(base: f64, exponent: f64) -> f64 {
 
 #[cfg(test)]
 mod tests {
-    use super::{Vec2, clamp, dexp, dln, dpow, lerp, piecewise, smoothstep};
+    use super::{LN_2, Vec2, clamp, dexp, dln, dpow, lerp, piecewise, smoothstep};
 
     #[test]
     fn smoothstep_edges_and_reverse_direction() {
@@ -202,16 +202,12 @@ mod tests {
     fn exp_log_pow_agree_with_known_constants() {
         assert_eq!(dexp(0.0), 1.0);
         assert!((dexp(1.0) - std::f64::consts::E).abs() < 1e-13);
-        assert!((dexp(LN2()) - 2.0).abs() < 1e-13);
+        assert!((dexp(LN_2) - 2.0).abs() < 1e-13);
         assert!((dln(std::f64::consts::E) - 1.0).abs() < 1e-13);
         assert!((dln(2.0) - std::f64::consts::LN_2).abs() < 1e-13);
         assert!((dln(1.0 / 8.0) + 3.0 * std::f64::consts::LN_2).abs() < 1e-12);
         assert!((dpow(2.0, 10.0) - 1024.0).abs() < 1e-9);
         assert!((dpow(0.5, 1.6) - 0.329_876_977_693_223_5).abs() < 1e-12);
-    }
-
-    fn LN2() -> f64 {
-        std::f64::consts::LN_2
     }
 
     #[test]
