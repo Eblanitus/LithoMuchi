@@ -34,10 +34,10 @@ jobs:
         run: |
           cargo run -p litho-sandbox --release -- render \
             --seed 42 --mode gameplay --size 512 --bpp 64 \
-            --layers plates,boundaries,jacobian,crust,height,mpi \
+            --layers noise,warp,plates,boundaries,jacobian,hash,crust,height,mpi \
             --out docs/images/v0-seed42-gameplay
           git config user.name "Arena Agent"
           git config user.email "agent@arena.ai"
           git add docs/images/v0-seed42-gameplay
-          git diff --cached --quiet || git commit -m "Карты после Д-011: изогнутые границы и берега, сид 42"
+          git diff --cached --quiet || git commit -m "Карты после Д-011: полный набор слоёв, сид 42 [skip ci]"
           git push origin HEAD:arena/f957ca43-lithomuchi || true
