@@ -23,7 +23,7 @@ pub const CLIMATE_LAYERS: [&str; 8] = [
     "poles", "temp", "wind", "moisture", "precip", "zones", "biomes", "vanilla",
 ];
 
-pub const LAYERS: [&str; 17] = [
+pub const LAYERS: [&str; 20] = [
     "noise",
     "warp",
     "plates",
@@ -41,6 +41,9 @@ pub const LAYERS: [&str; 17] = [
     "zones",
     "biomes",
     "vanilla",
+    "rivers",
+    "lava",
+    "spawn",
 ];
 
 #[derive(Clone, Debug)]
@@ -62,6 +65,20 @@ impl RenderOptions {
             self.center_z + (py as f64 - half) * self.bpp,
         )
     }
+}
+
+/// Слой `spawn` центрируется на найденной точке появления, остальные — на
+/// `--center`. Сдвиг считается по сиду, поэтому одинаков во всех запусках.
+pub fn options_for_layer(opts: &RenderOptions, layer: &str) -> RenderOptions {
+    let mut out = opts.clone();
+    if layer == "spawn" {
+        if let Ok(generator) = Generator::new(opts.seed, opts.mode, opts.version) {
+            let shift = generator.spawn_shift();
+            out.center_x = shift.x * opts.mode.l_blocks();
+            out.center_z = shift.z * opts.mode.l_blocks();
+        }
+    }
+    out
 }
 
 /// Подпись картинки (12.3): сид, режим, версия, `params_hash`, масштаб, слой.
@@ -87,12 +104,13 @@ pub fn render_layer(opts: &RenderOptions, layer: &str) -> Result<RgbImage, Strin
     let generator =
         Generator::new(opts.seed, opts.mode, opts.version).map_err(|error| error.to_string())?;
     let params: &Params = generator.params();
+    let effective = options_for_layer(opts, layer);
     let noise_seed = subseed(generator.seed(), SALT_NOISE_DETAIL);
     let mut image = RgbImage::new(opts.size, opts.size);
 
     for py in 0..opts.size {
         for px in 0..opts.size {
-            let (x, z) = opts.block_at_pixel(px, py);
+            let (x, z) = effective.block_at_pixel(px, py);
             let p = generator.macro_point(x, z);
             let world = if CLIMATE_LAYERS.contains(&layer) {
                 generator.world_sample(x, z)
@@ -148,6 +166,20 @@ pub fn render_layer(opts: &RenderOptions, layer: &str) -> Result<RgbImage, Strin
                 "vanilla" => world.as_ref().map_or([0, 0, 0], |w| {
                     palette::vanilla_field(w.vanilla.c, w.vanilla.e, w.vanilla.w)
                 }),
+                "rivers" => match generator.crust_sample(x, z) {
+                    Some(crust) => palette::river_field(generator.river_sample(x, z), crust.e_km),
+                    None => [0, 0, 0],
+                },
+                "lava" => palette::heat(generator.lava_sample(x, z)),
+                "spawn" => {
+                    let quality = generator.spawn_quality(x, z);
+                    let dx = x - effective.center_x;
+                    let dz = z - effective.center_z;
+                    let distance = (dx * dx + dz * dz).sqrt();
+                    let ring =
+                        (distance - params.spawn.search_radius_blocks).abs() < effective.bpp * 1.5;
+                    palette::spawn_field(quality.score, ring)
+                }
                 "hash" => {
                     let i = (p.x / 4.0).floor() as i64;
                     let j = (p.z / 4.0).floor() as i64;

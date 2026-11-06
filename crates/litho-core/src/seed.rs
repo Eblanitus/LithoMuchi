@@ -27,6 +27,8 @@ pub const SALT_CLASS_JITTER: &str = "classify.jitter";
 pub const SALT_VANILLA_E: &str = "vanilla.erosion";
 pub const SALT_VANILLA_W: &str = "vanilla.weirdness";
 pub const SALT_VANILLA_S: &str = "vanilla.sign";
+pub const SALT_RIVERS: &str = "rivers.source";
+pub const SALT_RIVERS_MEANDER: &str = "rivers.meander";
 
 /// Сид Minecraft знаковый 64-битный; биты переносятся без изменения.
 pub const fn from_world_seed(seed: i64) -> u64 {

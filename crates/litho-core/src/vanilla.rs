@@ -95,12 +95,13 @@ pub fn sample(
     z: f64,
     seed: u64,
     params: &Params,
+    river: f64,
 ) -> VanillaSample {
     let c = &params.climate;
     let surface = climate.surface;
     let c_value = continentalness(surface.e_km, surface.iota_l, params);
     let e_value = erosion(x, z, surface.mountain, surface.plateau, seed, params);
-    let w_value = weirdness(x, z, surface.mountain, surface.plateau, seed, params, 0.0);
+    let w_value = weirdness(x, z, surface.mountain, surface.plateau, seed, params, river);
     let t_value = c.t_centers[(class.cell.t as usize).min(4)];
     let h_value = if class.is_ocean {
         0.0
@@ -176,6 +177,8 @@ mod tests {
                 iota_l: t,
                 mountain: clamp01(t / 10.0),
                 plateau: 0.2,
+                boundary_weights: [0.0; 7],
+                sigma_l: 0.0,
             };
             let climate = ClimateSample {
                 point: Vec2::new(t, -t),
@@ -205,7 +208,7 @@ mod tests {
                 },
             };
             let class = classify_inputs(10.0, 0.65, 2.0, &p);
-            let v = sample(&climate, &class, t * 100.0, -t * 50.0, 42, &p);
+            let v = sample(&climate, &class, t * 100.0, -t * 50.0, 42, &p, 0.0);
             for value in [v.c, v.e, v.w, v.t, v.h] {
                 assert!(
                     (-1.0..=1.0).contains(&value),

@@ -212,6 +212,23 @@ pub fn vanilla_field(c: f64, e: f64, w: f64) -> [u8; 3] {
     ]
 }
 
+/// Реки: суша зелёная, океан синий, русла ярко-голубые.
+pub fn river_field(r: f64, e_km: f64) -> [u8; 3] {
+    let base = if e_km < 0.0 {
+        mix([16, 48, 112], [86, 166, 202], clamp01(1.0 + e_km / 6.0))
+    } else {
+        mix([198, 206, 152], [92, 150, 90], clamp01(e_km / 3.0))
+    };
+    mix(base, [46, 158, 232], clamp01(r))
+}
+
+/// Точка появления: чем светлее, тем лучше место; белое кольцо — радиус
+/// ванильного поиска 2048 блоков.
+pub fn spawn_field(score: f64, ring: bool) -> [u8; 3] {
+    let base = mix([28, 44, 74], [236, 214, 120], clamp01(score));
+    if ring { [250, 250, 250] } else { base }
+}
+
 #[cfg(test)]
 mod tests {
     use super::from_hash;

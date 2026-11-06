@@ -298,21 +298,46 @@ pub struct PrecipParams {
 pub struct RiversParams {
     pub source_cell_l: f64,
     pub source_probability: f64,
+    pub source_min_mountain: f64,
+    pub source_min_height_km: f64,
+    pub source_min_precip_mm: f64,
+    pub source_window_cells: i64,
     pub trace_step_l: f64,
     pub trace_max_steps: usize,
     pub trace_min_length_l: f64,
+    pub trace_gradient_min: f64,
+    pub trace_flat_steps: usize,
+    pub meander_turn_rad: f64,
+    pub gradient_step_l: f64,
+    pub foothill_sigma_factor: f64,
+    pub half_width_growth: f64,
+    pub half_width_length_l: f64,
 }
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct LavaParams {
     pub width_blocks: f64,
     pub background: f64,
+    pub base_factor: f64,
+    pub boundary_factor: f64,
 }
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct SpawnParams {
     pub candidates: usize,
     pub radius_l: f64,
+    pub fallback_grid: usize,
+    pub min_e_km: f64,
+    pub max_e_km: f64,
+    pub min_kappa_l: f64,
+    pub max_mountain: f64,
+    pub min_phi_deg: f64,
+    pub max_phi_deg: f64,
+    pub min_ratio: f64,
+    pub max_ratio: f64,
+    pub fixed_mu: f64,
+    pub fixed_wind: f64,
+    pub search_radius_blocks: f64,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -683,17 +708,42 @@ impl Params {
             rivers: RiversParams {
                 source_cell_l: 2.0,
                 source_probability: 0.6,
+                source_min_mountain: 0.35,
+                source_min_height_km: 0.8,
+                source_min_precip_mm: 500.0,
+                source_window_cells: 2,
                 trace_step_l: 0.05,
                 trace_max_steps: 60,
                 trace_min_length_l: 1.0,
+                trace_gradient_min: 0.02,
+                trace_flat_steps: 5,
+                meander_turn_rad: 0.6,
+                gradient_step_l: 0.05,
+                foothill_sigma_factor: -1.6,
+                half_width_growth: 0.6,
+                half_width_length_l: 3.0,
             },
             lava: LavaParams {
                 width_blocks: block.lava_width_blocks,
                 background: block.lava_background,
+                base_factor: 0.4,
+                boundary_factor: 0.6,
             },
             spawn: SpawnParams {
                 candidates: 256,
                 radius_l: 100.0,
+                fallback_grid: 32,
+                min_e_km: 0.1,
+                max_e_km: 1.5,
+                min_kappa_l: 1.0,
+                max_mountain: 0.2,
+                min_phi_deg: 25.0,
+                max_phi_deg: 55.0,
+                min_ratio: 0.5,
+                max_ratio: 2.0,
+                fixed_mu: 0.4,
+                fixed_wind: 0.6,
+                search_radius_blocks: 2048.0,
             },
             climate: ClimateParams {
                 t_equator_c: 28.0,
@@ -942,13 +992,56 @@ impl Params {
         writeln!(w, "precip.itcz_precip_mm={v}", v = pr.itcz_precip_mm).unwrap();
         writeln!(w, "precip.advection_mm={v}", v = pr.advection_mm).unwrap();
         let r = &self.rivers;
-        writeln!(w, "rivers.source_cell_l={v}", v = r.source_cell_l).unwrap();
-        writeln!(w, "rivers.trace_step_l={v}", v = r.trace_step_l).unwrap();
+        for (name, value) in [
+            ("rivers.source_cell_l", r.source_cell_l),
+            ("rivers.source_probability", r.source_probability),
+            ("rivers.source_min_mountain", r.source_min_mountain),
+            ("rivers.source_min_height_km", r.source_min_height_km),
+            ("rivers.source_min_precip_mm", r.source_min_precip_mm),
+            ("rivers.trace_step_l", r.trace_step_l),
+            ("rivers.trace_min_length_l", r.trace_min_length_l),
+            ("rivers.trace_gradient_min", r.trace_gradient_min),
+            ("rivers.meander_turn_rad", r.meander_turn_rad),
+            ("rivers.gradient_step_l", r.gradient_step_l),
+            ("rivers.foothill_sigma_factor", r.foothill_sigma_factor),
+            ("rivers.half_width_growth", r.half_width_growth),
+            ("rivers.half_width_length_l", r.half_width_length_l),
+        ] {
+            writeln!(w, "{name}={value:?}").unwrap();
+        }
         writeln!(w, "rivers.trace_max_steps={v}", v = r.trace_max_steps).unwrap();
+        writeln!(w, "rivers.trace_flat_steps={v}", v = r.trace_flat_steps).unwrap();
+        writeln!(
+            w,
+            "rivers.source_window_cells={v}",
+            v = r.source_window_cells
+        )
+        .unwrap();
         writeln!(w, "lava.width_blocks={v}", v = self.lava.width_blocks).unwrap();
         writeln!(w, "lava.background={v}", v = self.lava.background).unwrap();
+        writeln!(w, "lava.base_factor={:?}", self.lava.base_factor).unwrap();
+        writeln!(w, "lava.boundary_factor={:?}", self.lava.boundary_factor).unwrap();
         writeln!(w, "spawn.candidates={v}", v = self.spawn.candidates).unwrap();
         writeln!(w, "spawn.radius_l={v}", v = self.spawn.radius_l).unwrap();
+        for (name, value) in [
+            ("spawn.min_e_km", self.spawn.min_e_km),
+            ("spawn.max_e_km", self.spawn.max_e_km),
+            ("spawn.min_kappa_l", self.spawn.min_kappa_l),
+            ("spawn.max_mountain", self.spawn.max_mountain),
+            ("spawn.min_phi_deg", self.spawn.min_phi_deg),
+            ("spawn.max_phi_deg", self.spawn.max_phi_deg),
+            ("spawn.min_ratio", self.spawn.min_ratio),
+            ("spawn.max_ratio", self.spawn.max_ratio),
+            ("spawn.fixed_mu", self.spawn.fixed_mu),
+            ("spawn.fixed_wind", self.spawn.fixed_wind),
+            (
+                "spawn.search_radius_blocks",
+                self.spawn.search_radius_blocks,
+            ),
+        ] {
+            writeln!(w, "{name}={value:?}").unwrap();
+        }
+        writeln!(w, "spawn.fallback_grid={v}", v = self.spawn.fallback_grid).unwrap();
         let l = &self.lattice;
         writeln!(w, "lattice.fine_divisor={v}", v = l.fine_divisor).unwrap();
         writeln!(w, "lattice.coarse_divisor={v}", v = l.coarse_divisor).unwrap();

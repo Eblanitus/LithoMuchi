@@ -17,6 +17,9 @@ pub struct SurfaceSample {
     pub iota_l: f64,
     pub mountain: f64,
     pub plateau: f64,
+    /// Веса k1…k7 у ближайшей границы и расстояние до неё (нужны рекам T50).
+    pub boundary_weights: [f64; 7],
+    pub sigma_l: f64,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -555,6 +558,8 @@ mod tests {
                 iota_l: point.x.abs() * 0.1,
                 mountain: 0.2,
                 plateau: 0.0,
+                boundary_weights: [0.0; 7],
+                sigma_l: 0.0,
             };
             let s = sample(Vec2::new(3.0, -7.0), 42, &p, &field).unwrap();
             assert!(s.temperature.t_bio.is_finite());

@@ -5,8 +5,8 @@
 //! полей в точке `(x, z)` мира с сидом `S` в режиме `M` версии `V`».
 //!
 //! Статус: реализованы Э0, Э1a–Э1c, климат (T30–T33), классификация и пять
-//! ванильных параметров (T40–T43). Дальше по плану: реки, лава, точка
-//! появления (Э1f), решётка и быстрый путь (T13, T55), оценка автором (Э1h).
+//! ванильных параметров (T40–T43), реки, лава и точка появления (Э1f).
+//! Дальше по плану: решётка и быстрый путь (T13, T55), оценка автором (Э1h).
 
 #![forbid(unsafe_code)]
 
@@ -15,13 +15,16 @@ pub mod climate;
 pub mod crust;
 pub mod generator;
 pub mod hash;
+pub mod lava;
 pub mod math;
 pub mod mode;
 pub mod noise;
 pub mod noise_tables;
 pub mod params;
 pub mod plates;
+pub mod rivers;
 pub mod seed;
+pub mod spawn;
 pub mod vanilla;
 pub mod version;
 

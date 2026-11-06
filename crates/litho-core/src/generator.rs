@@ -4,6 +4,8 @@
 //! ванильных параметров. Полный быстрый путь с решёткой и кэшем появится в
 //! T13/T55, но песочница и будущий мод уже вызывают один и тот же `Generator`.
 
+use std::sync::Arc;
+
 use crate::classify::{ClassSample, classify};
 use crate::climate::{ClimateSample, SurfaceSample};
 use crate::crust::{CrustSample, crust_from_sample};
@@ -37,6 +39,8 @@ pub struct WorldSample {
     pub climate: ClimateSample,
     pub class: ClassSample,
     pub vanilla: VanillaSample,
+    /// Сила рифтовой/предгорной реки, вошедшая в W (7.9.3).
+    pub river: f64,
     pub is_ocean: bool,
 }
 
@@ -44,6 +48,8 @@ pub struct WorldSample {
 pub struct Generator {
     seed: u64,
     params: Params,
+    rivers: Arc<RiverCache>,
+    spawn_shift: Vec2,
 }
 
 impl Generator {
@@ -53,9 +59,15 @@ impl Generator {
         if version != GenVersion::V0 {
             return Err(GenError::UnsupportedVersion(version));
         }
+        let world_seed = from_world_seed(seed);
+        let params = Params::defaults(version, mode);
+        // T54: точка появления ищется один раз на мир, только по сиду и версии.
+        let shift = spawn::find_shift(world_seed, &params);
         Ok(Self {
-            seed: from_world_seed(seed),
-            params: Params::defaults(version, mode),
+            seed: world_seed,
+            params,
+            rivers: Arc::new(RiverCache::new()),
+            spawn_shift: shift,
         })
     }
 
@@ -67,9 +79,11 @@ impl Generator {
         &self.params
     }
 
-    /// Сдвиг макро-координат `p*` (7.12). До T54 равен нулю.
+    /// Сдвиг макро-координат `p*` (7.12). В v0 найден и доступен слою `spawn`,
+    /// но ещё не подставлен в `macro_point`: карты песочницы остаются на месте
+    /// до T55, чтобы автор сравнивал их с прежними (Д-015).
     pub fn spawn_shift(&self) -> Vec2 {
-        Vec2::default()
+        self.spawn_shift
     }
 
     /// Блочные координаты → макро-координата `p = (x/L, z/L) + p*`.
@@ -105,6 +119,8 @@ impl Generator {
                     iota_l: crust.iota_l,
                     mountain: crust.mountain,
                     plateau: crust.plateau,
+                    boundary_weights: crust.boundary_weights,
+                    sigma_l: sample.d_ab_l,
                 }
             }
             None => SurfaceSample::default(),
@@ -123,13 +139,48 @@ impl Generator {
         let c = continentalness(climate.surface.e_km, climate.surface.iota_l, &self.params);
         let is_ocean = c < self.params.climate.ocean_c_threshold;
         let class = classify(&climate, is_ocean, x, z, self.seed, &self.params);
-        let vanilla = crate::vanilla::sample(&climate, &class, x, z, self.seed, &self.params);
+        // Дешёвая часть рек входит в W везде; трассированные реки считаются
+        // отдельно для слоя `rivers` (Д-015).
+        let river = local_r(x, z, &climate.surface, self.seed, &self.params);
+        let vanilla =
+            crate::vanilla::sample(&climate, &class, x, z, self.seed, &self.params, river);
         Some(WorldSample {
             climate,
             class,
             vanilla,
+            river,
             is_ocean,
         })
+    }
+
+    /// Полная сила реки вместе с трассированными руслами (слой `rivers`).
+    pub fn river_sample(&self, x: f64, z: f64) -> f64 {
+        let point = self.macro_point(x, z);
+        let surface = self.surface_at(point);
+        let local = local_r(x, z, &surface, self.seed, &self.params);
+        let traced = traced_r(
+            point,
+            surface.e_km,
+            self.seed,
+            &self.params,
+            &|q| self.surface_at(q),
+            &self.rivers,
+        );
+        local.max(traced)
+    }
+
+    /// Поле глубинной лавы λ (слой `lava`, T53).
+    pub fn lava_sample(&self, x: f64, z: f64) -> f64 {
+        let point = self.macro_point(x, z);
+        match plate_query(point, self.seed, &self.params) {
+            Some(sample) => crate::lava::sample(point, &sample, self.seed, &self.params),
+            None => self.params.lava.background,
+        }
+    }
+
+    /// Насколько точка подходит для появления (слой `spawn`, T54).
+    pub fn spawn_quality(&self, x: f64, z: f64) -> SpawnQuality {
+        spawn::evaluate(self.macro_point(x, z), self.seed, &self.params)
     }
 }
 

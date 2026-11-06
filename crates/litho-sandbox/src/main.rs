@@ -112,7 +112,12 @@ fn cmd_render(args: &[String]) -> Result<(), String> {
             format!("запись '{path}': {e}")
         })?;
         let json_path = dir.join(format!("{layer}.json"));
-        std::fs::write(&json_path, render::metadata(&opts, &layer, params_hash)).map_err(|e| {
+        let meta_opts = render::options_for_layer(&opts, &layer);
+        std::fs::write(
+            &json_path,
+            render::metadata(&meta_opts, &layer, params_hash),
+        )
+        .map_err(|e| {
             let path = json_path.display();
             format!("запись '{path}': {e}")
         })?;
@@ -131,7 +136,7 @@ fn cmd_probe(args: &[String]) -> Result<(), String> {
 }
 
 fn usage() -> &'static str {
-    "Litospherity sandbox (этап Э1a–Э1e)\n\n\
+    "Litospherity sandbox (этап Э1a–Э1f)\n\n\
      Команды:\n\
        render   карты PNG в папку --out\n\
        probe    все доступные поля в точке --at x,z\n\
@@ -142,7 +147,8 @@ fn usage() -> &'static str {
        --bpp N (64 научный / 16 геймплейный), --path reference|fast,\n\
        --layers plates|all|список через запятую, --out ПАПКА\n\
      Слои: шум/плиты/кора, климат (poles,temp,wind,moisture,precip),\n\
-       зоны, биомы и пять ванильных чисел (zones,biomes,vanilla).\n\n\
+       зоны, биомы и пять ванильных чисел (zones,biomes,vanilla),\n\
+       реки, лава и точка появления (rivers,lava,spawn).\n\n\
      Пример:\n\
        cargo run -p litho-sandbox --release -- render --seed 42 --mode gameplay \\\n\
          --layers plates,boundaries,jacobian --size 512 --out out/seed42\n"
