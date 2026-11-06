@@ -4,6 +4,8 @@
 name: Debug build
 
 on:
+  push:
+    branches: ["arena/**"]
   workflow_dispatch:
 
 jobs:
