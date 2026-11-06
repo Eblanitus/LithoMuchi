@@ -4,15 +4,16 @@
 //! внешних крейтов (план 6.1, 9.2). Оно отвечает на вопрос «какие значения
 //! полей в точке `(x, z)` мира с сидом `S` в режиме `M` версии `V`».
 //!
-//! Статус: реализованы Э0, Э1a–Э1c, климат (T30–T33), классификация и пять
-//! ванильных параметров (T40–T43), реки, лава и точка появления (Э1f).
-//! Дальше по плану: решётка и быстрый путь (T13, T55), оценка автором (Э1h).
+//! Статус: реализованы Э0, Э1a–Э1f, решётка и кэш (T13/T14), эталонный и
+//! быстрый пути с пятью полями для игры (T55). Дальше: оценка автором (Э1h).
 
 #![forbid(unsafe_code)]
 
+pub mod cache;
 pub mod classify;
 pub mod climate;
 pub mod crust;
+pub mod field;
 pub mod generator;
 pub mod hash;
 pub mod lattice;
@@ -32,6 +33,7 @@ pub mod version;
 pub use classify::{ClassSample, LifeZone, VanillaCell};
 pub use climate::{ClimateSample, PoleSample, PrecipSample, TemperatureSample};
 pub use crust::CrustSample;
+pub use field::{Field, FullSample, to_f32};
 pub use generator::{GenError, Generator, WorldSample};
 pub use math::Vec2;
 pub use mode::{BlockParams, Mode};

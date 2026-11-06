@@ -161,32 +161,41 @@ pub fn temperature(phi_deg: f64, e_km: f64, cont: f64, params: &Params) -> Tempe
     let t_c = t_sl + delta_c - c.lapse_c_per_km * e_km.max(0.0);
     let amp_lat = c.amp_base_c + c.amp_lat_c * smoothstep(5.0, 75.0, phi_deg);
     let amp_c = amp_lat * (c.amp_sea_factor + c.amp_land_factor * cont);
-    // cos(2π(m + 0,5)/12), каждое значение дважды. Константы, а не системный cos.
-    const MONTH_COS: [f64; 12] = [
-        0.965_925_8,
-        std::f64::consts::FRAC_1_SQRT_2,
-        0.258_819,
-        -0.258_819,
-        -std::f64::consts::FRAC_1_SQRT_2,
-        -0.965_925_8,
-        -0.965_925_8,
-        -std::f64::consts::FRAC_1_SQRT_2,
-        -0.258_819,
-        0.258_819,
-        std::f64::consts::FRAC_1_SQRT_2,
-        0.965_925_8,
-    ];
-    let mut bio = 0.0;
-    for cos_m in MONTH_COS {
-        bio += clamp(t_c + amp_c * cos_m, c.bio_min_c, c.bio_max_c);
-    }
+    let (t_bio, t_min) = seasonal(t_c, amp_c, params);
     TemperatureSample {
         t_c,
         sst_c: t_sl.max(c.sst_min_c),
         amp_c,
-        t_bio: bio / 12.0,
-        t_min: t_c - c.coldest_cos * amp_c,
+        t_bio,
+        t_min,
     }
+}
+
+/// cos(2π(m + 0,5)/12), каждое значение дважды. Константы, а не системный cos.
+pub const MONTH_COS: [f64; 12] = [
+    0.965_925_8,
+    std::f64::consts::FRAC_1_SQRT_2,
+    0.258_819,
+    -0.258_819,
+    -std::f64::consts::FRAC_1_SQRT_2,
+    -0.965_925_8,
+    -0.965_925_8,
+    -std::f64::consts::FRAC_1_SQRT_2,
+    -0.258_819,
+    0.258_819,
+    std::f64::consts::FRAC_1_SQRT_2,
+    0.965_925_8,
+];
+
+/// Биотемпература и самый холодный месяц при уже известных средней температуре
+/// и сезонной амплитуде (быстрый путь T55 считает их поблочно).
+pub fn seasonal(t_c: f64, amp_c: f64, params: &Params) -> (f64, f64) {
+    let c = &params.climate;
+    let mut bio = 0.0;
+    for cos_m in MONTH_COS {
+        bio += clamp(t_c + amp_c * cos_m, c.bio_min_c, c.bio_max_c);
+    }
+    (bio / 12.0, t_c - c.coldest_cos * amp_c)
 }
 
 /// Три пояса постоянных ветров (7.6). Вектор НЕ нормируется: в переходных
