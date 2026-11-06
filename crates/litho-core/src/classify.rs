@@ -60,10 +60,11 @@ fn province_of(ratio: f64, params: &Params) -> u8 {
     province
 }
 
-fn desert(params: &Params) -> VanillaCell {
-    // Правило ⚑ «холодные пустыни» [ПО СИТУАЦИИ]: по умолчанию песчаная
-    // пустыня, альтернатива — равнины. Переключается до оценки автором (В2).
-    if params.climate.cold_desert_sand {
+fn desert(t_min: f64, params: &Params) -> VanillaCell {
+    // Правило ⚑ [ПО СИТУАЦИИ]: в игре нет холодной пустыни. Песок ставим
+    // только там, где зима не уходит в мороз; сухие места с морозной зимой
+    // (Гоби, Большой Бассейн) становятся сухими равнинами (Д-014).
+    if params.climate.cold_desert_sand && t_min >= params.climate.cold_desert_winter_c {
         cell(4, 0, "desert")
     } else {
         cell(1, 0, "plains")
@@ -101,7 +102,7 @@ pub fn biome_cell(belt: u8, province: u8, ratio: f64, t_min: f64, params: &Param
                 cell(1, 4, "old_growth_spruce_taiga")
             }
         }
-        (3, 1..=2) => desert(params),
+        (3, 1..=2) => desert(t_min, params),
         (3, 3) => {
             if cold {
                 cell(1, 1, "plains")
@@ -134,22 +135,22 @@ pub fn biome_cell(belt: u8, province: u8, ratio: f64, t_min: f64, params: &Param
                 cell(1, 4, "old_growth_spruce_taiga")
             }
         }
-        (4, 1..=2) => desert(params),
+        (4, 1..=2) => desert(t_min, params),
         (4, 3) => cell(3, 0, "savanna"),
         (4, 4) => cell(3, 2, "forest"),
         (4, 5) => cell(2, 3, "birch_forest"),
         (4, 6) => cell(2, 4, "dark_forest"),
-        (5, 1..=2) => desert(params),
+        (5, 1..=2) => desert(t_min, params),
         (5, 3) => cell(3, 0, "savanna"),
         (5, 4) => cell(3, 1, "savanna"),
         (5, 5) => cell(3, 2, "forest"),
         (5, 6) => cell(3, 3, "jungle"),
-        (6, 1..=2) => desert(params),
+        (6, 1..=2) => desert(t_min, params),
         (6, 3) => cell(3, 0, "savanna"),
         (6, 4) => cell(3, 1, "savanna"),
         (6, 5) => cell(3, 3, "jungle"),
         (6, 6) => cell(3, 4, "jungle"),
-        _ => desert(params),
+        _ => desert(t_min, params),
     }
 }
 
@@ -252,6 +253,14 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn dry_places_with_freezing_winters_are_plains_not_sand() {
+        let p = params();
+        assert_eq!(biome_cell(3, 1, 20.0, -7.0, &p).biome, "plains");
+        assert_eq!(biome_cell(3, 1, 20.0, 5.0, &p).biome, "desert");
+        assert_eq!(biome_cell(5, 1, 20.0, 15.0, &p).biome, "desert");
     }
 
     #[test]

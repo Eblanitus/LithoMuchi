@@ -373,6 +373,8 @@ pub struct ClimateParams {
     pub winter_boreal_c: f64,
     pub winter_temperate_c: f64,
     pub cold_desert_sand: bool,
+    /// Песок допустим только там, где самый холодный месяц не ниже этого.
+    pub cold_desert_winter_c: f64,
     pub jitter_lambda_blocks: f64,
     pub jitter_octaves: usize,
     pub jitter_gain: f64,
@@ -476,6 +478,12 @@ impl ClimateParams {
         )
         .unwrap();
         writeln!(w, "climate.cold_desert_sand={:?}", self.cold_desert_sand).unwrap();
+        writeln!(
+            w,
+            "climate.cold_desert_winter_c={:?}",
+            self.cold_desert_winter_c
+        )
+        .unwrap();
         writeln!(
             w,
             "climate.jitter_lambda_blocks={:?}",
@@ -735,6 +743,7 @@ impl Params {
                 winter_boreal_c: -12.0,
                 winter_temperate_c: -8.0,
                 cold_desert_sand: true,
+                cold_desert_winter_c: 0.0,
                 jitter_lambda_blocks: 240.0,
                 jitter_octaves: 3,
                 jitter_gain: 0.5,
