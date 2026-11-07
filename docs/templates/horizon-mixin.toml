@@ -1,0 +1,45 @@
+[mod]
+id = "litospherity"
+version = "0.1.0"
+priority = 100
+
+[compatibility]
+horizon_revision = "66f3981"
+
+# Модуль runtime: наша генерация мира (не зависит от Horizon, использует crates/litho-core)
+[[module]]
+id = "runtime"
+file = "crates/horizon-client/src/game.rs"
+name = "litospherity"
+source = "runtime.rs"
+
+# Модуль bridge: клей к Horizon (знает типы игры, компилируется только внутри игры)
+[[module]]
+id = "bridge"
+file = "crates/horizon-client/src/game.rs"
+name = "litospherity_bridge"
+source = "bridge.rs"
+
+# Точка входа: генерация чанка — цель НЕИЗВЕСТНА, нужно узнать в коде Horizon
+[[injection]]
+id = "chunk_gen"
+kind = "HEAD"
+target = "TODO: функция генерации чанка в Horizon"
+helper = "chunk_gen.rs"
+bindings = [
+  # TODO: привязки (координаты чанка, семя, настройки)
+]
+
+# Примеры остальных инъекций из distant_horizons (могут не подойти):
+# [[injection]]
+# id = "settings"
+# kind = "HEAD"
+# target = "horizon_client::game::native_hooks::Game<'_>::native_settings"
+# helper = "settings.rs"
+# bindings = [...]
+# [[injection]]
+# id = "click"
+# kind = "HEAD"
+# target = "horizon_client::game::native_hooks::Game<'_>::native_settings_click"
+# helper = "click.rs"
+# bindings = [...]
