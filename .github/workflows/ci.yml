@@ -80,3 +80,19 @@ jobs:
         run: |
           export PATH="/c/msys64/mingw64/bin:$PATH"
           cargo test --workspace --target x86_64-pc-windows-gnu
+
+  hnmod:
+    name: Мод · упаковка litospherity.hnmod
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Упаковать бандл (пути с прямыми слешами, как требует лаунчер)
+        run: |
+          cd mod/litospherity
+          python3 -c "import json; json.load(open('horizon-native.json'))"
+          zip -r -X ../../litospherity.hnmod horizon-native.json mixins
+          unzip -l ../../litospherity.hnmod
+      - uses: actions/upload-artifact@v4
+        with:
+          name: litospherity-hnmod
+          path: litospherity.hnmod

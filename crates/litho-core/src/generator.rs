@@ -115,7 +115,7 @@ impl Generator {
     /// появления попала в заданную клетку (Д-015 закрыт).
     pub fn macro_point(&self, x: f64, z: f64) -> Vec2 {
         let l = self.params.block.l_blocks;
-        Vec2::new(x / l, z / l) + self.spawn_shift
+        Vec2::new(x / l, z / l).add(self.spawn_shift)
     }
 
     /// Плита и границы в блочной точке.
