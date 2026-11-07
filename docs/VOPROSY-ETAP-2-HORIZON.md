@@ -22,12 +22,51 @@
 
 ---
 
-## Осталось неизвестным (нужно для кода мода)
+## Осталось неизвестным (нужно для кода мода) — исследовано по образцу `distant_horizons`
 
-1. **Название функции генерации чанка** — для `target` в `[[injection]]` в `horizon-mixin.toml` (в примере `distant_horizons` это примерно `horizon_client::world::generator::generate_chunk`, у вас может быть иначе)
-2. **Дополнительные точки входа** — настройки, кнопки, команды, HUD (остальные `[[injection]]`)
-3. **Типы `DensityVolume` / `DensityError`** — для `add_to_volume` в `bridge.rs` (задача T72)
-4. **Как измерить время чанка** — для подтверждения DoD Этапа 3
+### 1. Название функции генерации чанка
+**Неизвестно из примера.** В `distant_horizons` нет инъекции в `generate_chunk`. Вместо этого используются:
+- `game.streaming.lod_source()` — доступ к генератору
+- `game.world.chunks` — загруженные чанки
+- `game.streaming.center`, `game.streaming.radius` — центр и радиус стриминга
+
+Нужно искать в коде Horizon версии `66f3981`.
+
+### 2. Дополнительные точки входа (`[[injection]]`)
+**Найдены из примера `distant_horizons/mixins/distant_horizons/horizon-mixin.toml`:**
+
+| id | kind | target |
+|----|------|--------|
+| `frame` | HEAD | `horizon_client::game::native_hooks::Game<'_>::native_frame` |
+| `distance` | RETURN | `horizon_client::game::Game<'_>::terrain_distance` |
+| `list` | HEAD | `horizon_client::game::native_hooks::Game<'_>::native_mods` |
+| `settings` | HEAD | `horizon_client::game::native_hooks::Game<'_>::native_settings` |
+| `click` | HEAD | `horizon_client::game::native_hooks::Game<'_>::native_settings_click` |
+| `command` | HEAD | `horizon_client::game::native_hooks::Game<'_>::native_command` |
+| `hud` | HEAD | `horizon_client::game::native_hooks::Game<'_>::native_hud` |
+
+### 3. Типы Horizon (вместо DensityVolume/DensityError)
+**Не найдены в примере.** В `distant_horizons` нет типов `DensityVolume`/`DensityError`. Вместо них используются:
+- `horizon_client::blocks::BlockFacts`
+- `horizon_client::chunk::Chunk`
+- `horizon_world::registry::BlockStateId`
+- `horizon_client::lod::TileKey`
+- `horizon_client::mesher::{OPAQUE_LAYER, SectionMesh, TerrainVertex}`
+- `horizon_client::streaming::{LodSampler, LodSource, WorkerContext}`
+- `horizon_core::position::BlockPos`
+
+Для версии `66f3981` типы могут отличаться — нужно проверять в коде Horizon.
+
+### 4. Как измерить время чанка
+**Найдено из примера.** Используется `std::time::{Duration, Instant}`:
+
+```rust
+const SCAN_EVERY: Duration = Duration::from_millis(250);
+const REREAD_EVERY: Duration = Duration::from_secs(5);
+const UPLOAD_BUDGET: Duration = Duration::from_millis(2);
+```
+
+Измерение через `Instant::now()` до и после операции, затем `.elapsed()`.
 
 ---
 

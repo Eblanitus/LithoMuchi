@@ -84,35 +84,105 @@ file = "crates/horizon-client/src/game.rs"
 name = "litospherity_bridge"
 source = "bridge.rs"
 
+# Точки входа (по образцу distant_horizons):
 [[injection]]
-id = "chunk_gen"
+id = "frame"
 kind = "HEAD"
-target = "TODO: функция генерации чанка в Horizon"  # ❌ неизвестно
-helper = "chunk_gen.rs"
+target = "horizon_client::game::native_hooks::Game<'_>::native_frame"
+helper = "frame.rs"
 bindings = [
-  # TODO: нужные привязки (координаты чанка, семя, настройки)
+  { name = "game", ty = "&mut crate::game::Game<'_>", value = "&mut *self" },
 ]
 
-# Примеры остальных инъекций (из distant_horizons, могут не подойти):
+[[injection]]
+id = "distance"
+kind = "RETURN"
+target = "horizon_client::game::Game<'_>::terrain_distance"
+helper = "distance.rs"
+bindings = [
+  { name = "value", ty = "i32", value = "$value" },
+]
+
+[[injection]]
+id = "list"
+kind = "HEAD"
+target = "horizon_client::game::native_hooks::Game<'_>::native_mods"
+helper = "list.rs"
+bindings = [
+  { name = "mods", ty = "&mut Vec<crate::game::native_hooks::NativeMod>", value = "&mut *mods" },
+]
+
+[[injection]]
+id = "settings"
+kind = "HEAD"
+target = "horizon_client::game::native_hooks::Game<'_>::native_settings"
+helper = "settings.rs"
+bindings = [
+  { name = "game", ty = "&mut crate::game::Game<'_>", value = "&mut *self" },
+  { name = "mod_id", ty = "&str", value = "mod_id" },
+  { name = "buttons", ty = "&mut Vec<String>", value = "&mut *buttons" },
+]
+
+[[injection]]
+id = "click"
+kind = "HEAD"
+target = "horizon_client::game::native_hooks::Game<'_>::native_settings_click"
+helper = "click.rs"
+bindings = [
+  { name = "game", ty = "&mut crate::game::Game<'_>", value = "&mut *self" },
+  { name = "mod_id", ty = "&str", value = "mod_id" },
+  { name = "button", ty = "usize", value = "button" },
+]
+
+[[injection]]
+id = "command"
+kind = "HEAD"
+target = "horizon_client::game::native_hooks::Game<'_>::native_command"
+helper = "command.rs"
+bindings = [
+  { name = "game", ty = "&mut crate::game::Game<'_>", value = "&mut *self" },
+  { name = "command", ty = "&str", value = "command" },
+  { name = "ran", ty = "&mut bool", value = "&mut *ran" },
+]
+
+[[injection]]
+id = "hud"
+kind = "HEAD"
+target = "horizon_client::game::native_hooks::Game<'_>::native_hud"
+helper = "hud.rs"
+bindings = [
+  { name = "game", ty = "&mut crate::game::Game<'_>", value = "&mut *self" },
+  { name = "batch", ty = "&mut horizon_client::hud::HudBatch", value = "&mut *batch" },
+  { name = "corners", ty = "&mut horizon_client::extras_hud::Corners", value = "&mut *corners" },
+]
+
+# ❌ Неизвестно: функция генерации чанка (нужно искать в коде Horizon 66f3981)
 # [[injection]]
-# id = "settings"
+# id = "chunk_gen"
 # kind = "HEAD"
-# target = "horizon_client::game::native_hooks::Game<'_>::native_settings"
-# helper = "settings.rs"
+# target = "TODO: функция генерации чанка в Horizon"
+# helper = "chunk_gen.rs"
 # bindings = [...]
 ```
 
-**❌ Неизвестно (нужно у пользователя или в коде Horizon):**
-- Название функции генерации чанка (цель `target` для `[[injection]]`)
-- Дополнительные точки входа (настройки, кнопки, команды, HUD)
-- Какие типы данных передавать в привязках (`bindings`)
+**❌ Неизвестно (нужно в коде Horizon 66f3981):**
+- Название функции генерации чанка (цель `target` для дополнительного `[[injection]]`)
+- Какие типы данных передавать в привязках для генерации чанков
 
 ### Шаг 4. Написать `bridge.rs`
 
 Клей между нашим генератором и Horizon. По образцу `distant_horizons/mixins/distant_horizons/bridge.rs`:
 
-- Знает типы Horizon (`horizon_client::chunk::Chunk`, `horizon_world::registry::BlockStateId` и т.д.)
+- Знает типы Horizon (из примера `distant_horizons`):
+  - `horizon_client::blocks::BlockFacts`
+  - `horizon_client::chunk::Chunk`
+  - `horizon_world::registry::BlockStateId`
+  - `horizon_client::lod::TileKey`
+  - `horizon_client::mesher::{OPAQUE_LAYER, SectionMesh, TerrainVertex}`
+  - `horizon_client::streaming::{LodSampler, LodSource, WorkerContext}`
+  - `horizon_core::position::BlockPos`
 - Реализует `add_to_volume` по колонкам (уже заготовлено в `mod/glue/litospherity_glue.rs.in`)
+- ❌ Типы `DensityVolume` / `DensityError` **не найдены** в примере `distant_horizons` — нужно искать в коде Horizon 66f3981
 - Регистрирует шумовые источники для Horizon
 - Компилируется только внутри игры Horizon
 
@@ -133,6 +203,7 @@ bindings = [
 - Включить мод `litospherity`
 - Проверить, что мир генерируется без вылетов
 - Проверить DoD Этапа 3: рост времени генерации чанков ≤ 25 % от ванили
+- Измерение времени: по образцу `distant_horizons` — `std::time::{Duration, Instant}`, `Instant::now()` до и после операции, `.elapsed()`
 
 ---
 
