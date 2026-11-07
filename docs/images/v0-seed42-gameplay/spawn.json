@@ -3,8 +3,8 @@
   "seed": 42,
   "mode": "gameplay",
   "version": "v0",
-  "params_hash": "8cd60458847fda7e",
-  "center": [22212.3959225285, -8362.28585012071],
+  "params_hash": "db9735ac8060e384",
+  "center": [20523.118368153446, 43984.69849473965],
   "size": 128,
   "blocks_per_pixel": 256,
   "path": "reference"

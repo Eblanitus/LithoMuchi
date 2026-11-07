@@ -3,9 +3,9 @@
   "seed": 2024,
   "mode": "gameplay",
   "version": "v0",
-  "params_hash": "8cd60458847fda7e",
+  "params_hash": "db9735ac8060e384",
   "center": [0, 0],
-  "size": 192,
-  "blocks_per_pixel": 260.4166666666667,
+  "size": 256,
+  "blocks_per_pixel": 97.65625,
   "path": "reference"
 }
