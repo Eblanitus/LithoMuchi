@@ -61,7 +61,7 @@ pub struct WorldSample {
     pub climate: ClimateSample,
     pub class: ClassSample,
     pub vanilla: VanillaSample,
-    /// Сила рифтовой/предгорной реки, вошедшая в W (7.9.3).
+    /// Сила реки в W: локальная (рифтовая/предгорная) плюс трассированные русла.
     pub river: f64,
     pub is_ocean: bool,
 }
@@ -104,20 +104,18 @@ impl Generator {
         &self.params
     }
 
-    /// Сдвиг макро-координат `p*` (7.12). В v0 найден и доступен слою `spawn`,
-    /// но ещё не подставлен в `macro_point`: карты песочницы остаются на месте
-    /// до T55, чтобы автор сравнивал их с прежними (Д-015).
+    /// Сдвиг макро-координат `p*` (7.12). Подставляется в `macro_point`,
+    /// поэтому точка появления попадает в заданную клетку (Д-015 закрыт).
     pub fn spawn_shift(&self) -> Vec2 {
         self.spawn_shift
     }
 
     /// Блочные координаты → макро-координата `p = x/L, z/L`.
-    /// Сдвиг `p*` (7.12) в v0 найден, но не подставлен сюда (Д-015): карты
-    /// песочницы остаются на прежнем месте планеты, слой `spawn` центрируется
-    /// на `p*` сам.
+    /// Сдвиг `p*` (7.12) подставлен: весь мир сдвигается так, чтобы точка
+    /// появления попала в заданную клетку (Д-015 закрыт).
     pub fn macro_point(&self, x: f64, z: f64) -> Vec2 {
         let l = self.params.block.l_blocks;
-        Vec2::new(x / l, z / l)
+        Vec2::new(x / l, z / l) + self.spawn_shift
     }
 
     /// Плита и границы в блочной точке.
@@ -167,9 +165,20 @@ impl Generator {
         let c = continentalness(climate.surface.e_km, climate.surface.iota_l, &self.params);
         let is_ocean = c < self.params.climate.ocean_c_threshold;
         let class = classify(&climate, is_ocean, x, z, self.seed, &self.params);
-        // Дешёвая часть рек входит в W везде; трассированные реки считаются
-        // отдельно для слоя `rivers` (Д-015).
-        let river = local_r(x, z, &climate.surface, self.seed, &self.params);
+        // Река в W: локальная (рифтовая/предгорная) плюс трассированные русла
+        // (трассы кэшируются в RiverCache, см. `river_sample`).
+        let point = self.macro_point(x, z);
+        let surface = &climate.surface;
+        let local = local_r(x, z, surface, self.seed, &self.params);
+        let traced = traced_r(
+            point,
+            surface.e_km,
+            self.seed,
+            &self.params,
+            &|q| self.surface_at(q),
+            &self.rivers,
+        );
+        let river = local.max(traced);
         let vanilla =
             crate::vanilla::sample(&climate, &class, x, z, self.seed, &self.params, river);
         Some(WorldSample {
