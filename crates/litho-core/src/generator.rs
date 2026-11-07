@@ -37,6 +37,37 @@ thread_local! {
     /// «Последний тайл» на поток: соседние запросы не трогают замки (6.6).
     /// Ключ включает сид и масштаб, чтобы миры в одном процессе не путались (Р14).
     static LAST_COARSE: RefCell<LastCoarse> = const { RefCell::new(None) };
+    /// Кэш колонок на поток: Horizon запрашивает пять полей одной точки
+    /// отдельными шумами, а `sample` считает их все сразу. Без кэша каждая
+    /// колонка проходила полный расчёт пять раз. Значения не меняются.
+    static COLUMNS: RefCell<Vec<ColumnEntry>> = const { RefCell::new(Vec::new()) };
+}
+
+/// Число слотов кэша колонок на поток (степень двойки).
+const COLUMN_SLOTS: usize = 4096;
+
+/// Уникальный номер генератора, чтобы кэш колонок не путал миры.
+static NEXT_GEN_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+
+#[derive(Clone, Copy)]
+struct ColumnEntry {
+    gen_id: u64,
+    x: u64,
+    z: u64,
+    /// C, E, W, T, H, лава, e_km — уже очищенные от не-конечных значений.
+    values: [f64; 7],
+}
+
+fn field_slot(field: Field) -> usize {
+    match field {
+        Field::Continents => 0,
+        Field::Erosion => 1,
+        Field::Ridges => 2,
+        Field::Temperature => 3,
+        Field::Vegetation => 4,
+        Field::Lava => 5,
+        Field::Offset => 6,
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -68,6 +99,7 @@ pub struct WorldSample {
 
 #[derive(Clone, Debug)]
 pub struct Generator {
+    id: u64,
     seed: u64,
     params: Params,
     rivers: Arc<RiverCache>,
@@ -88,6 +120,7 @@ impl Generator {
         let shift = spawn::find_shift(world_seed, &params);
         let shards = params.lattice.cache_shards.max(1);
         Ok(Self {
+            id: NEXT_GEN_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
             seed: world_seed,
             params,
             rivers: Arc::new(RiverCache::new()),
@@ -409,19 +442,61 @@ impl Generator {
 
     /// Одно ванильное поле в блочных координатах: то, что зовёт мод (9.4).
     pub fn field(&self, field: Field, x: f64, _y: f64, z: f64) -> f64 {
+        self.column_values(x, z)[field_slot(field)]
+    }
+
+    /// Все поля колонки разом, через кэш потока (см. `COLUMNS`).
+    fn column_values(&self, x: f64, z: f64) -> [f64; 7] {
+        let (xb, zb) = (x.to_bits(), z.to_bits());
+        let h = xb.wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ zb.wrapping_mul(0xC2B2_AE3D_27D4_EB4F);
+        // Старшие биты: у целых f64 младшие биты мантиссы нулевые.
+        let slot = (h >> (64 - COLUMN_SLOTS.trailing_zeros())) as usize;
+        let hit = COLUMNS.with(|c| {
+            c.borrow()
+                .get(slot)
+                .and_then(|e| (e.gen_id == self.id && e.x == xb && e.z == zb).then_some(e.values))
+        });
+        if let Some(values) = hit {
+            return values;
+        }
+        let values = self.compute_column(x, z);
+        COLUMNS.with(|c| {
+            let mut c = c.borrow_mut();
+            if c.is_empty() {
+                c.resize(
+                    COLUMN_SLOTS,
+                    ColumnEntry {
+                        gen_id: 0,
+                        x: 0,
+                        z: 0,
+                        values: [0.0; 7],
+                    },
+                );
+            }
+            c[slot] = ColumnEntry {
+                gen_id: self.id,
+                x: xb,
+                z: zb,
+                values,
+            };
+        });
+        values
+    }
+
+    fn compute_column(&self, x: f64, z: f64) -> [f64; 7] {
         let Some(full) = self.sample(x, z) else {
-            return 0.0;
+            return [0.0; 7];
         };
-        let value = match field {
-            Field::Continents => full.vanilla.c,
-            Field::Erosion => full.vanilla.e,
-            Field::Ridges => full.vanilla.w,
-            Field::Temperature => full.vanilla.t,
-            Field::Vegetation => full.vanilla.h,
-            Field::Lava => full.lava,
-            Field::Offset => full.climate.surface.e_km,
-        };
-        if value.is_finite() { value } else { 0.0 }
+        let clean = |v: f64| if v.is_finite() { v } else { 0.0 };
+        [
+            clean(full.vanilla.c),
+            clean(full.vanilla.e),
+            clean(full.vanilla.w),
+            clean(full.vanilla.t),
+            clean(full.vanilla.h),
+            clean(full.lava),
+            clean(full.climate.surface.e_km),
+        ]
     }
 
     /// Значение на колонку `(x, z)` для `add_to_volume` (10.3).
