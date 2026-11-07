@@ -206,18 +206,30 @@ impl BoundaryContrib {
     }
 }
 
+/// Геометрия одной границы A|N. Собрана в структуру, чтобы функция не
+/// выходила за лимит clippy по числу аргументов (Д-022).
+#[derive(Clone, Copy)]
+struct BoundaryInput {
+    d_l: f64,
+    normal: Vec2,
+    weight: f64,
+    /// χ из непрерывного κ_global — то же поле, что и у высоты.
+    chi: f64,
+}
+
 /// Вклад одной границы A|N: профили U1–U7, взвешенные k1…k7 (7.3.6, 7.4.3).
 fn boundary_contrib(
     sample: &PlateSample,
     neighbor: &Plate,
-    d_l: f64,
-    normal: Vec2,
-    weight: f64,
-    chi: f64,
+    input: BoundaryInput,
     seed: u64,
     params: &Params,
 ) -> BoundaryContrib {
     let c = &params.crust;
+    let d_l = input.d_l;
+    let normal = input.normal;
+    let weight = input.weight;
+    let chi = input.chi;
     let bt: BoundaryType = boundary_type(&sample.a, neighbor, sample.q, normal, params);
     // Д-022: веса стыка берутся из того же непрерывного κ_global, что и
     // высота e_base. Раньше χ считался от «своей» плиты: на стыке A↔B
@@ -364,10 +376,12 @@ pub fn crust_from_sample(
         bc = boundary_contrib(
             sample,
             &b,
-            sample.d_ab_l,
-            sample.n_ab,
-            sample.w_b,
-            chi,
+            BoundaryInput {
+                d_l: sample.d_ab_l,
+                normal: sample.n_ab,
+                weight: sample.w_b,
+                chi,
+            },
             seed,
             params,
         );
@@ -376,10 +390,12 @@ pub fn crust_from_sample(
         bc = bc.add(boundary_contrib(
             sample,
             &c_plate,
-            sample.d_ac_l,
-            sample.n_ac,
-            sample.w_c,
-            chi,
+            BoundaryInput {
+                d_l: sample.d_ac_l,
+                normal: sample.n_ac,
+                weight: sample.w_c,
+                chi,
+            },
             seed,
             params,
         ));
