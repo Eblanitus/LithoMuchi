@@ -1,0 +1,34 @@
+# Шаблон бандла нативного мода Horizon (план 10.2, T72).
+# НЕ ПРОВЕРЕН сборкой лаунчера: это эскиз по docs/horizon-mixins, готовится xtask bundle.
+# Плейсхолдеры подставляет `cargo run -p xtask -- bundle`.
+[mod]
+id = "litospherity"
+version = "@VERSION@"
+
+[compatibility]
+# Закрепление на точной ночной сборке (план 5.2). Проверить на Windows, что
+# ревизия ещё существует как тег nightly-source/<дата>-<коммит>.
+horizon_revision = "@HORIZON_REV@"
+
+[[crate]]
+id = "core"
+path = "crates/litho-core"
+dependent = "horizon-core"
+
+[[module]]
+id = "glue"
+file = "crates/horizon-core/src/lib.rs"
+name = "litospherity_glue"
+source = "glue/litospherity_glue.rs"
+
+[[injection]]
+id = "noise"
+kind = "HEAD"
+cancellable = true
+target = "horizon_core::density::graph::seeded::SeededContext::noise"
+helper = "glue/noise_hook.rs"
+bindings = [
+  { name = "ctx",   ty = "&SeededContext", value = "self" },
+  { name = "graph", ty = "&DensityGraph",  value = "graph" },
+  { name = "id",    ty = "NoiseId",        value = "id" },
+]

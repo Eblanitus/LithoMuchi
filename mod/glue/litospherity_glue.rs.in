@@ -1,0 +1,128 @@
+// Клей LithoNoise и реестр генераторов (план 10.3, T72/T74).
+// Модуль поддержки [[module]]: НЕЛЬЗЯ писать //! и #![...], внешние mod-файлы
+// и include! (план 5.4). Файл НЕ КОМПИЛИРУЕТСЯ в workspace разработки:
+// пути crate::noise::* принадлежат horizon-core и сверяются при первой сборке.
+use std::sync::{Arc, Mutex, Weak};
+
+use litho_core::{Field, GenVersion, Generator, Mode};
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct NoiseSpec {
+    pub version: GenVersion,
+    pub mode: Mode,
+    pub field: Field,
+}
+
+/// Строгий разбор `litospherity:v0/scientific/continents`.
+/// Неизвестная версия, режим или поле -> None (мир не падает, см. 10.2).
+pub fn parse_noise_name(name: &str) -> Option<NoiseSpec> {
+    let rest = name.strip_prefix("litospherity:")?;
+    let mut parts = rest.split('/');
+    let version = GenVersion::parse(parts.next()?)?;
+    let mode = Mode::parse(parts.next()?)?;
+    let field = Field::parse(parts.next()?)?;
+    if parts.next().is_some() {
+        return None;
+    }
+    Some(NoiseSpec {
+        version,
+        mode,
+        field,
+    })
+}
+
+/// Smoke-пак Э2: мир заведомо наш, всюду суша с постоянной континентальностью.
+/// Имя `litospherity:smoke/<поле>` не версия и не режим, поэтому разбирается
+/// отдельно и не может случайно совпасть с боевым паком.
+pub fn smoke_noise(name: &str) -> Option<Arc<dyn crate::noise::Noise>> {
+    let field = name.strip_prefix("litospherity:smoke/").and_then(Field::parse)?;
+    let value = match field {
+        Field::Continents => 0.8, // заведомо суша
+        _ => 0.0,
+    };
+    Some(Arc::new(ConstNoise { value }))
+}
+
+pub fn noise_for_name(seed: i64, name: &str) -> Option<Arc<dyn crate::noise::Noise>> {
+    if let Some(noise) = smoke_noise(name) {
+        return Some(noise);
+    }
+    parse_noise_name(name).and_then(|spec| noise_for(seed, spec))
+}
+
+type Key = (i64, u8, u8);
+static REGISTRY: Mutex<Vec<(Key, Weak<Generator>)>> = Mutex::new(Vec::new());
+
+fn key(seed: i64, spec: NoiseSpec) -> Key {
+    let version = if spec.version == GenVersion::V0 { 0 } else { 1 };
+    let mode = if spec.mode == Mode::Scientific { 0 } else { 1 };
+    (seed, version, mode)
+}
+
+/// Один Generator на (seed, mode, version), общий для всех полей мира и LOD.
+pub fn noise_for(seed: i64, spec: NoiseSpec) -> Option<Arc<dyn crate::noise::Noise>> {
+    let k = key(seed, spec);
+    let mut registry = REGISTRY.lock().ok()?;
+    registry.retain(|(_, weak)| weak.strong_count() > 0);
+    for (existing, weak) in registry.iter() {
+        if *existing == k {
+            if let Some(gen) = weak.upgrade() {
+                return Some(Arc::new(LithoNoise {
+                    gen,
+                    field: spec.field,
+                }));
+            }
+        }
+    }
+    let gen = Arc::new(Generator::new(seed, spec.mode, spec.version).ok()?);
+    registry.push((k, Arc::downgrade(&gen)));
+    Some(Arc::new(LithoNoise {
+        gen,
+        field: spec.field,
+    }))
+}
+
+#[derive(Debug)]
+pub struct LithoNoise {
+    gen: Arc<Generator>,
+    field: Field,
+}
+
+impl crate::noise::Noise for LithoNoise {
+    fn range(&self) -> Result<[f32; 2], crate::noise::NanRange> {
+        Ok([-1.0, 1.0])
+    }
+
+    fn get2(&self, x: f64, z: f64) -> f32 {
+        self.gen.field_column(self.field, x, z) as f32
+    }
+
+    fn get3(&self, x: f64, _y: f64, z: f64) -> f32 {
+        // Наши поля от y не зависят (кроме лавы, T77).
+        self.gen.field_column(self.field, x, z) as f32
+    }
+
+    // T74: переопределить add_to_volume. Реализация по умолчанию зовёт get3
+    // для КАЖДОЙ точки объёма. Нужно одно значение на колонку (x, z),
+    // прибавленное ко всем y с учётом amplitude. Точные типы DensityVolume и
+    // DensityError, а также порядок обхода (z, x, y) сверяются при T72.
+}
+
+/// Константный шум для smoke-пака Э2. Диапазон объявлен в датапаке, а не здесь
+/// (план 5.3): фиктивное определение обязано накрывать выдаваемые значения.
+#[derive(Debug)]
+pub struct ConstNoise {
+    value: f32,
+}
+
+impl crate::noise::Noise for ConstNoise {
+    fn range(&self) -> Result<[f32; 2], crate::noise::NanRange> {
+        Ok([self.value, self.value])
+    }
+    fn get2(&self, _x: f64, _z: f64) -> f32 {
+        self.value
+    }
+    fn get3(&self, _x: f64, _y: f64, _z: f64) -> f32 {
+        self.value
+    }
+}

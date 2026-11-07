@@ -34,10 +34,15 @@ jobs:
           cat /tmp/v0-hashes.txt
           grep -Fxq 'scientific = 5cdbe1d36ef8d16a' /tmp/v0-hashes.txt
           grep -Fxq 'gameplay = b48e8037c4e85977' /tmp/v0-hashes.txt
-      - name: Профиль скорости по слоям (Э2, без подавления ошибок)
+      - name: Профиль скорости по слоям (Д-027, без подавления ошибок)
         run: cargo run -p litho-sandbox --release -- profile
       - name: sandbox smoke test
         run: cargo run -p litho-sandbox --release -- render --seed 42 --mode gameplay --layers plates,boundaries,jacobian --size 64 --out out/ci-smoke
+      - name: "Э2 — шаблоны паков и бандла (без Windows-сборки)"
+        run: |
+          cargo run -q -p xtask -- pack --out /tmp/litho-packs
+          cargo run -q -p xtask -- bundle --out /tmp/litho-bundle
+          cargo run -q -p xtask -- bundle-check --out /tmp/litho-bundle
 
   msrv:
     name: Linux · MSRV 1.85

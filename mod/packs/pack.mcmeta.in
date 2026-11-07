@@ -1,0 +1,7 @@
+{
+  "pack": {
+    "description": "Litospherity @VERSION@ / @MODE@ — @LABEL@",
+    "min_format": 121,
+    "max_format": 121
+  }
+}
