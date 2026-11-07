@@ -34,13 +34,12 @@ jobs:
         run: cargo build --release -p xtask -p litho-sandbox
       - name: Канонические параметры и хеши
         run: ./target/release/xtask params-doc > docs/PARAMS.md
-      - name: Метрики 12.4, швы и замер
+      - name: Метрики 12.4
+        run: ./target/release/litho-sandbox stats --seed 42 --mode gameplay > docs/images/stats.txt
+      - name: ОБЯЗАТЕЛЬНЫЙ ГЕЙТ: seams пусто и бенч не хуже прошлого
         run: |
-          {
-            ./target/release/litho-sandbox stats --seed 42 --mode gameplay
-            ./target/release/litho-sandbox seams --seed 42 --mode gameplay
-            ./target/release/litho-sandbox bench --seed 42 --mode gameplay
-          } > docs/images/stats.txt
+          ./target/release/litho-sandbox seams --seed 42 --mode gameplay | tee -a docs/images/stats.txt
+          ./target/release/litho-sandbox bench --seed 42 --mode gameplay | tee -a docs/images/stats.txt
       - name: Атлас 16 сидов × 2 режима
         run: ./target/release/litho-sandbox sweep --out docs/images/sweep
       - name: Полные слои, 512×512 @ 64 блока/пк

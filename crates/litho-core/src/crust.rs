@@ -32,6 +32,13 @@ pub struct CrustSample {
     pub iota_l: f64,
     /// Веса k1…k7 у ближайших границ (для отладки и будущих слоёв).
     pub boundary_weights: [f64; 7],
+    /// Доля материковой коры χ в точке (из того же κ, что и высота).
+    pub chi: f64,
+    /// Разложение высоты по физическим вкладам, км (Д-022).
+    pub e_base_km: f64,
+    pub boundary_u_km: f64,
+    pub hotspot_km: f64,
+    pub detail_km: f64,
 }
 
 /// `exp(−(x/w)²)` на детерминированной экспоненте.
@@ -380,7 +387,8 @@ pub fn crust_from_sample(
         + (1.0 - chi) * c.detail_ocean_km * ocean
         + mountain * c.detail_mountain_km * ridges;
 
-    let e_km = e_base(kappa_l, params) + bc.u + hotspots + detail;
+    let e_base_km = e_base(kappa_l, params);
+    let e_km = e_base_km + bc.u + hotspots + detail;
     let iota_l = if e_km > 0.0 {
         kappa_l.max((c.iota_height_factor * e_km).min(c.iota_max_l))
     } else {
@@ -394,6 +402,11 @@ pub fn crust_from_sample(
         plateau: clamp01(bc.plateau),
         iota_l,
         boundary_weights: weights,
+        chi,
+        e_base_km,
+        boundary_u_km: bc.u,
+        hotspot_km: hotspots,
+        detail_km: detail,
     }
 }
 

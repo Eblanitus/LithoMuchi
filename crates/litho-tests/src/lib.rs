@@ -1,9 +1,6 @@
 //! Инварианты 14.2 и побитовые эталоны 14.3.
 
 #[cfg(test)]
-mod diag;
-
-#[cfg(test)]
 mod golden {
     use std::collections::HashMap;
 
