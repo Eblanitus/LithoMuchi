@@ -1,10 +1,12 @@
-// Runs at the initial store of settings_json, before the density graph compiles.
+// Runs at the initialization of noise_clamped, after settings_json exists and
+// before the density graph compiles. The original None value is returned intact.
 // All other settings are retained. No Mojang settings are shipped in our pack.
 fn litospherity_lava_settings(
-    mut value: Value,
+    value: Option<(NoiseSettings, NoiseSettings)>,
+    settings: &mut Value,
     data: &Arc<GeneratorData>,
     dimension: &str,
-) -> Value {
+) -> Option<(NoiseSettings, NoiseSettings)> {
     if dimension != "minecraft:overworld" {
         return value;
     }
@@ -19,14 +21,15 @@ fn litospherity_lava_settings(
         (false, true) => "scientific",
         _ => return value,
     };
-    let Some(aquifers) = value.get_mut("aquifers").and_then(Value::as_object_mut) else {
+    let Some(aquifers) = settings.get_mut("aquifers").and_then(Value::as_object_mut) else {
         return value;
     };
     let Some(original) = aquifers.get("lava").cloned() else {
         return value;
     };
     // Aquifer samples lava at (block_x / 64, block_y / 40, block_z / 64).
-    // y <= -1 represents cells at/below -40. Retain original above this.
+    // floor(y / 40) <= -2 covers blocks strictly below -40.
+    // Cell -1 also includes blocks -39..-1, so retain the original there.
     aquifers.insert(
         "lava".into(),
         serde_json::json!({
@@ -36,7 +39,7 @@ fn litospherity_lava_settings(
                 "from_coordinate": -2, "to_coordinate": 0,
                 "from_value": -80, "to_value": 0
             },
-            "min_inclusive": -1000000, "max_exclusive": -39,
+            "min_inclusive": -1000000, "max_exclusive": -79,
             "when_in_range": format!("litospherity:v0/{mode}/lava"),
             "when_out_of_range": original
         }),

@@ -95,3 +95,25 @@ fn aquifer_lava_is_bounded_by_plate_heat_and_deterministic() {
         }
     }
 }
+
+#[test]
+fn hash_collision_evicts_instead_of_returning_another_coordinate() {
+    let generator = Generator::new(42, Mode::Gameplay, GenVersion::V0).unwrap();
+    let a = expected(&generator, 0.0, 0.0);
+    let b = expected(&generator, 17.0, 0.0);
+    // With the current 4096-slot hash, (0,0) and (17,0) share slot zero.
+    Generator::clear_column_cache();
+    assert_eq!(
+        generator.field(Field::Continents, 0.0, 0.0, 0.0).to_bits(),
+        a[0]
+    );
+    assert_eq!(
+        generator.field(Field::Continents, 17.0, 0.0, 0.0).to_bits(),
+        b[0]
+    );
+    assert_eq!(
+        generator.field(Field::Continents, 0.0, 0.0, 0.0).to_bits(),
+        a[0]
+    );
+    assert_eq!(Generator::column_cache_counts(), (3, 0));
+}

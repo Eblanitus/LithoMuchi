@@ -59,11 +59,12 @@ id = "lava-settings"
 kind = "MODIFY_VARIABLE"
 target = "horizon_world::worldgen::generator::OverworldGenerator::for_world_with_settings"
 helper = "glue/lava_settings.rs"
-variable = { name = "settings_json", ordinal = 0, at = "STORE" }
+variable = { name = "noise_clamped", ordinal = 0, at = "STORE" }
 require = 1
 ordinal = 0
 bindings = [
-  { name = "value", ty = "Value", value = "$value" },
+  { name = "value", ty = "Option<(NoiseSettings, NoiseSettings)>", value = "$value" },
+  { name = "settings", ty = "&mut Value", value = "$local_mut:settings_json:0" },
   { name = "data", ty = "&Arc<GeneratorData>", value = "&data" },
   { name = "dimension", ty = "&str", value = "dimension" },
 ]
