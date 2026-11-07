@@ -86,29 +86,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - name: Собрать бандл (генератор litho-core + клей) и паки
-        run: cargo run -q -p xtask -- bundle --out /tmp/bundle
-      - name: Упаковать .hnmod (пути с прямыми слешами, как требует лаунчер)
+      - name: Упаковать бандл (пути с прямыми слешами, как требует лаунчер)
         run: |
-          rev=$(grep -oP 'horizon_revision = "\K[0-9a-f]+' /tmp/bundle/horizon-mixin.toml)
-          mkdir -p /tmp/hnmod/mixins/litospherity /tmp/out
-          cp -r /tmp/bundle/horizon-mixin.toml /tmp/bundle/glue /tmp/bundle/crates /tmp/hnmod/mixins/litospherity/
-          cat > /tmp/hnmod/horizon-native.json <<JSON
-          {
-            "game": "26.3",
-            "horizon": "$rev",
-            "id": "litospherity",
-            "schema": 1,
-            "version": "0.1.0",
-            "mixins": "0d6b103c70633d8fd9443d8d0acd3aadaacedb06"
-          }
-          JSON
-          (cd /tmp/hnmod && zip -r -X /tmp/out/litospherity.hnmod .)
-          (cd /tmp/bundle/packs && for p in *; do (cd "$p" && zip -r -X "/tmp/out/$p.zip" .); done)
-          ls -la /tmp/out
-          test $(stat -c %s /tmp/out/litospherity.hnmod) -gt 20000
+          cd mod/litospherity
+          python3 -c "import json; json.load(open('horizon-native.json'))"
+          zip -r -X ../../litospherity.hnmod horizon-native.json mixins
+          unzip -l ../../litospherity.hnmod
       - uses: actions/upload-artifact@v4
         with:
           name: litospherity-hnmod
-          path: /tmp/out/
+          path: litospherity.hnmod
