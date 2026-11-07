@@ -9,7 +9,7 @@ struct NoiseSettings;
 include!("../../../mod/glue/lava_settings.rs.in");
 
 fn patch(mut settings: Value, data: &Arc<GeneratorData>, dimension: &str) -> Value {
-    litospherity_lava_settings(None, &mut settings, data, dimension);
+    let _ = litospherity_lava_settings(None, &mut settings, data, dimension);
     settings
 }
 

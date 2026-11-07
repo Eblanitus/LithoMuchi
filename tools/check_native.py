@@ -49,6 +49,9 @@ def main():
            '-p', 'horizon-mixins-cli', '--']
     run(cli + ['plan'] + common + ['--out', str(ROOT / 'out/native-plan.json')])
     run(cli + ['apply'] + common + ['--out', str(ROOT / 'out/native-stage')])
+    # Bundled path crates add workspace-package entries. Refresh those entries
+    # while retaining pinned registry dependencies, then require a locked build.
+    run(['cargo', 'update', '--workspace', '--manifest-path', str(ROOT / 'out/native-stage/Cargo.toml')])
     # Check the transformed libraries, not only the TOML and injection planner.
     run(['cargo', 'check', '--locked', '--manifest-path', str(ROOT / 'out/native-stage/Cargo.toml'),
          '--lib', '-p', 'horizon-core', '-p', 'horizon-world', '-p', 'horizon-client-render',
