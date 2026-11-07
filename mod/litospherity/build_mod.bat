@@ -17,9 +17,16 @@ set MOD_DST=%HORIZON_DIR%\crates\litospherity_mod
 echo [litospherity] Копирование исходников мода в %MOD_DST%...
 if not exist "%MOD_DST%\" mkdir "%MOD_DST%"
 
+REM Копируем Rust-хелперы инъекций
 xcopy /E /I /Y "%MOD_SRC%\mixins\litospherity\*.rs" "%MOD_DST%\src\mixins\litospherity\"
+REM Копируем манифест и конфиг миксинов
 xcopy /E /I /Y "%MOD_SRC%\horizon-native.json" "%MOD_DST%\"
 xcopy /E /I /Y "%MOD_SRC%\mixins\litospherity\horizon-mixin.toml" "%MOD_DST%\"
+REM Копируем Cargo-манифест и корневые исходники пакета
+xcopy /E /I /Y "%MOD_SRC%\Cargo.toml" "%MOD_DST%\"
+xcopy /E /I /Y "%MOD_SRC%\src\*.rs" "%MOD_DST%\src\"
+xcopy /E /I /Y "%MOD_SRC%\src\mixins\*.rs" "%MOD_DST%\src\mixins\"
+xcopy /E /I /Y "%MOD_SRC%\src\mixins\litospherity\*.rs" "%MOD_DST%\src\mixins\litospherity\"
 
 if errorlevel 1 (
     echo [litospherity] ОШИБКА: не удалось скопировать файлы мода.
