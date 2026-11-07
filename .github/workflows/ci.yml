@@ -93,6 +93,20 @@ jobs:
         run: cargo run -q -p xtask -- bundle-check --out out/bundle
       - name: Package client hooks, worldgen and core
         run: python3 tools/package_mod.py
+      - uses: actions/checkout@v4
+        with:
+          repository: horizon-rust/horizon
+          ref: 66f3981f522b24c250b21523a70080965b940424
+          path: out/horizon-source
+      - uses: actions/checkout@v4
+        with:
+          repository: horizon-rust/horizon-mixins
+          ref: 5a64af938ec86b00d53d16a408aabc0038fb3e57
+          path: out/horizon-mixins
+      - name: Validate actual packaged mod against pinned Horizon source
+        run: |
+          python3 -m zipfile -e out/release/litospherity.hnmod out/native-check
+          cargo run --manifest-path out/horizon-mixins/Cargo.toml -p horizon-mixins-cli -- plan --workspace out/horizon-source --mods out/native-check/mixins --out out/native-plan.json
       - uses: actions/upload-artifact@v4
         with:
           name: litospherity-hnmod
