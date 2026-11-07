@@ -264,7 +264,18 @@ impl Generator {
                 values[i * lattice::NODES + j] = cell;
             }
         }
+        // Д-021: сглаживание [1,4,6,4,1]/16 гасит рябь берега на 1,25 L,
+        // и луч влаги в узлах coarse-решётки усредняется насмерть — быстрый
+        // путь выдавал p_mm ≈ 90 мм там, где эталон даёт 32…237 мм. Плавные
+        // поля (φ, амплитуда, SST) сглаживаем, а зависящие от рельефа
+        // (t0, cont, p_mm, mu) оставляем как посчитано в узле.
+        let raw = values.clone();
         lattice::smooth(&mut values);
+        for (cell, src) in values.iter_mut().zip(raw.iter()) {
+            for n in [1_usize, 4, 5, 6] {
+                cell[n] = src[n];
+            }
+        }
         Arc::new(values)
     }
 

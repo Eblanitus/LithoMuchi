@@ -237,7 +237,7 @@ mod fast_path {
     #[test]
     fn diag_zone_split() {
         let generator = generator();
-        let pts = points(20);
+        let pts = points(150);
         let mut bad = 0;
         for (i, (x, z)) in pts.iter().enumerate() {
             let r = generator.sample_reference(*x, *z).unwrap();
@@ -248,7 +248,7 @@ mod fast_path {
             if diff {
                 bad += 1;
             }
-            if i < 20 {
+            if i < 8 {
                 println!(
                     "{i:2} {} ({x:8.2},{z:8.2}) zone {:?} vs {:?} | phi {:7.3}/{:7.3} tbio {:7.3}/{:7.3} ratio {:8.3}/{:8.3} pmm {:8.1}/{:8.1} mu {:6.3}/{:6.3} cont {:6.3}/{:6.3} amp {:6.3}/{:6.3} e {:6.2}/{:6.2}",
                     if diff { "РАСХ" } else { " OK " },
@@ -273,7 +273,11 @@ mod fast_path {
                 );
             }
         }
-        println!("ИТОГО расхождений зон: {bad} из {}", pts.len());
+        println!(
+            "ИТОГО расхождений зон: {bad} из {}, совпадение {:.3}",
+            pts.len(),
+            1.0 - bad as f64 / pts.len() as f64
+        );
     }
 
     /// 14.2: кэш не меняет ответ, результаты не зависят от порядка.
