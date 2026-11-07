@@ -689,6 +689,38 @@ fn cmd_profile() -> Result<(), String> {
         }
         acc
     });
+    // Д-027: где именно внутри `surface_at` уходят 850 мкс.
+    sink += measure("33 kappa_global", &points, |x, z| {
+        let base = generator.macro_point(x, z);
+        let mut acc = 0.0_f64;
+        for k in 0..33 {
+            let q = litho_core::math::Vec2::new(base.x - k as f64 * 0.25, base.z);
+            acc += litho_core::crust::kappa_global(q, 42, generator.params());
+        }
+        acc
+    });
+    sink += measure("33 plate_query", &points, |x, z| {
+        let base = generator.macro_point(x, z);
+        let mut acc = 0.0_f64;
+        for k in 0..33 {
+            let q = litho_core::math::Vec2::new(base.x - k as f64 * 0.25, base.z);
+            acc += litho_core::plates::plate_query(q, 42, generator.params())
+                .map(|p| p.d_ab_l)
+                .unwrap_or(0.0);
+        }
+        acc
+    });
+    sink += measure("33 crust_from_sample", &points, |x, z| {
+        let base = generator.macro_point(x, z);
+        let mut acc = 0.0_f64;
+        for k in 0..33 {
+            let q = litho_core::math::Vec2::new(base.x - k as f64 * 0.25, base.z);
+            if let Some(pl) = litho_core::plates::plate_query(q, 42, generator.params()) {
+                acc += litho_core::crust::crust_from_sample(q, &pl, 42, generator.params()).e_km;
+            }
+        }
+        acc
+    });
     println!("profile: sink={sink:.3} (чтобы оптимизатор не выкинул замеры)");
     std::hint::black_box(sink);
     Ok(())
