@@ -132,6 +132,4 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: litospherity-hnmod
-          path: |
-            out/release/litospherity.hnmod
-            out/release/*.zip
+          path: out/release/litospherity.hnmod

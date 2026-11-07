@@ -7,6 +7,8 @@ import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
 archive = ROOT / 'out/release/litospherity.hnmod'
+for mode in ('gameplay', 'scientific'):
+    assert not (archive.parent / f'litospherity_v0_{mode}.zip').exists(), 'redundant mode ZIP in player release'
 with zipfile.ZipFile(archive) as z:
     names = z.namelist()
     assert len(names) == len(set(names)), 'duplicate archive entries'

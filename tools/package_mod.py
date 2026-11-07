@@ -46,19 +46,21 @@ def package(bundle, out, include_smoke=False):
         for entry in parsed.get('crate', []):
             assert (target / entry['path'] / 'Cargo.toml').is_file(), entry
         archive(staging, out / 'litospherity.hnmod')
-    names = ['litospherity_v0_gameplay', 'litospherity_v0_scientific']
-    if include_smoke:
-        names.append('litospherity_smoke')
-    else:
-        # Do not leave a previous developer smoke archive in a player release.
-        (out / 'litospherity_smoke.zip').unlink(missing_ok=True)
+    # A player release is one self-contained mod, not separate world-mode ZIPs.
+    names = ['litospherity_smoke'] if include_smoke else []
+    for name in ('litospherity_v0_gameplay', 'litospherity_v0_scientific', 'litospherity_smoke'):
+        if name not in names:
+            # Also clean outputs from older packager versions on rebuild.
+            (out / (name + '.zip')).unlink(missing_ok=True)
     for name in names:
         pack = bundle / 'packs' / name
         for path in pack.rglob('*.json'):
             json.loads(path.read_text())
         json.loads((pack / 'pack.mcmeta').read_text())
         archive(pack, out / (name + '.zip'))
-    print(f'Packaged mod with two embedded modes and {len(names)} optional ZIPs: {out}')
+    print(f'Packaged self-contained mod with two embedded modes: {out / "litospherity.hnmod"}')
+    if include_smoke:
+        print(f'Developer-only smoke ZIP: {out / "litospherity_smoke.zip"}')
     print('Native compilation and in-game world generation still require Horizon.')
 
 

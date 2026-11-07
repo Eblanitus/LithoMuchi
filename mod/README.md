@@ -6,8 +6,9 @@ Smoke в обычную поставку не входит. Подробност
 [docs/INTEGRATION-0.2.0.md](../docs/INTEGRATION-0.2.0.md).
 
 Сборка: `cargo run -p xtask -- bundle --out out/bundle`, затем
-`python tools/package_mod.py`. Результат: `out/release/litospherity.hnmod`
-и два необязательных ZIP. Дополнительный smoke ZIP — флаг `--include-smoke`.
+`python tools/package_mod.py`. Результат — только `out/release/litospherity.hnmod`, оба режима уже внутри.
+Устаревшие ZIP режимов удаляются при повторной упаковке. Только для разработки
+можно отдельно получить smoke ZIP флагом `--include-smoke`; CI его не публикует.
 
 Ниже сохранена история подключения 0.1.0; её ручная установка датапаков
 не требуется для нового мода и нового мира.
@@ -27,8 +28,8 @@ cargo run -q -p xtask -- bundle-check --out out/bundle
 python tools/package_mod.py
 ```
 
-В `out/release/` появятся `litospherity.hnmod` и три ZIP-датапака.
-Те же файлы публикует CI в артефакте `litospherity-hnmod`.
+В `out/release/` появится только `litospherity.hnmod`.
+Его публикует CI в артефакте `litospherity-hnmod`.
 Мод содержит `litho-core`, модуль `litospherity_glue` в horizon-core и
 cancellable HEAD на `SeededContext::noise`, а также клиентскую команду и строку
 в списке модов. Только шумы с пространством имён `litospherity:` заменяются;
