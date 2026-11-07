@@ -36,7 +36,7 @@ jobs:
         run: ./target/release/xtask params-doc > docs/PARAMS.md
       - name: Метрики 12.4
         run: ./target/release/litho-sandbox stats --seed 42 --mode gameplay > docs/images/stats.txt
-      - name: ОБЯЗАТЕЛЬНЫЙ ГЕЙТ: seams пусто и бенч не хуже прошлого
+      - name: "ОБЯЗАТЕЛЬНЫЙ ГЕЙТ — seams пусто и бенч не хуже прошлого"
         run: |
           ./target/release/litho-sandbox seams --seed 42 --mode gameplay | tee -a docs/images/stats.txt
           ./target/release/litho-sandbox bench --seed 42 --mode gameplay | tee -a docs/images/stats.txt

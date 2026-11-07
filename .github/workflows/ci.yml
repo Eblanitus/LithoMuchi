@@ -23,7 +23,7 @@ jobs:
         run: cargo clippy --workspace --all-targets -- -D warnings
       - name: tests
         run: cargo test --workspace
-      - name: ОБЯЗАТЕЛЬНЫЙ ГЕЙТ: seams пусто и бенч не хуже прошлого
+      - name: "ОБЯЗАТЕЛЬНЫЙ ГЕЙТ — seams пусто и бенч не хуже прошлого"
         run: |
           cargo run -p litho-sandbox --release -- seams --seed 42 --mode gameplay
           cargo run -p litho-sandbox --release -- bench --seed 42 --mode gameplay
