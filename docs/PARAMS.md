@@ -80,17 +80,17 @@
 | `climate.uplift_base` | `0.6` | `0.6` |
 | `climate.uplift_per_slope` | `0.5` | `0.5` |
 | `climate.uplift_slope_max` | `3.0` | `3.0` |
-| `climate.w_land_start` | `0.5` | `0.5` |
+| `climate.w_land_start` | `0.85` | `0.85` |
 | `climate.w_max` | `0.75` | `0.75` |
 | `climate.w_mnt_base` | `0.3` | `0.3` |
 | `climate.w_mnt_noise` | `0.4` | `0.4` |
 | `climate.w_plain_base` | `0.18` | `0.18` |
 | `climate.w_plain_noise` | `0.1` | `0.1` |
 | `climate.w_plateau` | `0.33` | `0.33` |
-| `climate.w_sat_base` | `0.3` | `0.3` |
-| `climate.w_sat_max` | `1.25` | `1.25` |
+| `climate.w_sat_base` | `0.5` | `0.5` |
+| `climate.w_sat_max` | `2.1` | `2.1` |
 | `climate.w_sat_min` | `0.3` | `0.3` |
-| `climate.w_sat_per_c` | `0.035` | `0.035` |
+| `climate.w_sat_per_c` | `0.048` | `0.048` |
 | `climate.w_sign_scale` | `3.0` | `3.0` |
 | `climate.west_e` | `0.94` | `0.94` |
 | `climate.west_n` | `0.35` | `0.35` |
@@ -192,7 +192,7 @@
 | `poles.warp_lambda0_l` | `40` | `40` |
 | `precip.advection_mm` | `1500` | `1500` |
 | `precip.itcz_precip_mm` | `1900` | `1900` |
-| `precip.land_length_l` | `12` | `12` |
+| `precip.land_length_l` | `32` | `32` |
 | `precip.ocean_length_l` | `1` | `1` |
 | `precip.orographic_height_km` | `1.5` | `1.5` |
 | `precip.ray_step_l` | `0.25` | `0.25` |
@@ -245,4 +245,4 @@
 | `wind.knot7.phi_deg` | `90` | `90` |
 | `wind.knot7.s` | `0.3` | `0.3` |
 
-params_hash: scientific = 508c92f97ebb4389, gameplay = 0a0354986ff62688
+params_hash: scientific = 5cdbe1d36ef8d16a, gameplay = b48e8037c4e85977
