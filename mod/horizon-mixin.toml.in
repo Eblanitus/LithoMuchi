@@ -19,6 +19,7 @@ dependent = "horizon-core"
 id = "glue"
 file = "crates/horizon-core/src/lib.rs"
 name = "litospherity_glue"
+visibility = "pub"
 source = "glue/litospherity_glue.rs"
 
 [[injection]]
@@ -31,4 +32,38 @@ bindings = [
   { name = "ctx",   ty = "&SeededContext", value = "self" },
   { name = "graph", ty = "&DensityGraph",  value = "graph" },
   { name = "id",    ty = "NoiseId",        value = "id" },
+]
+
+[[crate]]
+id = "packs"
+path = "crates/litho-packs"
+dependent = "horizon-client-render"
+
+[[injection]]
+id = "builtin-packs"
+kind = "HEAD"
+target = "horizon_client_render::datapack::screen_packs"
+helper = "glue/packs_hook.rs"
+bindings = [{ name = "dir", ty = "&Path", value = "dir" }]
+
+[[injection]]
+id = "exclusive-mode"
+kind = "HEAD"
+cancellable = true
+target = "horizon_client_render::datapack::install"
+helper = "glue/packs_guard.rs"
+bindings = [{ name = "selected", ty = "&[String]", value = "selected" }]
+
+[[injection]]
+id = "lava-settings"
+kind = "MODIFY_VARIABLE"
+target = "horizon_world::worldgen::generator::OverworldGenerator::for_world_with_settings"
+helper = "glue/lava_settings.rs"
+variable = { name = "settings_json", ordinal = 0, at = "STORE" }
+require = 1
+ordinal = 0
+bindings = [
+  { name = "value", ty = "Value", value = "$value" },
+  { name = "data", ty = "&Arc<GeneratorData>", value = "&data" },
+  { name = "dimension", ty = "&str", value = "dimension" },
 ]

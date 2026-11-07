@@ -13,6 +13,7 @@ pub mod cache;
 pub mod classify;
 pub mod climate;
 pub mod crust;
+pub mod diagnostic;
 pub mod field;
 pub mod generator;
 pub mod hash;

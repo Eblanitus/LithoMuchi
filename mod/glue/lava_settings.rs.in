@@ -1,0 +1,45 @@
+// Runs at the initial store of settings_json, before the density graph compiles.
+// All other settings are retained. No Mojang settings are shipped in our pack.
+fn litospherity_lava_settings(
+    mut value: Value,
+    data: &Arc<GeneratorData>,
+    dimension: &str,
+) -> Value {
+    if dimension != "minecraft:overworld" {
+        return value;
+    }
+    let gameplay = data
+        .densities
+        .contains_key("litospherity:v0/gameplay/active");
+    let scientific = data
+        .densities
+        .contains_key("litospherity:v0/scientific/active");
+    let mode = match (gameplay, scientific) {
+        (true, false) => "gameplay",
+        (false, true) => "scientific",
+        _ => return value,
+    };
+    let Some(aquifers) = value.get_mut("aquifers").and_then(Value::as_object_mut) else {
+        return value;
+    };
+    let Some(original) = aquifers.get("lava").cloned() else {
+        return value;
+    };
+    // Aquifer samples lava at (block_x / 64, block_y / 40, block_z / 64).
+    // y <= -1 represents cells at/below -40. Retain original above this.
+    aquifers.insert(
+        "lava".into(),
+        serde_json::json!({
+            "type": "minecraft:range_choice",
+            "input": {
+                "type": "minecraft:gradient", "axis": "y",
+                "from_coordinate": -2, "to_coordinate": 0,
+                "from_value": -80, "to_value": 0
+            },
+            "min_inclusive": -1000000, "max_exclusive": -39,
+            "when_in_range": format!("litospherity:v0/{mode}/lava"),
+            "when_out_of_range": original
+        }),
+    );
+    value
+}

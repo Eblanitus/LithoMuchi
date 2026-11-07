@@ -770,6 +770,7 @@ fn usage() -> &'static str {
     "Litospherity sandbox (этап Э1, песочница целиком)\n\n\
      Команды:\n\
        render       карты PNG в папку --out\n\
+       diagnose     поля, биты и локальные скачки для сверки с игрой\n\
        probe        все поля в точке --at x,z\n\
        layers       список слоёв\n\
        stats        метрики 12.4 по области 200×200 L\n\
@@ -799,6 +800,16 @@ fn main() -> Result<(), String> {
     match command.as_str() {
         "render" => cmd_render(&args[1..]),
         "probe" => cmd_probe(&args[1..]),
+        "diagnose" => {
+            let opts = options_from(&args[1..])?;
+            let at = value(&args[1..], "--at").ok_or("нужно --at x,z")?;
+            let (x, z) = parse_pair(&at)?;
+            println!(
+                "{}",
+                litho_core::diagnostic::point(opts.seed, opts.mode, x, z)?
+            );
+            Ok(())
+        }
         "stats" => cmd_stats(&args[1..]),
         "stats-all" => cmd_stats_all(),
         "seams" => cmd_seams(&args[1..]),

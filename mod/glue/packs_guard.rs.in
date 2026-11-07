@@ -1,0 +1,10 @@
+// Refuse ambiguous selection rather than silently picking pack priority.
+fn litospherity_pack_selection(selected: &[String]) -> core::ops::ControlFlow<Result<(), String>> {
+    if litho_packs::conflicting(selected) {
+        core::ops::ControlFlow::Break(Err(
+            "Litospherity: select only one world mode (Gameplay OR Scientific).".into(),
+        ))
+    } else {
+        core::ops::ControlFlow::Continue(())
+    }
+}

@@ -36,6 +36,10 @@ jobs:
           grep -Fxq 'gameplay = b48e8037c4e85977' /tmp/v0-hashes.txt
       - name: Профиль скорости по слоям (Д-027, без подавления ошибок)
         run: cargo run -p litho-sandbox --release -- profile
+      - name: Column cache benchmark (exact values, both query orders)
+        run: |
+          cargo run -p litho-core --release --example bench_columns -- 42 gameplay 2
+          cargo run -p litho-core --release --example bench_columns -- 42 scientific 2
       - name: sandbox smoke test
         run: cargo run -p litho-sandbox --release -- render --seed 42 --mode gameplay --layers plates,boundaries,jacobian --size 64 --out out/ci-smoke
       - name: "Э2 — шаблоны паков и бандла (без Windows-сборки)"
@@ -84,6 +88,7 @@ jobs:
   hnmod:
     name: Мод · упаковка litospherity.hnmod
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -92,7 +97,9 @@ jobs:
       - name: Validate bundle
         run: cargo run -q -p xtask -- bundle-check --out out/bundle
       - name: Package client hooks, worldgen and core
-        run: python3 tools/package_mod.py
+        run: |
+          python3 tools/package_mod.py
+          python3 tools/check_package.py
       - uses: actions/checkout@v4
         with:
           repository: horizon-rust/horizon
@@ -118,10 +125,10 @@ jobs:
               link.unlink()
               link.write_bytes(content)
           PYTHON
-      - name: Validate actual packaged mod against pinned Horizon source
-        run: |
-          python3 -m zipfile -e out/release/litospherity.hnmod out/native-check
-          cargo run --manifest-path out/horizon-mixins/Cargo.toml -p horizon-mixins-cli -- plan --workspace out/horizon-source --mods out/native-check/mixins --out out/native-plan.json
+      - name: Linux headers for the native client check
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libasound2-dev libudev-dev
+      - name: Validate, apply and compile the actual packaged mod
+        run: python3 tools/check_native.py
       - uses: actions/upload-artifact@v4
         with:
           name: litospherity-hnmod

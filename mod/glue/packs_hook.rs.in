@@ -1,0 +1,6 @@
+// Populate only Create World's temporary pack folder, never existing saves.
+fn litospherity_packs(dir: &Path) {
+    if let Err(error) = litho_packs::install(dir) {
+        log::warn!("Litospherity: cannot install built-in datapacks: {error}");
+    }
+}

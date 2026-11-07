@@ -11,7 +11,7 @@ use litho_core::{GenVersion, Mode, Params};
 /// Версия генератора, для которой сейчас собираются паки (план 6.8).
 const GEN_VERSION: GenVersion = GenVersion::V0;
 /// Версия самого мода в `[mod] version` манифеста.
-const MOD_VERSION: &str = "0.1.0";
+const MOD_VERSION: &str = "0.2.0";
 /// Ревизия Horizon из раздела 5 плана; сверить на Windows (T70).
 const HORIZON_REV: &str = "66f3981f522b24c250b21523a70080965b940424";
 /// Пять полей, которые подменяем в MVP (точка №2 плана 10.1).
@@ -159,6 +159,35 @@ fn make_pack(dir: &Path, label: &str, noise_prefix: &str, noise_dir: &str) -> Re
             &noise,
         )?;
     }
+    if noise_dir != "smoke" {
+        let mode = noise_dir.rsplit('/').next().ok_or("нет режима")?;
+        fs::copy(
+            mod_dir().join(format!("assets/{mode}.png")),
+            dir.join("pack.png"),
+        )
+        .map_err(|e| e.to_string())?;
+        write_file(
+            &dir.join(format!(
+                "data/litospherity/worldgen/density_function/{noise_dir}/active.json"
+            )),
+            "0.0\n",
+        )?;
+        let lava_id = format!("{noise_prefix}/lava");
+        write_file(
+            &dir.join(format!(
+                "data/litospherity/worldgen/density_function/{noise_dir}/lava.json"
+            )),
+            &format!(
+                "{{\"type\":\"minecraft:noise\",\"noise\":\"{lava_id}\",\"xz_scale\":64.0,\"y_scale\":40.0}}\n"
+            ),
+        )?;
+        write_file(
+            &dir.join(format!(
+                "data/litospherity/worldgen/noise/{noise_dir}/lava.json"
+            )),
+            &noise,
+        )?;
+    }
     println!("пак: {}", dir.display());
     Ok(())
 }
@@ -170,7 +199,11 @@ fn cmd_pack(out: &Path) -> Result<(), String> {
         let noise_dir = format!("{}/{}", GEN_VERSION.as_str(), mode.as_str());
         make_pack(
             &out.join(&name),
-            "поля Litospherity",
+            if mode == Mode::Gameplay {
+                "Игровой мир — просторные материки и климат, удобный масштаб"
+            } else {
+                "Научный мир — крупные материки и протяжённые климатические пояса"
+            },
             &format!("litospherity:{noise_dir}"),
             noise_dir.as_str(),
         )?;
@@ -219,6 +252,9 @@ fn cmd_bundle(out: &Path) -> Result<(), String> {
     )?;
     for (src, dst) in [
         ("glue/noise_hook.rs.in", "glue/noise_hook.rs"),
+        ("glue/packs_hook.rs.in", "glue/packs_hook.rs"),
+        ("glue/packs_guard.rs.in", "glue/packs_guard.rs"),
+        ("glue/lava_settings.rs.in", "glue/lava_settings.rs"),
         ("glue/litospherity_glue.rs.in", "glue/litospherity_glue.rs"),
     ] {
         let text = read_template(src)?;
@@ -232,6 +268,7 @@ fn cmd_bundle(out: &Path) -> Result<(), String> {
         &out.join("crates/litho-core"),
     )?;
     cmd_pack(&out.join("packs"))?;
+    make_packs_crate(out)?;
     write_file(
         &out.join("README.txt"),
         "Бандл собран xtask, НЕ проверен лаунчером Horizon (T70/T72).\n\
@@ -240,6 +277,53 @@ fn cmd_bundle(out: &Path) -> Result<(), String> {
          Подробности: docs/HORIZON.md в репозитории.\n",
     )?;
     println!("бандл: {} (исходников ядра: {n})", out.display());
+    Ok(())
+}
+
+/// Embed only the two player modes in a dependency-free crate. Includes are
+/// legal inside bundle crates (support modules cannot use include_bytes!).
+fn make_packs_crate(out: &Path) -> Result<(), String> {
+    let dst = out.join("crates/litho-packs");
+    write_file(
+        &dst.join("Cargo.toml"),
+        "[package]\nname = \"litho-packs\"\nversion = \"0.2.0\"\nedition = \"2024\"\nrust-version = \"1.85\"\nlicense = \"MIT OR Apache-2.0\"\n[dependencies]\n",
+    )?;
+    let mut source = String::from("const FILES: &[(&str, &str, &[u8])] = &[\n");
+    for (mode, title) in [
+        ("gameplay", "Litospherity - Игровой мир"),
+        ("scientific", "Litospherity - Научный мир"),
+    ] {
+        let pack = out.join(format!("packs/litospherity_v0_{mode}"));
+        let data = dst.join(format!("data/{mode}"));
+        copy_dir(&pack, &data)?;
+        let mut files = Vec::new();
+        collect_files(&data, &data, &mut files)?;
+        files.sort();
+        for rel in files {
+            source.push_str(&format!(
+                "    ({title:?}, {rel:?}, include_bytes!(concat!(env!(\"CARGO_MANIFEST_DIR\"), \"/data/{mode}/{rel}\"))),\n"
+            ));
+        }
+    }
+    source.push_str("];\n");
+    source.push_str(&read_template("packs_installer.rs")?);
+    write_file(&dst.join("src/lib.rs"), &source)
+}
+
+fn collect_files(root: &Path, dir: &Path, files: &mut Vec<String>) -> Result<(), String> {
+    for entry in fs::read_dir(dir).map_err(|e| e.to_string())? {
+        let path = entry.map_err(|e| e.to_string())?.path();
+        if path.is_dir() {
+            collect_files(root, &path, files)?;
+        } else {
+            files.push(
+                path.strip_prefix(root)
+                    .map_err(|e| e.to_string())?
+                    .to_string_lossy()
+                    .replace('\\', "/"),
+            );
+        }
+    }
     Ok(())
 }
 
@@ -271,7 +355,7 @@ fn check_no_placeholders(dir: &Path) -> Result<usize, String> {
         }
         if name.ends_with(".json") || name.ends_with(".mcmeta") {
             let trimmed = text.trim();
-            if !trimmed.starts_with('{') || !trimmed.ends_with('}') {
+            if trimmed != "0.0" && (!trimmed.starts_with('{') || !trimmed.ends_with('}')) {
                 return Err(format!("{}: не похоже на JSON", path.display()));
             }
         }

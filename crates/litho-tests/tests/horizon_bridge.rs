@@ -131,3 +131,27 @@ mod hook_contract {
         ));
     }
 }
+
+#[test]
+fn lava_bulk_uses_all_three_scaled_block_coordinates() {
+    let noise = noise_for_name(42, "litospherity:v0/gameplay/lava").unwrap();
+    let generator =
+        litho_core::Generator::new(42, litho_core::Mode::Gameplay, litho_core::GenVersion::V0)
+            .unwrap();
+    let volume = DensityVolume::new([2, 3, 2], [-2, -2, 3], [1, 1, 1]).unwrap();
+    let mut buffer = vec![0.25; volume.size() + 1];
+    noise
+        .add_to_volume(&mut buffer, volume, 64.0, 40.0, 0.75)
+        .unwrap();
+    let mut index = 0;
+    for z in [3.0, 4.0] {
+        for x in [-2.0, -1.0] {
+            for y in [-2.0, -1.0, 0.0] {
+                let sampled = generator.aquifer_lava(x * 64.0, y * 40.0, z * 64.0) as f32;
+                assert_eq!(buffer[index].to_bits(), (0.25 + 0.75 * sampled).to_bits());
+                index += 1;
+            }
+        }
+    }
+    assert_eq!(buffer[volume.size()], 0.25);
+}

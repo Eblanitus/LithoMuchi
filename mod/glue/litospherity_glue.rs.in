@@ -21,7 +21,17 @@ pub fn parse_noise_name(name: &str) -> Option<NoiseSpec> {
     let version = GenVersion::parse(parts.next()?)?;
     let mode = Mode::parse(parts.next()?)?;
     let field = Field::parse(parts.next()?)?;
-    if parts.next().is_some() || !matches!(field, Field::Continents | Field::Erosion | Field::Ridges | Field::Temperature | Field::Vegetation) {
+    if parts.next().is_some()
+        || !matches!(
+            field,
+            Field::Continents
+                | Field::Erosion
+                | Field::Ridges
+                | Field::Temperature
+                | Field::Vegetation
+                | Field::Lava
+        )
+    {
         return None;
     }
     Some(NoiseSpec {
@@ -35,7 +45,9 @@ pub fn parse_noise_name(name: &str) -> Option<NoiseSpec> {
 /// Имя `litospherity:smoke/<поле>` не версия и не режим, поэтому разбирается
 /// отдельно и не может случайно совпасть с боевым паком.
 pub fn smoke_noise(name: &str) -> Option<Arc<dyn crate::noise::Noise>> {
-    let field = name.strip_prefix("litospherity:smoke/").and_then(Field::parse)?;
+    let field = name
+        .strip_prefix("litospherity:smoke/")
+        .and_then(Field::parse)?;
     let value = match field {
         Field::Continents => 0.8, // заведомо суша
         _ => 0.0,
@@ -95,12 +107,15 @@ impl crate::noise::Noise for LithoNoise {
     }
 
     fn get2(&self, x: f64, z: f64) -> f32 {
-        self.generator.field_column(self.field, x, z) as f32
+        self.get3(x, 0.0, z)
     }
 
-    fn get3(&self, x: f64, _y: f64, z: f64) -> f32 {
-        // Наши поля от y не зависят (кроме лавы, T77).
-        self.generator.field_column(self.field, x, z) as f32
+    fn get3(&self, x: f64, y: f64, z: f64) -> f32 {
+        if self.field == Field::Lava {
+            self.generator.aquifer_lava(x, y, z) as f32
+        } else {
+            self.generator.field_column(self.field, x, z) as f32
+        }
     }
 
     // Horizon 66f3981: Z/X/Y layout, scaled coordinates, additive writes.
@@ -110,7 +125,7 @@ impl crate::noise::Noise for LithoNoise {
         buffer: &mut [f32],
         volume: crate::noise::DensityVolume,
         xz_scale: f64,
-        _y_scale: f64,
+        y_scale: f64,
         amplitude: f32,
     ) -> Result<(), crate::noise::DensityError> {
         if buffer.len() < volume.size() {
@@ -124,9 +139,24 @@ impl crate::noise::Noise for LithoNoise {
             let z = minimum[2].wrapping_add((z as i32).wrapping_mul(steps[2]));
             for x in 0..sx {
                 let x = minimum[0].wrapping_add((x as i32).wrapping_mul(steps[0]));
-                let value = amplitude * self.get2(f64::from(x) * xz_scale, f64::from(z) * xz_scale);
-                for _ in 0..sy {
-                    buffer[index] += value;
+                let value = if self.field == Field::Lava {
+                    0.0
+                } else {
+                    amplitude * self.get2(f64::from(x) * xz_scale, f64::from(z) * xz_scale)
+                };
+                for y in 0..sy {
+                    let add = if self.field == Field::Lava {
+                        let y = minimum[1].wrapping_add((y as i32).wrapping_mul(steps[1]));
+                        amplitude
+                            * self.get3(
+                                f64::from(x) * xz_scale,
+                                f64::from(y) * y_scale,
+                                f64::from(z) * xz_scale,
+                            )
+                    } else {
+                        value
+                    };
+                    buffer[index] += add;
                     index += 1;
                 }
             }
@@ -151,5 +181,13 @@ impl crate::noise::Noise for ConstNoise {
     }
     fn get3(&self, _x: f64, _y: f64, _z: f64) -> f32 {
         self.value
+    }
+}
+
+// Explicit inputs, suitable for comparison with the sandbox diagnostic command.
+pub fn diagnose(seed: i64, mode: &str, x: f64, z: f64) -> String {
+    match Mode::parse(mode) {
+        Some(mode) => litho_core::diagnostic::point(seed, mode, x, z).unwrap_or_else(|error| error),
+        None => "mode must be gameplay or scientific".into(),
     }
 }
