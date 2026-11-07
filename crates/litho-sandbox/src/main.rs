@@ -618,6 +618,71 @@ fn write_atlas(dir: &Path) -> Result<(), String> {
     .map_err(|e| format!("запись atlas.html: {e}"))
 }
 
+/// Д-024 / Э2: разбивка времени по слоям, чтобы ускорять то, что реально
+/// дорого, не меняя ни одного числа и ни одного замороженного хеша.
+fn cmd_profile() -> Result<(), String> {
+    let generator =
+        Generator::new(42, Mode::Gameplay, GenVersion::V0).map_err(|error| error.to_string())?;
+    let n = 2000_usize;
+    let points: Vec<(f64, f64)> = (0..n)
+        .map(|k| {
+            let x = k as f64 * 0.75;
+            (x, -x * 0.5)
+        })
+        .collect();
+
+    fn measure<F>(label: &str, points: &[(f64, f64)], mut f: F) -> f64
+    where
+        F: FnMut(f64, f64) -> f64,
+    {
+        let start = Instant::now();
+        let mut sink = 0.0_f64;
+        for &(x, z) in points {
+            sink += f(x, z);
+        }
+        let us = start.elapsed().as_secs_f64() / points.len() as f64 * 1e6;
+        println!("profile: {label:<22} {us:8.1} мкс/точку");
+        sink
+    }
+
+    let mut sink = 0.0_f64;
+    sink += measure("плиты", &points, |x, z| {
+        generator
+            .plate_sample(x, z)
+            .map(|p| p.d_ab_l)
+            .unwrap_or(0.0)
+    });
+    sink += measure("плиты + кора", &points, |x, z| {
+        generator.crust_sample(x, z).map(|c| c.e_km).unwrap_or(0.0)
+    });
+    sink += measure("климат (луч 32)", &points, |x, z| {
+        generator
+            .climate_sample(x, z)
+            .map(|c| c.precip.p_mm)
+            .unwrap_or(0.0)
+    });
+    sink += measure("эталон целиком", &points, |x, z| {
+        generator
+            .world_sample(x, z)
+            .map(|w| w.vanilla.c)
+            .unwrap_or(0.0)
+    });
+    sink += measure("33 полюса", &points, |x, z| {
+        let base = generator.macro_point(x, z);
+        let mut acc = 0.0_f64;
+        for k in 0..33 {
+            let q = litho_core::math::Vec2::new(base.x - k as f64 * 0.25, base.z);
+            acc += litho_core::climate::pole_sample(q, 42, generator.params())
+                .map(|p| p.phi_deg)
+                .unwrap_or(0.0);
+        }
+        acc
+    });
+    println!("profile: sink={sink:.3} (чтобы оптимизатор не выкинул замеры)");
+    std::hint::black_box(sink);
+    Ok(())
+}
+
 /// `sweep`: 16 сидов × 2 режима, слой `height`, плюс HTML-атлас (T64).
 fn cmd_sweep(args: &[String]) -> Result<(), String> {
     let out = value(args, "--out").unwrap_or_else(|| "docs/images/sweep".to_string());
@@ -668,6 +733,7 @@ fn usage() -> &'static str {
        stats-all    те же метрики на 16 сидах × 2 режима\n\
        seams        скачки C/E/W между соседними блоками\n\
        bench        время эталонного и быстрого пути\n\
+       profile      разбивка времени по слоям\n\
        checkpoints  10 точек вокруг точки появления\n\
        sweep        16 сидов × 2 режима + HTML-атлас\n\
        atlas        пересобрать только HTML-атлас\n\
@@ -693,6 +759,7 @@ fn main() -> Result<(), String> {
         "stats-all" => cmd_stats_all(),
         "seams" => cmd_seams(&args[1..]),
         "bench" => cmd_bench(&args[1..]),
+        "profile" => cmd_profile(),
         "checkpoints" => cmd_checkpoints(&args[1..]),
         "sweep" => cmd_sweep(&args[1..]),
         "atlas" => write_atlas(Path::new(
