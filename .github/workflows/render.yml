@@ -6,9 +6,8 @@ name: Пересъёмка атласа (T66, Д-021)
 # а не тихо переснятые карты.
 on:
   push:
-    branches: ["arena/988a155a-lithomuchi"]
+    branches: ["arena/0a50e9ef-lithomuchi"]
     paths:
-      - ".github/workflows/render.yml"
       - "crates/**"
       - "tools/**"
   workflow_dispatch:
@@ -81,7 +80,7 @@ jobs:
             docs/images/sweep docs/images/v0-seed42-gameplay \
             docs/images/fast-path docs/images/after-32km
           git diff --cached --quiet || git commit -m "Атлас, метрики и параметры после Д-021 [skip ci]"
-          git push origin HEAD:arena/988a155a-lithomuchi
+          git push origin HEAD:arena/0a50e9ef-lithomuchi
       - uses: actions/upload-artifact@v4
         with:
           name: atlas-d021
