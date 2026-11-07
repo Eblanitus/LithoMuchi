@@ -10,9 +10,7 @@ use std::sync::Arc;
 
 use crate::cache::{CACHE_CAPACITY, ShardedCache};
 use crate::classify::{ClassSample, classify};
-use crate::climate::{
-    ClimateSample, PoleSample, PrecipSample, SurfaceSample, TemperatureSample, dryness, seasonal,
-};
+use crate::climate::{ClimateSample, PrecipSample, SurfaceSample, TemperatureSample, dryness};
 use crate::crust::{CrustSample, crust_from_sample};
 use crate::field::{Field, FullSample, to_f32};
 use crate::lattice::{self, Nodes};
@@ -26,9 +24,11 @@ use crate::spawn::{self, SpawnQuality};
 use crate::vanilla::{VanillaSample, continentalness};
 use crate::version::GenVersion;
 
-/// Полей в узле грубой решётки: φ, T на уровне моря, амплитуда, SST,
-/// континентальность, осадки, влагосодержание (план 6.6, B.2).
-const COARSE_N: usize = 7;
+/// Полей в узле грубой решётки: φ, SST и две компоненты ветра (Д-021).
+/// Осадки и влагосодержание больше НЕ кэшируются: это результат луча влаги
+/// длиной 8 L, который выходит за пределы coarse-тайла в 5 L и при рябистом
+/// береге не интерполируется. Кэш хранит только плавные поля.
+const COARSE_N: usize = 4;
 
 type CoarseTiles = ShardedCache<(i64, i64), Arc<Nodes<COARSE_N>>>;
 type LastCoarse = Option<(u64, u64, i64, i64, Arc<Nodes<COARSE_N>>)>;
@@ -242,40 +242,28 @@ impl Generator {
             for j in 0..lattice::NODES {
                 let (bx, bz) = lattice::node_coords(tx, tz, i, j, step);
                 let point = Vec2::new(bx / l, bz / l);
-                let cell = match crate::climate::sample(point, self.seed, &self.params, &|q| {
-                    self.surface_at(q)
-                }) {
-                    Some(climate) => {
-                        let t0 = climate.temperature.t_c
-                            + self.params.climate.lapse_c_per_km * climate.surface.e_km.max(0.0);
-                        [
-                            climate.pole.phi_deg,
-                            t0,
-                            climate.temperature.amp_c,
-                            climate.temperature.sst_c,
-                            climate.precip.cont,
-                            climate.precip.p_mm,
-                            climate.precip.mu,
-                        ]
+                let cell = match crate::climate::pole_sample(point, self.seed, &self.params) {
+                    // Только плавные поля: полюса, SST и ветер. Луч влаги
+                    // трассируется позже, из конкретной точки (Д-021).
+                    Some(pole) => {
+                        let surface = self.surface_at(point);
+                        let t = crate::climate::temperature(
+                            pole.phi_deg,
+                            surface.e_km,
+                            0.5,
+                            &self.params,
+                        );
+                        let w =
+                            crate::climate::wind(pole.phi_deg, pole.north, pole.east, &self.params);
+                        [pole.phi_deg, t.sst_c, w.x, w.z]
                     }
                     // Полюс не нашёлся: нейтральные значения, не NaN.
-                    None => [45.0, 15.0, 0.0, 15.0, 0.5, 800.0, 0.5],
+                    None => [45.0, 15.0, 0.0, 1.0],
                 };
                 values[i * lattice::NODES + j] = cell;
             }
         }
-        // Д-021: сглаживание [1,4,6,4,1]/16 гасит рябь берега на 1,25 L,
-        // и луч влаги в узлах coarse-решётки усредняется насмерть — быстрый
-        // путь выдавал p_mm ≈ 90 мм там, где эталон даёт 32…237 мм. Плавные
-        // поля (φ, амплитуда, SST) сглаживаем, а зависящие от рельефа
-        // (t0, cont, p_mm, mu) оставляем как посчитано в узле.
-        let raw = values.clone();
         lattice::smooth(&mut values);
-        for (cell, src) in values.iter_mut().zip(raw.iter()) {
-            for n in [1_usize, 4, 5, 6] {
-                cell[n] = src[n];
-            }
-        }
         Arc::new(values)
     }
 
@@ -327,36 +315,56 @@ impl Generator {
             boundary_weights: crust.boundary_weights,
             sigma_l: plates.d_ab_l,
         };
-        let coarse = self.coarse_values(x, z);
-        let [phi, t0, amp_c, sst_c, cont, p_mm, mu] = coarse;
-        let t_c = t0 - self.params.climate.lapse_c_per_km * surface.e_km.max(0.0);
-        let (t_bio, t_min) = seasonal(t_c, amp_c, &self.params);
-        let (pet_mm, ratio) = dryness(t_bio, p_mm, &self.params);
+        // Д-021: φ и направление ветра берутся точными в самой точке, иначе
+        // t_bio дрожит на ±0,4 °C и перескакивает через порог пояса 18 °C.
+        // coarse-решётка экономит только на 32 шагах линии тока влаги.
+        let pole = crate::climate::pole_sample(point, self.seed, &self.params)?;
+        let wind = crate::climate::wind(pole.phi_deg, pole.north, pole.east, &self.params);
+        let wind_len = wind.len();
+        let dir = if wind_len > 1e-9 {
+            wind.normalized()
+        } else {
+            crate::climate::fallback_dir(&self.params)
+        };
+        let l = self.params.block.l_blocks;
+        let wind_fn = |q: Vec2| {
+            let c = self.coarse_values(q.x * l, q.z * l);
+            (Vec2::new(c[2], c[3]), c[0])
+        };
+        let ray =
+            crate::climate::trace_ray(point, &self.params, &|q| self.surface_at(q), dir, &wind_fn);
+        let c = &self.params.climate;
+        let c_iso = crate::math::smoothstep(0.0, c.c_iso_end_l, surface.iota_l);
+        let cont = crate::math::lerp(
+            c_iso,
+            ray.cont_ray,
+            crate::math::smoothstep(c.c_ray_wind_lo, c.c_ray_wind_hi, wind_len),
+        );
+        let temperature =
+            crate::climate::temperature(pole.phi_deg, surface.e_km, cont, &self.params);
+        let sst_c = temperature.sst_c;
+        let p_mm =
+            crate::climate::precipitation(pole.phi_deg, ray.mu, wind_len, ray.slope, &self.params);
+        let (pet_mm, ratio) = dryness(temperature.t_bio, p_mm, &self.params);
         let climate = ClimateSample {
             point,
             surface,
-            pole: PoleSample {
-                phi_deg: phi,
-                north: Vec2::new(0.0, 1.0),
-                east: Vec2::new(1.0, 0.0),
-                pole: Vec2::default(),
-                distance_l: 0.0,
-            },
-            wind: Vec2::default(),
+            pole,
+            wind,
             temperature: TemperatureSample {
-                t_c,
+                t_c: temperature.t_c,
                 sst_c,
-                amp_c,
-                t_bio,
-                t_min,
+                amp_c: temperature.amp_c,
+                t_bio: temperature.t_bio,
+                t_min: temperature.t_min,
             },
             precip: PrecipSample {
-                mu,
+                mu: ray.mu,
                 cont,
                 p_mm,
                 pet_mm,
                 ratio,
-                slope: 0.0,
+                slope: ray.slope,
             },
         };
         let c_value = continentalness(surface.e_km, surface.iota_l, &self.params);
