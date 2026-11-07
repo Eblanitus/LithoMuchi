@@ -28,6 +28,12 @@ jobs:
           cargo run -p litho-sandbox --release -- seams --seed 42 --mode gameplay
           cargo run -p litho-sandbox --release -- bench --seed 42 --mode gameplay
           cargo run -p litho-sandbox --release -- stats --seed 42 --mode gameplay
+      - name: "ЗАМОК v0 — хеши параметров не меняются"
+        run: |
+          cargo run -q -p litho-sandbox --release -- hash > /tmp/v0-hashes.txt
+          cat /tmp/v0-hashes.txt
+          grep -Fxq 'scientific = 5cdbe1d36ef8d16a' /tmp/v0-hashes.txt
+          grep -Fxq 'gameplay = b48e8037c4e85977' /tmp/v0-hashes.txt
       - name: Профиль скорости по слоям (Э2, без подавления ошибок)
         run: cargo run -p litho-sandbox --release -- profile
       - name: sandbox smoke test

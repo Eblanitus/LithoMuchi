@@ -620,6 +620,17 @@ fn write_atlas(dir: &Path) -> Result<(), String> {
 
 /// Д-024 / Э2: разбивка времени по слоям, чтобы ускорять то, что реально
 /// дорого, не меняя ни одного числа и ни одного замороженного хеша.
+/// Д-026 / `freeze v0`: хеши параметров прямо из кода, а не из документа.
+/// CI сверяет их с зафиксированными значениями, поэтому любая правка чисел
+/// краснеет ещё до пересъёмки карт.
+fn cmd_hash() -> Result<(), String> {
+    for mode in Mode::ALL {
+        let hash = Params::defaults(GenVersion::V0, mode).params_hash();
+        println!("{} = {hash:016x}", mode.as_str());
+    }
+    Ok(())
+}
+
 fn cmd_profile() -> Result<(), String> {
     let generator =
         Generator::new(42, Mode::Gameplay, GenVersion::V0).map_err(|error| error.to_string())?;
@@ -734,6 +745,7 @@ fn usage() -> &'static str {
        seams        скачки C/E/W между соседними блоками\n\
        bench        время эталонного и быстрого пути\n\
        profile      разбивка времени по слоям\n\
+       hash         хеши параметров для замка v0\n\
        checkpoints  10 точек вокруг точки появления\n\
        sweep        16 сидов × 2 режима + HTML-атлас\n\
        atlas        пересобрать только HTML-атлас\n\
@@ -760,6 +772,7 @@ fn main() -> Result<(), String> {
         "seams" => cmd_seams(&args[1..]),
         "bench" => cmd_bench(&args[1..]),
         "profile" => cmd_profile(),
+        "hash" => cmd_hash(),
         "checkpoints" => cmd_checkpoints(&args[1..]),
         "sweep" => cmd_sweep(&args[1..]),
         "atlas" => write_atlas(Path::new(
