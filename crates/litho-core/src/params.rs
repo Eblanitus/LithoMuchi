@@ -731,7 +731,7 @@ impl Params {
                 // 9–17,5 L и луч влаги всего 8 L. Внутри континента μ падала
                 // до 0,15, осадки до 448 мм при PET 962 мм — отсюда 38 %
                 // пустынь и 9 % лесов на 16 сидах. Характерная длина удвоена.
-                land_length_l: 12.0,
+                land_length_l: 20.0,
                 orographic_height_km: 1.5,
                 itcz_precip_mm: 1900.0,
                 itcz_width_deg: 11.0,
@@ -809,14 +809,14 @@ impl Params {
                 // Д-021: полярный пояс уже, шапки меньше.
                 belt_polar_deg: [68.0, 78.0],
                 wind_fallback_dir: [-0.87, 0.5],
-                w_sat_base: 0.3,
-                w_sat_per_c: 0.035,
+                w_sat_base: 0.4,
+                w_sat_per_c: 0.04,
                 w_sat_min: 0.3,
-                w_sat_max: 1.25,
+                w_sat_max: 1.6,
                 // Д-023: если дальний конец 8-L луча тоже суша (а при
                 // континентальности 0,84 это почти всегда), стартовая влага
                 // не должна обнуляться вдвое.
-                w_land_start: 0.5,
+                w_land_start: 0.7,
                 cont_decay_l: 3.0,
                 c_iso_end_l: 5.0,
                 c_ray_wind_lo: 0.1,
