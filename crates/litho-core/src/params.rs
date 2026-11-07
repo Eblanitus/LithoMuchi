@@ -710,8 +710,12 @@ impl Params {
                 warp_octaves: 3,
                 warp_gain: 0.5,
                 query_radius_cells: 2,
-                phi_noise_degrees: 6.0,
-                phi_noise_lambda_l: 24.0,
+                // Д-021: 6° дрожи ломали луч влаги (32 шага × 0,25 L):
+                // ветер в coarse-узле и в точке уходил разными путями, p_mm
+                // расходился в разы и зоны не совпадали. 3° + изгиб warp 6 L
+                // дают рваные кольца без разлада быстрого пути.
+                phi_noise_degrees: 3.0,
+                phi_noise_lambda_l: 12.0,
                 phi_noise_octaves: 3,
                 phi_noise_gain: 0.5,
             },
