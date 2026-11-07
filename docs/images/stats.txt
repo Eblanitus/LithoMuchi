@@ -1,19 +1,12 @@
-[1m[92m   Compiling[0m litho-sandbox v0.1.0 (/home/runner/work/LithoMuchi/LithoMuchi/crates/litho-sandbox)
-[1m[92m    Finished[0m `release` profile [optimized] target(s) in 0.65s
-[1m[92m     Running[0m `target/release/litho-sandbox stats --seed 42 --mode gameplay`
 сид=42 режим=gameplay область=200×200 L точек=4096
-доля суши                31.2 %  (цель 25–40)
-горы на суше              5.5 %  (цель 5–20)
-пустыни на суше          38.2 %  (цель 15–30)
-леса на суше              9.5 %  (цель 30–50)
-полярные пояса на суше    6.6 %  (цель 10–25)
-[1m[92m    Finished[0m `release` profile [optimized] target(s) in 0.00s
-[1m[92m     Running[0m `target/release/litho-sandbox seams --seed 42 --mode gameplay`
-seams: max |ΔC|=0.00312 |ΔE|=0.01373 |ΔW|=0.00655, порог 0.02
-  C: (416,416) -0.54658 → -0.54970
-  E: (-160,192) -0.04173 → -0.02799
-  W: (-96,160) -0.16537 → -0.17192
-seams: пусто
-[1m[92m    Finished[0m `release` profile [optimized] target(s) in 0.00s
-[1m[92m     Running[0m `target/release/litho-sandbox bench --seed 42 --mode gameplay`
-bench: эталон 335.7 мкс/точку, быстрый путь 275.6 мкс/поле, ускорение 1.2× (sink=-1408.778)
+доля суши                42.3 %  (цель 25–40)
+горы на суше              5.1 %  (цель 5–20)
+пустыни на суше          41.7 %  (цель 15–30)
+леса на суше              9.4 %  (цель 30–50)
+полярные пояса на суше    9.8 %  (цель 10–25)
+seams: max |ΔC|=0.06515 |ΔE|=0.00745 |ΔW|=0.00778, порог 0.02
+  C: (-416,-32) 0.14170 → 0.20685
+  E: (-160,-224) -0.09057 → -0.09802
+  W: (-192,-256) -0.38146 → -0.38924
+seams: ЕСТЬ РАЗРЫВЫ
+bench: эталон 917.1 мкс/точку, быстрый путь 989.3 мкс/поле, ускорение 0.9× (sink=727.425)

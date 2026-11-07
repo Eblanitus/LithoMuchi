@@ -115,13 +115,15 @@ pub fn pole_sample(point: Vec2, seed: u64, params: &Params) -> Option<PoleSample
     let total = f1 + f2;
     let t = if total > 0.0 { f1 / total } else { 0.0 };
     let phi0 = 90.0 * (1.0 - 2.0 * t);
+    // Д-021: дрожь псевдошироты стала многооктавной и настраиваемой —
+    // границы холода рваные, а не концентрические окружности.
     let jitter = fbm2(
         subseed(seed, SALT_PHI_NOISE),
         point.x,
         point.z,
-        10.0,
-        3,
-        0.5,
+        pol.phi_noise_lambda_l,
+        pol.phi_noise_octaves,
+        pol.phi_noise_gain,
     );
     let phi_deg = clamp(phi0 + pol.phi_noise_degrees * jitter, 0.0, 90.0);
 
@@ -228,7 +230,7 @@ pub fn wind(phi_deg: f64, north: Vec2, east: Vec2, params: &Params) -> Vec2 {
         .scale(strength)
 }
 
-fn fallback_dir(params: &Params) -> Vec2 {
+pub fn fallback_dir(params: &Params) -> Vec2 {
     let c = &params.climate;
     Vec2::new(c.wind_fallback_dir[0], c.wind_fallback_dir[1]).normalized()
 }
@@ -271,17 +273,30 @@ pub fn dryness(t_bio: f64, p_mm: f64, params: &Params) -> (f64, f64) {
     (pet, pet / p_mm.max(c.p_min_mm))
 }
 
-struct RayResult {
-    mu: f64,
-    cont_ray: f64,
-    slope: f64,
+#[derive(Clone, Copy, Debug)]
+pub struct RayResult {
+    pub mu: f64,
+    pub cont_ray: f64,
+    pub slope: f64,
 }
 
 /// Линия тока против ветра (7.7.1–7.7.3): 32 шага по 0,25 L, влага считается
 /// от дальнего конца к точке, заодно собирается континентальность.
-fn trace_ray<F>(point: Vec2, seed: u64, params: &Params, field: &F, wind_dir: Vec2) -> RayResult
+///
+/// Д-021: ветер берётся из `wind_fn`, а не из `pole_sample` напрямую. Эталон
+/// подставляет точные полюса, быстрый путь — coarse-решётку ветра. Луч всегда
+/// стартует из самой точки: результат 8-L луча при рябистом рельефе нельзя
+/// интерполировать по узлам coarse-тайла в 5 L.
+pub fn trace_ray<F, W>(
+    point: Vec2,
+    params: &Params,
+    field: &F,
+    wind_dir: Vec2,
+    wind_fn: &W,
+) -> RayResult
 where
     F: Fn(Vec2) -> SurfaceSample,
+    W: Fn(Vec2) -> (Vec2, f64),
 {
     let pr = &params.precip;
     let c = &params.climate;
@@ -293,14 +308,14 @@ where
     let mut prev = fallback_dir(params);
     let mut q = point;
     for _ in 0..steps {
-        let (v, phi) = wind_at(q, seed, params);
+        let (v, phi) = wind_fn(q);
         phis.push(phi);
         let dir = if v.len() < 0.05 { prev } else { v.normalized() };
         q = q.sub(dir.scale(ds));
         points.push(q);
         prev = dir;
     }
-    let (_, phi_last) = wind_at(q, seed, params);
+    let (_, phi_last) = wind_fn(q);
     phis.push(phi_last);
     let mut heights = Vec::with_capacity(points.len());
     for candidate in &points {
@@ -363,7 +378,7 @@ where
     } else {
         fallback_dir(params)
     };
-    let ray = trace_ray(point, seed, params, field, dir);
+    let ray = trace_ray(point, params, field, dir, &|q| wind_at(q, seed, params));
     let c_iso = smoothstep(0.0, c.c_iso_end_l, surface.iota_l);
     let cont = lerp(
         c_iso,

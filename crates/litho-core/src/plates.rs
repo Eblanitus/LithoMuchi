@@ -5,7 +5,7 @@
 //! кэшем тайлов появится в T13/T14/T55, формулы при этом не изменятся.
 
 use crate::hash::{hash3, splitmix64, unit};
-use crate::math::{Vec2, clamp01, dexp};
+use crate::math::{Vec2, clamp01, dexp, dpow};
 use crate::noise::warp2;
 use crate::noise_tables::DIRS;
 use crate::params::Params;
@@ -178,7 +178,12 @@ pub fn seeds_in_cell(seed: u64, i: i64, j: i64, params: &Params) -> Vec<Plate> {
             props.next_range(-offset, offset),
         ));
         let has_continent = props.next_unit() < p.continent_probability;
-        let radius_l = props.next_range(p.continent_radius_min_l, p.continent_radius_max_l);
+        // Д-021: степенной разброс радиусов. Одно случайное число, как и
+        // раньше, поэтому порядок всех прочих свойств плиты не меняется.
+        // Большинство материков мелкие и средние, единицы — крупные.
+        let radius_l = p.continent_radius_min_l
+            + (p.continent_radius_max_l - p.continent_radius_min_l)
+                * dpow(props.next_unit(), p.continent_radius_skew);
         let aspect = props.next_range(p.aspect_min, p.aspect_max);
         let age = props.next_unit();
         let axis = dir_from_rng(&mut props);

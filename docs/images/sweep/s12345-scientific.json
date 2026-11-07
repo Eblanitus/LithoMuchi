@@ -3,9 +3,9 @@
   "seed": 12345,
   "mode": "scientific",
   "version": "v0",
-  "params_hash": "064fb44b489356fb",
+  "params_hash": "2a855bd841649b61",
   "center": [0, 0],
-  "size": 192,
-  "blocks_per_pixel": 1041.6666666666667,
+  "size": 256,
+  "blocks_per_pixel": 97.65625,
   "path": "reference"
 }

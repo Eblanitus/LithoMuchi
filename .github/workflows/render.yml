@@ -1,0 +1,93 @@
+name: Пересъёмка атласа (T66, Д-021)
+
+# Одноразовый прогон: локального Rust в песочнице нет, поэтому карты,
+# docs/PARAMS.md и метрики собираются здесь и уходят в артефакт.
+# Проверки идут отдельно и без `|| true`: падение теста = красный прогон,
+# а не тихо переснятые карты.
+on:
+  push:
+    branches: ["arena/dec6fb0e-lithomuchi"]
+    paths:
+      - ".github/workflows/render.yml"
+      - "crates/**"
+      - "tools/**"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  atlas:
+    name: Атлас, метрики и параметры
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - name: Формат, clippy и тесты (без подавления ошибок)
+        run: |
+          cargo fmt --all -- --check
+          cargo clippy --workspace --all-targets -- -D warnings
+          cargo test --workspace
+      - name: Сборка инструментов
+        run: cargo build --release -p xtask -p litho-sandbox
+      - name: Канонические параметры и хеши
+        run: ./target/release/xtask params-doc > docs/PARAMS.md
+      - name: Метрики 12.4, швы и замер
+        run: |
+          {
+            ./target/release/litho-sandbox stats --seed 42 --mode gameplay
+            ./target/release/litho-sandbox seams --seed 42 --mode gameplay
+            ./target/release/litho-sandbox bench --seed 42 --mode gameplay
+          } > docs/images/stats.txt
+      - name: Атлас 16 сидов × 2 режима
+        run: ./target/release/litho-sandbox sweep --out docs/images/sweep
+      - name: Полные слои, 512×512 @ 64 блока/пк
+        run: >
+          ./target/release/litho-sandbox render --seed 42 --mode gameplay --version v0
+          --center 0,0 --layers noise,warp,plates,boundaries,jacobian,hash,crust,height,mpi
+          --size 512 --bpp 64 --path reference --out docs/images/v0-seed42-gameplay
+      - name: Климат и биомы, 256×256 @ 128 блоков/пк
+        run: >
+          ./target/release/litho-sandbox render --seed 42 --mode gameplay --version v0
+          --center 0,0 --layers poles,temp,wind,moisture,precip,zones,biomes,vanilla
+          --size 256 --bpp 128 --path reference --out docs/images/v0-seed42-gameplay
+      - name: Реки, лава и спавн, 128×128 @ 256 блоков/пк
+        run: >
+          ./target/release/litho-sandbox render --seed 42 --mode gameplay --version v0
+          --center 0,0 --layers rivers,lava,spawn
+          --size 128 --bpp 256 --path reference --out docs/images/v0-seed42-gameplay
+      - name: Быстрый путь
+        run: >
+          ./target/release/litho-sandbox render --seed 42 --mode gameplay --version v0
+          --center 0,0 --layers biomes --size 128 --bpp 256
+          --path fast --out docs/images/fast-path
+      - name: Кадр 32,8 км для сравнения «было / стало»
+        run: |
+          mkdir -p docs/images/after-32km
+          for f in poles crust height biomes vanilla; do
+            cp "docs/images/v0-seed42-gameplay/$f.png" "docs/images/after-32km/$f.png"
+            cp "docs/images/v0-seed42-gameplay/$f.json" "docs/images/after-32km/$f.json"
+          done
+      - name: Карты и параметры в ветку (без повторного CI)
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add docs/PARAMS.md docs/images/stats.txt docs/images/atlas.html \
+            docs/images/sweep docs/images/v0-seed42-gameplay \
+            docs/images/fast-path docs/images/after-32km
+          git diff --cached --quiet || git commit -m "Атлас, метрики и параметры после Д-021 [skip ci]"
+          git push origin HEAD:arena/dec6fb0e-lithomuchi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: atlas-d021
+          path: |
+            docs/PARAMS.md
+            docs/images/stats.txt
+            docs/images/atlas.html
+            docs/images/sweep/
+            docs/images/v0-seed42-gameplay/
+            docs/images/fast-path/
+            docs/images/after-32km/
+          retention-days: 14

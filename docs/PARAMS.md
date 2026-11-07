@@ -26,7 +26,7 @@
 | `climate.amp_lat_c` | `24.0` | `24.0` |
 | `climate.amp_sea_factor` | `0.25` | `0.25` |
 | `climate.belt_edges_c` | `[1.5, 3.0, 6.0, 12.0, 18.0, 24.0]` | `[1.5, 3.0, 6.0, 12.0, 18.0, 24.0]` |
-| `climate.belt_polar_deg` | `[55.0, 65.0]` | `[55.0, 65.0]` |
+| `climate.belt_polar_deg` | `[68.0, 78.0]` | `[68.0, 78.0]` |
 | `climate.belt_trade_deg` | `[25.0, 35.0]` | `[25.0, 35.0]` |
 | `climate.belt_west_deg` | `[25.0, 35.0]` | `[25.0, 35.0]` |
 | `climate.bio_max_c` | `30.0` | `30.0` |
@@ -99,7 +99,7 @@
 | `climate.winter_temperate_c` | `-8.0` | `-8.0` |
 | `crust.blend_width_l` | `1` | `1` |
 | `crust.boundary_mix_factor` | `0.5` | `0.5` |
-| `crust.continent_query_radius_cells` | `3` | `3` |
+| `crust.continent_query_radius_cells` | `4` | `4` |
 | `crust.continent_scale_l` | `1.5` | `1.5` |
 | `crust.detail_gain` | `0.5` | `0.5` |
 | `crust.detail_land_km` | `0.25` | `0.25` |
@@ -110,26 +110,26 @@
 | `crust.detail_ocean_lambda_l` | `4` | `4` |
 | `crust.detail_octaves` | `3` | `3` |
 | `crust.h_col_km` | `4.5` | `4.5` |
-| `crust.h_hotspot_km` | `4.8` | `4.8` |
+| `crust.h_hotspot_km` | `4.6` | `4.6` |
 | `crust.h_ridge_km` | `2.2` | `2.2` |
 | `crust.h_rift_km` | `0.9` | `0.9` |
 | `crust.h_trench_km` | `3.5` | `3.5` |
-| `crust.hotspot_chain_count` | `6` | `6` |
+| `crust.hotspot_chain_count` | `4` | `4` |
 | `crust.hotspot_chain_decay` | `0.17` | `0.17` |
 | `crust.hotspot_chain_step_l` | `0.9` | `0.9` |
-| `crust.hotspot_consider_radius_l` | `2` | `2` |
-| `crust.hotspot_continental_factor` | `0.7` | `0.7` |
+| `crust.hotspot_consider_radius_l` | `2.5` | `2.5` |
+| `crust.hotspot_continental_factor` | `0.85` | `0.85` |
 | `crust.hotspot_inset` | `0.1` | `0.1` |
-| `crust.hotspot_probability` | `0.3` | `0.3` |
+| `crust.hotspot_probability` | `0.45` | `0.45` |
 | `crust.hotspot_radius_growth` | `0.1` | `0.1` |
 | `crust.iota_height_factor` | `0.5` | `0.5` |
 | `crust.iota_max_l` | `1` | `1` |
 | `crust.island_noise_amp` | `0.45` | `0.45` |
 | `crust.island_noise_base` | `0.55` | `0.55` |
 | `crust.island_noise_lambda_l` | `1.2` | `1.2` |
-| `crust.kappa_noise_amplitude_l` | `2.2` | `2.2` |
+| `crust.kappa_noise_amplitude_l` | `3` | `3` |
 | `crust.kappa_noise_gain` | `0.5` | `0.5` |
-| `crust.kappa_noise_lambda_l` | `5` | `5` |
+| `crust.kappa_noise_lambda_l` | `6` | `6` |
 | `crust.kappa_noise_octaves` | `4` | `4` |
 | `crust.mountain_edge_l` | `0.3` | `0.3` |
 | `crust.mountain_scale_km` | `3` | `3` |
@@ -164,11 +164,12 @@
 | `plates.boundary_width` | `0.5` | `0.5` |
 | `plates.cell_g_l` | `16` | `16` |
 | `plates.center_offset_fraction` | `0.25` | `0.25` |
-| `plates.continent_probability` | `0.2` | `0.2` |
-| `plates.continent_radius_max_l` | `17` | `17` |
-| `plates.continent_radius_min_l` | `9` | `9` |
-| `plates.double_probability` | `0.25` | `0.25` |
-| `plates.empty_probability` | `0.35` | `0.35` |
+| `plates.continent_probability` | `0.45` | `0.45` |
+| `plates.continent_radius_max_l` | `17.5` | `17.5` |
+| `plates.continent_radius_min_l` | `2.5` | `2.5` |
+| `plates.continent_radius_skew` | `2.2` | `2.2` |
+| `plates.double_probability` | `0.35` | `0.35` |
+| `plates.empty_probability` | `0.22` | `0.22` |
 | `plates.inset_fraction` | `0.08` | `0.08` |
 | `plates.min_seed_distance_fraction` | `0.35` | `0.35` |
 | `plates.omega_max` | `0.03` | `0.03` |
@@ -181,10 +182,13 @@
 | `plates.warp_gain` | `0.45` | `0.45` |
 | `plates.warp_lambda0_l` | `24` | `24` |
 | `plates.warp_octaves` | `4` | `4` |
-| `poles.cell_g_p_l` | `64` | `64` |
+| `poles.cell_g_p_l` | `128` | `128` |
 | `poles.phi_noise_degrees` | `3` | `3` |
+| `poles.phi_noise_gain` | `0.5` | `0.5` |
+| `poles.phi_noise_lambda_l` | `12` | `12` |
+| `poles.phi_noise_octaves` | `3` | `3` |
 | `poles.query_radius_cells` | `2` | `2` |
-| `poles.warp_amplitude_l` | `4` | `4` |
+| `poles.warp_amplitude_l` | `6` | `6` |
 | `poles.warp_lambda0_l` | `40` | `40` |
 | `precip.advection_mm` | `1500` | `1500` |
 | `precip.itcz_precip_mm` | `1900` | `1900` |
@@ -209,8 +213,8 @@
 | `rivers.trace_max_steps` | `60` | `60` |
 | `rivers.trace_min_length_l` | `1.0` | `1.0` |
 | `rivers.trace_step_l` | `0.05` | `0.05` |
-| `spawn.candidates` | `256` | `256` |
-| `spawn.fallback_grid` | `32` | `32` |
+| `spawn.candidates` | `384` | `384` |
+| `spawn.fallback_grid` | `48` | `48` |
 | `spawn.fixed_mu` | `0.4` | `0.4` |
 | `spawn.fixed_wind` | `0.6` | `0.6` |
 | `spawn.max_e_km` | `1.5` | `1.5` |
@@ -221,7 +225,7 @@
 | `spawn.min_kappa_l` | `1.0` | `1.0` |
 | `spawn.min_phi_deg` | `25.0` | `25.0` |
 | `spawn.min_ratio` | `0.5` | `0.5` |
-| `spawn.radius_l` | `100` | `100` |
+| `spawn.radius_l` | `200` | `200` |
 | `spawn.search_radius_blocks` | `2048.0` | `2048.0` |
 | `version` | `v0` | `v0` |
 | `wind.knot0.phi_deg` | `0` | `0` |
@@ -241,4 +245,4 @@
 | `wind.knot7.phi_deg` | `90` | `90` |
 | `wind.knot7.s` | `0.3` | `0.3` |
 
-params_hash: scientific = 064fb44b489356fb, gameplay = 8cd60458847fda7e
+params_hash: scientific = 2a855bd841649b61, gameplay = db9735ac8060e384
