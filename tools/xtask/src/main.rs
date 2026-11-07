@@ -11,7 +11,7 @@ use litho_core::{GenVersion, Mode, Params};
 /// Версия генератора, для которой сейчас собираются паки (план 6.8).
 const GEN_VERSION: GenVersion = GenVersion::V0;
 /// Версия самого мода в `[mod] version` манифеста.
-const MOD_VERSION: &str = "0.2.0";
+const MOD_VERSION: &str = "0.3.0";
 /// Ревизия Horizon из раздела 5 плана; сверить на Windows (T70).
 const HORIZON_REV: &str = "66f3981f522b24c250b21523a70080965b940424";
 /// Пять полей, которые подменяем в MVP (точка №2 плана 10.1).
@@ -286,7 +286,7 @@ fn make_packs_crate(out: &Path) -> Result<(), String> {
     let dst = out.join("crates/litho-packs");
     write_file(
         &dst.join("Cargo.toml"),
-        "[package]\nname = \"litho-packs\"\nversion = \"0.2.0\"\nedition = \"2024\"\nrust-version = \"1.85\"\nlicense = \"MIT OR Apache-2.0\"\n[dependencies]\n",
+        "[package]\nname = \"litho-packs\"\nversion = \"0.3.0\"\nedition = \"2024\"\nrust-version = \"1.85\"\nlicense = \"MIT OR Apache-2.0\"\n[dependencies]\n",
     )?;
     let mut source = String::from("const FILES: &[(&str, &str, &[u8])] = &[\n");
     for (mode, title) in [

@@ -231,20 +231,19 @@ thread_local! {
         const { std::cell::RefCell::new(None) };
 }
 
-/// Поиск плиты в точке. `radius_cells = 2` даёт окно 5×5 (рабочий вариант);
-/// большее окно нужно только тестам и отладке.
-pub fn plate_query_window(
-    point: Vec2,
+/// Cached candidate window at an already warped point. Shared by the
+/// nearest-plate query and the continuous, unordered boundary-pair field.
+pub(crate) fn plate_candidates(
+    q: Vec2,
     seed: u64,
     params: &Params,
     radius_cells: i64,
-) -> Option<PlateSample> {
+) -> Rc<Vec<Plate>> {
     let p = &params.plates;
-    let q = warped_point(point, seed, params);
     let ci = (q.x / p.cell_g_l).floor() as i64;
     let cj = (q.z / p.cell_g_l).floor() as i64;
 
-    let candidates: Rc<Vec<Plate>> = PLATE_CANDIDATES.with(|cell| {
+    PLATE_CANDIDATES.with(|cell| {
         let mut slot = cell.borrow_mut();
         if let Some((s, key, i, j, r, plates)) = slot.as_ref() {
             if *s == seed && *key == params.config_key && *i == ci && *j == cj && *r == radius_cells
@@ -270,7 +269,20 @@ pub fn plate_query_window(
             Rc::clone(&plates),
         ));
         plates
-    });
+    })
+}
+
+/// Поиск плиты в точке. `radius_cells = 2` даёт окно 5×5 (рабочий вариант);
+/// большее окно нужно только тестам и отладке.
+pub fn plate_query_window(
+    point: Vec2,
+    seed: u64,
+    params: &Params,
+    radius_cells: i64,
+) -> Option<PlateSample> {
+    let p = &params.plates;
+    let q = warped_point(point, seed, params);
+    let candidates = plate_candidates(q, seed, params, radius_cells);
     if candidates.is_empty() {
         return None;
     }

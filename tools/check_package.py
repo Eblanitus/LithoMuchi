@@ -21,7 +21,7 @@ with zipfile.ZipFile(archive) as z:
     root = 'mixins/litospherity/'
     metadata = json.loads(z.read('horizon-native.json'))
     manifest = tomllib.loads(z.read(root + 'horizon-mixin.toml').decode())
-    assert metadata['version'] == manifest['mod']['version'] == '0.2.0'
+    assert metadata['version'] == manifest['mod']['version'] == '0.3.0'
     assert metadata['horizon'] == manifest['compatibility']['horizon_revision']
     assert {c['dependent'] for c in manifest['crate']} == {'horizon-core', 'horizon-client-render'}
     # Match the launcher's native source allowlist, including its depth limits.

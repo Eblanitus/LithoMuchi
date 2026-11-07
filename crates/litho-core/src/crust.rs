@@ -13,7 +13,7 @@ use crate::noise::{fbm2, ridged2};
 use crate::params::Params;
 use crate::plates::{
     BoundaryType, Plate, PlateSample, boundary_type, boundary_weights_from_chi, continent_field,
-    continent_fraction, plate_query, seeds_in_cell,
+    continent_fraction, plate_candidates, plate_query, seeds_in_cell,
 };
 use crate::seed::{
     CellRng, SALT_BOUNDARY_SIDE, SALT_CRUST_DETAIL, SALT_CRUST_KAPPA, SALT_HOTSPOT, cell_hash,
@@ -226,15 +226,11 @@ struct BoundaryContrib {
 }
 
 impl BoundaryContrib {
-    fn add(self, other: Self) -> Self {
-        Self {
-            u: self.u + other.u,
-            positive: self.positive + other.positive,
-            plateau: self.plateau + other.plateau,
-            k7_gauss: self.k7_gauss + other.k7_gauss,
-            sigma_l: self.sigma_l,
-            upper: self.upper,
-        }
+    fn add(&mut self, other: Self) {
+        self.u += other.u;
+        self.positive += other.positive;
+        self.plateau += other.plateau;
+        self.k7_gauss += other.k7_gauss;
     }
 }
 
@@ -242,6 +238,9 @@ impl BoundaryContrib {
 /// выходила за лимит clippy по числу аргументов (Д-022).
 #[derive(Clone, Copy)]
 struct BoundaryInput {
+    a: Plate,
+    neighbor: Plate,
+    q: Vec2,
     d_l: f64,
     weight: f64,
     /// χ из непрерывного κ_global — то же поле, что и у высоты.
@@ -250,38 +249,36 @@ struct BoundaryInput {
 
 /// Вклад одной границы A|N: профили U1–U7, взвешенные k1…k7 (7.3.6, 7.4.3).
 fn boundary_contrib(
-    sample: &PlateSample,
-    neighbor: &Plate,
     input: BoundaryInput,
     bt: BoundaryType,
     seed: u64,
     params: &Params,
 ) -> BoundaryContrib {
     let c = &params.crust;
-    let d_l = input.d_l;
+    let d_l = input.d_l.abs();
     let weight = input.weight;
     let chi = input.chi;
     // Д-022: веса стыка берутся из того же непрерывного κ_global, что и
     // высота e_base. Раньше χ считался от «своей» плиты: на стыке A↔B
     // k1 перескакивал в k2 и вклад границ менялся на 0,57 км за один блок.
     let k = boundary_weights_from_chi(bt, chi);
-    let sigma_l = boundary_sigma(&sample.a, neighbor, d_l, seed);
+    let sigma_l = boundary_sigma(&input.a, &input.neighbor, input.d_l, seed);
 
     let detail_seed = subseed(seed, SALT_CRUST_DETAIL);
     let island_noise = 0.5
         + 0.5
             * fbm2(
                 detail_seed,
-                sample.q.x,
-                sample.q.z,
+                input.q.x,
+                input.q.z,
                 c.island_noise_lambda_l,
                 2,
                 0.5,
             );
     let transform_noise = fbm2(
         splitmix64(detail_seed),
-        sample.q.x,
-        sample.q.z,
+        input.q.x,
+        input.q.z,
         c.u7_noise_lambda_l,
         2,
         0.5,
@@ -326,6 +323,84 @@ fn boundary_contrib(
         sigma_l,
         upper: sigma_l > 0.0,
     }
+}
+
+/// Symmetric compact pair field. At a regular boundary the nearest pair has
+/// full weight; at a triple junction all three pairs mix. We never divide by a
+/// vanishing weight: fading pairs must fade to zero, not pop at the cutoff.
+fn continuous_boundaries(
+    sample: &PlateSample,
+    chi: f64,
+    seed: u64,
+    params: &Params,
+    radius: i64,
+) -> (BoundaryContrib, [f64; 7]) {
+    let candidates = plate_candidates(sample.q, seed, params, radius);
+    let nearest = candidates
+        .iter()
+        .map(|p| sample.q.dist2(p.seed_pos))
+        .fold(f64::INFINITY, f64::min)
+        .sqrt();
+    // Distance gaps are about twice bisector distances. Cover the complete
+    // collision plateau (3.5*w_col) before reaching the compact-support cutoff.
+    let support = 7.0 * params.crust.w_col_l;
+    let limit2 = (nearest + support) * (nearest + support);
+    let mut active = Vec::new();
+    for p in candidates.iter() {
+        let d2 = sample.q.dist2(p.seed_pos);
+        if d2 < limit2 {
+            let weight = 1.0 - smoothstep(0.0, support, d2.sqrt() - nearest);
+            active.push((*p, weight));
+        }
+    }
+    // Fix summation order too, so input enumeration/rank cannot change bits.
+    active.sort_by_key(|(p, _)| p.id);
+    let mut total = 0.0;
+    for i in 0..active.len() {
+        for j in i + 1..active.len() {
+            total += active[i].1 * active[j].1;
+        }
+    }
+    let denominator = total.max(1.0);
+    let mut result = BoundaryContrib::default();
+    let mut weights = [0.0; 7];
+    for i in 0..active.len() {
+        for j in i + 1..active.len() {
+            let (a, wa) = active[i];
+            let (b, wb) = active[j];
+            let delta = b.seed_pos.sub(a.seed_pos);
+            let separation = delta.len();
+            if separation <= 0.0 {
+                continue;
+            }
+            let normal = delta.scale(1.0 / separation);
+            let d_l =
+                (sample.q.dist2(b.seed_pos) - sample.q.dist2(a.seed_pos)) / (2.0 * separation);
+            let weight = wa * wb / denominator;
+            let bt = boundary_type(&a, &b, sample.q, normal, params);
+            for (sum, k) in weights.iter_mut().zip(boundary_weights_from_chi(bt, chi)) {
+                *sum += weight * k;
+            }
+            result.add(boundary_contrib(
+                BoundaryInput {
+                    a,
+                    neighbor: b,
+                    q: sample.q,
+                    d_l,
+                    weight,
+                    chi,
+                },
+                bt,
+                seed,
+                params,
+            ));
+        }
+    }
+    if let Some(b) = sample.b {
+        result.sigma_l = boundary_sigma(&sample.a, &b, sample.d_ab_l, seed);
+        result.upper = result.sigma_l > 0.0;
+    }
+    (result, weights)
 }
 
 /// Горячие точки и цепочки затонувших гор (7.4.4). Смотрим ячейки 3×3 вокруг
@@ -389,7 +464,6 @@ pub fn crust_from_sample(
     let noise = kappa_noise(sample.q, seed, params);
     let kappa_l = kappa_global_with_noise(sample.q, seed, noise, params);
     let chi = continent_fraction(kappa_l);
-    let mut bc = BoundaryContrib::default();
     let chi_a_plate =
         continent_fraction(kappa_plate_with_noise(&sample.a, sample.q, noise, params));
     let chi_b_plate = sample
@@ -400,45 +474,10 @@ pub fn crust_from_sample(
         .c
         .map(|c| continent_fraction(kappa_plate_with_noise(&c, sample.q, noise, params)))
         .unwrap_or(0.0);
-    // Д-022: тип деформации — свойство окрестности стыка, а не пары
-    // «ближайшая плита + конкретный сосед». Раньше для второй границы C он
-    // считался от пары A|C и при смене A↔B перескакивал на пару B|C: `conv`
-    // менялся скачком, `bc.positive` — на 0,87 км, а эрозия E — на 0,029.
-    let bt = sample
-        .b
-        .map(|b| boundary_type(&sample.a, &b, sample.q, sample.n_ab, params))
-        .unwrap_or_default();
-    let weights = boundary_weights_from_chi(bt, chi);
-    if let Some(b) = sample.b {
-        // Первый вклад кладём напрямую, а не через default(): иначе σ в
-        // диагностике всегда был бы нулём (Д-022).
-        bc = boundary_contrib(
-            sample,
-            &b,
-            BoundaryInput {
-                d_l: sample.d_ab_l,
-                weight: sample.w_b,
-                chi,
-            },
-            bt,
-            seed,
-            params,
-        );
-    }
-    if let Some(c_plate) = sample.c {
-        bc = bc.add(boundary_contrib(
-            sample,
-            &c_plate,
-            BoundaryInput {
-                d_l: sample.d_ac_l,
-                weight: sample.w_c,
-                chi,
-            },
-            bt,
-            seed,
-            params,
-        ));
-    }
+    // Every unordered nearby pair contributes its own geometry and deformation.
+    // Compact continuous ownership weights depend on distances, not A/B/C ranks.
+    // This stays continuous at A/B, B/C, and C/D reorderings and triple points.
+    let (bc, weights) = continuous_boundaries(sample, chi, seed, params, 2);
 
     let hotspots = hotspot_height(point, seed, params);
     let mountain = clamp01(
@@ -516,6 +555,101 @@ mod tests {
 
     fn params() -> crate::Params {
         crate::Params::defaults(GenVersion::V0, Mode::Gameplay)
+    }
+
+    #[test]
+    fn boundary_field_matches_larger_windows_and_has_no_window_seams() {
+        use super::continuous_boundaries;
+        for seed in [0, 42, 7_249_957_072_115_989_875] {
+            let p = params();
+            let g = Generator::new(seed, Mode::Gameplay, GenVersion::V0).unwrap();
+            let mut sample = g.plate_sample(0.0, 0.0).unwrap();
+            for k in -20..=20 {
+                for z in [-17.3, -0.5, 0.0, 0.5, 22.9] {
+                    let x = f64::from(k) * p.plates.cell_g_l;
+                    let mut sides = Vec::new();
+                    for dx in [-1e-7, 1e-7] {
+                        sample.q = Vec2::new(x + dx, z * p.plates.cell_g_l);
+                        let (near, weights) = continuous_boundaries(&sample, 0.6, g.seed(), &p, 2);
+                        let (far, far_weights) =
+                            continuous_boundaries(&sample, 0.6, g.seed(), &p, 4);
+                        for (a, b) in [
+                            (near.u, far.u),
+                            (near.positive, far.positive),
+                            (near.plateau, far.plateau),
+                        ] {
+                            assert!(
+                                (a - b).abs() < 1e-12,
+                                "candidate window truncates active boundary pairs: {a} {b}"
+                            );
+                        }
+                        assert_eq!(weights, far_weights);
+                        sides.push(near);
+                    }
+                    assert!(
+                        (sides[0].u - sides[1].u).abs() < 1e-3,
+                        "boundary window seam"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn rank_changes_do_not_create_height_or_cew_discontinuities() {
+        let mut transitions = [0; 3];
+        for seed in [0, 42, -7_249_957_072_115_989_875] {
+            for mode in Mode::ALL {
+                let g = Generator::new(seed, mode, GenVersion::V0).unwrap();
+                let l = mode.l_blocks();
+                for row in [-16.0, -4.0, 4.0, 16.0] {
+                    let z = row * l;
+                    let mut last_x = -40.0 * l;
+                    let mut last_ids = g.crust_sample(last_x, z).unwrap().plate_ids;
+                    for k in 1..=320 {
+                        let x = (-40.0 + f64::from(k) * 0.25) * l;
+                        let ids = g.crust_sample(x, z).unwrap().plate_ids;
+                        if ids != last_ids {
+                            let mut low = last_x;
+                            let mut high = x;
+                            for _ in 0..32 {
+                                let middle = (low + high) * 0.5;
+                                if g.crust_sample(middle, z).unwrap().plate_ids == last_ids {
+                                    low = middle;
+                                } else {
+                                    high = middle;
+                                }
+                            }
+                            let left = g.world_sample(low - 1e-6, z).unwrap();
+                            let right = g.world_sample(high + 1e-6, z).unwrap();
+                            for (a, b) in [
+                                (left.climate.surface.e_km, right.climate.surface.e_km),
+                                (left.vanilla.c, right.vanilla.c),
+                                (left.vanilla.e, right.vanilla.e),
+                                (left.vanilla.w, right.vanilla.w),
+                            ] {
+                                assert!(
+                                    (a - b).abs() < 1e-3,
+                                    "rank discontinuity seed={seed} mode={mode:?} at {low},{z}: {a} {b}"
+                                );
+                            }
+                            for i in 0..3 {
+                                if last_ids[i] != ids[i] {
+                                    transitions[i] += 1;
+                                }
+                            }
+                        }
+                        last_x = x;
+                        last_ids = ids;
+                    }
+                }
+            }
+        }
+        eprintln!("rank transition checks (A/B/C): {transitions:?}");
+        assert!(
+            transitions.iter().all(|n| *n > 10),
+            "must exercise A, B and C changes: {transitions:?}"
+        );
     }
 
     #[test]

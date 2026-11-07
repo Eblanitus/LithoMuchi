@@ -4,7 +4,7 @@ use std::fmt::Write;
 
 pub fn snapshot() -> String {
     let mut out = String::from(
-        "# World v0: seed mode x z C E W T H e P T_bio shift_x shift_z zone; f64 bits hex\n",
+        "# World v0 algorithm 0.3.0: seed mode x z C E W T H e P T_bio shift_x shift_z zone; f64 bits hex\n",
     );
     for seed in [0, 42, -123456789] {
         for mode in Mode::ALL {
