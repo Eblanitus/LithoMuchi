@@ -39,6 +39,12 @@ pub struct CrustSample {
     pub boundary_u_km: f64,
     pub hotspot_km: f64,
     pub detail_km: f64,
+    /// Какая плита «сверху» на ближайшей границе и знаковое расстояние σ.
+    pub upper_is_a: bool,
+    pub sigma_b_l: f64,
+    /// Идентификаторы плит A/B/C и их χ из κ_plate (Д-012).
+    pub plate_ids: [u64; 3],
+    pub chi_plates: [f64; 3],
 }
 
 /// `exp(−(x/w)²)` на детерминированной экспоненте.
@@ -172,6 +178,8 @@ struct BoundaryContrib {
     positive: f64,
     plateau: f64,
     k7_gauss: f64,
+    sigma_l: f64,
+    upper: bool,
 }
 
 impl BoundaryContrib {
@@ -181,6 +189,8 @@ impl BoundaryContrib {
             positive: self.positive + other.positive,
             plateau: self.plateau + other.plateau,
             k7_gauss: self.k7_gauss + other.k7_gauss,
+            sigma_l: self.sigma_l,
+            upper: self.upper,
         }
     }
 }
@@ -262,6 +272,8 @@ fn boundary_contrib(
         positive: weight * positive,
         plateau: weight * k[0] * plateau_shape(sigma_l, c.w_col_l),
         k7_gauss: weight * k[6] * gauss(d_l, c.mountain_edge_l),
+        sigma_l,
+        upper: upper_is_a(&sample.a, neighbor, chi_a, chi_n, seed),
     }
 }
 
@@ -326,6 +338,15 @@ pub fn crust_from_sample(
     let chi = continent_fraction(kappa_l);
     let mut bc = BoundaryContrib::default();
     let mut weights = [0.0; 7];
+    let chi_a_plate = continent_fraction(kappa_plate(&sample.a, sample.q, seed, params));
+    let chi_b_plate = sample
+        .b
+        .map(|b| continent_fraction(kappa_plate(&b, sample.q, seed, params)))
+        .unwrap_or(0.0);
+    let chi_c_plate = sample
+        .c
+        .map(|c| continent_fraction(kappa_plate(&c, sample.q, seed, params)))
+        .unwrap_or(0.0);
     if let Some(b) = sample.b {
         let contrib = boundary_contrib(
             sample,
@@ -407,6 +428,14 @@ pub fn crust_from_sample(
         boundary_u_km: bc.u,
         hotspot_km: hotspots,
         detail_km: detail,
+        upper_is_a: bc.upper,
+        sigma_b_l: bc.sigma_l,
+        plate_ids: [
+            sample.a.id,
+            sample.b.map(|b| b.id).unwrap_or(0),
+            sample.c.map(|c| c.id).unwrap_or(0),
+        ],
+        chi_plates: [chi_a_plate, chi_b_plate, chi_c_plate],
     }
 }
 

@@ -206,9 +206,9 @@ fn seam_components(generator: &Generator, x: f64, z: f64, label: &str) {
     let Some(crust) = generator.crust_sample(x, z) else {
         return;
     };
-    let (d_ab, w_b, w_c) = match generator.plate_sample(x, z) {
-        Some(p) => (p.d_ab_l, p.w_b, p.w_c),
-        None => (f64::NAN, 0.0, 0.0),
+    let (d_ab, d_ac, w_b, w_c, nx, nz) = match generator.plate_sample(x, z) {
+        Some(p) => (p.d_ab_l, p.d_ac_l, p.w_b, p.w_c, p.n_ab.x, p.n_ab.z),
+        None => (f64::NAN, f64::NAN, 0.0, 0.0, f64::NAN, f64::NAN),
     };
     let c = litho_core::vanilla::continentalness(crust.e_km, crust.iota_l, generator.params());
     let k = crust.boundary_weights;
@@ -223,14 +223,29 @@ fn seam_components(generator: &Generator, x: f64, z: f64, label: &str) {
     );
     println!(
         "    e = base {b:+.5} + границы {u:+.5} + точки {h:+.5} + деталь {d:+.5} км; \
-         d_ab={dab:.4} w_b={wb:.3} w_c={wc:.3}",
+         d_ab={dab:.4} d_ac={dac:.4} w_b={wb:.3} w_c={wc:.3} n=({nx:+.2},{nz:+.2})",
         b = crust.e_base_km,
         u = crust.boundary_u_km,
         h = crust.hotspot_km,
         d = crust.detail_km,
         dab = d_ab,
+        dac = d_ac,
         wb = w_b,
         wc = w_c,
+        nx = nx,
+        nz = nz,
+    );
+    println!(
+        "    плиты A/B/C = {p0}/{p1}/{p2}; χ_plate = [{c0:.2}, {c1:.2}, {c2:.2}]; \
+         upper_is_a={up} sigma_b={sig:+.4}",
+        p0 = crust.plate_ids[0],
+        p1 = crust.plate_ids[1],
+        p2 = crust.plate_ids[2],
+        c0 = crust.chi_plates[0],
+        c1 = crust.chi_plates[1],
+        c2 = crust.chi_plates[2],
+        up = crust.upper_is_a,
+        sig = crust.sigma_b_l,
     );
     println!(
         "    k1..k7 = [{:.3}, {:.3}, {:.3}, {:.3}, {:.3}, {:.3}, {:.3}]",
@@ -286,6 +301,8 @@ fn cmd_seams(args: &[String]) -> Result<(), String> {
     println!("  E: ({ex:.0},{ez:.0}) {eh:.5} → {en:.5}");
     println!("  W: ({wx:.0},{wz:.0}) {wh:.5} → {wn:.5}");
     seam_components(&generator, cx, cz, "C");
+    seam_components(&generator, cx + 1.0, cz, "C+1x");
+    seam_components(&generator, cx, cz + 1.0, "C+1z");
     seam_components(&generator, ex, ez, "E");
     seam_components(&generator, wx, wz, "W");
     if max_c <= SEAM_LIMIT && max_e <= SEAM_LIMIT && max_w <= SEAM_LIMIT {
