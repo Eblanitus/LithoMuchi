@@ -60,7 +60,7 @@ kind = "MODIFY_VARIABLE"
 target = "horizon_world::worldgen::generator::OverworldGenerator::for_world_with_settings"
 helper = "glue/lava_settings.rs"
 variable = { name = "noise_clamped", ordinal = 0, at = "STORE" }
-require = 1
+require = 2
 ordinal = 0
 bindings = [
   { name = "value", ty = "Option<(NoiseSettings, NoiseSettings)>", value = "$value" },
