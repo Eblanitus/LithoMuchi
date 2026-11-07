@@ -32,7 +32,7 @@
 | `climate.bio_max_c` | `30.0` | `30.0` |
 | `climate.bio_min_c` | `0.0` | `0.0` |
 | `climate.c_coast` | `-0.17` | `-0.17` |
-| `climate.c_coast_e_km` | `0.15` | `0.15` |
+| `climate.c_coast_e_km` | `0.6` | `0.6` |
 | `climate.c_iso_end_l` | `5.0` | `5.0` |
 | `climate.c_land` | `[-0.17, -0.11, 0.03, 0.3, 0.6, 0.85, 1.0]` | `[-0.17, -0.11, 0.03, 0.3, 0.6, 0.85, 1.0]` |
 | `climate.c_land_iota_l` | `[0.0, 0.05, 0.5, 2.0, 5.0, 10.0, 20.0]` | `[0.0, 0.05, 0.5, 2.0, 5.0, 10.0, 20.0]` |
@@ -145,7 +145,7 @@
 | `crust.u6_width_l` | `0.5` | `0.5` |
 | `crust.u7_amplitude_km` | `0.35` | `0.35` |
 | `crust.u7_noise_lambda_l` | `2` | `2` |
-| `crust.u7_width_l` | `0.12` | `0.12` |
+| `crust.u7_width_l` | `0.24` | `0.24` |
 | `crust.w_col_l` | `0.6` | `0.6` |
 | `lattice.cache_shards` | `64` | `64` |
 | `lattice.coarse_divisor` | `4` | `4` |
@@ -245,4 +245,4 @@
 | `wind.knot7.phi_deg` | `90` | `90` |
 | `wind.knot7.s` | `0.3` | `0.3` |
 
-params_hash: scientific = 2a855bd841649b61, gameplay = db9735ac8060e384
+params_hash: scientific = c0a588da09ce3aec, gameplay = f42ec071748c9141
