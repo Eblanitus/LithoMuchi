@@ -356,7 +356,6 @@ pub fn crust_from_sample(
     let kappa_l = kappa_global(sample.q, seed, params);
     let chi = continent_fraction(kappa_l);
     let mut bc = BoundaryContrib::default();
-    let mut weights = [0.0; 7];
     let chi_a_plate = continent_fraction(kappa_plate(&sample.a, sample.q, seed, params));
     let chi_b_plate = sample
         .b
@@ -374,7 +373,7 @@ pub fn crust_from_sample(
         .b
         .map(|b| boundary_type(&sample.a, &b, sample.q, sample.n_ab, params))
         .unwrap_or_default();
-    weights = boundary_weights_from_chi(bt, chi);
+    let weights = boundary_weights_from_chi(bt, chi);
     if let Some(b) = sample.b {
         // Первый вклад кладём напрямую, а не через default(): иначе σ в
         // диагностике всегда был бы нулём (Д-022).
