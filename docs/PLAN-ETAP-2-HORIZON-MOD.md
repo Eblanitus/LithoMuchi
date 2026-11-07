@@ -156,33 +156,34 @@ bindings = [
   { name = "corners", ty = "&mut horizon_client::extras_hud::Corners", value = "&mut *corners" },
 ]
 
-# ❌ Неизвестно: функция генерации чанка (нужно искать в коде Horizon 66f3981)
-# [[injection]]
-# id = "chunk_gen"
-# kind = "HEAD"
-# target = "TODO: функция генерации чанка в Horizon"
-# helper = "chunk_gen.rs"
-# bindings = [...]
-```
-
-**❌ Неизвестно (нужно в коде Horizon 66f3981):**
-- Название функции генерации чанка (цель `target` для дополнительного `[[injection]]`)
-- Какие типы данных передавать в привязках для генерации чанков
+# Точка входа генерации чанка (по коду Horizon):
+[[injection]]
+id = "fill"
+kind = "HEAD"
+target = "horizon_client::game::native_hooks::Game<'_>::native_fill"
+helper = "fill.rs"
+bindings = [
+  # TODO: привязки для генерации чанка (координаты, семя, настройки мира)
+  # Нужно проверить сигнатуру native_fill в коде Horizon 66f3981
+]
 
 ### Шаг 4. Написать `bridge.rs`
 
 Клей между нашим генератором и Horizon. По образцу `distant_horizons/mixins/distant_horizons/bridge.rs`:
 
-- Знает типы Horizon (из примера `distant_horizons`):
-  - `horizon_client::blocks::BlockFacts`
-  - `horizon_client::chunk::Chunk`
-  - `horizon_world::registry::BlockStateId`
-  - `horizon_client::lod::TileKey`
-  - `horizon_client::mesher::{OPAQUE_LAYER, SectionMesh, TerrainVertex}`
-  - `horizon_client::streaming::{LodSampler, LodSource, WorkerContext}`
-  - `horizon_core::position::BlockPos`
+- Знает типы Horizon:
+  - Из примера `distant_horizons`:
+    - `horizon_client::blocks::BlockFacts`
+    - `horizon_client::chunk::Chunk`
+    - `horizon_world::registry::BlockStateId`
+    - `horizon_client::lod::TileKey`
+    - `horizon_client::mesher::{OPAQUE_LAYER, SectionMesh, TerrainVertex}`
+    - `horizon_client::streaming::{LodSampler, LodSource, WorkerContext}`
+    - `horizon_core::position::BlockPos`
+  - Из кода Horizon (`crates/horizon-core/src/noise/volume.rs`):
+    - `horizon_core::noise::DensityVolume` — границы и шаги объема плотности
+    - `horizon_core::noise::DensityError` — ошибки объема (`NonpositiveDimensions`, `NonpositiveSteps`, `VolumeTooLarge`, `BufferTooShort`)
 - Реализует `add_to_volume` по колонкам (уже заготовлено в `mod/glue/litospherity_glue.rs.in`)
-- ❌ Типы `DensityVolume` / `DensityError` **не найдены** в примере `distant_horizons` — нужно искать в коде Horizon 66f3981
 - Регистрирует шумовые источники для Horizon
 - Компилируется только внутри игры Horizon
 
@@ -222,8 +223,8 @@ bindings = [
 
 | Риск | Что делать |
 |------|------------|
-| Неизвестны названия функций Horizon | Спросить у разработчиков Horizon или посмотреть в исходном коде примера `distant_horizons` |
-| Типы `DensityVolume`/`DensityError` не совпадут | Сверять при первой сборке (задача T72 в плане) |
+| Сигнатура `native_fill` может отличаться в версии 66f3981 | Проверить в коде Horizon при первой сборке |
+| Типы `DensityVolume`/`DensityError` могут отличаться | Сверять при первой сборке (задача T72 в плане) |
 | Мод не загрузится в лаунчере | Проверить `horizon-native.json` и версию Horizon |
 | Скорость генерации чанков превысит бюджет | Оптимизировать `field()` и `add_to_volume` (см. раздел 4 основного разбора) |
 
@@ -231,11 +232,12 @@ bindings = [
 
 ## 5. Что нужно сделать пользователю перед началом кода
 
-1. Подтвердить версию игры `26.3` в лаунчере Horizon.
-2. Подтвердить коммит Horizon `66f3981`.
-3. Узнать название функции генерации чанка в Horizon (для `target` в `[[injection]]`).
-4. Узнать точные типы `DensityVolume` / `DensityError` в Horizon API.
-5. Узнать, куда класть `.hnmod` в лаунчере Horizon (папка модов).
+1. ✅ Версия игры `26.3` — подтверждена.
+2. ✅ Коммит Horizon `66f3981` — подтвержден.
+3. ✅ Название функции генерации чанка — `native_fill` (найдено в коде Horizon).
+4. ✅ Типы `DensityVolume` / `DensityError` — `horizon_core::noise::{DensityError, DensityVolume}` (найдены в коде Horizon).
+5. ✅ Все точки входа (`[[injection]]`) — найдены в `native-hooks.json`.
+6. Узнать, куда класть `.hnmod` в лаунчере Horizon (папка модов).
 
 ---
 

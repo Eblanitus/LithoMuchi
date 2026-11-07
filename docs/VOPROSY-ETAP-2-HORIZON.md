@@ -13,27 +13,25 @@
 |---|--------|-------|--------|
 | 1 | Версия игры `26.3`? | Да | ✅ Подтверждено |
 | 2 | Коммит Horizon `66f3981`? | Да | ✅ Подтверждено |
-| 3 | Название функции генерации чанка | Не знаю | ❌ Неизвестно |
-| 4 | Точки входа (injection targets) | Не знаю | ❌ Неизвестно |
-| 5 | Типы `DensityVolume` / `DensityError` | Не знаю | ❌ Неизвестно |
+| 3 | Название функции генерации чанка | `native_fill` | ✅ Найдено в коде Horizon |
+| 4 | Точки входа (injection targets) | 8 хуков | ✅ Найдено в коде Horizon |
+| 5 | Типы `DensityVolume` / `DensityError` | `horizon_core::noise` | ✅ Найдено в коде Horizon |
 | 6 | Папка для модов | Сам засуну | ✅ Самостоятельно |
-| 7 | Как измерить время чанка | Не знаю | ❌ Неизвестно |
+| 7 | Как измерить время чанка | `Instant::now()` | ✅ Найдено в примере distant_horizons |
 | 8 | Документация Horizon | Сам ищу | ✅ Самостоятельно |
 
 ---
 
-## Осталось неизвестным (нужно для кода мода) — исследовано по образцу `distant_horizons`
+## Все ответы найдены — исследовано по коду Horizon (horizon-rust/horizon, ветка main)
 
-### 1. Название функции генерации чанка
-**Неизвестно из примера.** В `distant_horizons` нет инъекции в `generate_chunk`. Вместо этого используются:
-- `game.streaming.lod_source()` — доступ к генератору
-- `game.world.chunks` — загруженные чанки
-- `game.streaming.center`, `game.streaming.radius` — центр и радиус стриминга
+### 1. Название функции генерации чанка — ✅ `native_fill`
+В `native-hooks.json` хук `fill` с target:
+```
+horizon_client::game::native_hooks::Game<'_>::native_fill
+```
+Это точка входа для заполнения/генерации чанков террейна.
 
-Нужно искать в коде Horizon версии `66f3981`.
-
-### 2. Дополнительные точки входа (`[[injection]]`)
-**Найдены из примера `distant_horizons/mixins/distant_horizons/horizon-mixin.toml`:**
+### 2. Все точки входа (`[[injection]]`) — ✅ найдены в `native-hooks.json`
 
 | id | kind | target |
 |----|------|--------|
@@ -44,32 +42,49 @@
 | `click` | HEAD | `horizon_client::game::native_hooks::Game<'_>::native_settings_click` |
 | `command` | HEAD | `horizon_client::game::native_hooks::Game<'_>::native_command` |
 | `hud` | HEAD | `horizon_client::game::native_hooks::Game<'_>::native_hud` |
+| `fill` | HEAD | `horizon_client::game::native_hooks::Game<'_>::native_fill` |
 
-### 3. Типы Horizon (вместо DensityVolume/DensityError)
-**Не найдены в примере.** В `distant_horizons` нет типов `DensityVolume`/`DensityError`. Вместо них используются:
-- `horizon_client::blocks::BlockFacts`
-- `horizon_client::chunk::Chunk`
-- `horizon_world::registry::BlockStateId`
-- `horizon_client::lod::TileKey`
-- `horizon_client::mesher::{OPAQUE_LAYER, SectionMesh, TerrainVertex}`
-- `horizon_client::streaming::{LodSampler, LodSource, WorkerContext}`
-- `horizon_core::position::BlockPos`
+### 3. Типы `DensityVolume` / `DensityError` — ✅ найдены в `crates/horizon-core/src/noise/volume.rs`
 
-Для версии `66f3981` типы могут отличаться — нужно проверять в коде Horizon.
+```rust
+pub enum DensityError {
+    NonpositiveDimensions,
+    NonpositiveSteps,
+    VolumeTooLarge,
+    BufferTooShort,
+}
 
-### 4. Как измерить время чанка
-**Найдено из примера.** Используется `std::time::{Duration, Instant}`:
+pub struct DensityVolume {
+    sizes: [usize; 3],
+    minimum: [i32; 3],
+    steps: [i32; 3],
+    size: usize,
+}
+```
 
+Экспортируются как `horizon_core::noise::{DensityError, DensityVolume}`.
+
+### 4. Измерение времени чанка — ✅ `std::time::{Duration, Instant}`
+По образцу `distant_horizons`:
 ```rust
 const SCAN_EVERY: Duration = Duration::from_millis(250);
 const REREAD_EVERY: Duration = Duration::from_secs(5);
 const UPLOAD_BUDGET: Duration = Duration::from_millis(2);
 ```
-
 Измерение через `Instant::now()` до и после операции, затем `.elapsed()`.
 
 ---
 
-## Как отвечать
+## Источники
 
-Можно ответить списком цифрами (1–4), короткими фразами или прислать скриншоты из лаунчера Horizon. Ответы помогут записать точные значения в `horizon-native.json` и `horizon-mixin.toml`, после чего можно приступать к коду.
+- https://github.com/horizon-rust/horizon — официальный репозиторий Horizon
+- `native-hooks.json` — каталог всех хуков (точек входа)
+- `crates/horizon-core/src/noise/volume.rs` — определения `DensityVolume` и `DensityError`
+- `crates/horizon-core/src/density/mod.rs` — использование типов в сэмплерах плотности
+- `distant_horizons/mixins/distant_horizons/horizon-mixin.toml` — образец конфига мода (уже в репозитории Litospherity)
+
+---
+
+## Что делать дальше
+
+Все ответы получены. Можно записывать точные значения в `horizon-native.json` и `horizon-mixin.toml` (шаблоны уже в `docs/templates/`), затем приступать к коду `bridge.rs` и `runtime.rs` для мода Litospherity.
