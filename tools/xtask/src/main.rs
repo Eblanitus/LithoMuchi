@@ -349,9 +349,9 @@ fn main() -> Result<(), String> {
     match args.first().map(String::as_str) {
         Some("params-doc") => cmd_params_doc(),
         Some("params-hash") => cmd_params_hash(),
-        Some("pack") => cmd_pack(&out_arg(&args[1..])?),
-        Some("bundle") => cmd_bundle(&out_arg(&args[1..])?),
-        Some("bundle-check") => cmd_bundle_check(&out_arg(&args[1..])?),
+        Some("pack") => cmd_pack(&out_arg(&args[1..])?)?,
+        Some("bundle") => cmd_bundle(&out_arg(&args[1..])?)?,
+        Some("bundle-check") => cmd_bundle_check(&out_arg(&args[1..])?)?,
         Some("help") | Some("--help") | Some("-h") | None => print!("{text}", text = usage()),
         Some(other) => return Err(format!("неизвестная команда '{other}'")),
     }
