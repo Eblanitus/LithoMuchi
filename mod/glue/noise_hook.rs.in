@@ -2,22 +2,22 @@
 // СТРОГОЕ ПРАВИЛО 5.5: файл помощника содержит ровно ОДНУ приватную функцию
 // и НИ ОДНОГО атрибута (в том числе //! и #![...]). Он вставляется локальной
 // функцией внутрь seeded.rs, поэтому видит приватные типы и поля модуля.
-// НЕ КОМПИЛИРУЕТСЯ в workspace разработки: типы принадлежат horizon-core.
+// Типы принадлежат horizon-core; тест компилирует этот же файл с контрактом.
+// ВАЖНО: Arc, Noise и CompileError оставляем как в сигнатуре цели:
+// horizon-mixins сравнивает токены типов, не разрешая эквивалентные пути.
 fn litospherity_noise(
     ctx: &SeededContext,
     graph: &DensityGraph,
     id: NoiseId,
-) -> std::ops::ControlFlow<
-    Result<std::sync::Arc<dyn crate::noise::Noise>, crate::density::graph::CompileError>,
-> {
+) -> core::ops::ControlFlow<Result<Arc<dyn Noise>, CompileError>> {
     // Привязка может быть только параметром цели или его заимствованием,
     // поэтому self.seed и graph.noise_entry(id) вычисляются ЗДЕСЬ (план 10.2).
     let Ok(entry) = graph.noise_entry(id) else {
-        return std::ops::ControlFlow::Continue(());
+        return core::ops::ControlFlow::Continue(());
     };
     match crate::litospherity_glue::noise_for_name(ctx.seed, &entry.name) {
-        Some(noise) => std::ops::ControlFlow::Break(Ok(noise)),
+        Some(noise) => core::ops::ControlFlow::Break(Ok(noise)),
         // Не наш шум, неизвестная версия или nether: обычный путь Horizon.
-        None => std::ops::ControlFlow::Continue(()),
+        None => core::ops::ControlFlow::Continue(()),
     }
 }

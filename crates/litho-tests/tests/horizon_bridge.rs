@@ -77,3 +77,57 @@ fn bulk_matches_scalar_and_preserves_tail() {
         assert_eq!(short, [7.0; 2]);
     }
 }
+
+mod hook_contract {
+    use crate::noise::Noise;
+    use std::sync::Arc;
+
+    struct SeededContext {
+        seed: i64,
+    }
+    type NoiseId = usize;
+    #[derive(Debug)]
+    struct CompileError;
+    struct Entry {
+        name: String,
+    }
+    struct DensityGraph {
+        entries: Vec<Entry>,
+    }
+    impl DensityGraph {
+        fn noise_entry(&self, id: NoiseId) -> Result<&Entry, CompileError> {
+            self.entries.get(id).ok_or(CompileError)
+        }
+    }
+
+    include!("../../../mod/glue/noise_hook.rs.in");
+
+    #[test]
+    fn hook_replaces_our_noise_and_passes_through_others() {
+        let ctx = SeededContext { seed: 42 };
+        let graph = DensityGraph {
+            entries: vec![
+                Entry {
+                    name: "litospherity:smoke/continents".into(),
+                },
+                Entry {
+                    name: "minecraft:temperature".into(),
+                },
+            ],
+        };
+        match litospherity_noise(&ctx, &graph, 0) {
+            core::ops::ControlFlow::Break(Ok(noise)) => {
+                assert_eq!(noise.get2(0.0, 0.0), 0.8);
+            }
+            _ => panic!("our noise must replace the vanilla sampler"),
+        }
+        assert!(matches!(
+            litospherity_noise(&ctx, &graph, 1),
+            core::ops::ControlFlow::Continue(())
+        ));
+        assert!(matches!(
+            litospherity_noise(&ctx, &graph, 2),
+            core::ops::ControlFlow::Continue(())
+        ));
+    }
+}
