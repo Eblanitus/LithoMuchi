@@ -21,6 +21,8 @@ jobs:
         run: cargo fmt --all -- --check
       - name: clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: Диагностика шва D-022 (временная)
+        run: cargo test -p litho-tests --lib diag_seam_components -- --nocapture
       - name: tests
         run: cargo test --workspace
       - name: sandbox smoke test
