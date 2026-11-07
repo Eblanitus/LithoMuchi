@@ -192,7 +192,7 @@
 | `poles.warp_lambda0_l` | `40` | `40` |
 | `precip.advection_mm` | `1500` | `1500` |
 | `precip.itcz_precip_mm` | `1900` | `1900` |
-| `precip.land_length_l` | `6` | `6` |
+| `precip.land_length_l` | `12` | `12` |
 | `precip.ocean_length_l` | `1` | `1` |
 | `precip.orographic_height_km` | `1.5` | `1.5` |
 | `precip.ray_step_l` | `0.25` | `0.25` |
@@ -245,4 +245,4 @@
 | `wind.knot7.phi_deg` | `90` | `90` |
 | `wind.knot7.s` | `0.3` | `0.3` |
 
-params_hash: scientific = c0a588da09ce3aec, gameplay = f42ec071748c9141
+params_hash: scientific = 508c92f97ebb4389, gameplay = 0a0354986ff62688
