@@ -99,6 +99,16 @@ pub fn kappa_mix(sample: &PlateSample, seed: u64, params: &Params) -> f64 {
     result
 }
 
+// Д-027: центры материков в окне 9×9 зависят только от ячейки. 33 точки
+// луча влаги лежат в одном окне, поэтому список кэшируется в потоке.
+// Порядок обхода и формулы не изменены — ответ побайтово прежний.
+type CandidateCache = Option<(u64, u64, i64, i64, i64, Vec<Plate>)>;
+
+thread_local! {
+    static KAPPA_CANDIDATES: std::cell::RefCell<CandidateCache> =
+        const { std::cell::RefCell::new(None) };
+}
+
 /// Поле материка как максимум вкладов ближайших плит с материком (Д-012).
 ///
 /// В 7.4.1 `κ` привязано к ближайшей плите, поэтому материк обрезается
@@ -107,15 +117,6 @@ pub fn kappa_mix(sample: &PlateSample, seed: u64, params: &Params) -> f64 {
 /// лежать на нескольких плитах, как в реальности, а береговая линия больше не
 /// повторяет прямолинейные швы. Вклад далёкой плиты ограничен уровнем океана,
 /// поэтому смена окна не даёт разрывов на границах ячеек.
-/// Д-027: центры материков в окне 9×9 зависят только от ячейки. 33 точки
-/// луча влаги лежат в одном окне, поэтому список кэшируется в потоке.
-/// Порядок обхода и формулы не изменены — ответ побайтово прежний.
-thread_local! {
-    static KAPPA_CANDIDATES: std::cell::RefCell<
-        Option<(u64, u64, i64, i64, i64, Vec<Plate>)>,
-    > = const { std::cell::RefCell::new(None) };
-}
-
 pub fn kappa_global(q: Vec2, seed: u64, params: &Params) -> f64 {
     kappa_global_with_noise(q, seed, kappa_noise(q, seed, params), params)
 }
