@@ -4,7 +4,7 @@ horizon_revision = "66f3981f522b24c250b21523a70080965b940424"
 [mod]
 id = "litospherity"
 priority = 100
-version = "0.3.0"
+version = "0.4.0"
 
 [[module]]
 file = "crates/horizon-client/src/game.rs"

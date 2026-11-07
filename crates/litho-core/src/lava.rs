@@ -46,6 +46,19 @@ pub fn sample(point: Vec2, plates: &PlateSample, seed: u64, params: &Params) -> 
     b.max(c).max(params.lava.background).min(1.0)
 }
 
+/// Probability of crossing Horizon's abs(lava) > 0.3 threshold. Unlike the
+/// old amplitude product, this works with the scientific mode's low background.
+pub fn aquifer_probability(heat: f64, background: f64) -> f64 {
+    let tectonic = ((heat - background) / (1.0 - background)).clamp(0.0, 1.0);
+    0.01 + 0.49 * tectonic
+}
+
+/// Encode a probability into the existing lava sampler contract. Inactive
+/// negative values never reach -0.3, so abs() cannot accidentally activate them.
+pub fn aquifer_value(heat: f64, background: f64, random: f64) -> f64 {
+    0.3 + 0.5 * (aquifer_probability(heat, background) - random)
+}
+
 #[cfg(test)]
 mod tests {
     use super::sample;
@@ -54,6 +67,25 @@ mod tests {
     use crate::params::Params;
     use crate::plates::{Plate, PlateSample};
     use crate::version::GenVersion;
+
+    #[test]
+    fn probability_matches_native_threshold_for_hot_and_cold_cells() {
+        for background in [0.05, 0.15] {
+            let mut last = 0;
+            for heat in [background, 0.3, 0.5, 0.8, 1.0] {
+                let count = (0..10000)
+                    .filter(|i| {
+                        let r = (f64::from(*i) + 0.5) / 10000.0;
+                        super::aquifer_value(heat, background, r).abs() > 0.3
+                    })
+                    .count();
+                let expected = super::aquifer_probability(heat, background) * 10000.0;
+                assert!((count as f64 - expected).abs() <= 1.0);
+                assert!(count >= last);
+                last = count;
+            }
+        }
+    }
 
     fn empty_sample() -> PlateSample {
         PlateSample {

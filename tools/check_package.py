@@ -21,7 +21,7 @@ with zipfile.ZipFile(archive) as z:
     root = 'mixins/litospherity/'
     metadata = json.loads(z.read('horizon-native.json'))
     manifest = tomllib.loads(z.read(root + 'horizon-mixin.toml').decode())
-    assert metadata['version'] == manifest['mod']['version'] == '0.3.0'
+    assert metadata['version'] == manifest['mod']['version'] == '0.4.0'
     assert metadata['horizon'] == manifest['compatibility']['horizon_revision']
     assert {c['dependent'] for c in manifest['crate']} == {'horizon-core', 'horizon-client-render'}
     # Match the launcher's native source allowlist, including its depth limits.
@@ -54,6 +54,17 @@ with zipfile.ZipFile(archive) as z:
                 json.loads(content)
         lava = json.loads(packs[title, f'data/litospherity/worldgen/density_function/v0/{mode}/lava.json'])
         assert (lava['xz_scale'], lava['y_scale']) == (64.0, 40.0)
+        own_offset = 'data/minecraft/worldgen/density_function/overworld/offset.json'
+        if mode == 'scientific':
+            node = json.loads(embedded[own_offset])
+            assert node['input']['noise'] == 'litospherity:v0/scientific/offset'
+            assert node['input']['y_scale'] == 0.0
+            assert json.loads(embedded['data/minecraft/worldgen/density_function/overworld/factor.json']) == 8.0
+            assert json.loads(embedded['data/minecraft/worldgen/density_function/overworld/jaggedness.json']) == 0.0
+            assert 'data/litospherity/worldgen/density_function/v0/scientific/height_active.json' in embedded
+        else:
+            assert own_offset not in embedded, 'gameplay must retain accepted terrain'
+        assert not any('/dimension_type/' in p or '/noise_settings/' in p or '/dimension/' in p for p in embedded), 'world/build height must not change'
     assert {title for title, path in packs} == {'Litospherity - Игровой мир', 'Litospherity - Научный мир'}
     for injection in manifest['injection']:
         assert root + injection['helper'] in names

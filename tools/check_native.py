@@ -58,6 +58,11 @@ def main():
         '[package]\nname="litho-native-reader-check"\nversion="0.0.0"\nedition="2024"\n'
         '[workspace]\n[dependencies]\nhorizon-mods = { path = '
         + json.dumps(str(dependency)) + ', features = ["index"] }\n')
+    with (reader / 'Cargo.toml').open('a') as manifest:
+        for package in ('horizon-core', 'horizon-world'):
+            manifest.write(package + ' = { path = ' + json.dumps(str(ROOT / 'out/native-stage/crates' / package)) + ' }\n')
+        manifest.write('serde_json = "1"\n')
+    shutil.copyfile(ROOT / 'tools/native_world_tests.rs', reader / 'src/terrain.rs')
     (reader / 'src/main.rs').write_text(
         'fn main() {\n'
         ' let path = std::env::args().nth(1).expect("archive path");\n'
@@ -65,9 +70,12 @@ def main():
         '   .unwrap_or_else(|e| panic!("Launcher rejected archive: {e}"));\n'
         ' assert!(!horizon_mods::index::native::allowed(\n'
         '   "crates/litho-packs/data/gameplay/active.json"));\n'
-        ' println!("PASS: actual Horizon launcher Bundle::read");\n}\n')
+        ' println!("PASS: actual Horizon launcher Bundle::read");\n}\n'
+        '#[cfg(test)] mod terrain;\n')
     run(['cargo', 'run', '--manifest-path', str(reader / 'Cargo.toml'),
          '--target-dir', str(ROOT / 'out/native-stage/target'), '--', str(archive)])
+    run(['cargo', 'test', '--manifest-path', str(reader / 'Cargo.toml'),
+         '--target-dir', str(ROOT / 'out/native-stage/target'), '--', '--nocapture'])
     # Bundled path crates add workspace-package entries. Refresh those entries
     # while retaining pinned registry dependencies, then require a locked build.
     run(['cargo', 'update', '--workspace', '--manifest-path', str(ROOT / 'out/native-stage/Cargo.toml')])

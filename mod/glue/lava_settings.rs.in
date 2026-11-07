@@ -21,25 +21,76 @@ fn litospherity_lava_settings(
         (false, true) => "scientific",
         _ => return value,
     };
+    if mode == "scientific"
+        && data
+            .densities
+            .contains_key("litospherity:v0/scientific/height_active")
+    {
+        // Preserve the original density/cave graph. Only move vanilla's terrain
+        // slides INSIDE the unchanged [-64,320) build range, so they do not
+        // erase our high plateaus or fill our deep trenches at Y=-40.
+        if let Some(root) = settings
+            .get_mut("noise_router")
+            .and_then(|r| r.get_mut("final_density"))
+        {
+            let mut graph = match root.as_str() {
+                Some(name) => data
+                    .densities
+                    .get(name)
+                    .and_then(|json| serde_json::from_str::<Value>(json).ok()),
+                None => Some(root.clone()),
+            };
+            if let Some(ref mut graph) = graph {
+                let mut stack = vec![graph];
+                while let Some(node) = stack.pop() {
+                    match node {
+                        Value::Object(map) => {
+                            let gradient = map
+                                .get("type")
+                                .and_then(Value::as_str)
+                                .is_some_and(|t| t == "minecraft:gradient" || t == "gradient");
+                            if gradient && map.get("axis").and_then(Value::as_str) == Some("y") {
+                                let from = map.get("from_coordinate").and_then(Value::as_i64);
+                                let to = map.get("to_coordinate").and_then(Value::as_i64);
+                                if from == Some(240) && to == Some(256) {
+                                    map.insert("from_coordinate".into(), 288.into());
+                                    map.insert("to_coordinate".into(), 312.into());
+                                } else if from == Some(-64) && to == Some(-40) {
+                                    map.insert("to_coordinate".into(), (-56).into());
+                                }
+                            }
+                            stack.extend(map.values_mut());
+                        }
+                        Value::Array(values) => stack.extend(values.iter_mut()),
+                        _ => {}
+                    }
+                }
+            }
+            if let Some(graph) = graph {
+                *root = graph;
+            }
+        }
+    }
     let Some(aquifers) = settings.get_mut("aquifers").and_then(Value::as_object_mut) else {
         return value;
     };
     let Some(original) = aquifers.get("lava").cloned() else {
         return value;
     };
-    // Aquifer samples lava at (block_x / 64, block_y / 40, block_z / 64).
-    // floor(y / 40) <= -2 covers blocks strictly below -40.
-    // Cell -1 also includes blocks -39..-1, so retain the original there.
+    // Lava is sampled on integer (x/64,y/40,z/64) cells, not block Y.
+    // Include cell -1 (-40..-1) too: restricting to <=-2 left almost no
+    // visible band above the unconditional vanilla lava floor at -54.
+    // Horizon independently requires fluid level <= -10; no surface eruptions.
     aquifers.insert(
         "lava".into(),
         serde_json::json!({
             "type": "minecraft:range_choice",
             "input": {
                 "type": "minecraft:gradient", "axis": "y",
-                "from_coordinate": -2, "to_coordinate": 0,
-                "from_value": -80, "to_value": 0
+                "from_coordinate": -1, "to_coordinate": 0,
+                "from_value": -1, "to_value": 0
             },
-            "min_inclusive": -1000000, "max_exclusive": -79,
+            "min_inclusive": -2, "max_exclusive": 0,
             "when_in_range": format!("litospherity:v0/{mode}/lava"),
             "when_out_of_range": original
         }),

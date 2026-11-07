@@ -82,14 +82,13 @@ fn generator_identity_and_threads_do_not_change_answers() {
 }
 
 #[test]
-fn aquifer_lava_is_bounded_by_plate_heat_and_deterministic() {
+fn aquifer_lava_encodes_activation_probability_and_is_deterministic() {
     for mode in Mode::ALL {
         let generator = Generator::new(42, mode, GenVersion::V0).unwrap();
         for x in [-4096.0, -64.0, 0.0, 64.0, 4096.0] {
-            let heat = generator.lava_sample(x, -x);
             for y in [-80.0, -40.0, 0.0] {
                 let value = generator.aquifer_lava(x, y, -x);
-                assert!(value >= heat * 0.2 && value <= heat);
+                assert!((-0.2..=0.55).contains(&value));
                 assert_eq!(value.to_bits(), generator.aquifer_lava(x, y, -x).to_bits());
             }
         }

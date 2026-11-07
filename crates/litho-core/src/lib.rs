@@ -17,6 +17,7 @@ pub mod diagnostic;
 pub mod field;
 pub mod generator;
 pub mod hash;
+pub mod height;
 pub mod lattice;
 pub mod lava;
 pub mod math;

@@ -51,7 +51,7 @@ fn only_our_overworld_changes_and_original_lava_is_preserved_above_depth_gate() 
             format!("litospherity:v0/{mode}/lava")
         );
         assert_eq!(lava["input"]["axis"], "y");
-        assert_eq!(lava["max_exclusive"], -79);
+        assert_eq!(lava["max_exclusive"], 0);
     }
     let no_aquifer = json!({"noise": {"min_y": 0}});
     assert_eq!(
@@ -61,5 +61,74 @@ fn only_our_overworld_changes_and_original_lava_is_preserved_above_depth_gate() 
             "minecraft:overworld"
         ),
         no_aquifer
+    );
+}
+
+#[test]
+fn scientific_changes_only_terrain_slides_not_build_height_or_cave_terms() {
+    let original = json!({
+        "noise": {"min_y": -64, "height": 384}, "sea_level": 63,
+        "noise_router": {"final_density": {
+            "type": "add", "left": {"type": "gradient", "axis": "y",
+                "from_coordinate":240,"to_coordinate":256,"from_value":1,"to_value":0},
+            "right": {"type":"add", "left":"minecraft:overworld/caves/noodle",
+                "right":{"type":"gradient","axis":"y","from_coordinate":-64,
+                    "to_coordinate":-40,"from_value":0,"to_value":1}}
+        }}
+    });
+    let gameplay = patch(
+        original.clone(),
+        &data(&["gameplay"]),
+        "minecraft:overworld",
+    );
+    assert_eq!(gameplay, original);
+    let mut scientific_data = data(&["scientific"]);
+    // Legacy scientific packs do not opt into new terrain handling.
+    assert_eq!(
+        patch(original.clone(), &scientific_data, "minecraft:overworld"),
+        original
+    );
+    Arc::get_mut(&mut scientific_data)
+        .unwrap()
+        .densities
+        .insert(
+            "litospherity:v0/scientific/height_active".into(),
+            "0.0".into(),
+        );
+    let scientific = patch(original.clone(), &scientific_data, "minecraft:overworld");
+    assert_eq!(scientific["noise"], original["noise"]);
+    assert_eq!(scientific["sea_level"], original["sea_level"]);
+    assert_eq!(
+        scientific["noise_router"]["final_density"]["left"]["from_coordinate"],
+        288
+    );
+    assert_eq!(
+        scientific["noise_router"]["final_density"]["left"]["to_coordinate"],
+        312
+    );
+    assert_eq!(
+        scientific["noise_router"]["final_density"]["right"]["right"]["to_coordinate"],
+        -56
+    );
+    assert_eq!(
+        scientific["noise_router"]["final_density"]["right"]["left"],
+        "minecraft:overworld/caves/noodle"
+    );
+    for dim in ["minecraft:the_nether", "minecraft:the_end"] {
+        assert_eq!(
+            patch(original.clone(), &data(&["scientific"]), dim),
+            original
+        );
+    }
+    let mut referenced = original.clone();
+    referenced["noise_router"]["final_density"] = "minecraft:test".into();
+    let mut registry = scientific_data;
+    Arc::get_mut(&mut registry).unwrap().densities.insert(
+        "minecraft:test".into(),
+        original["noise_router"]["final_density"].to_string(),
+    );
+    assert_eq!(
+        patch(referenced, &registry, "minecraft:overworld"),
+        scientific
     );
 }

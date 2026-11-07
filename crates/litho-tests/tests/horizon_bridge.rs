@@ -155,3 +155,32 @@ fn lava_bulk_uses_all_three_scaled_block_coordinates() {
     }
     assert_eq!(buffer[volume.size()], 0.25);
 }
+
+#[test]
+fn scientific_offset_uses_our_height_and_bulk_stays_two_dimensional() {
+    use litho_core::{Field, GenVersion, Generator, Mode};
+    assert!(litospherity_glue::parse_noise_name("litospherity:v0/gameplay/offset").is_none());
+    let sampler =
+        litospherity_glue::noise_for_name(42, "litospherity:v0/scientific/offset").unwrap();
+    let generator = Generator::new(42, Mode::Scientific, GenVersion::V0).unwrap();
+    for (x, z) in [(0.0, 0.0), (-1700.0, 830.0), (12000.0, -6400.0)] {
+        let expected =
+            litho_core::height::offset(generator.field_column(Field::Offset, x, z)) as f32;
+        assert_eq!(sampler.get3(x, -40.0, z).to_bits(), expected.to_bits());
+        assert_eq!(sampler.get3(x, 280.0, z).to_bits(), expected.to_bits());
+    }
+    let volume = noise::DensityVolume::new([2, 3, 2], [-17, -40, 13], [4, 8, 4]).unwrap();
+    let mut actual = vec![0.0; volume.size()];
+    sampler
+        .add_to_volume(&mut actual, volume, 1.0, 0.0, 1.0)
+        .unwrap();
+    let mut i = 0;
+    for z in [13.0, 17.0] {
+        for x in [-17.0, -13.0] {
+            for _ in 0..3 {
+                assert_eq!(actual[i].to_bits(), sampler.get2(x, z).to_bits());
+                i += 1;
+            }
+        }
+    }
+}

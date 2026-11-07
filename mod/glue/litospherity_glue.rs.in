@@ -30,8 +30,12 @@ pub fn parse_noise_name(name: &str) -> Option<NoiseSpec> {
                 | Field::Temperature
                 | Field::Vegetation
                 | Field::Lava
+                | Field::Offset
         )
     {
+        return None;
+    }
+    if field == Field::Offset && mode != Mode::Scientific {
         return None;
     }
     Some(NoiseSpec {
@@ -103,7 +107,11 @@ pub struct LithoNoise {
 
 impl crate::noise::Noise for LithoNoise {
     fn range(&self) -> Result<[f32; 2], crate::noise::NanRange> {
-        Ok([-1.0, 1.0])
+        Ok(if self.field == Field::Offset {
+            [-2.0, 2.0]
+        } else {
+            [-1.0, 1.0]
+        })
     }
 
     fn get2(&self, x: f64, z: f64) -> f32 {
@@ -113,6 +121,8 @@ impl crate::noise::Noise for LithoNoise {
     fn get3(&self, x: f64, y: f64, z: f64) -> f32 {
         if self.field == Field::Lava {
             self.generator.aquifer_lava(x, y, z) as f32
+        } else if self.field == Field::Offset {
+            litho_core::height::offset(self.generator.surface_height_km(x, z)) as f32
         } else {
             self.generator.field_column(self.field, x, z) as f32
         }

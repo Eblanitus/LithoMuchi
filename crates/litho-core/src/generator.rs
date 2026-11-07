@@ -240,6 +240,12 @@ impl Generator {
         local.max(traced)
     }
 
+    /// Scientific terrain needs only crust, not 33 climate-advection samples.
+    /// Exact same surface elevation as the full reference path.
+    pub fn surface_height_km(&self, x: f64, z: f64) -> f64 {
+        self.crust_sample(x, z).map_or(0.0, |sample| sample.e_km)
+    }
+
     /// Поле глубинной лавы λ (слой `lava`, T53).
     pub fn lava_sample(&self, x: f64, z: f64) -> f64 {
         let point = self.macro_point(x, z);
@@ -529,8 +535,7 @@ impl Generator {
             cell(y, 40.0),
             cell(z, 64.0),
         ));
-        // Equivalent to lambda * (0.6 + 0.4 * noise), noise in [-1, 1).
-        self.lava_sample(x, z) * (0.2 + 0.8 * random)
+        crate::lava::aquifer_value(self.lava_sample(x, z), self.params.lava.background, random)
     }
 
     /// Значение на колонку `(x, z)` для `add_to_volume` (10.3).
