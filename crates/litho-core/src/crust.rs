@@ -211,7 +211,6 @@ impl BoundaryContrib {
 #[derive(Clone, Copy)]
 struct BoundaryInput {
     d_l: f64,
-    normal: Vec2,
     weight: f64,
     /// χ из непрерывного κ_global — то же поле, что и у высоты.
     chi: f64,
@@ -222,15 +221,14 @@ fn boundary_contrib(
     sample: &PlateSample,
     neighbor: &Plate,
     input: BoundaryInput,
+    bt: BoundaryType,
     seed: u64,
     params: &Params,
 ) -> BoundaryContrib {
     let c = &params.crust;
     let d_l = input.d_l;
-    let normal = input.normal;
     let weight = input.weight;
     let chi = input.chi;
-    let bt: BoundaryType = boundary_type(&sample.a, neighbor, sample.q, normal, params);
     // Д-022: веса стыка берутся из того же непрерывного κ_global, что и
     // высота e_base. Раньше χ считался от «своей» плиты: на стыке A↔B
     // k1 перескакивал в k2 и вклад границ менялся на 0,57 км за один блок.
@@ -368,9 +366,16 @@ pub fn crust_from_sample(
         .c
         .map(|c| continent_fraction(kappa_plate(&c, sample.q, seed, params)))
         .unwrap_or(0.0);
+    // Д-022: тип деформации — свойство окрестности стыка, а не пары
+    // «ближайшая плита + конкретный сосед». Раньше для второй границы C он
+    // считался от пары A|C и при смене A↔B перескакивал на пару B|C: `conv`
+    // менялся скачком, `bc.positive` — на 0,87 км, а эрозия E — на 0,029.
+    let bt = sample
+        .b
+        .map(|b| boundary_type(&sample.a, &b, sample.q, sample.n_ab, params))
+        .unwrap_or_default();
+    weights = boundary_weights_from_chi(bt, chi);
     if let Some(b) = sample.b {
-        let bt = boundary_type(&sample.a, &b, sample.q, sample.n_ab, params);
-        weights = boundary_weights_from_chi(bt, chi);
         // Первый вклад кладём напрямую, а не через default(): иначе σ в
         // диагностике всегда был бы нулём (Д-022).
         bc = boundary_contrib(
@@ -378,10 +383,10 @@ pub fn crust_from_sample(
             &b,
             BoundaryInput {
                 d_l: sample.d_ab_l,
-                normal: sample.n_ab,
                 weight: sample.w_b,
                 chi,
             },
+            bt,
             seed,
             params,
         );
@@ -392,10 +397,10 @@ pub fn crust_from_sample(
             &c_plate,
             BoundaryInput {
                 d_l: sample.d_ac_l,
-                normal: sample.n_ac,
                 weight: sample.w_c,
                 chi,
             },
+            bt,
             seed,
             params,
         ));
