@@ -336,6 +336,26 @@ pub fn boundary_type(a: &Plate, b: &Plate, q: Vec2, n_ab: Vec2, params: &Params)
 
 /// Веса `k1…k7` классификации границ (7.3.6). `chi_a`, `chi_b` — доля
 /// материковой коры у границы, 0 = океан, 1 = материк.
+/// Веса k1…k7 из одного непрерывного поля χ = continent_fraction(κ_global)
+/// (Д-022). Обе стороны стыка смотрят в одну и ту же точку, поэтому при смене
+/// ближайшей плиты A↔B веса не перескакивают. Разложение χ² / 2χ(1−χ) /
+/// (1−χ)² сохраняет физику: на материке работает столкновение (горы), в
+/// океане — жёлоб и островная дуга, на берегу — смешанный профиль.
+pub fn boundary_weights_from_chi(boundary: BoundaryType, chi: f64) -> [f64; 7] {
+    let land = chi * chi;
+    let mixed = 2.0 * chi * (1.0 - chi);
+    let both_ocean = (1.0 - chi) * (1.0 - chi);
+    [
+        boundary.conv * land,
+        boundary.conv * mixed,
+        boundary.conv * both_ocean,
+        boundary.div * both_ocean,
+        boundary.div * land,
+        boundary.div * mixed,
+        boundary.tr,
+    ]
+}
+
 pub fn boundary_weights(boundary: BoundaryType, chi_a: f64, chi_b: f64) -> [f64; 7] {
     let both_land = chi_a * chi_b;
     let mixed = (chi_a - chi_b).abs();

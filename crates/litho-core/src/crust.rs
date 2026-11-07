@@ -10,7 +10,7 @@ use crate::math::{Vec2, clamp01, dexp, smoothstep};
 use crate::noise::{fbm2, ridged2};
 use crate::params::Params;
 use crate::plates::{
-    BoundaryType, Plate, PlateSample, boundary_type, boundary_weights, continent_field,
+    BoundaryType, Plate, PlateSample, boundary_type, boundary_weights_from_chi, continent_field,
     continent_fraction, plate_query, seeds_in_cell,
 };
 use crate::seed::{
@@ -151,36 +151,36 @@ fn plateau_shape(sigma_l: f64, w_col_l: f64) -> f64 {
         * (1.0 - smoothstep(1.2 * w_col_l, 3.5 * w_col_l, sigma_l))
 }
 
-/// Какая сторона границы «сверху»: у субдукции надвигается более молодая
-/// плита, при равном возрасте сторону выбирает хэш пары (7.4.3, Д-022).
+/// Знаковое расстояние σ до границы, привязанное к **паре** плит, а не к
+/// ближайшей плите (Д-022). `d_l` из `plate_query` неотрицателен: при смене
+/// A↔B знак терялся, а вместе с ним переворачивались все профили U2/U3/U6 —
+/// жёлоб и островная дуга появлялись/исчезали целиком за один блок.
 ///
-/// Это свойство **пары плит**, а не точки: раньше сюда подавались χ плит из
-/// `kappa_plate`, и жёсткий порог `|χ_a − χ_n| > 0.25` перескакивал посреди
-/// ровного склона. Знак `σ` переворачивался, `gauss(σ − d_island, w_island)`
-/// включался/выключался целиком и давал скачок высоты на 1,12 км за один блок
-/// (точка (336, 384) сида 42). Теперь ответ антисимметричен: при смене
-/// ближайшей плиты A↔B он инвертируется ровно настолько, насколько `d_l`
-/// меняет сторону, и `σ` остаётся непрерывным на самой границе.
-fn upper_is_a(a: &Plate, neighbor: &Plate, seed: u64) -> bool {
+/// Каноническая нормаль задаётся порядком id: при перестановке A↔B и порядок,
+/// и знак `beta` меняются, поэтому `σ` остаётся тем же. Дополнительный знак
+/// берётся из возраста пары (младшая плита сверху) или из хэша пары — оба
+/// симметричны и не зависят от того, кто сейчас «A».
+fn boundary_sigma(a: &Plate, neighbor: &Plate, d_l: f64, seed: u64) -> f64 {
     let low = a.id.min(neighbor.id);
     let high = a.id.max(neighbor.id);
-    let hash_bit = hash3(
-        subseed(seed, SALT_BOUNDARY_SIDE),
-        low as i64,
-        high as i64,
-        0,
-    ) & 1
-        == 1;
-    if (a.age - neighbor.age).abs() > 1e-12 {
-        // Младшая (как правило, океаническая) плита сверху. Условие
-        // антисимметрично: upper(A,B) == !upper(B,A).
-        return a.age < neighbor.age;
-    }
-    if a.id < neighbor.id {
-        hash_bit
+    let (age_low, age_high) = if a.id == low {
+        (a.age, neighbor.age)
     } else {
-        !hash_bit
-    }
+        (neighbor.age, a.age)
+    };
+    let flip = if (age_low - age_high).abs() > 1e-12 {
+        age_low < age_high
+    } else {
+        hash3(
+            subseed(seed, SALT_BOUNDARY_SIDE),
+            low as i64,
+            high as i64,
+            0,
+        ) & 1
+            == 1
+    };
+    let canonical = if a.id < neighbor.id { -d_l } else { d_l };
+    if flip { -canonical } else { canonical }
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -213,19 +213,17 @@ fn boundary_contrib(
     d_l: f64,
     normal: Vec2,
     weight: f64,
+    chi: f64,
     seed: u64,
     params: &Params,
 ) -> BoundaryContrib {
     let c = &params.crust;
     let bt: BoundaryType = boundary_type(&sample.a, neighbor, sample.q, normal, params);
-    let chi_a = continent_fraction(kappa_plate(&sample.a, sample.q, seed, params));
-    let chi_n = continent_fraction(kappa_plate(neighbor, sample.q, seed, params));
-    let k = boundary_weights(bt, chi_a, chi_n);
-    let sigma_l = if upper_is_a(&sample.a, neighbor, seed) {
-        d_l
-    } else {
-        -d_l
-    };
+    // Д-022: веса стыка берутся из того же непрерывного κ_global, что и
+    // высота e_base. Раньше χ считался от «своей» плиты: на стыке A↔B
+    // k1 перескакивал в k2 и вклад границ менялся на 0,57 км за один блок.
+    let k = boundary_weights_from_chi(bt, chi);
+    let sigma_l = boundary_sigma(&sample.a, neighbor, d_l, seed);
 
     let detail_seed = subseed(seed, SALT_CRUST_DETAIL);
     let island_noise = 0.5
@@ -284,7 +282,7 @@ fn boundary_contrib(
         plateau: weight * k[0] * plateau_shape(sigma_l, c.w_col_l),
         k7_gauss: weight * k[6] * gauss(d_l, c.mountain_edge_l),
         sigma_l,
-        upper: upper_is_a(&sample.a, neighbor, seed),
+        upper: sigma_l > 0.0,
     }
 }
 
@@ -360,8 +358,7 @@ pub fn crust_from_sample(
         .unwrap_or(0.0);
     if let Some(b) = sample.b {
         let bt = boundary_type(&sample.a, &b, sample.q, sample.n_ab, params);
-        let chi_b = continent_fraction(kappa_plate(&b, sample.q, seed, params));
-        weights = boundary_weights(bt, chi, chi_b);
+        weights = boundary_weights_from_chi(bt, chi);
         // Первый вклад кладём напрямую, а не через default(): иначе σ в
         // диагностике всегда был бы нулём (Д-022).
         bc = boundary_contrib(
@@ -370,6 +367,7 @@ pub fn crust_from_sample(
             sample.d_ab_l,
             sample.n_ab,
             sample.w_b,
+            chi,
             seed,
             params,
         );
@@ -381,6 +379,7 @@ pub fn crust_from_sample(
             sample.d_ac_l,
             sample.n_ac,
             sample.w_c,
+            chi,
             seed,
             params,
         ));
