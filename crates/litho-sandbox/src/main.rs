@@ -191,11 +191,76 @@ fn cmd_checkpoints(args: &[String]) -> Result<(), String> {
 }
 
 /// Скачки C/E/W между соседними блоками: команда `seams` (12.3, 12.5 В1).
+/// Порог 14.2: соседние блоки не должны расходиться больше чем на 0.02.
+/// Не ослабляется: это тот же порог, что и в `adjacent_blocks_are_continuous`.
+const SEAM_LIMIT: f64 = 0.02;
+
+/// Отношение «быстрый путь / эталон» на main 8d44a17: 989.3 / 917.1 = 1.079.
+/// Допуск 2 % на шум разделяемого раннера; абсолютный бюджет 14.4 (150 мкс)
+/// пока не выполнен и честно печатается отдельно (Д-019, пункт 5 в работе).
+const BENCH_MAX_FAST_OVER_REF: f64 = 1.10;
+
+/// Разложение полей в худшей точке: видно, какой именно физический вклад
+/// сделал скачок. Печатается всегда, в том числе когда `seams` пусто.
+fn seam_components(generator: &Generator, x: f64, z: f64, label: &str) {
+    let Some(crust) = generator.crust_sample(x, z) else {
+        return;
+    };
+    let (d_ab, d_ac, w_b, w_c, nx, nz) = match generator.plate_sample(x, z) {
+        Some(p) => (p.d_ab_l, p.d_ac_l, p.w_b, p.w_c, p.n_ab.x, p.n_ab.z),
+        None => (f64::NAN, f64::NAN, 0.0, 0.0, f64::NAN, f64::NAN),
+    };
+    let c = litho_core::vanilla::continentalness(crust.e_km, crust.iota_l, generator.params());
+    let k = crust.boundary_weights;
+    println!(
+        "  {label} ({x:.0},{z:.0}): C={c:.5} e={e:.5} κ={kap:.4} χ={chi:.3} ι={iota:.4} M={mnt:.3} Pl={pl:.3}",
+        e = crust.e_km,
+        kap = crust.kappa_l,
+        chi = crust.chi,
+        iota = crust.iota_l,
+        mnt = crust.mountain,
+        pl = crust.plateau,
+    );
+    println!(
+        "    e = base {b:+.5} + границы {u:+.5} + точки {h:+.5} + деталь {d:+.5} км; \
+         d_ab={dab:.4} d_ac={dac:.4} w_b={wb:.3} w_c={wc:.3} n=({nx:+.2},{nz:+.2})",
+        b = crust.e_base_km,
+        u = crust.boundary_u_km,
+        h = crust.hotspot_km,
+        d = crust.detail_km,
+        dab = d_ab,
+        dac = d_ac,
+        wb = w_b,
+        wc = w_c,
+        nx = nx,
+        nz = nz,
+    );
+    println!(
+        "    плиты A/B/C = {p0}/{p1}/{p2}; χ_plate = [{c0:.2}, {c1:.2}, {c2:.2}]; \
+         upper_is_a={up} sigma_b={sig:+.4}",
+        p0 = crust.plate_ids[0],
+        p1 = crust.plate_ids[1],
+        p2 = crust.plate_ids[2],
+        c0 = crust.chi_plates[0],
+        c1 = crust.chi_plates[1],
+        c2 = crust.chi_plates[2],
+        up = crust.upper_is_a,
+        sig = crust.sigma_b_l,
+    );
+    println!(
+        "    k1..k7 = [{:.3}, {:.3}, {:.3}, {:.3}, {:.3}, {:.3}, {:.3}]",
+        k[0], k[1], k[2], k[3], k[4], k[5], k[6]
+    );
+}
+
+/// Полный скан карты, а не 100 точек юнит-теста: 64×64 узла с шагом 16
+/// блоков, соседи по обеим осям для всех трёх полей. Возвращает ошибку при
+/// любом превышении порога — это и есть обязательный гейт из Д-022.
 fn cmd_seams(args: &[String]) -> Result<(), String> {
     let opts = options_from(args)?;
     let generator = generator(&opts)?;
-    let n = 48_usize;
-    let step = 32.0;
+    let n = 64_usize;
+    let step = 16.0;
     let mut worst_c = (0.0_f64, 0.0_f64, 0.0_f64, 0.0_f64, 0.0_f64);
     let mut worst_e = worst_c;
     let mut worst_w = worst_c;
@@ -203,45 +268,75 @@ fn cmd_seams(args: &[String]) -> Result<(), String> {
         for j in 0..n {
             let x = (i as f64 - n as f64 * 0.5) * step;
             let z = (j as f64 - n as f64 * 0.5) * step;
-            let hc = generator.field(Field::Continents, x, 64.0, z);
-            let ec = generator.field(Field::Continents, x + 1.0, 64.0, z);
-            let he = generator.field(Field::Erosion, x, 64.0, z);
-            let ee = generator.field(Field::Erosion, x, 64.0, z + 1.0);
-            let hw = generator.field(Field::Ridges, x, 64.0, z);
-            let ew = generator.field(Field::Ridges, x, 64.0, z + 1.0);
-            let dc = (ec - hc).abs();
-            let de = (ee - he).abs();
-            let dw = (ew - hw).abs();
-            if dc > worst_c.0 {
-                worst_c = (dc, x, z, hc, ec);
-            }
-            if de > worst_e.0 {
-                worst_e = (de, x, z, he, ee);
-            }
-            if dw > worst_w.0 {
-                worst_w = (dw, x, z, hw, ew);
+            let base = [
+                generator.field(Field::Continents, x, 64.0, z),
+                generator.field(Field::Erosion, x, 64.0, z),
+                generator.field(Field::Ridges, x, 64.0, z),
+            ];
+            for (dx, dz) in [(1.0, 0.0), (0.0, 1.0)] {
+                let next = [
+                    generator.field(Field::Continents, x + dx, 64.0, z + dz),
+                    generator.field(Field::Erosion, x + dx, 64.0, z + dz),
+                    generator.field(Field::Ridges, x + dx, 64.0, z + dz),
+                ];
+                for (worst, k) in [(&mut worst_c, 0), (&mut worst_e, 1), (&mut worst_w, 2)] {
+                    let delta = (next[k] - base[k]).abs();
+                    if delta > worst.0 {
+                        *worst = (delta, x, z, base[k], next[k]);
+                    }
+                }
             }
         }
     }
     let (max_c, cx, cz, ch, cn) = worst_c;
     let (max_e, ex, ez, eh, en) = worst_e;
     let (max_w, wx, wz, wh, wn) = worst_w;
-    println!("seams: max |ΔC|={max_c:.5} |ΔE|={max_e:.5} |ΔW|={max_w:.5}, порог 0.02");
+    println!(
+        "seams: скан {scan}×{scan} узлов, шаг {step:.0} блоков, обе оси; \
+         max |ΔC|={max_c:.5} |ΔE|={max_e:.5} |ΔW|={max_w:.5}, порог {lim}",
+        scan = n,
+        lim = SEAM_LIMIT,
+    );
     println!("  C: ({cx:.0},{cz:.0}) {ch:.5} → {cn:.5}");
     println!("  E: ({ex:.0},{ez:.0}) {eh:.5} → {en:.5}");
     println!("  W: ({wx:.0},{wz:.0}) {wh:.5} → {wn:.5}");
-    if max_c <= 0.02 && max_e <= 0.02 && max_w <= 0.02 {
+    seam_components(&generator, cx, cz, "C");
+    seam_components(&generator, cx + 1.0, cz, "C+1x");
+    seam_components(&generator, cx, cz + 1.0, "C+1z");
+    seam_components(&generator, ex, ez, "E");
+    seam_components(&generator, wx, wz, "W");
+    if max_c <= SEAM_LIMIT && max_e <= SEAM_LIMIT && max_w <= SEAM_LIMIT {
         println!("seams: пусто");
-    } else {
-        println!("seams: ЕСТЬ РАЗРЫВЫ");
+        return Ok(());
     }
-    Ok(())
+    println!("seams: ЕСТЬ РАЗРЫВЫ");
+    Err(format!(
+        "seams: |ΔC|={max_c:.5}, |ΔE|={max_e:.5}, |ΔW|={max_w:.5} \
+         при пороге {SEAM_LIMIT}; мерж запрещён"
+    ))
 }
 
 /// Метрики 12.4 по области 200×200 L (T63).
-fn cmd_stats(args: &[String]) -> Result<(), String> {
-    let opts = options_from(args)?;
-    let generator = generator(&opts)?;
+/// Метрики 12.4 плюс диагностика климата на суше (Д-023).
+#[derive(Clone, Copy)]
+struct StatsRow {
+    seed: i64,
+    mode: Mode,
+    land: f64,
+    mountains: f64,
+    deserts: f64,
+    forests: f64,
+    polar: f64,
+    p_mm: f64,
+    pet_mm: f64,
+    ratio: f64,
+    mu: f64,
+    cont: f64,
+    t_bio: f64,
+}
+
+fn stats_row(seed: i64, mode: Mode) -> Result<StatsRow, String> {
+    let generator = Generator::new(seed, mode, GenVersion::V0).map_err(|e| e.to_string())?;
     let params = generator.params();
     let n = 64_usize;
     let step = 200.0 * params.block.l_blocks / n as f64;
@@ -250,6 +345,8 @@ fn cmd_stats(args: &[String]) -> Result<(), String> {
     let mut deserts = 0_usize;
     let mut forests = 0_usize;
     let mut polar = 0_usize;
+    let (mut p_sum, mut pet_sum, mut ratio_sum) = (0.0_f64, 0.0_f64, 0.0_f64);
+    let (mut mu_sum, mut cont_sum, mut t_sum) = (0.0_f64, 0.0_f64, 0.0_f64);
     for i in 0..n {
         for j in 0..n {
             let x = (i as f64 - n as f64 * 0.5) * step;
@@ -272,26 +369,134 @@ fn cmd_stats(args: &[String]) -> Result<(), String> {
                 if zone.belt <= 1 {
                     polar += 1;
                 }
+                let pr = world.climate.precip;
+                p_sum += pr.p_mm;
+                pet_sum += pr.pet_mm;
+                ratio_sum += pr.ratio;
+                mu_sum += pr.mu;
+                cont_sum += pr.cont;
+                t_sum += world.climate.temperature.t_bio;
             }
         }
     }
     let total = (n * n).max(1) as f64;
     let land_n = land.max(1) as f64;
+    Ok(StatsRow {
+        seed,
+        mode,
+        land: 100.0 * land as f64 / total,
+        mountains: 100.0 * mountains as f64 / land_n,
+        deserts: 100.0 * deserts as f64 / land_n,
+        forests: 100.0 * forests as f64 / land_n,
+        polar: 100.0 * polar as f64 / land_n,
+        p_mm: p_sum / land_n,
+        pet_mm: pet_sum / land_n,
+        ratio: ratio_sum / land_n,
+        mu: mu_sum / land_n,
+        cont: cont_sum / land_n,
+        t_bio: t_sum / land_n,
+    })
+}
+
+fn cmd_stats(args: &[String]) -> Result<(), String> {
+    let opts = options_from(args)?;
+    let row = stats_row(opts.seed, opts.mode)?;
     println!(
-        "сид={seed} режим={mode} область=200×200 L точек={count}\n\
+        "сид={seed} режим={mode} область=200×200 L точек=4096\n\
          доля суши              {land:6.1} %  (цель 25–40)\n\
          горы на суше           {mnt:6.1} %  (цель 5–20)\n\
          пустыни на суше        {dst:6.1} %  (цель 15–30)\n\
          леса на суше           {frs:6.1} %  (цель 30–50)\n\
          полярные пояса на суше {pol:6.1} %  (цель 10–25)",
-        seed = opts.seed,
-        mode = opts.mode.as_str(),
-        count = n * n,
-        land = 100.0 * land as f64 / total,
-        mnt = 100.0 * mountains as f64 / land_n,
-        dst = 100.0 * deserts as f64 / land_n,
-        frs = 100.0 * forests as f64 / land_n,
-        pol = 100.0 * polar as f64 / land_n,
+        seed = row.seed,
+        mode = row.mode.as_str(),
+        land = row.land,
+        mnt = row.mountains,
+        dst = row.deserts,
+        frs = row.forests,
+        pol = row.polar,
+    );
+    // Д-023: честная диагностика, почему пустынь много, а лесов мало.
+    println!(
+        "климат на суше (среднее): осадки P={p:7.1} мм, испаряемость PET={pet:7.1} мм, PET/P={r:5.2}, влага μ={mu:5.3}, континентальность c={cont:5.3}, t_bio={t:5.1} °C",
+        p = row.p_mm,
+        pet = row.pet_mm,
+        r = row.ratio,
+        mu = row.mu,
+        cont = row.cont,
+        t = row.t_bio,
+    );
+    Ok(())
+}
+
+/// Оценка 12.5 / Э1h: те же метрики на 16 сидах × 2 режима, без картинок.
+fn cmd_stats_all() -> Result<(), String> {
+    println!(
+        "сид        режим      суша  горы пустыни  леса поляр |     P    PET PET/P     μ     c  t_bio"
+    );
+    let mut n = 0_usize;
+    let mut sum = StatsRow {
+        seed: 0,
+        mode: Mode::Gameplay,
+        land: 0.0,
+        mountains: 0.0,
+        deserts: 0.0,
+        forests: 0.0,
+        polar: 0.0,
+        p_mm: 0.0,
+        pet_mm: 0.0,
+        ratio: 0.0,
+        mu: 0.0,
+        cont: 0.0,
+        t_bio: 0.0,
+    };
+    for seed in SWEEP_SEEDS {
+        for mode in Mode::ALL {
+            let r = stats_row(seed, mode)?;
+            println!(
+                "{seed:>10} {mode:<10} {land:5.1} {mnt:5.1} {dst:8.1} {frs:5.1} {pol:5.1} | {p:7.1} {pet:7.1} {r:5.2} {mu:5.3} {cont:5.3} {t:6.1}",
+                seed = r.seed,
+                mode = r.mode.as_str(),
+                land = r.land,
+                mnt = r.mountains,
+                dst = r.deserts,
+                frs = r.forests,
+                pol = r.polar,
+                p = r.p_mm,
+                pet = r.pet_mm,
+                r = r.ratio,
+                mu = r.mu,
+                cont = r.cont,
+                t = r.t_bio,
+            );
+            n += 1;
+            sum.land += r.land;
+            sum.mountains += r.mountains;
+            sum.deserts += r.deserts;
+            sum.forests += r.forests;
+            sum.polar += r.polar;
+            sum.p_mm += r.p_mm;
+            sum.pet_mm += r.pet_mm;
+            sum.ratio += r.ratio;
+            sum.mu += r.mu;
+            sum.cont += r.cont;
+            sum.t_bio += r.t_bio;
+        }
+    }
+    let d = n as f64;
+    println!(
+        "СРЕДНЕЕ ({n} прогонов): суша {land:5.1} горы {mnt:5.1} пустыни {dst:5.1} леса {frs:5.1} поляр {pol:5.1} | P {p:7.1} PET {pet:7.1} PET/P {r:5.2} μ {mu:5.3} c {cont:5.3} t_bio {t:5.1}",
+        land = sum.land / d,
+        mnt = sum.mountains / d,
+        dst = sum.deserts / d,
+        frs = sum.forests / d,
+        pol = sum.polar / d,
+        p = sum.p_mm / d,
+        pet = sum.pet_mm / d,
+        r = sum.ratio / d,
+        mu = sum.mu / d,
+        cont = sum.cont / d,
+        t = sum.t_bio / d,
     );
     Ok(())
 }
@@ -301,23 +506,50 @@ fn cmd_bench(args: &[String]) -> Result<(), String> {
     let generator = generator(&opts)?;
     let n = 1000;
     let mut sink = 0.0_f64;
-    let start = Instant::now();
-    for k in 0..n {
-        let x = k as f64 * 0.75;
-        if let Some(full) = generator.sample_reference(x, -x * 0.5) {
-            sink += full.vanilla.c;
+    let mut refs = [0.0_f64; 3];
+    let mut fasts = [0.0_f64; 3];
+    for (r, f) in refs.iter_mut().zip(fasts.iter_mut()) {
+        // Медиана трёх сглаживает шум разделяемого раннера, чтобы гейт не
+        // срабатывал от чужой нагрузки на CPU. Отношение двух путей считается
+        // в одном процессе и потому не зависит от абсолютной скорости машины.
+        let start = Instant::now();
+        for k in 0..n {
+            let x = k as f64 * 0.75;
+            if let Some(full) = generator.sample_reference(x, -x * 0.5) {
+                sink += full.vanilla.c;
+            }
         }
+        *r = start.elapsed().as_secs_f64() / n as f64 * 1e6;
+        let start = Instant::now();
+        for k in 0..n {
+            sink += generator.field(Field::Continents, k as f64 * 0.75, 64.0, -k as f64 * 0.375);
+        }
+        *f = start.elapsed().as_secs_f64() / n as f64 * 1e6;
     }
-    let reference = start.elapsed().as_secs_f64() / n as f64 * 1e6;
-    let start = Instant::now();
-    for k in 0..n {
-        sink += generator.field(Field::Continents, k as f64 * 0.75, 64.0, -k as f64 * 0.375);
-    }
-    let fast = start.elapsed().as_secs_f64() / n as f64 * 1e6;
+    refs.sort_by(f64::total_cmp);
+    fasts.sort_by(f64::total_cmp);
+    let reference = refs[1];
+    let fast = fasts[1];
+    let ratio = reference / fast.max(1e-9);
     println!(
-        "bench: эталон {reference:.1} мкс/точку, быстрый путь {fast:.1} мкс/поле, ускорение {ratio:.1}× (sink={sink:.3})",
-        ratio = reference / fast.max(1e-9)
+        "bench: медиана 3 прогонов — эталон {reference:.1} мкс/точку, быстрый путь {fast:.1} мкс/поле, ускорение {ratio:.3}× (sink={sink:.3})"
     );
+    println!(
+        "bench: бюджет 14.4 = 150 мкс/поле — {budget}; гейт регрессии: быстрый/эталон ≤ {limit:.2} (прошлое 1.079, допуск 2 %)",
+        budget = if fast <= 150.0 {
+            "выполнен"
+        } else {
+            "НЕ выполнен (Д-019, пункт 5 в работе)"
+        },
+        limit = BENCH_MAX_FAST_OVER_REF,
+    );
+    if fast > reference * BENCH_MAX_FAST_OVER_REF {
+        return Err(format!(
+            "bench: регрессия — быстрый путь {fast:.1} мкс против эталона {reference:.1} мкс \
+             (в {slow:.3} раза), прошлое было 1.079; мерж запрещён",
+            slow = fast / reference.max(1e-9),
+        ));
+    }
     Ok(())
 }
 
@@ -386,6 +618,114 @@ fn write_atlas(dir: &Path) -> Result<(), String> {
     .map_err(|e| format!("запись atlas.html: {e}"))
 }
 
+/// Д-024 / Э2: разбивка времени по слоям, чтобы ускорять то, что реально
+/// дорого, не меняя ни одного числа и ни одного замороженного хеша.
+/// Д-026 / `freeze v0`: хеши параметров прямо из кода, а не из документа.
+/// CI сверяет их с зафиксированными значениями, поэтому любая правка чисел
+/// краснеет ещё до пересъёмки карт.
+fn cmd_hash() -> Result<(), String> {
+    for mode in Mode::ALL {
+        let hash = Params::defaults(GenVersion::V0, mode).params_hash();
+        println!("{} = {hash:016x}", mode.as_str());
+    }
+    Ok(())
+}
+
+fn cmd_profile() -> Result<(), String> {
+    let generator =
+        Generator::new(42, Mode::Gameplay, GenVersion::V0).map_err(|error| error.to_string())?;
+    let n = 2000_usize;
+    let points: Vec<(f64, f64)> = (0..n)
+        .map(|k| {
+            let x = k as f64 * 0.75;
+            (x, -x * 0.5)
+        })
+        .collect();
+
+    fn measure<F>(label: &str, points: &[(f64, f64)], mut f: F) -> f64
+    where
+        F: FnMut(f64, f64) -> f64,
+    {
+        let start = Instant::now();
+        let mut sink = 0.0_f64;
+        for &(x, z) in points {
+            sink += f(x, z);
+        }
+        let us = start.elapsed().as_secs_f64() / points.len() as f64 * 1e6;
+        println!("profile: {label:<22} {us:8.1} мкс/точку");
+        sink
+    }
+
+    let mut sink = 0.0_f64;
+    sink += measure("плиты", &points, |x, z| {
+        generator
+            .plate_sample(x, z)
+            .map(|p| p.d_ab_l)
+            .unwrap_or(0.0)
+    });
+    sink += measure("плиты + кора", &points, |x, z| {
+        generator.crust_sample(x, z).map(|c| c.e_km).unwrap_or(0.0)
+    });
+    sink += measure("климат (луч 32)", &points, |x, z| {
+        generator
+            .climate_sample(x, z)
+            .map(|c| c.precip.p_mm)
+            .unwrap_or(0.0)
+    });
+    sink += measure("эталон целиком", &points, |x, z| {
+        generator
+            .world_sample(x, z)
+            .map(|w| w.vanilla.c)
+            .unwrap_or(0.0)
+    });
+    sink += measure("33 полюса", &points, |x, z| {
+        let base = generator.macro_point(x, z);
+        let mut acc = 0.0_f64;
+        for k in 0..33 {
+            let q = litho_core::math::Vec2::new(base.x - k as f64 * 0.25, base.z);
+            acc += litho_core::climate::pole_sample(q, 42, generator.params())
+                .map(|p| p.phi_deg)
+                .unwrap_or(0.0);
+        }
+        acc
+    });
+    // Д-027: где именно внутри `surface_at` уходят 850 мкс.
+    sink += measure("33 kappa_global", &points, |x, z| {
+        let base = generator.macro_point(x, z);
+        let mut acc = 0.0_f64;
+        for k in 0..33 {
+            let q = litho_core::math::Vec2::new(base.x - k as f64 * 0.25, base.z);
+            acc += litho_core::crust::kappa_global(q, 42, generator.params());
+        }
+        acc
+    });
+    sink += measure("33 plate_query", &points, |x, z| {
+        let base = generator.macro_point(x, z);
+        let mut acc = 0.0_f64;
+        for k in 0..33 {
+            let q = litho_core::math::Vec2::new(base.x - k as f64 * 0.25, base.z);
+            acc += litho_core::plates::plate_query(q, 42, generator.params())
+                .map(|p| p.d_ab_l)
+                .unwrap_or(0.0);
+        }
+        acc
+    });
+    sink += measure("33 crust_from_sample", &points, |x, z| {
+        let base = generator.macro_point(x, z);
+        let mut acc = 0.0_f64;
+        for k in 0..33 {
+            let q = litho_core::math::Vec2::new(base.x - k as f64 * 0.25, base.z);
+            if let Some(pl) = litho_core::plates::plate_query(q, 42, generator.params()) {
+                acc += litho_core::crust::crust_from_sample(q, &pl, 42, generator.params()).e_km;
+            }
+        }
+        acc
+    });
+    println!("profile: sink={sink:.3} (чтобы оптимизатор не выкинул замеры)");
+    std::hint::black_box(sink);
+    Ok(())
+}
+
 /// `sweep`: 16 сидов × 2 режима, слой `height`, плюс HTML-атлас (T64).
 fn cmd_sweep(args: &[String]) -> Result<(), String> {
     let out = value(args, "--out").unwrap_or_else(|| "docs/images/sweep".to_string());
@@ -433,8 +773,11 @@ fn usage() -> &'static str {
        probe        все поля в точке --at x,z\n\
        layers       список слоёв\n\
        stats        метрики 12.4 по области 200×200 L\n\
+       stats-all    те же метрики на 16 сидах × 2 режима\n\
        seams        скачки C/E/W между соседними блоками\n\
        bench        время эталонного и быстрого пути\n\
+       profile      разбивка времени по слоям\n\
+       hash         хеши параметров для замка v0\n\
        checkpoints  10 точек вокруг точки появления\n\
        sweep        16 сидов × 2 режима + HTML-атлас\n\
        atlas        пересобрать только HTML-атлас\n\
@@ -457,8 +800,11 @@ fn main() -> Result<(), String> {
         "render" => cmd_render(&args[1..]),
         "probe" => cmd_probe(&args[1..]),
         "stats" => cmd_stats(&args[1..]),
+        "stats-all" => cmd_stats_all(),
         "seams" => cmd_seams(&args[1..]),
         "bench" => cmd_bench(&args[1..]),
+        "profile" => cmd_profile(),
+        "hash" => cmd_hash(),
         "checkpoints" => cmd_checkpoints(&args[1..]),
         "sweep" => cmd_sweep(&args[1..]),
         "atlas" => write_atlas(Path::new(

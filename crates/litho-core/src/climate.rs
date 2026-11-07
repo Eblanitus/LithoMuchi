@@ -236,7 +236,7 @@ pub fn fallback_dir(params: &Params) -> Vec2 {
 }
 
 /// Ветер и псевдоширота в точке линии тока.
-fn wind_at(point: Vec2, seed: u64, params: &Params) -> (Vec2, f64) {
+pub fn wind_at(point: Vec2, seed: u64, params: &Params) -> (Vec2, f64) {
     match pole_sample(point, seed, params) {
         Some(pol) => (wind(pol.phi_deg, pol.north, pol.east, params), pol.phi_deg),
         None => (fallback_dir(params), 45.0),

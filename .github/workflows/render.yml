@@ -6,7 +6,7 @@ name: Пересъёмка атласа (T66, Д-021)
 # а не тихо переснятые карты.
 on:
   push:
-    branches: ["arena/dec6fb0e-lithomuchi"]
+    branches: ["arena/988a155a-lithomuchi"]
     paths:
       - ".github/workflows/render.yml"
       - "crates/**"
@@ -34,13 +34,15 @@ jobs:
         run: cargo build --release -p xtask -p litho-sandbox
       - name: Канонические параметры и хеши
         run: ./target/release/xtask params-doc > docs/PARAMS.md
-      - name: Метрики 12.4, швы и замер
+      - name: Метрики 12.4
+        run: ./target/release/litho-sandbox stats --seed 42 --mode gameplay > docs/images/stats.txt
+      - name: Оценка 16 сидов × 2 режима (12.5, Э1h)
+        run: ./target/release/litho-sandbox stats-all > docs/images/sweep-stats.txt
+      - name: "ОБЯЗАТЕЛЬНЫЙ ГЕЙТ — seams пусто и бенч не хуже прошлого"
         run: |
-          {
-            ./target/release/litho-sandbox stats --seed 42 --mode gameplay
-            ./target/release/litho-sandbox seams --seed 42 --mode gameplay
-            ./target/release/litho-sandbox bench --seed 42 --mode gameplay
-          } > docs/images/stats.txt
+          set -euo pipefail
+          ./target/release/litho-sandbox seams --seed 42 --mode gameplay | tee -a docs/images/stats.txt
+          ./target/release/litho-sandbox bench --seed 42 --mode gameplay | tee -a docs/images/stats.txt
       - name: Атлас 16 сидов × 2 режима
         run: ./target/release/litho-sandbox sweep --out docs/images/sweep
       - name: Полные слои, 512×512 @ 64 блока/пк
@@ -74,11 +76,12 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add docs/PARAMS.md docs/images/stats.txt docs/images/atlas.html \
+          git add docs/PARAMS.md docs/images/stats.txt docs/images/sweep-stats.txt \
+            docs/images/atlas.html \
             docs/images/sweep docs/images/v0-seed42-gameplay \
             docs/images/fast-path docs/images/after-32km
           git diff --cached --quiet || git commit -m "Атлас, метрики и параметры после Д-021 [skip ci]"
-          git push origin HEAD:arena/dec6fb0e-lithomuchi
+          git push origin HEAD:arena/988a155a-lithomuchi
       - uses: actions/upload-artifact@v4
         with:
           name: atlas-d021

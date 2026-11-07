@@ -4,6 +4,8 @@
 //! есть локально (6.4). Здесь эталонный путь с `Vec` кандидатов; быстрый путь с
 //! кэшем тайлов появится в T13/T14/T55, формулы при этом не изменятся.
 
+use std::rc::Rc;
+
 use crate::hash::{hash3, splitmix64, unit};
 use crate::math::{Vec2, clamp01, dexp, dpow};
 use crate::noise::warp2;
@@ -218,6 +220,17 @@ fn dir_from_rng(rng: &mut CellRng) -> Vec2 {
     Vec2::new(d[0], d[1])
 }
 
+// Д-027: список плит в окне ячеек зависит только от (сид, ячейка, радиус,
+// конфигурация), а не от точки. Луч влаги делает 33 запроса в одном и том же
+// окне, поэтому держим последний список в потоке. Порядок кандидатов
+// сохраняется полностью — ответ побайтово равен прежнему.
+type PlateCandidateCache = Option<(u64, u64, i64, i64, i64, Rc<Vec<Plate>>)>;
+
+thread_local! {
+    static PLATE_CANDIDATES: std::cell::RefCell<PlateCandidateCache> =
+        const { std::cell::RefCell::new(None) };
+}
+
 /// Поиск плиты в точке. `radius_cells = 2` даёт окно 5×5 (рабочий вариант);
 /// большее окно нужно только тестам и отладке.
 pub fn plate_query_window(
@@ -231,14 +244,33 @@ pub fn plate_query_window(
     let ci = (q.x / p.cell_g_l).floor() as i64;
     let cj = (q.z / p.cell_g_l).floor() as i64;
 
-    let mut candidates: Vec<Plate> = Vec::with_capacity(64);
-    for dj in -radius_cells..=radius_cells {
-        for di in -radius_cells..=radius_cells {
-            for plate in seeds_in_cell(seed, ci + di, cj + dj, params) {
-                candidates.push(plate);
+    let candidates: Rc<Vec<Plate>> = PLATE_CANDIDATES.with(|cell| {
+        let mut slot = cell.borrow_mut();
+        if let Some((s, key, i, j, r, plates)) = slot.as_ref() {
+            if *s == seed && *key == params.config_key && *i == ci && *j == cj && *r == radius_cells
+            {
+                return Rc::clone(plates);
             }
         }
-    }
+        let mut plates: Vec<Plate> = Vec::with_capacity(64);
+        for dj in -radius_cells..=radius_cells {
+            for di in -radius_cells..=radius_cells {
+                for plate in seeds_in_cell(seed, ci + di, cj + dj, params) {
+                    plates.push(plate);
+                }
+            }
+        }
+        let plates = Rc::new(plates);
+        *slot = Some((
+            seed,
+            params.config_key,
+            ci,
+            cj,
+            radius_cells,
+            Rc::clone(&plates),
+        ));
+        plates
+    });
     if candidates.is_empty() {
         return None;
     }
@@ -336,6 +368,26 @@ pub fn boundary_type(a: &Plate, b: &Plate, q: Vec2, n_ab: Vec2, params: &Params)
 
 /// Веса `k1…k7` классификации границ (7.3.6). `chi_a`, `chi_b` — доля
 /// материковой коры у границы, 0 = океан, 1 = материк.
+/// Веса k1…k7 из одного непрерывного поля χ = continent_fraction(κ_global)
+/// (Д-022). Обе стороны стыка смотрят в одну и ту же точку, поэтому при смене
+/// ближайшей плиты A↔B веса не перескакивают. Разложение χ² / 2χ(1−χ) /
+/// (1−χ)² сохраняет физику: на материке работает столкновение (горы), в
+/// океане — жёлоб и островная дуга, на берегу — смешанный профиль.
+pub fn boundary_weights_from_chi(boundary: BoundaryType, chi: f64) -> [f64; 7] {
+    let land = chi * chi;
+    let mixed = 2.0 * chi * (1.0 - chi);
+    let both_ocean = (1.0 - chi) * (1.0 - chi);
+    [
+        boundary.conv * land,
+        boundary.conv * mixed,
+        boundary.conv * both_ocean,
+        boundary.div * both_ocean,
+        boundary.div * land,
+        boundary.div * mixed,
+        boundary.tr,
+    ]
+}
+
 pub fn boundary_weights(boundary: BoundaryType, chi_a: f64, chi_b: f64) -> [f64; 7] {
     let both_land = chi_a * chi_b;
     let mixed = (chi_a - chi_b).abs();

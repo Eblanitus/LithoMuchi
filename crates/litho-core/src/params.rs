@@ -571,6 +571,10 @@ pub struct Params {
     pub spawn: SpawnParams,
     pub lattice: LatticeParams,
     pub climate: ClimateParams,
+    /// Инфраструктурная подпись конфигурации для кэшей кандидатов (Д-027).
+    /// Намеренно НЕ входит в `canonical_text()` / `params_hash()` (9.5):
+    /// влияет только на скорость, не на мир.
+    pub(crate) config_key: u64,
 }
 
 impl Params {
@@ -578,7 +582,7 @@ impl Params {
     /// (8.2); `block` берётся из `Mode::block_params`.
     pub fn defaults(version: GenVersion, mode: Mode) -> Self {
         let block = mode.block_params();
-        Self {
+        let mut p = Self {
             version,
             mode,
             block,
@@ -625,19 +629,19 @@ impl Params {
                 w_col_l: 0.6,
                 h_trench_km: 3.5,
                 d_trench_l: 0.15,
-                w_trench_l: 0.12,
+                w_trench_l: 0.24,
                 h_arc_km: 4.0,
                 d_arc_l: 0.9,
                 w_arc_l: 0.45,
                 h_island_km: 4.3,
                 d_island_l: 0.55,
-                w_island_l: 0.18,
+                w_island_l: 0.28,
                 h_ridge_km: 2.2,
                 w_ridge_l: 1.8,
                 h_axial_km: 0.4,
-                w_axial_l: 0.06,
+                w_axial_l: 0.12,
                 h_rift_km: 0.9,
-                w_rift_l: 0.25,
+                w_rift_l: 0.35,
                 h_shoulder_km: 0.7,
                 ocean_kappa_l: -6.0,
                 // Д-021: вытянутые эллипсы (r до 17,5 L, aspect до 2) на краю
@@ -669,7 +673,7 @@ impl Params {
                 u6_width_l: 0.5,
                 u6_drop_km: 0.2,
                 u7_amplitude_km: 0.35,
-                u7_width_l: 0.12,
+                u7_width_l: 0.24,
                 u7_noise_lambda_l: 2.0,
                 mountain_edge_l: 0.3,
                 mountain_scale_km: 3.0,
@@ -727,7 +731,11 @@ impl Params {
                 ray_steps: 32,
                 ray_step_l: 0.25,
                 ocean_length_l: 1.0,
-                land_length_l: 6.0,
+                // Д-023: над сушей влага жила 6 L, а материки имеют радиус
+                // 9–17,5 L и луч влаги всего 8 L. Внутри континента μ падала
+                // до 0,15, осадки до 448 мм при PET 962 мм — отсюда 38 %
+                // пустынь и 9 % лесов на 16 сидах. Характерная длина удвоена.
+                land_length_l: 32.0,
                 orographic_height_km: 1.5,
                 itcz_precip_mm: 1900.0,
                 itcz_width_deg: 11.0,
@@ -805,11 +813,14 @@ impl Params {
                 // Д-021: полярный пояс уже, шапки меньше.
                 belt_polar_deg: [68.0, 78.0],
                 wind_fallback_dir: [-0.87, 0.5],
-                w_sat_base: 0.3,
-                w_sat_per_c: 0.035,
+                w_sat_base: 0.50,
+                w_sat_per_c: 0.048,
                 w_sat_min: 0.3,
-                w_sat_max: 1.25,
-                w_land_start: 0.5,
+                w_sat_max: 2.1,
+                // Д-023: если дальний конец 8-L луча тоже суша (а при
+                // континентальности 0,84 это почти всегда), стартовая влага
+                // не должна обнуляться вдвое.
+                w_land_start: 0.85,
                 cont_decay_l: 3.0,
                 c_iso_end_l: 5.0,
                 c_ray_wind_lo: 0.1,
@@ -837,7 +848,7 @@ impl Params {
                 c_sea: [-0.98, -0.70, -0.52, -0.45, -0.40, -0.30, -0.17],
                 c_land_iota_l: [0.0, 0.05, 0.5, 2.0, 5.0, 10.0, 20.0],
                 c_land: [-0.17, -0.11, 0.03, 0.30, 0.60, 0.85, 1.00],
-                c_coast_e_km: 0.15,
+                c_coast_e_km: 0.60,
                 c_coast: -0.17,
                 ocean_c_threshold: -0.19,
                 e_base: 0.25,
@@ -866,7 +877,10 @@ impl Params {
                 halo_nodes: 2,
                 cache_shards: 64,
             },
-        }
+            config_key: 0,
+        };
+        p.config_key = p.params_hash();
+        p
     }
 
     /// Каноническая текстовая запись: только поля и значения, без пробелов в

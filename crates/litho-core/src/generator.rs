@@ -301,6 +301,13 @@ impl Generator {
         )
     }
 
+    /// Плавные поля coarse-решётки для диагностики и этапа Э2 (Д-021).
+    /// Луч влаги их больше не использует: точный ветер дешевле и совпадает
+    /// с эталоном (Д-025).
+    pub fn coarse_probe(&self, x: f64, z: f64) -> [f64; COARSE_N] {
+        self.coarse_values(x, z)
+    }
+
     /// Быстрый путь (T55): рельеф, реки, лава и пять ванильных чисел считаются
     /// точно в блоке, а дорогой климат берётся интерполяцией по грубой решётке.
     pub fn sample(&self, x: f64, z: f64) -> Option<FullSample> {
@@ -326,11 +333,12 @@ impl Generator {
         } else {
             crate::climate::fallback_dir(&self.params)
         };
-        let l = self.params.block.l_blocks;
-        let wind_fn = |q: Vec2| {
-            let c = self.coarse_values(q.x * l, q.z * l);
-            (Vec2::new(c[2], c[3]), c[0])
-        };
+        // Д-025: профиль показал, что 33 точных `pole_sample` стоят 23 мкс,
+        // а 33 пересчёта рельефа в луче — около 850 мкс. Интерполяция ветра
+        // по coarse-решётке экономила 2,5 % времени, но при влажном климате
+        // роняла совпадение зон до 0,953. Берём ветер точно, как в эталоне:
+        // это дешевле, чем ослаблять инвариант 14.2.
+        let wind_fn = |q: Vec2| crate::climate::wind_at(q, self.seed, &self.params);
         let ray =
             crate::climate::trace_ray(point, &self.params, &|q| self.surface_at(q), dir, &wind_fn);
         let c = &self.params.climate;
