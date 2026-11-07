@@ -731,15 +731,15 @@ impl Params {
                 // 9–17,5 L и луч влаги всего 8 L. Внутри континента μ падала
                 // до 0,15, осадки до 448 мм при PET 962 мм — отсюда 38 %
                 // пустынь и 9 % лесов на 16 сидах. Характерная длина удвоена.
-                land_length_l: 12.0,
+                land_length_l: 20.0,
                 orographic_height_km: 1.5,
                 itcz_precip_mm: 1900.0,
                 itcz_width_deg: 11.0,
                 front_precip_mm: 900.0,
                 front_center_deg: 50.0,
                 front_width_deg: 13.0,
-                local_fraction_base: 0.15,
-                advection_mm: 1500.0,
+                local_fraction_base: 0.30,
+                advection_mm: 2200.0,
             },
             rivers: RiversParams {
                 source_cell_l: 2.0,
