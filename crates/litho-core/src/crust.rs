@@ -5,6 +5,8 @@
 //! `Pl`, `ι`. Высота в километрах условной планеты; в блоки игры её переведёт
 //! ванильный генератор через параметры C/E/W (7.9, T41–T43).
 
+use std::rc::Rc;
+
 use crate::hash::{hash3, splitmix64, unit};
 use crate::math::{Vec2, clamp01, dexp, smoothstep};
 use crate::noise::{fbm2, ridged2};
@@ -102,7 +104,7 @@ pub fn kappa_mix(sample: &PlateSample, seed: u64, params: &Params) -> f64 {
 // Д-027: центры материков в окне 9×9 зависят только от ячейки. 33 точки
 // луча влаги лежат в одном окне, поэтому список кэшируется в потоке.
 // Порядок обхода и формулы не изменены — ответ побайтово прежний.
-type CandidateCache = Option<(u64, u64, i64, i64, i64, Vec<Plate>)>;
+type CandidateCache = Option<(u64, u64, i64, i64, i64, Rc<Vec<Plate>>)>;
 
 thread_local! {
     static KAPPA_CANDIDATES: std::cell::RefCell<CandidateCache> =
@@ -127,11 +129,11 @@ fn kappa_global_with_noise(q: Vec2, seed: u64, noise: f64, params: &Params) -> f
     let radius = c.continent_query_radius_cells;
     let ci = (q.x / g).floor() as i64;
     let cj = (q.z / g).floor() as i64;
-    let plates: Vec<Plate> = KAPPA_CANDIDATES.with(|cell| {
+    let plates: Rc<Vec<Plate>> = KAPPA_CANDIDATES.with(|cell| {
         let mut slot = cell.borrow_mut();
         if let Some((s, key, i, j, r, plates)) = slot.as_ref() {
             if *s == seed && *key == params.config_key && *i == ci && *j == cj && *r == radius {
-                return plates.clone();
+                return Rc::clone(plates);
             }
         }
         let mut plates = Vec::new();
@@ -144,11 +146,12 @@ fn kappa_global_with_noise(q: Vec2, seed: u64, noise: f64, params: &Params) -> f
                 }
             }
         }
-        *slot = Some((seed, params.config_key, ci, cj, radius, plates.clone()));
+        let plates = Rc::new(plates);
+        *slot = Some((seed, params.config_key, ci, cj, radius, Rc::clone(&plates)));
         plates
     });
     let mut result = c.ocean_kappa_l;
-    for plate in &plates {
+    for plate in plates.iter() {
         let value =
             (continent_field(plate, q) + c.kappa_noise_amplitude_l * noise).max(c.ocean_kappa_l);
         if value > result {

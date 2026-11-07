@@ -4,6 +4,8 @@
 //! есть локально (6.4). Здесь эталонный путь с `Vec` кандидатов; быстрый путь с
 //! кэшем тайлов появится в T13/T14/T55, формулы при этом не изменятся.
 
+use std::rc::Rc;
+
 use crate::hash::{hash3, splitmix64, unit};
 use crate::math::{Vec2, clamp01, dexp, dpow};
 use crate::noise::warp2;
@@ -222,7 +224,7 @@ fn dir_from_rng(rng: &mut CellRng) -> Vec2 {
 // конфигурация), а не от точки. Луч влаги делает 33 запроса в одном и том же
 // окне, поэтому держим последний список в потоке. Порядок кандидатов
 // сохраняется полностью — ответ побайтово равен прежнему.
-type PlateCandidateCache = Option<(u64, u64, i64, i64, i64, Vec<Plate>)>;
+type PlateCandidateCache = Option<(u64, u64, i64, i64, i64, Rc<Vec<Plate>>)>;
 
 thread_local! {
     static PLATE_CANDIDATES: std::cell::RefCell<PlateCandidateCache> =
@@ -242,12 +244,12 @@ pub fn plate_query_window(
     let ci = (q.x / p.cell_g_l).floor() as i64;
     let cj = (q.z / p.cell_g_l).floor() as i64;
 
-    let candidates: Vec<Plate> = PLATE_CANDIDATES.with(|cell| {
+    let candidates: Rc<Vec<Plate>> = PLATE_CANDIDATES.with(|cell| {
         let mut slot = cell.borrow_mut();
         if let Some((s, key, i, j, r, plates)) = slot.as_ref() {
             if *s == seed && *key == params.config_key && *i == ci && *j == cj && *r == radius_cells
             {
-                return plates.clone();
+                return Rc::clone(plates);
             }
         }
         let mut plates: Vec<Plate> = Vec::with_capacity(64);
@@ -258,13 +260,14 @@ pub fn plate_query_window(
                 }
             }
         }
+        let plates = Rc::new(plates);
         *slot = Some((
             seed,
             params.config_key,
             ci,
             cj,
             radius_cells,
-            plates.clone(),
+            Rc::clone(&plates),
         ));
         plates
     });
