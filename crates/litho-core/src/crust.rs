@@ -54,20 +54,30 @@ fn gauss(x: f64, width: f64) -> f64 {
 }
 
 /// Поле материка одной плиты: эллипс плюс крупный шум береговой линии (7.4.1).
-pub fn kappa_plate(plate: &Plate, q: Vec2, seed: u64, params: &Params) -> f64 {
+/// Д-027: один и тот же шум κ нужен и `kappa_global`, и трём `kappa_plate`.
+/// Раньше он считался 4 раза на точку (33 × 4 за луче влаги).
+fn kappa_noise(q: Vec2, seed: u64, params: &Params) -> f64 {
     let c = &params.crust;
-    if !plate.has_continent {
-        return c.ocean_kappa_l;
-    }
-    let n = fbm2(
+    fbm2(
         subseed(seed, SALT_CRUST_KAPPA),
         q.x,
         q.z,
         c.kappa_noise_lambda_l,
         c.kappa_noise_octaves,
         c.kappa_noise_gain,
-    );
-    continent_field(plate, q) + c.kappa_noise_amplitude_l * n
+    )
+}
+
+pub fn kappa_plate(plate: &Plate, q: Vec2, seed: u64, params: &Params) -> f64 {
+    kappa_plate_with_noise(plate, q, kappa_noise(q, seed, params), params)
+}
+
+fn kappa_plate_with_noise(plate: &Plate, q: Vec2, noise: f64, params: &Params) -> f64 {
+    let c = &params.crust;
+    if !plate.has_continent {
+        return c.ocean_kappa_l;
+    }
+    continent_field(plate, q) + c.kappa_noise_amplitude_l * noise
 }
 
 /// Смешивание `κ` через границу плиты: на самом стыке получается среднее,
@@ -97,33 +107,51 @@ pub fn kappa_mix(sample: &PlateSample, seed: u64, params: &Params) -> f64 {
 /// лежать на нескольких плитах, как в реальности, а береговая линия больше не
 /// повторяет прямолинейные швы. Вклад далёкой плиты ограничен уровнем океана,
 /// поэтому смена окна не даёт разрывов на границах ячеек.
+/// Д-027: центры материков в окне 9×9 зависят только от ячейки. 33 точки
+/// луча влаги лежат в одном окне, поэтому список кэшируется в потоке.
+/// Порядок обхода и формулы не изменены — ответ побайтово прежний.
+thread_local! {
+    static KAPPA_CANDIDATES: std::cell::RefCell<
+        Option<(u64, u64, i64, i64, i64, Vec<Plate>)>,
+    > = const { std::cell::RefCell::new(None) };
+}
+
 pub fn kappa_global(q: Vec2, seed: u64, params: &Params) -> f64 {
+    kappa_global_with_noise(q, seed, kappa_noise(q, seed, params), params)
+}
+
+fn kappa_global_with_noise(q: Vec2, seed: u64, noise: f64, params: &Params) -> f64 {
     let c = &params.crust;
     let g = params.plates.cell_g_l;
     let radius = c.continent_query_radius_cells;
     let ci = (q.x / g).floor() as i64;
     let cj = (q.z / g).floor() as i64;
-    let noise = fbm2(
-        subseed(seed, SALT_CRUST_KAPPA),
-        q.x,
-        q.z,
-        c.kappa_noise_lambda_l,
-        c.kappa_noise_octaves,
-        c.kappa_noise_gain,
-    );
-    let mut result = c.ocean_kappa_l;
-    for dj in -radius..=radius {
-        for di in -radius..=radius {
-            for plate in seeds_in_cell(seed, ci + di, cj + dj, params) {
-                if !plate.has_continent {
-                    continue;
-                }
-                let value = (continent_field(&plate, q) + c.kappa_noise_amplitude_l * noise)
-                    .max(c.ocean_kappa_l);
-                if value > result {
-                    result = value;
+    let plates: Vec<Plate> = KAPPA_CANDIDATES.with(|cell| {
+        let mut slot = cell.borrow_mut();
+        if let Some((s, key, i, j, r, plates)) = slot.as_ref() {
+            if *s == seed && *key == params.config_key && *i == ci && *j == cj && *r == radius {
+                return plates.clone();
+            }
+        }
+        let mut plates = Vec::new();
+        for dj in -radius..=radius {
+            for di in -radius..=radius {
+                for plate in seeds_in_cell(seed, ci + di, cj + dj, params) {
+                    if plate.has_continent {
+                        plates.push(plate);
+                    }
                 }
             }
+        }
+        *slot = Some((seed, params.config_key, ci, cj, radius, plates.clone()));
+        plates
+    });
+    let mut result = c.ocean_kappa_l;
+    for plate in &plates {
+        let value =
+            (continent_field(plate, q) + c.kappa_noise_amplitude_l * noise).max(c.ocean_kappa_l);
+        if value > result {
+            result = value;
         }
     }
     result
@@ -353,17 +381,20 @@ pub fn crust_from_sample(
     params: &Params,
 ) -> CrustSample {
     let c = &params.crust;
-    let kappa_l = kappa_global(sample.q, seed, params);
+    // Д-027: шум κ один на точку, а не четыре (см. kappa_noise).
+    let noise = kappa_noise(sample.q, seed, params);
+    let kappa_l = kappa_global_with_noise(sample.q, seed, noise, params);
     let chi = continent_fraction(kappa_l);
     let mut bc = BoundaryContrib::default();
-    let chi_a_plate = continent_fraction(kappa_plate(&sample.a, sample.q, seed, params));
+    let chi_a_plate =
+        continent_fraction(kappa_plate_with_noise(&sample.a, sample.q, noise, params));
     let chi_b_plate = sample
         .b
-        .map(|b| continent_fraction(kappa_plate(&b, sample.q, seed, params)))
+        .map(|b| continent_fraction(kappa_plate_with_noise(&b, sample.q, noise, params)))
         .unwrap_or(0.0);
     let chi_c_plate = sample
         .c
-        .map(|c| continent_fraction(kappa_plate(&c, sample.q, seed, params)))
+        .map(|c| continent_fraction(kappa_plate_with_noise(&c, sample.q, noise, params)))
         .unwrap_or(0.0);
     // Д-022: тип деформации — свойство окрестности стыка, а не пары
     // «ближайшая плита + конкретный сосед». Раньше для второй границы C он

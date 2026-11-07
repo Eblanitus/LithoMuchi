@@ -571,6 +571,10 @@ pub struct Params {
     pub spawn: SpawnParams,
     pub lattice: LatticeParams,
     pub climate: ClimateParams,
+    /// Инфраструктурная подпись конфигурации для кэшей кандидатов (Д-027).
+    /// Намеренно НЕ входит в `canonical_text()` / `params_hash()` (9.5):
+    /// влияет только на скорость, не на мир.
+    pub(crate) config_key: u64,
 }
 
 impl Params {
@@ -578,7 +582,7 @@ impl Params {
     /// (8.2); `block` берётся из `Mode::block_params`.
     pub fn defaults(version: GenVersion, mode: Mode) -> Self {
         let block = mode.block_params();
-        Self {
+        let mut p = Self {
             version,
             mode,
             block,
@@ -873,7 +877,10 @@ impl Params {
                 halo_nodes: 2,
                 cache_shards: 64,
             },
-        }
+            config_key: 0,
+        };
+        p.config_key = p.params_hash();
+        p
     }
 
     /// Каноническая текстовая запись: только поля и значения, без пробелов в

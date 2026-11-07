@@ -220,6 +220,16 @@ fn dir_from_rng(rng: &mut CellRng) -> Vec2 {
 
 /// Поиск плиты в точке. `radius_cells = 2` даёт окно 5×5 (рабочий вариант);
 /// большее окно нужно только тестам и отладке.
+/// Д-027: список плит в окне ячеек зависит только от (сид, ячейка, радиус,
+/// конфигурация), а не от точки. Луч влаги делает 33 запроса в одном и том же
+/// окне, поэтому держим последний список в потоке. Порядок кандидатов
+/// сохраняется полностью — ответ побайтово равен прежнему.
+thread_local! {
+    static PLATE_CANDIDATES: std::cell::RefCell<
+        Option<(u64, u64, i64, i64, i64, Vec<Plate>)>,
+    > = const { std::cell::RefCell::new(None) };
+}
+
 pub fn plate_query_window(
     point: Vec2,
     seed: u64,
@@ -231,14 +241,32 @@ pub fn plate_query_window(
     let ci = (q.x / p.cell_g_l).floor() as i64;
     let cj = (q.z / p.cell_g_l).floor() as i64;
 
-    let mut candidates: Vec<Plate> = Vec::with_capacity(64);
-    for dj in -radius_cells..=radius_cells {
-        for di in -radius_cells..=radius_cells {
-            for plate in seeds_in_cell(seed, ci + di, cj + dj, params) {
-                candidates.push(plate);
+    let candidates: Vec<Plate> = PLATE_CANDIDATES.with(|cell| {
+        let mut slot = cell.borrow_mut();
+        if let Some((s, key, i, j, r, plates)) = slot.as_ref() {
+            if *s == seed && *key == params.config_key && *i == ci && *j == cj && *r == radius_cells
+            {
+                return plates.clone();
             }
         }
-    }
+        let mut plates: Vec<Plate> = Vec::with_capacity(64);
+        for dj in -radius_cells..=radius_cells {
+            for di in -radius_cells..=radius_cells {
+                for plate in seeds_in_cell(seed, ci + di, cj + dj, params) {
+                    plates.push(plate);
+                }
+            }
+        }
+        *slot = Some((
+            seed,
+            params.config_key,
+            ci,
+            cj,
+            radius_cells,
+            plates.clone(),
+        ));
+        plates
+    });
     if candidates.is_empty() {
         return None;
     }
