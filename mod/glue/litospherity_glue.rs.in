@@ -21,7 +21,7 @@ pub fn parse_noise_name(name: &str) -> Option<NoiseSpec> {
     let version = GenVersion::parse(parts.next()?)?;
     let mode = Mode::parse(parts.next()?)?;
     let field = Field::parse(parts.next()?)?;
-    if parts.next().is_some() {
+    if parts.next().is_some() || !matches!(field, Field::Continents | Field::Erosion | Field::Ridges | Field::Temperature | Field::Vegetation) {
         return None;
     }
     Some(NoiseSpec {
@@ -51,7 +51,8 @@ pub fn noise_for_name(seed: i64, name: &str) -> Option<Arc<dyn crate::noise::Noi
 }
 
 type Key = (i64, u8, u8);
-static REGISTRY: Mutex<Vec<(Key, Weak<Generator>)>> = Mutex::new(Vec::new());
+type RegistryEntry = (Key, Weak<Generator>);
+static REGISTRY: Mutex<Vec<RegistryEntry>> = Mutex::new(Vec::new());
 
 fn key(seed: i64, spec: NoiseSpec) -> Key {
     let version = if spec.version == GenVersion::V0 { 0 } else { 1 };
@@ -66,25 +67,25 @@ pub fn noise_for(seed: i64, spec: NoiseSpec) -> Option<Arc<dyn crate::noise::Noi
     registry.retain(|(_, weak)| weak.strong_count() > 0);
     for (existing, weak) in registry.iter() {
         if *existing == k {
-            if let Some(gen) = weak.upgrade() {
+            if let Some(generator) = weak.upgrade() {
                 return Some(Arc::new(LithoNoise {
-                    gen,
+                    generator,
                     field: spec.field,
                 }));
             }
         }
     }
-    let gen = Arc::new(Generator::new(seed, spec.mode, spec.version).ok()?);
-    registry.push((k, Arc::downgrade(&gen)));
+    let generator = Arc::new(Generator::new(seed, spec.mode, spec.version).ok()?);
+    registry.push((k, Arc::downgrade(&generator)));
     Some(Arc::new(LithoNoise {
-        gen,
+        generator,
         field: spec.field,
     }))
 }
 
 #[derive(Debug)]
 pub struct LithoNoise {
-    gen: Arc<Generator>,
+    generator: Arc<Generator>,
     field: Field,
 }
 
@@ -94,35 +95,39 @@ impl crate::noise::Noise for LithoNoise {
     }
 
     fn get2(&self, x: f64, z: f64) -> f32 {
-        self.gen.field_column(self.field, x, z) as f32
+        self.generator.field_column(self.field, x, z) as f32
     }
 
     fn get3(&self, x: f64, _y: f64, z: f64) -> f32 {
         // Наши поля от y не зависят (кроме лавы, T77).
-        self.gen.field_column(self.field, x, z) as f32
+        self.generator.field_column(self.field, x, z) as f32
     }
 
-    // T74: переопределён — одна величина на колонку (x, z), прибавленная ко
-    // всем y с учётом amplitude. Порядок обхода (z, x, y) и типы DensityVolume
-    // / DensityError сверяются при T72 при первой сборке под Horizon.
+    // Horizon 66f3981: Z/X/Y layout, scaled coordinates, additive writes.
+    // Validate before writing so short buffers remain untouched.
     fn add_to_volume(
         &self,
-        volume: &mut crate::noise::DensityVolume,
-        x_min: i32,
-        x_max: i32,
-        z_min: i32,
-        z_max: i32,
-        y_min: i32,
-        y_max: i32,
-        amplitude: f64,
+        buffer: &mut [f32],
+        volume: crate::noise::DensityVolume,
+        xz_scale: f64,
+        _y_scale: f64,
+        amplitude: f32,
     ) -> Result<(), crate::noise::DensityError> {
-        let amp = amplitude as f32;
-        for z in z_min..=z_max {
-            for x in x_min..=x_max {
-                let value = self.gen.field_column(self.field, x as f64, z as f64) as f32 * amp;
-                for y in y_min..=y_max {
-                    let cur = volume.get(x, y, z)?;
-                    volume.set(x, y, z, cur + value)?;
+        if buffer.len() < volume.size() {
+            return Err(crate::noise::DensityError::BufferTooShort);
+        }
+        let [sx, sy, sz] = volume.sizes();
+        let minimum = volume.minimum();
+        let steps = volume.steps();
+        let mut index = 0;
+        for z in 0..sz {
+            let z = minimum[2].wrapping_add((z as i32).wrapping_mul(steps[2]));
+            for x in 0..sx {
+                let x = minimum[0].wrapping_add((x as i32).wrapping_mul(steps[0]));
+                let value = amplitude * self.get2(f64::from(x) * xz_scale, f64::from(z) * xz_scale);
+                for _ in 0..sy {
+                    buffer[index] += value;
+                    index += 1;
                 }
             }
         }

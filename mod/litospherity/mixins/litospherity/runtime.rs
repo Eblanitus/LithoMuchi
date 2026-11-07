@@ -6,5 +6,5 @@ pub const DESCRIPTION: &str = "Tectonic plates and climate world generation (wor
 
 /// Text for /litospherity.
 pub fn status() -> String {
-    format!("{NAME} {VERSION} is loaded. Terrain generation is not hooked yet.")
+    format!("{NAME} {VERSION} is loaded. Worldgen hook installed. Enable exactly one Litospherity datapack when creating a new world.")
 }

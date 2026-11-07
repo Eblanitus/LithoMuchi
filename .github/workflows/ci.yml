@@ -86,13 +86,16 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Упаковать бандл (пути с прямыми слешами, как требует лаунчер)
-        run: |
-          cd mod/litospherity
-          python3 -c "import json; json.load(open('horizon-native.json'))"
-          zip -r -X ../../litospherity.hnmod horizon-native.json mixins
-          unzip -l ../../litospherity.hnmod
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Generate worldgen bundle and datapacks
+        run: cargo run -q -p xtask -- bundle --out out/bundle
+      - name: Validate bundle
+        run: cargo run -q -p xtask -- bundle-check --out out/bundle
+      - name: Package client hooks, worldgen and core
+        run: python3 tools/package_mod.py
       - uses: actions/upload-artifact@v4
         with:
           name: litospherity-hnmod
-          path: litospherity.hnmod
+          path: |
+            out/release/litospherity.hnmod
+            out/release/*.zip

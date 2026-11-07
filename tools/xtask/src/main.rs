@@ -13,7 +13,7 @@ const GEN_VERSION: GenVersion = GenVersion::V0;
 /// Версия самого мода в `[mod] version` манифеста.
 const MOD_VERSION: &str = "0.1.0";
 /// Ревизия Horizon из раздела 5 плана; сверить на Windows (T70).
-const HORIZON_REV: &str = "f319701e8c9ab657ff562250b3ba07b2d654e3bc";
+const HORIZON_REV: &str = "66f3981f522b24c250b21523a70080965b940424";
 /// Пять полей, которые подменяем в MVP (точка №2 плана 10.1).
 const FIELDS: [&str; 5] = [
     "continents",
