@@ -81,11 +81,7 @@ fn scientific_pack_depth_follows_model_height_without_raising_build_limits() {
     let golden = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../golden/v0/world-0.3.0.txt");
     let golden = std::fs::read_to_string(golden).unwrap();
     let mut tested = 0;
-    for line in golden
-        .lines()
-        .filter(|l| l.starts_with("42 scientific "))
-        .step_by(47)
-    {
+    for line in golden.lines().filter(|l| l.starts_with("42 scientific ")) {
         let values: Vec<_> = line.split_whitespace().collect();
         let number = |i: usize| f64::from_bits(u64::from_str_radix(values[i], 16).unwrap());
         let (x, z, e) = (number(2) as i32, number(3) as i32, number(9));
@@ -100,7 +96,10 @@ fn scientific_pack_depth_follows_model_height_without_raising_build_limits() {
         assert!(sampler.sample_value(&mut context, [x, high, z]).unwrap() < 0.0);
         tested += 1;
     }
-    assert!(tested >= 20);
+    assert!(
+        tested >= 300,
+        "only {tested} integer golden coordinates tested"
+    );
 }
 
 #[test]
