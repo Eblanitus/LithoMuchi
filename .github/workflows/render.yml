@@ -25,6 +25,8 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
+      - name: Диагностика coarse-полей Д-021 (не влияет на результат)
+        run: cargo test -p litho-tests --lib diag_zone_split -- --nocapture
       - name: Формат, clippy и тесты (без подавления ошибок)
         run: |
           cargo fmt --all -- --check

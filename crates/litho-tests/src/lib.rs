@@ -232,6 +232,50 @@ mod fast_path {
         );
     }
 
+    /// Диагностика Д-021: печатает, какое из coarse-полей расходится.
+    /// Не проверяет ничего — только выводит значения при `--nocapture`.
+    #[test]
+    fn diag_zone_split() {
+        let generator = generator();
+        let pts = points(20);
+        let mut bad = 0;
+        for (i, (x, z)) in pts.iter().enumerate() {
+            let r = generator.sample_reference(*x, *z).unwrap();
+            let f = generator.sample(*x, *z).unwrap();
+            let rc = &r.climate;
+            let fc = &f.climate;
+            let diff = r.zone != f.zone;
+            if diff {
+                bad += 1;
+            }
+            if i < 20 {
+                println!(
+                    "{i:2} {} ({x:8.2},{z:8.2}) zone {:?} vs {:?} | phi {:7.3}/{:7.3} tbio {:7.3}/{:7.3} ratio {:8.3}/{:8.3} pmm {:8.1}/{:8.1} mu {:6.3}/{:6.3} cont {:6.3}/{:6.3} amp {:6.3}/{:6.3} e {:6.2}/{:6.2}",
+                    if diff { "РАСХ" } else { " OK " },
+                    r.zone,
+                    f.zone,
+                    rc.pole.phi_deg,
+                    fc.pole.phi_deg,
+                    rc.temperature.t_bio,
+                    fc.temperature.t_bio,
+                    rc.precip.ratio,
+                    fc.precip.ratio,
+                    rc.precip.p_mm,
+                    fc.precip.p_mm,
+                    rc.precip.mu,
+                    fc.precip.mu,
+                    rc.precip.cont,
+                    fc.precip.cont,
+                    rc.temperature.amp_c,
+                    fc.temperature.amp_c,
+                    rc.surface.e_km,
+                    fc.surface.e_km,
+                );
+            }
+        }
+        println!("ИТОГО расхождений зон: {bad} из {}", pts.len());
+    }
+
     /// 14.2: кэш не меняет ответ, результаты не зависят от порядка.
     #[test]
     fn cache_does_not_change_the_answer() {
