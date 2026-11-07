@@ -280,8 +280,8 @@ fn cmd_bundle(out: &Path) -> Result<(), String> {
     Ok(())
 }
 
-/// Embed only the two player modes in a dependency-free crate. Includes are
-/// legal inside bundle crates (support modules cannot use include_bytes!).
+/// Embed both player modes as Rust byte arrays. No external data files: the
+/// launcher rejects JSON/PNG at this nested bundled-crate path.
 fn make_packs_crate(out: &Path) -> Result<(), String> {
     let dst = out.join("crates/litho-packs");
     write_file(
@@ -294,15 +294,17 @@ fn make_packs_crate(out: &Path) -> Result<(), String> {
         ("scientific", "Litospherity - Научный мир"),
     ] {
         let pack = out.join(format!("packs/litospherity_v0_{mode}"));
-        let data = dst.join(format!("data/{mode}"));
-        copy_dir(&pack, &data)?;
+        // Remove data from earlier include_bytes-based bundles on rebuild.
+        let old_data = dst.join("data");
+        if old_data.exists() {
+            fs::remove_dir_all(&old_data).map_err(|e| e.to_string())?;
+        }
         let mut files = Vec::new();
-        collect_files(&data, &data, &mut files)?;
+        collect_files(&pack, &pack, &mut files)?;
         files.sort();
         for rel in files {
-            source.push_str(&format!(
-                "    ({title:?}, {rel:?}, include_bytes!(concat!(env!(\"CARGO_MANIFEST_DIR\"), \"/data/{mode}/{rel}\"))),\n"
-            ));
+            let bytes = fs::read(pack.join(&rel)).map_err(|e| e.to_string())?;
+            source.push_str(&format!("    ({title:?}, {rel:?}, &{bytes:?}),\n"));
         }
     }
     source.push_str("];\n");

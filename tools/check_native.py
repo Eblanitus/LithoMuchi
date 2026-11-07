@@ -49,6 +49,25 @@ def main():
            '-p', 'horizon-mixins-cli', '--']
     run(cli + ['plan'] + common + ['--out', str(ROOT / 'out/native-plan.json')])
     run(cli + ['apply'] + common + ['--out', str(ROOT / 'out/native-stage')])
+    # The launcher reads the archive before invoking Mixins. Exercise that exact
+    # reader too; plan/apply alone does not enforce its native-source allowlist.
+    reader = ROOT / 'out/native-reader'
+    (reader / 'src').mkdir(parents=True, exist_ok=True)
+    dependency = ROOT / 'out/native-stage/crates/horizon-mods'
+    (reader / 'Cargo.toml').write_text(
+        '[package]\nname="litho-native-reader-check"\nversion="0.0.0"\nedition="2024"\n'
+        '[workspace]\n[dependencies]\nhorizon-mods = { path = '
+        + json.dumps(str(dependency)) + ', features = ["index"] }\n')
+    (reader / 'src/main.rs').write_text(
+        'fn main() {\n'
+        ' let path = std::env::args().nth(1).expect("archive path");\n'
+        ' horizon_mods::index::native::Bundle::read(std::path::Path::new(&path))\n'
+        '   .unwrap_or_else(|e| panic!("Launcher rejected archive: {e}"));\n'
+        ' assert!(!horizon_mods::index::native::allowed(\n'
+        '   "crates/litho-packs/data/gameplay/active.json"));\n'
+        ' println!("PASS: actual Horizon launcher Bundle::read");\n}\n')
+    run(['cargo', 'run', '--manifest-path', str(reader / 'Cargo.toml'),
+         '--target-dir', str(ROOT / 'out/native-stage/target'), '--', str(archive)])
     # Bundled path crates add workspace-package entries. Refresh those entries
     # while retaining pinned registry dependencies, then require a locked build.
     run(['cargo', 'update', '--workspace', '--manifest-path', str(ROOT / 'out/native-stage/Cargo.toml')])
