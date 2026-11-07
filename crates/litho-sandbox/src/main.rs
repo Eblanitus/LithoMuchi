@@ -317,9 +317,26 @@ fn cmd_seams(args: &[String]) -> Result<(), String> {
 }
 
 /// Метрики 12.4 по области 200×200 L (T63).
-fn cmd_stats(args: &[String]) -> Result<(), String> {
-    let opts = options_from(args)?;
-    let generator = generator(&opts)?;
+/// Метрики 12.4 плюс диагностика климата на суше (Д-023).
+#[derive(Clone, Copy)]
+struct StatsRow {
+    seed: i64,
+    mode: Mode,
+    land: f64,
+    mountains: f64,
+    deserts: f64,
+    forests: f64,
+    polar: f64,
+    p_mm: f64,
+    pet_mm: f64,
+    ratio: f64,
+    mu: f64,
+    cont: f64,
+    t_bio: f64,
+}
+
+fn stats_row(seed: i64, mode: Mode) -> Result<StatsRow, String> {
+    let generator = Generator::new(seed, mode, GenVersion::V0).map_err(|e| e.to_string())?;
     let params = generator.params();
     let n = 64_usize;
     let step = 200.0 * params.block.l_blocks / n as f64;
@@ -328,6 +345,8 @@ fn cmd_stats(args: &[String]) -> Result<(), String> {
     let mut deserts = 0_usize;
     let mut forests = 0_usize;
     let mut polar = 0_usize;
+    let (mut p_sum, mut pet_sum, mut ratio_sum) = (0.0_f64, 0.0_f64, 0.0_f64);
+    let (mut mu_sum, mut cont_sum, mut t_sum) = (0.0_f64, 0.0_f64, 0.0_f64);
     for i in 0..n {
         for j in 0..n {
             let x = (i as f64 - n as f64 * 0.5) * step;
@@ -350,26 +369,134 @@ fn cmd_stats(args: &[String]) -> Result<(), String> {
                 if zone.belt <= 1 {
                     polar += 1;
                 }
+                let pr = world.climate.precip;
+                p_sum += pr.p_mm;
+                pet_sum += pr.pet_mm;
+                ratio_sum += pr.ratio;
+                mu_sum += pr.mu;
+                cont_sum += pr.cont;
+                t_sum += world.climate.temperature.t_bio;
             }
         }
     }
     let total = (n * n).max(1) as f64;
     let land_n = land.max(1) as f64;
+    Ok(StatsRow {
+        seed,
+        mode,
+        land: 100.0 * land as f64 / total,
+        mountains: 100.0 * mountains as f64 / land_n,
+        deserts: 100.0 * deserts as f64 / land_n,
+        forests: 100.0 * forests as f64 / land_n,
+        polar: 100.0 * polar as f64 / land_n,
+        p_mm: p_sum / land_n,
+        pet_mm: pet_sum / land_n,
+        ratio: ratio_sum / land_n,
+        mu: mu_sum / land_n,
+        cont: cont_sum / land_n,
+        t_bio: t_sum / land_n,
+    })
+}
+
+fn cmd_stats(args: &[String]) -> Result<(), String> {
+    let opts = options_from(args)?;
+    let row = stats_row(opts.seed, opts.mode)?;
     println!(
-        "сид={seed} режим={mode} область=200×200 L точек={count}\n\
+        "сид={seed} режим={mode} область=200×200 L точек=4096\n\
          доля суши              {land:6.1} %  (цель 25–40)\n\
          горы на суше           {mnt:6.1} %  (цель 5–20)\n\
          пустыни на суше        {dst:6.1} %  (цель 15–30)\n\
          леса на суше           {frs:6.1} %  (цель 30–50)\n\
          полярные пояса на суше {pol:6.1} %  (цель 10–25)",
-        seed = opts.seed,
-        mode = opts.mode.as_str(),
-        count = n * n,
-        land = 100.0 * land as f64 / total,
-        mnt = 100.0 * mountains as f64 / land_n,
-        dst = 100.0 * deserts as f64 / land_n,
-        frs = 100.0 * forests as f64 / land_n,
-        pol = 100.0 * polar as f64 / land_n,
+        seed = row.seed,
+        mode = row.mode.as_str(),
+        land = row.land,
+        mnt = row.mountains,
+        dst = row.deserts,
+        frs = row.forests,
+        pol = row.polar,
+    );
+    // Д-023: честная диагностика, почему пустынь много, а лесов мало.
+    println!(
+        "климат на суше (среднее): осадки P={p:7.1} мм, испаряемость PET={pet:7.1} мм, PET/P={r:5.2}, влага μ={mu:5.3}, континентальность c={cont:5.3}, t_bio={t:5.1} °C",
+        p = row.p_mm,
+        pet = row.pet_mm,
+        r = row.ratio,
+        mu = row.mu,
+        cont = row.cont,
+        t = row.t_bio,
+    );
+    Ok(())
+}
+
+/// Оценка 12.5 / Э1h: те же метрики на 16 сидах × 2 режима, без картинок.
+fn cmd_stats_all() -> Result<(), String> {
+    println!(
+        "сид        режим      суша  горы пустыни  леса поляр |     P    PET PET/P     μ     c  t_bio"
+    );
+    let mut n = 0_usize;
+    let mut sum = StatsRow {
+        seed: 0,
+        mode: Mode::Gameplay,
+        land: 0.0,
+        mountains: 0.0,
+        deserts: 0.0,
+        forests: 0.0,
+        polar: 0.0,
+        p_mm: 0.0,
+        pet_mm: 0.0,
+        ratio: 0.0,
+        mu: 0.0,
+        cont: 0.0,
+        t_bio: 0.0,
+    };
+    for seed in SWEEP_SEEDS {
+        for mode in Mode::ALL {
+            let r = stats_row(seed, mode)?;
+            println!(
+                "{seed:>10} {mode:<10} {land:5.1} {mnt:5.1} {dst:8.1} {frs:5.1} {pol:5.1} | {p:7.1} {pet:7.1} {r:5.2} {mu:5.3} {cont:5.3} {t:6.1}",
+                seed = r.seed,
+                mode = r.mode.as_str(),
+                land = r.land,
+                mnt = r.mountains,
+                dst = r.deserts,
+                frs = r.forests,
+                pol = r.polar,
+                p = r.p_mm,
+                pet = r.pet_mm,
+                r = r.ratio,
+                mu = r.mu,
+                cont = r.cont,
+                t = r.t_bio,
+            );
+            n += 1;
+            sum.land += r.land;
+            sum.mountains += r.mountains;
+            sum.deserts += r.deserts;
+            sum.forests += r.forests;
+            sum.polar += r.polar;
+            sum.p_mm += r.p_mm;
+            sum.pet_mm += r.pet_mm;
+            sum.ratio += r.ratio;
+            sum.mu += r.mu;
+            sum.cont += r.cont;
+            sum.t_bio += r.t_bio;
+        }
+    }
+    let d = n as f64;
+    println!(
+        "СРЕДНЕЕ ({n} прогонов): суша {land:5.1} горы {mnt:5.1} пустыни {dst:5.1} леса {frs:5.1} поляр {pol:5.1} | P {p:7.1} PET {pet:7.1} PET/P {r:5.2} μ {mu:5.3} c {cont:5.3} t_bio {t:5.1}",
+        land = sum.land / d,
+        mnt = sum.mountains / d,
+        dst = sum.deserts / d,
+        frs = sum.forests / d,
+        pol = sum.polar / d,
+        p = sum.p_mm / d,
+        pet = sum.pet_mm / d,
+        r = sum.ratio / d,
+        mu = sum.mu / d,
+        cont = sum.cont / d,
+        t = sum.t_bio / d,
     );
     Ok(())
 }
@@ -538,6 +665,7 @@ fn usage() -> &'static str {
        probe        все поля в точке --at x,z\n\
        layers       список слоёв\n\
        stats        метрики 12.4 по области 200×200 L\n\
+       stats-all    те же метрики на 16 сидах × 2 режима\n\
        seams        скачки C/E/W между соседними блоками\n\
        bench        время эталонного и быстрого пути\n\
        checkpoints  10 точек вокруг точки появления\n\
@@ -562,6 +690,7 @@ fn main() -> Result<(), String> {
         "render" => cmd_render(&args[1..]),
         "probe" => cmd_probe(&args[1..]),
         "stats" => cmd_stats(&args[1..]),
+        "stats-all" => cmd_stats_all(),
         "seams" => cmd_seams(&args[1..]),
         "bench" => cmd_bench(&args[1..]),
         "checkpoints" => cmd_checkpoints(&args[1..]),

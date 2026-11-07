@@ -36,6 +36,8 @@ jobs:
         run: ./target/release/xtask params-doc > docs/PARAMS.md
       - name: Метрики 12.4
         run: ./target/release/litho-sandbox stats --seed 42 --mode gameplay > docs/images/stats.txt
+      - name: Оценка 16 сидов × 2 режима (12.5, Э1h)
+        run: ./target/release/litho-sandbox stats-all > docs/images/sweep-stats.txt
       - name: "ОБЯЗАТЕЛЬНЫЙ ГЕЙТ — seams пусто и бенч не хуже прошлого"
         run: |
           set -euo pipefail
@@ -74,7 +76,8 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add docs/PARAMS.md docs/images/stats.txt docs/images/atlas.html \
+          git add docs/PARAMS.md docs/images/stats.txt docs/images/sweep-stats.txt \
+            docs/images/atlas.html \
             docs/images/sweep docs/images/v0-seed42-gameplay \
             docs/images/fast-path docs/images/after-32km
           git diff --cached --quiet || git commit -m "Атлас, метрики и параметры после Д-021 [skip ci]"
