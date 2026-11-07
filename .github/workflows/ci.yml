@@ -27,6 +27,7 @@ jobs:
         run: |
           cargo run -p litho-sandbox --release -- seams --seed 42 --mode gameplay
           cargo run -p litho-sandbox --release -- bench --seed 42 --mode gameplay
+          cargo run -p litho-sandbox --release -- stats --seed 42 --mode gameplay
       - name: sandbox smoke test
         run: cargo run -p litho-sandbox --release -- render --seed 42 --mode gameplay --layers plates,boundaries,jacobian --size 64 --out out/ci-smoke
 
