@@ -103,6 +103,21 @@ jobs:
           repository: horizon-rust/horizon-mixins
           ref: 5a64af938ec86b00d53d16a408aabc0038fb3e57
           path: out/horizon-mixins
+      - name: Materialize Horizon documentation symlink for mixins staging
+        # Pinned Horizon has CLAUDE.md -> AGENTS.md. The mixins planner
+        # rejects symlinks anywhere in its input tree, even documentation.
+        run: |
+          python3 - <<'PYTHON'
+          from pathlib import Path
+          root = Path("out/horizon-source").resolve()
+          link = root / "CLAUDE.md"
+          if link.is_symlink():
+              if link.resolve() != root / "AGENTS.md":
+                  raise SystemExit("Unexpected CLAUDE.md symlink target")
+              content = link.read_bytes()
+              link.unlink()
+              link.write_bytes(content)
+          PYTHON
       - name: Validate actual packaged mod against pinned Horizon source
         run: |
           python3 -m zipfile -e out/release/litospherity.hnmod out/native-check
