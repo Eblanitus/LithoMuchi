@@ -127,6 +127,8 @@ pub struct PolesParams {
     pub query_radius_cells: i64,
     pub phi_noise_degrees: f64,
     /// Масштаб и октавы дрожания псевдошироты (Д-021): рваные кольца.
+    /// λ₀ обязан быть много крупнее coarse-решётки климата, иначе сглаживание
+    /// узлов гасит дрожь только в быстром пути и зоны перестают совпадать.
     pub phi_noise_lambda_l: f64,
     pub phi_noise_octaves: usize,
     pub phi_noise_gain: f64,
@@ -644,23 +646,24 @@ impl Params {
                 continent_query_radius_cells: 4,
                 // Д-011: береговая линия должна быть изрезанной, а не повторять
                 // границы ячеек Вороного.
-                // Д-021: прибрежная рябь — четыре октавы от 4 L до 0,5 L.
-                // Берег перестаёт быть гладким эллипсом; частоты не уходят
-                // ниже блока, чтобы 14.2 (|dC|,|dE| <= 0,02) оставался честным.
-                kappa_noise_amplitude_l: 2.4,
-                kappa_noise_lambda_l: 4.0,
+                // Д-021: прибрежная рябь — четыре октавы от 6 L до 0,75 L.
+                // Берег перестаёт быть гладким эллипсом. Частоты крупнее
+                // coarse-решётки (0,25 L): иначе эталон и быстрый путь видят
+                // разный климат и зоны расходятся (тест 14.2, Д-021).
+                kappa_noise_amplitude_l: 3.0,
+                kappa_noise_lambda_l: 6.0,
                 kappa_noise_octaves: 4,
                 kappa_noise_gain: 0.5,
-                blend_width_l: 0.7,
+                blend_width_l: 1.0,
                 boundary_mix_factor: 0.5,
                 shelf_start_l: 0.5,
                 shelf_end_l: 1.5,
-                continent_scale_l: 1.1,
+                continent_scale_l: 1.5,
                 slope_drop_km: 4.3,
                 plateau_factor: 0.4,
-                island_noise_lambda_l: 1.0,
-                island_noise_base: 0.45,
-                island_noise_amp: 0.50,
+                island_noise_lambda_l: 1.2,
+                island_noise_base: 0.55,
+                island_noise_amp: 0.45,
                 rift_shoulder_offset: 1.6,
                 u6_offset_l: 0.8,
                 u6_width_l: 0.5,
@@ -700,13 +703,15 @@ impl Params {
                 cell_g_p_l: 128.0,
                 inset_fraction: 0.1,
                 // Рваные, изогнутые границы холода вместо концентрических кругов.
-                warp_lambda0_l: 24.0,
+                // λ₀ = 40 L и 3 октавы: даже мелкая октава (10 L) много крупнее
+                // coarse-узла, поэтому быстрый путь видит тот же изгиб.
+                warp_lambda0_l: 40.0,
                 warp_amplitude_l: 6.0,
-                warp_octaves: 4,
+                warp_octaves: 3,
                 warp_gain: 0.5,
                 query_radius_cells: 2,
                 phi_noise_degrees: 6.0,
-                phi_noise_lambda_l: 8.0,
+                phi_noise_lambda_l: 24.0,
                 phi_noise_octaves: 3,
                 phi_noise_gain: 0.5,
             },
