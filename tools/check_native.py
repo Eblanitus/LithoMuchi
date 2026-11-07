@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Plan/apply the exact release bundle; report actionable CI annotations."""
 import json
+import os
+import re
 from pathlib import Path
 import shutil
 import subprocess
@@ -12,11 +14,13 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def run(command):
+    env = dict(os.environ, CARGO_TERM_COLOR='never')
     result = subprocess.run(command, cwd=ROOT, text=True, stdout=subprocess.PIPE,
-                            stderr=subprocess.STDOUT)
+                            stderr=subprocess.STDOUT, env=env)
     print(result.stdout, flush=True)
     if result.returncode:
-        tail = result.stdout[-12000:].replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A')
+        clean = re.sub(r'\x1b\[[0-9;]*m', '', result.stdout)
+        tail = clean[-2500:].replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A')
         print(f'::error title=Native validation failed::{tail}', flush=True)
         raise SystemExit(result.returncode)
 
