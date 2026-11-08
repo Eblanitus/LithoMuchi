@@ -223,36 +223,48 @@ impl Generator {
         local.max(traced)
     }
 
-    /// Топографическая сеть стока плиты (T110, только v1-dev). Пока это
-    /// диагностика: `field` и ванильные C/E/W/PV её не используют. T111
-    /// добавит климат/расход, T112 — геометрию, T115 — влияние на поля.
+    /// Сеть стока плиты с климатом и расходом (T110/T111, только v1-dev).
+    /// Пока это диагностика: `field` и ванильные C/E/W/PV её не используют.
+    /// T112 добавит геометрию русел, T115 — влияние на поля.
     pub fn drainage_network(&self, plate: &Plate) -> Result<Arc<RiverNet>, RiverNetError> {
         if !self.params.version.is_water_relief_dev() {
             return Err(RiverNetError::UnsupportedVersion(self.params.version));
         }
         self.drainage.get_or_build(plate.id, || {
-            RiverNet::build(plate, self.seed, &self.params, &|point| {
-                let surface = self.surface_at(point);
-                let outlet = if surface.e_km < 0.0 {
-                    DrainageOutlet::Sea
-                } else if surface.sigma_l.abs() < self.params.drainage.step_l {
-                    let k = surface.boundary_weights;
-                    let min = self.params.drainage.outlet_min_weight;
-                    if k[4] > min {
-                        DrainageOutlet::Rift
-                    } else if k[6] > min {
-                        DrainageOutlet::Transform
+            RiverNet::build(
+                plate,
+                self.seed,
+                &self.params,
+                &|point| {
+                    let surface = self.surface_at(point);
+                    let outlet = if surface.e_km < 0.0 {
+                        DrainageOutlet::Sea
+                    } else if surface.sigma_l.abs() < self.params.drainage.step_l {
+                        let k = surface.boundary_weights;
+                        let min = self.params.drainage.outlet_min_weight;
+                        if k[4] > min {
+                            DrainageOutlet::Rift
+                        } else if k[6] > min {
+                            DrainageOutlet::Transform
+                        } else {
+                            DrainageOutlet::None
+                        }
                     } else {
                         DrainageOutlet::None
+                    };
+                    DrainageInput {
+                        route_km: surface.e_km,
+                        outlet,
                     }
-                } else {
-                    DrainageOutlet::None
-                };
-                DrainageInput {
-                    route_km: surface.e_km,
-                    outlet,
-                }
-            })
+                },
+                &|point| {
+                    crate::climate::sample(point, self.seed, &self.params, &|q| self.surface_at(q))
+                        .map(|sample| crate::runoff::RunoffClimate {
+                            p_mm: sample.precip.p_mm,
+                            pet_mm: sample.precip.pet_mm,
+                        })
+                },
+            )
         })
     }
 

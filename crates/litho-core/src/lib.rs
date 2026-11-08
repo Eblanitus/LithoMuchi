@@ -26,6 +26,7 @@ pub mod noise_tables;
 pub mod params;
 pub mod plates;
 pub mod rivers;
+pub mod runoff;
 pub mod seed;
 pub mod spawn;
 pub mod vanilla;

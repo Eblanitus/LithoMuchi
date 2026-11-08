@@ -1,8 +1,8 @@
-//! Основа сети стока плиты (PLAN-REVISION 5.3, T110).
+//! Сеть стока плиты (PLAN-REVISION 5.3, T110/T111).
 //!
-//! Здесь только топография: узлы, выходы, priority-flood и впадины. Климат,
-//! расход Q, полилинии русел и влияние на C/E/W/PV — следующие задачи
-//! T111–T115. Модуль не меняет замороженный v0 и пока не вызывается из `field`.
+//! Здесь топография и годовой водный баланс: узлы, выходы, priority-flood,
+//! впадины, климат и расход Q. Полилинии русел и влияние на C/E/W/PV —
+//! следующие задачи T112–T115. Модуль не меняет v0 и не вызывается из `field`.
 
 use std::cmp::Ordering;
 use std::collections::{BinaryHeap, HashMap, VecDeque};
@@ -13,6 +13,7 @@ use crate::hash::unit;
 use crate::math::Vec2;
 use crate::params::Params;
 use crate::plates::{Plate, plate_query};
+use crate::runoff::{ClimateGrid, Runoff, RunoffClimate};
 use crate::seed::{SALT_RIVERS_DRAINAGE, cell_hash, subseed};
 use crate::version::GenVersion;
 
@@ -61,6 +62,7 @@ pub enum RiverNetError {
     InvalidParameters(&'static str),
     NoOwnedNode { plate_id: u64 },
     InvalidInput { cell: Cell },
+    InvalidClimate { cell: Cell },
     BrokenInvariant { node: usize, reason: &'static str },
 }
 
@@ -76,6 +78,9 @@ impl std::fmt::Display for RiverNetError {
             }
             Self::InvalidInput { cell } => {
                 write!(f, "неконечная высота стока в узле {cell:?}")
+            }
+            Self::InvalidClimate { cell } => {
+                write!(f, "некорректный или отсутствующий климат в узле {cell:?}")
             }
             Self::BrokenInvariant { node, reason } => {
                 write!(f, "нарушен инвариант стока в узле {node}: {reason}")
@@ -124,6 +129,7 @@ pub struct RiverNet {
     plate_id: u64,
     nodes: Vec<DrainageNode>,
     depressions: Vec<Depression>,
+    runoff: Runoff,
 }
 
 impl RiverNet {
@@ -132,6 +138,7 @@ impl RiverNet {
         seed: u64,
         params: &Params,
         input: &impl Fn(Vec2) -> DrainageInput,
+        climate: &impl Fn(Vec2) -> Option<RunoffClimate>,
     ) -> Result<Self, RiverNetError> {
         if !params.version.is_water_relief_dev() {
             return Err(RiverNetError::UnsupportedVersion(params.version));
@@ -171,10 +178,14 @@ impl RiverNet {
             p.fill_epsilon_km,
             p.depression_min_depth_km,
         );
+        let points: Vec<_> = nodes.iter().map(|node| node.point).collect();
+        let grid = ClimateGrid::build(&points, p.climate_step_l, climate)?;
+        let runoff = Runoff::calculate(&nodes, &depressions, &grid, params)?;
         let net = Self {
             plate_id: plate.id,
             nodes,
             depressions,
+            runoff,
         };
         net.check_invariants(p.fill_epsilon_km)?;
         Ok(net)
@@ -190,6 +201,10 @@ impl RiverNet {
 
     pub fn depressions(&self) -> &[Depression] {
         &self.depressions
+    }
+
+    pub const fn runoff(&self) -> &Runoff {
+        &self.runoff
     }
 
     pub fn plate_node_count(&self) -> usize {
@@ -262,6 +277,10 @@ fn validate_params(params: &Params) -> Result<(), RiverNetError> {
         Some("outlet_min_weight должен лежать в [0, 1]")
     } else if !(1..=8).contains(&p.anchor_search_radius_cells) {
         Some("anchor_search_radius_cells должен лежать в 1..=8")
+    } else if !p.climate_step_l.is_finite() || p.climate_step_l <= 0.0 {
+        Some("climate_step_l должен быть положительным")
+    } else if !p.et_factor.is_finite() || p.et_factor < 0.0 {
+        Some("et_factor должен быть неотрицательным")
     } else {
         None
     };
@@ -645,10 +664,21 @@ mod tests {
         ];
         let neighbors = prepare(&mut nodes);
         let depressions = route_nodes(&mut nodes, &neighbors, 1e-4, 0.002);
+        let params = crate::Params::defaults(GenVersion::V1Dev, crate::Mode::Gameplay);
+        let points: Vec<_> = nodes.iter().map(|node| node.point).collect();
+        let grid = ClimateGrid::build(&points, params.drainage.climate_step_l, |_| {
+            Some(RunoffClimate {
+                p_mm: 100.0,
+                pet_mm: 0.0,
+            })
+        })
+        .unwrap();
+        let runoff = Runoff::calculate(&nodes, &depressions, &grid, &params).unwrap();
         RiverNet {
             plate_id: 7,
             nodes,
             depressions,
+            runoff,
         }
     }
 

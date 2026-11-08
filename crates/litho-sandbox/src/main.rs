@@ -576,8 +576,8 @@ fn cmd_stats_all(args: &[String]) -> Result<(), String> {
     Ok(())
 }
 
-/// T110: диагностика сети стока одной плиты. Это ещё не реки в игре:
-/// климат/Q (T111), русла (T112) и влияние на C/E/W (T115) не подключены.
+/// T110/T111: диагностика сети стока одной плиты. Это ещё не реки в игре:
+/// русла (T112) и влияние на C/E/W (T115) не подключены.
 fn cmd_drainage(args: &[String]) -> Result<(), String> {
     let opts = options_from(args)?;
     let (x, z) = parse_pair(&value(args, "--at").unwrap_or_else(|| "0,0".to_string()))?;
@@ -626,10 +626,21 @@ fn cmd_drainage(args: &[String]) -> Result<(), String> {
         .iter()
         .map(|d| d.max_depth_km)
         .fold(0.0, f64::max);
+    let runoff = net.runoff();
+    let climate_nodes = runoff.climate_nodes();
+    let endorheic = runoff.endorheic_count();
+    let export = runoff.export_mm_l2();
+    let evaporation = runoff.evaporation_mm_l2();
+    let storage = runoff.storage_mm_l2();
+    let max_q = runoff
+        .nodes()
+        .iter()
+        .map(|node| node.discharge_mm_l2)
+        .fold(0.0, f64::max);
     let hash = generator.params().params_hash();
     if args.iter().any(|arg| arg == "--json") {
         println!(
-            "{{\"stage\":\"T110\",\"acceptance\":false,\"connected_to_game_fields\":false,\"seed\":{},\"mode\":\"{}\",\"version\":\"{}\",\"params_hash\":\"{hash:016x}\",\"plate_id\":{},\"at\":[{x},{z}],\"nodes_total\":{},\"nodes_plate\":{},\"nodes_ring\":{},\"outlets_sea\":{sea},\"outlets_rift\":{rift},\"outlets_transform\":{transform},\"depressions_filled\":{filled},\"depressions_closed\":{closed},\"max_depth_km\":{max_depth:.9},\"cold_ms\":{cold_ms:.6},\"warm_ms\":{warm_ms:.6}}}",
+            "{{\"stage\":\"T110+T111\",\"acceptance\":false,\"connected_to_game_fields\":false,\"seed\":{},\"mode\":\"{}\",\"version\":\"{}\",\"params_hash\":\"{hash:016x}\",\"plate_id\":{},\"at\":[{x},{z}],\"nodes_total\":{},\"nodes_plate\":{},\"nodes_ring\":{},\"outlets_sea\":{sea},\"outlets_rift\":{rift},\"outlets_transform\":{transform},\"depressions_filled\":{filled},\"depressions_closed\":{closed},\"max_depth_km\":{max_depth:.9},\"climate_nodes\":{climate_nodes},\"endorheic_basins\":{endorheic},\"max_discharge_mm_l2\":{max_q:.9},\"export_mm_l2\":{export:.9},\"evaporation_mm_l2\":{evaporation:.9},\"storage_mm_l2\":{storage:.9},\"cold_ms\":{cold_ms:.6},\"warm_ms\":{warm_ms:.6}}}",
             opts.seed,
             opts.mode.as_str(),
             opts.version.as_str(),
@@ -640,10 +651,11 @@ fn cmd_drainage(args: &[String]) -> Result<(), String> {
         );
     } else {
         println!(
-            "T110 drainage: диагностика, НЕ реки в игре (T111–T115 не подключены)\n\
+            "T110/T111 drainage: диагностика, НЕ реки в игре (T112–T115 не подключены)\n\
              seed={seed} mode={mode} version={version} params={hash:016x} plate={plate}\n\
              узлы: всего {total}, своей плиты {plate_nodes}, кольцо {ring}; выходы: море {sea}, рифт {rift}, трансформ {transform}\n\
-             впадины: заполненные {filled}, замкнутые без выхода {closed}; max глубина {max_depth:.6} км\n\
+             впадины: заполненные {filled}, замкнутые без выхода {closed}, бессточные {endorheic}; max глубина {max_depth:.6} км\n\
+             климат: {climate_nodes} узлов; max Q {max_q:.3} мм·L²/год; экспорт {export:.3}, испарение {evaporation:.3}, замкнутый избыток {storage:.3}\n\
              время: cold {cold_ms:.3} мс, warm {warm_ms:.3} мс (один раннер, не приёмка T160)",
             seed = opts.seed,
             mode = opts.mode.as_str(),

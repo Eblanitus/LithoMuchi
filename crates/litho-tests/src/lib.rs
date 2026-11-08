@@ -434,6 +434,11 @@ mod drainage_dev {
             .unwrap();
         assert_eq!(first.plate_id(), plate.id);
         assert!(first.plate_node_count() > 0);
+        assert_eq!(first.runoff().nodes().len(), first.nodes().len());
+        assert!(first.runoff().climate_nodes() > 0);
+        assert!(first.runoff().export_mm_l2().is_finite());
+        assert!(first.runoff().evaporation_mm_l2().is_finite());
+        assert!(first.runoff().storage_mm_l2().is_finite());
         assert!(first.nodes().iter().any(|node| !node.in_plate));
         assert!(
             first

@@ -323,8 +323,8 @@ pub struct RiversParams {
     pub half_width_length_l: f64,
 }
 
-/// T110: топографическая сеть стока. Используется только v1-dev; ключи v0
-/// не получают новых строк. Климат и расход добавит T111 отдельно.
+/// T110/T111: сеть стока и климатический расход. Используется только
+/// v1-dev; ключи v0 не получают новых строк.
 #[derive(Clone, Debug, PartialEq)]
 pub struct DrainageParams {
     pub step_l: f64,
@@ -333,6 +333,10 @@ pub struct DrainageParams {
     pub depression_min_depth_km: f64,
     pub outlet_min_weight: f64,
     pub anchor_search_radius_cells: i64,
+    /// T111: шаг решётки P/PET в L; в узлы — билинейно.
+    pub climate_step_l: f64,
+    /// T111: коэффициент перед PET в стоке суши P - k_et·PET.
+    pub et_factor: f64,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -786,6 +790,8 @@ impl Params {
                 depression_min_depth_km: 0.002,
                 outlet_min_weight: 0.5,
                 anchor_search_radius_cells: 2,
+                climate_step_l: 1.0,
+                et_factor: 1.0,
             },
             lava: LavaParams {
                 width_blocks: block.lava_width_blocks,
@@ -1191,6 +1197,8 @@ impl Params {
                     d.depression_min_depth_km,
                 ),
                 ("drainage.outlet_min_weight", d.outlet_min_weight),
+                ("drainage.climate_step_l", d.climate_step_l),
+                ("drainage.et_factor", d.et_factor),
             ] {
                 writeln!(w, "{name}={value:?}").unwrap();
             }
