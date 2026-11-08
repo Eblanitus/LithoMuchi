@@ -18,7 +18,7 @@ use crate::lattice::{self, Nodes};
 use crate::math::Vec2;
 use crate::mode::Mode;
 use crate::params::Params;
-use crate::plates::{Plate, PlateSample, plate_query, warp_jacobian};
+use crate::plates::{Plate, PlateSample, plate_query, plates_near, warp_jacobian};
 use crate::rivers::{RiverCache, local_r, traced_r};
 use crate::seed::from_world_seed;
 use crate::spawn::{self, SpawnQuality};
@@ -268,18 +268,25 @@ impl Generator {
         })
     }
 
-    /// Быстрый запрос русла T112 в блочной точке. Пока ищется только сеть
-    /// ближайшей плиты; межплитовые связи и общий радиус долины — T113.
+    /// Общий запрос русел T113 в блочной точке. Обходим консервативное окно
+    /// плит в радиусе долина + меандр + кольцевой узел; порядок фиксирован id.
+    /// Q соседних плит не складывается: межплитовая ширина постоянна (§5.5).
     pub fn drainage_channel_query(
         &self,
         x: f64,
         z: f64,
     ) -> Result<crate::channel::ChannelQuery, RiverNetError> {
-        let Some(plate) = self.plate_sample(x, z) else {
-            return Ok(crate::channel::ChannelQuery::default());
-        };
-        let net = self.drainage_network(&plate.a)?;
-        Ok(net.channels().query(self.macro_point(x, z)))
+        if !self.params.version.is_water_relief_dev() {
+            return Err(RiverNetError::UnsupportedVersion(self.params.version));
+        }
+        let point = self.macro_point(x, z);
+        let radius = crate::channel::max_query_radius_l(&self.params);
+        let mut out = crate::channel::ChannelQuery::default();
+        for plate in plates_near(point, radius, self.seed, &self.params) {
+            let net = self.drainage_network(&plate)?;
+            out.merge(net.channels().query(point));
+        }
+        Ok(out)
     }
 
     /// Поле глубинной лавы λ (слой `lava`, T53).

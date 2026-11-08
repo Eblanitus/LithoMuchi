@@ -249,15 +249,14 @@ impl Runoff {
             if let Some(d) = node.depression {
                 let balance = basins[d];
                 runoff_nodes[k].downstream = None;
-                runoff_nodes[k].terminal = basin_terminal(balance, depressions[d].plate_node_count);
+                runoff_nodes[k].terminal = basin_terminal(balance);
                 continue;
             }
             match node.downstream {
                 Some(down) if down < nodes.len() => {
                     if let Some(d) = nodes[down].depression {
                         runoff_nodes[k].downstream = None;
-                        runoff_nodes[k].terminal =
-                            basin_terminal(basins[d], depressions[d].plate_node_count);
+                        runoff_nodes[k].terminal = basin_terminal(basins[d]);
                     } else {
                         runoff_nodes[k].downstream = Some(down);
                     }
@@ -370,10 +369,9 @@ impl Runoff {
     }
 }
 
-fn basin_terminal(balance: BasinBalance, plate_nodes: usize) -> FlowTerminal {
-    if plate_nodes == 0 {
-        return FlowTerminal::Boundary;
-    }
+fn basin_terminal(balance: BasinBalance) -> FlowTerminal {
+    // Принадлежность узлов не меняет водный путь: чужая впадина тоже может
+    // пропустить воду дальше. Boundary здесь удвоил бы экспорт (вход и выход).
     if balance.endorheic {
         FlowTerminal::Endorheic {
             depression: balance.depression,
@@ -832,6 +830,56 @@ mod balance_tests {
             runoff.nodes()[0].terminal,
             FlowTerminal::ClosedSurplus { depression: 0 }
         );
+    }
+
+    #[test]
+    fn foreign_basin_transmits_water_without_double_export() {
+        let params = Params::defaults(GenVersion::V1Dev, Mode::Gameplay);
+        let node = |cell: (i64, i64),
+                    in_plate: bool,
+                    route_km: f64,
+                    downstream: Option<usize>,
+                    outlet: DrainageOutlet,
+                    depression: Option<usize>| DrainageNode {
+            cell,
+            point: Vec2::new(cell.0 as f64 * 0.25, cell.1 as f64 * 0.25),
+            in_plate,
+            route_km,
+            filled_km: route_km,
+            downstream,
+            outlet,
+            depression,
+        };
+        let nodes = vec![
+            node((0, 0), true, 2.0, Some(1), DrainageOutlet::None, None),
+            node((1, 0), false, 1.0, Some(2), DrainageOutlet::None, Some(0)),
+            node((2, 0), false, 0.0, None, DrainageOutlet::Transform, None),
+        ];
+        let depressions = vec![Depression {
+            kind: DepressionKind::Filled { spill_km: 1.0 },
+            bottom_node: 1,
+            node_count: 1,
+            plate_node_count: 0,
+            max_depth_km: 0.1,
+        }];
+        let points: Vec<_> = nodes.iter().map(|n| n.point).collect();
+        let grid = ClimateGrid::build(&points, 1.0, |_| {
+            Some(RunoffClimate {
+                p_mm: 400.0,
+                pet_mm: 100.0,
+            })
+        })
+        .unwrap();
+        let runoff = Runoff::calculate(&nodes, &depressions, &grid, &params).unwrap();
+        let supply = (400.0 - 100.0) * 0.25 * 0.25;
+        assert_eq!(
+            runoff.nodes()[0].terminal,
+            FlowTerminal::Lake { depression: 0 }
+        );
+        assert!((runoff.export_mm_l2() - supply).abs() < 1e-12);
+        assert_eq!(runoff.evaporation_mm_l2(), 0.0);
+        assert_eq!(runoff.storage_mm_l2(), 0.0);
+        assert!((runoff.basins()[0].outflow_mm_l2 - supply).abs() < 1e-12);
     }
 
     #[test]

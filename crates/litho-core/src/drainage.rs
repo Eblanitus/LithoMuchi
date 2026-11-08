@@ -562,7 +562,10 @@ pub struct RiverNetCache {
 
 impl RiverNetCache {
     pub fn new(shards: usize, capacity: usize) -> Self {
-        let shards = shards.max(1);
+        // Не даём числу шардов съесть вместимость: при 64/64 каждый шард имел
+        // бы один слот и случайные коллизии id вытесняли бы горячие плиты.
+        // Минимум четыре слота на шард, когда общая вместимость позволяет.
+        let shards = shards.max(1).min((capacity / 4).max(1));
         let per_shard = (capacity / shards).max(1);
         Self {
             shards: (0..shards)
@@ -781,5 +784,20 @@ mod tests {
         assert_eq!(first, rebuilt);
         assert_eq!(builds.load(Ordering::SeqCst), 3);
         assert_eq!(cache.len(), 1);
+    }
+
+    #[test]
+    fn many_shards_do_not_reduce_each_shard_to_one_slot() {
+        let cache = RiverNetCache::new(64, 64);
+        let mut first = None;
+        for k in 0..4_u64 {
+            let net = cache.get_or_build(k * 64, || Ok(tiny_net())).unwrap();
+            if k == 0 {
+                first = Some(net);
+            }
+        }
+        assert_eq!(cache.len(), 4);
+        let again = cache.get_or_build(0, || Ok(tiny_net())).unwrap();
+        assert!(Arc::ptr_eq(&first.unwrap(), &again));
     }
 }

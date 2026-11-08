@@ -352,6 +352,56 @@ pub fn plate_query(point: Vec2, seed: u64, params: &Params) -> Option<PlateSampl
     plate_query_window(point, seed, params, 2)
 }
 
+/// Консервативное окно плит для запроса русла радиуса `radius_l` (T113).
+///
+/// Плита может попасть в ответ, если её узел находится внутри диска запроса.
+/// Искажение домена ограничено: каждая компонента warp не больше amplitude,
+/// значит векторный сдвиг не больше amplitude·√2. Для точки диска y имеем
+/// |seed(P)-q| ≤ |seed(A)-q| + 2·(radius + 2·warp_bound). Окно ячеек покрывает
+/// этот радиус с запасом в одну ячейку. Список сортируется по id: порядок
+/// обхода кэшей не влияет на результат. Это поиск соседей, не связывание Q.
+pub fn plates_near(point: Vec2, radius_l: f64, seed: u64, params: &Params) -> Vec<Plate> {
+    let g = params.plates.cell_g_l;
+    if !point.x.is_finite()
+        || !point.z.is_finite()
+        || !radius_l.is_finite()
+        || radius_l < 0.0
+        || !g.is_finite()
+        || g <= 0.0
+    {
+        return Vec::new();
+    }
+    let base_radius = params.plates.query_radius_cells.max(2);
+    let Some(nearest) = plate_query_window(point, seed, params, base_radius) else {
+        return Vec::new();
+    };
+    let warp_bound = params.plates.warp_amplitude_l.abs() * crate::math::SQRT_2;
+    let d0 = nearest.q.sub(nearest.a.seed_pos).len();
+    let reach_l = d0 + 2.0 * (radius_l + 2.0 * warp_bound);
+    let cells = ((reach_l / g).ceil() as i64)
+        .saturating_add(1)
+        .max(base_radius);
+    let ci = (nearest.q.x / g).floor() as i64;
+    let cj = (nearest.q.z / g).floor() as i64;
+    let reach2 = reach_l * reach_l;
+    let mut out = Vec::new();
+    for dj in -cells..=cells {
+        for di in -cells..=cells {
+            let (Some(i), Some(j)) = (ci.checked_add(di), cj.checked_add(dj)) else {
+                continue;
+            };
+            for plate in seeds_in_cell(seed, i, j, params) {
+                if nearest.q.dist2(plate.seed_pos) <= reach2 {
+                    out.push(plate);
+                }
+            }
+        }
+    }
+    out.sort_unstable_by_key(|plate| (plate.id, plate.cell_i, plate.cell_j, plate.index));
+    out.dedup_by_key(|plate| plate.id);
+    out
+}
+
 /// Тип границы между A и B в точке `q` (7.3.5). `n_ab` — нормаль от A к B.
 /// Формула симметрична: с точки зрения B получаются те же `conv`, `div`, `tr`.
 pub fn boundary_type(a: &Plate, b: &Plate, q: Vec2, n_ab: Vec2, params: &Params) -> BoundaryType {
@@ -441,7 +491,7 @@ pub fn plate_color(id: u64) -> [u8; 3] {
 mod tests {
     use super::{
         boundary_type, continent_field, continent_fraction, plate_query, plate_query_window,
-        seeds_in_cell, warp_jacobian,
+        plates_near, seeds_in_cell, warp_jacobian,
     };
     use crate::hash::{splitmix64, unit};
     use crate::math::Vec2;
@@ -486,6 +536,37 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn channel_neighborhood_covers_owners_of_the_whole_disk() {
+        let p = params();
+        for seed in [0_u64, 42] {
+            for k in 0..8 {
+                let center = Vec2::new(k as f64 * 7.31 - 25.0, k as f64 * -5.17 + 11.0);
+                for radius in [0.05_f64, 0.5, 1.5] {
+                    let neighbors = plates_near(center, radius, seed, &p);
+                    assert!(!neighbors.is_empty());
+                    assert!(neighbors.windows(2).all(|pair| pair[0].id < pair[1].id));
+                    let steps = (radius / 0.25).ceil() as i64;
+                    for di in -steps..=steps {
+                        for dj in -steps..=steps {
+                            let offset = Vec2::new(di as f64 * 0.25, dj as f64 * 0.25);
+                            if offset.len() > radius {
+                                continue;
+                            }
+                            let owner = plate_query(center.add(offset), seed, &p).unwrap().a.id;
+                            assert!(
+                                neighbors.iter().any(|plate| plate.id == owner),
+                                "seed={seed} center={center:?} radius={radius} owner={owner}"
+                            );
+                        }
+                    }
+                }
+            }
+        }
+        assert!(plates_near(Vec2::new(f64::NAN, 0.0), 1.0, 42, &p).is_empty());
+        assert!(plates_near(Vec2::default(), -1.0, 42, &p).is_empty());
     }
 
     #[test]

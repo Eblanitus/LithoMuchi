@@ -8,7 +8,7 @@ use std::collections::{BTreeSet, HashMap};
 
 use crate::drainage::{DrainageNode, RiverNetError};
 use crate::hash::{hash3, unit};
-use crate::math::{Vec2, clamp, dpow, lerp, smoothstep};
+use crate::math::{SQRT_2, Vec2, clamp, dpow, lerp, smoothstep};
 use crate::noise::noise2;
 use crate::params::Params;
 use crate::runoff::{FlowTerminal, Runoff};
@@ -30,7 +30,8 @@ pub enum ReachEnd {
     Confluence,
     /// Следующий узел ниже Q_min; не выдаётся за полноценное устье.
     BelowThreshold,
-    /// Кольцо соседней плиты; связь добавит T113.
+    /// Кольцо соседней плиты без выхода в этой сети. T113 накладывает геометрию
+    /// соседей общим запросом, но не переносит Q между плитами (§5.5).
     Boundary,
     /// Замкнутый избыток T111; контур/выход уточнят T113/T114.
     ClosedSurplus,
@@ -110,6 +111,7 @@ pub struct ChannelSegment {
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ChannelHit {
+    pub plate_id: u64,
     pub segment: usize,
     pub reach: usize,
     pub distance_l: f64,
@@ -126,10 +128,46 @@ pub struct ChannelQuery {
     pub core: f64,
     pub valley: f64,
     pub nearest: Option<ChannelHit>,
+    /// Диагностика T113: сколько сетей обошёл общий запрос.
+    pub networks_considered: usize,
+}
+
+impl ChannelQuery {
+    /// Объединение независимых сетей: максимум силы и ближайшее русло.
+    /// Ничьи по расстоянию разрешаются id плиты, затем номерами русла/отрезка.
+    pub fn merge(&mut self, other: Self) {
+        self.core = self.core.max(other.core);
+        self.valley = self.valley.max(other.valley);
+        self.networks_considered += other.networks_considered;
+        if let Some(hit) = other.nearest {
+            if self.nearest.is_none_or(|old| {
+                hit.distance_l.total_cmp(&old.distance_l).then_with(|| {
+                    (hit.plate_id, hit.reach, hit.segment).cmp(&(
+                        old.plate_id,
+                        old.reach,
+                        old.segment,
+                    ))
+                }) == std::cmp::Ordering::Less
+            }) {
+                self.nearest = Some(hit);
+            }
+        }
+    }
+}
+
+/// Верхняя граница радиуса общего запроса по параметрам, ещё до построения
+/// сетей: долина + меандр + переход к кольцевому узлу устья. Последний член —
+/// инфраструктурный запас решётки, не новый параметр мира.
+pub fn max_query_radius_l(params: &Params) -> f64 {
+    let c = &params.channels;
+    let core_l = c.core_max_blocks / params.block.l_blocks;
+    core_l * (c.valley_plain.max(c.valley_mountain) + 2.0 * c.meander_plain.max(c.meander_mountain))
+        + params.drainage.step_l * SQRT_2
 }
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct ChannelNetwork {
+    plate_id: u64,
     reaches: Vec<ChannelReach>,
     segments: Vec<ChannelSegment>,
     baskets: HashMap<Cell, Vec<usize>>,
@@ -196,10 +234,15 @@ impl ChannelNetwork {
                     chain.push(down);
                     break if nodes[down].depression.is_some() {
                         terminal_end(runoff.nodes()[down].terminal)
+                    } else if nodes[down].outlet.is_outlet() {
+                        match nodes[down].outlet {
+                            crate::drainage::DrainageOutlet::Sea => ReachEnd::Sea,
+                            crate::drainage::DrainageOutlet::Rift => ReachEnd::Rift,
+                            crate::drainage::DrainageOutlet::Transform => ReachEnd::Transform,
+                            crate::drainage::DrainageOutlet::None => ReachEnd::Boundary,
+                        }
                     } else if !nodes[down].in_plate {
                         ReachEnd::Boundary
-                    } else if nodes[down].route_km < 0.0 {
-                        ReachEnd::Sea
                     } else {
                         ReachEnd::BelowThreshold
                     };
@@ -280,6 +323,7 @@ impl ChannelNetwork {
             }
         }
         let net = Self {
+            plate_id,
             reaches,
             segments,
             baskets,
@@ -287,6 +331,10 @@ impl ChannelNetwork {
         };
         net.check()?;
         Ok(net)
+    }
+
+    pub const fn plate_id(&self) -> u64 {
+        self.plate_id
     }
 
     pub fn reaches(&self) -> &[ChannelReach] {
@@ -321,17 +369,24 @@ impl ChannelNetwork {
     }
 
     /// Быстрый запрос одной плиты: только корзина точки, потому что сегменты
-    /// заранее разложены по AABB с запасом на долину. Межплитовый поиск — T113.
+    /// заранее разложены по AABB с запасом на долину. Общий поиск T113 живёт
+    /// в `Generator::drainage_channel_query` и объединяет такие запросы.
     pub fn query(&self, point: Vec2) -> ChannelQuery {
         let key = (
             (point.x / BASKET_L).floor() as i64,
             (point.z / BASKET_L).floor() as i64,
         );
         let Some(candidates) = self.baskets.get(&key) else {
-            return ChannelQuery::default();
+            return ChannelQuery {
+                networks_considered: 1,
+                ..ChannelQuery::default()
+            };
         };
         let unique: BTreeSet<_> = candidates.iter().copied().collect();
-        let mut out = ChannelQuery::default();
+        let mut out = ChannelQuery {
+            networks_considered: 1,
+            ..ChannelQuery::default()
+        };
         for k in unique {
             let segment = self.segments[k];
             let ab = segment.b.point.sub(segment.a.point);
@@ -351,6 +406,7 @@ impl ChannelNetwork {
             out.core = out.core.max(core_strength);
             out.valley = out.valley.max(valley_strength);
             let hit = ChannelHit {
+                plate_id: self.plate_id,
                 segment: k,
                 reach: segment.reach,
                 distance_l,
@@ -657,6 +713,7 @@ mod tests {
                         .is_none_or(|old: super::ChannelHit| d < old.distance_l)
                     {
                         brute.nearest = Some(super::ChannelHit {
+                            plate_id: 7,
                             segment: s,
                             reach: segment.reach,
                             distance_l: d,
@@ -670,8 +727,45 @@ mod tests {
                     }
                 }
             }
-            assert_eq!(fast, brute, "point={point:?} basket={BASKET_L}");
+            assert_eq!(fast.core, brute.core);
+            assert_eq!(fast.valley, brute.valley);
+            assert_eq!(fast.nearest, brute.nearest);
+            assert_eq!(fast.networks_considered, 1);
+            assert_eq!(fast, net.query(point), "point={point:?} basket={BASKET_L}");
         }
+    }
+
+    #[test]
+    fn ring_outlets_keep_their_kind_and_queries_merge_deterministically() {
+        let p = params();
+        for (outlet, end) in [
+            (DrainageOutlet::Sea, ReachEnd::Sea),
+            (DrainageOutlet::Rift, ReachEnd::Rift),
+            (DrainageOutlet::Transform, ReachEnd::Transform),
+        ] {
+            let mut mouth = node(0, 0.0, None);
+            mouth.in_plate = false;
+            mouth.outlet = outlet;
+            let nodes = vec![node(1, 1.0, Some(1)), mouth];
+            let flow = runoff(&nodes, &p, 4.0);
+            let net = ChannelNetwork::build(7, 42, &nodes, &flow, &p).unwrap();
+            assert_eq!(net.reaches()[0].end, end);
+        }
+        let nodes = vec![node(4, 4.0, Some(1)), node(3, 3.0, None)];
+        let flow = runoff(&nodes, &p, 4.0);
+        let a = ChannelNetwork::build(7, 42, &nodes, &flow, &p).unwrap();
+        let b = ChannelNetwork::build(8, 42, &nodes, &flow, &p).unwrap();
+        let point = Vec2::new(0.875, 0.0);
+        let qa = a.query(point);
+        let qb = b.query(point);
+        let mut ab = qa;
+        ab.merge(qb);
+        let mut ba = qb;
+        ba.merge(qa);
+        assert_eq!(ab, ba);
+        assert_eq!(ab.networks_considered, 2);
+        assert_eq!(ab.nearest.unwrap().plate_id, 7);
+        assert!(super::max_query_radius_l(&p) >= 0.56 + 0.336);
     }
 
     #[test]

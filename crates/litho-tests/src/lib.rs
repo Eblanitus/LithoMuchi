@@ -468,11 +468,51 @@ mod drainage_dev {
     }
 
     #[test]
+    fn channel_query_crosses_the_nearest_plate_boundary_in_fixed_order() {
+        use litho_core::channel::max_query_radius_l;
+        use litho_core::plates::plates_near;
+
+        let generator = Generator::new(42, Mode::Gameplay, GenVersion::V1Dev).unwrap();
+        // Сид 42: середина отрезка соседней плиты попадает внутрь ближайшей
+        // плиты. До T113 запрос ближайшей плиты терял это русло.
+        let (x, z) = (1155.684324, -1143.037898);
+        let owner = generator.plate_sample(x, z).unwrap().a;
+        let query = generator.drainage_channel_query(x, z).unwrap();
+        let hit = query.nearest.expect("русло соседней плиты найдено");
+        assert_ne!(hit.plate_id, owner.id);
+        assert!(hit.distance_l < 1e-6);
+        assert!(query.networks_considered > 1);
+
+        let point = generator.macro_point(x, z);
+        let radius = max_query_radius_l(generator.params());
+        let neighbors = plates_near(point, radius, generator.seed(), generator.params());
+        let mut forward = litho_core::channel::ChannelQuery::default();
+        let mut reverse = litho_core::channel::ChannelQuery::default();
+        let mut hits = Vec::new();
+        for plate in &neighbors {
+            let net = generator.drainage_network(plate).unwrap();
+            hits.push(net.channels().query(point));
+        }
+        for hit in &hits {
+            forward.merge(*hit);
+        }
+        for hit in hits.iter().rev() {
+            reverse.merge(*hit);
+        }
+        assert_eq!(query, forward);
+        assert_eq!(forward, reverse);
+    }
+
+    #[test]
     fn frozen_v0_rejects_the_new_network() {
         let generator = Generator::new(42, Mode::Gameplay, GenVersion::V0).unwrap();
         let plate = generator.plate_sample(0.0, 0.0).unwrap().a;
         assert_eq!(
             generator.drainage_network(&plate).unwrap_err(),
+            RiverNetError::UnsupportedVersion(GenVersion::V0)
+        );
+        assert_eq!(
+            generator.drainage_channel_query(0.0, 0.0).unwrap_err(),
             RiverNetError::UnsupportedVersion(GenVersion::V0)
         );
     }
