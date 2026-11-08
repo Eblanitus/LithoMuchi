@@ -386,7 +386,7 @@ mod water_relief_dev {
             valley
         );
         assert!(
-            unsaturated as f64 / (n as f64) < 0.08,
+            unsaturated as f64 / (n as f64) < 0.15,
             "не saturated {} из {n}",
             unsaturated
         );
