@@ -18,6 +18,10 @@ use crate::version::GenVersion;
 
 type Cell = (i64, i64);
 
+/// Инфраструктурный LRU, не параметр мира: сеть крупнее coarse-тайла, поэтому
+/// держим меньше плит. Вытеснение меняет только скорость, не ответ.
+pub const NET_CACHE_CAPACITY: usize = 64;
+
 /// Куда может уйти вода из узла. `None` — не выход.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum DrainageOutlet {
@@ -84,7 +88,8 @@ impl std::error::Error for RiverNetError {}
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum DepressionKind {
-    /// Заполненная впадина с известным уровнем перелива.
+    /// Заполненная впадина. `spill_km` — уровень priority-flood у дна,
+    /// включая ε-наклон трассы; точное зеркало озера уточнит T145.
     Filled { spill_km: f64 },
     /// Топографически замкнутая область без найденного выхода. Это ещё не
     /// доказанное бессточное озеро: приток/испарение посчитает T111.
@@ -596,7 +601,7 @@ impl RiverNetCache {
 
 impl Default for RiverNetCache {
     fn default() -> Self {
-        Self::new(crate::cache::CACHE_CAPACITY, crate::cache::CACHE_CAPACITY)
+        Self::new(NET_CACHE_CAPACITY, NET_CACHE_CAPACITY)
     }
 }
 
@@ -652,9 +657,7 @@ mod tests {
         let mut nodes = Vec::new();
         for i in 0..5 {
             for j in 0..5 {
-                let height = if i == 2 && j == 2 {
-                    0.0
-                } else if i == 0 && j == 2 {
+                let height = if (i == 2 && j == 2) || (i == 0 && j == 2) {
                     0.0
                 } else {
                     1.0

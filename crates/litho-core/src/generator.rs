@@ -94,7 +94,10 @@ impl Generator {
             seed: world_seed,
             params,
             rivers: Arc::new(RiverCache::new()),
-            drainage: Arc::new(RiverNetCache::new(shards, CACHE_CAPACITY)),
+            drainage: Arc::new(RiverNetCache::new(
+                shards,
+                crate::drainage::NET_CACHE_CAPACITY,
+            )),
             coarse: Arc::new(ShardedCache::new(shards, CACHE_CAPACITY)),
             spawn_shift: shift,
         })
