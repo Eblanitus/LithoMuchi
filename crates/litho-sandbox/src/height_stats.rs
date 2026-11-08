@@ -280,7 +280,7 @@ impl HeightStats {
         if self.land == 0 || self.relief_windows == 0 {
             out.push_str("WARNING: нет суши/полных сухопутных окон; проценты и медиана не являются оценкой рельефа.\n");
         }
-        out.push_str("Сеть стока в полях, озёра и R2 ещё не подключены (T112–T116, T143–T145); T110/T111 — отдельная диагностика.\n");
+        out.push_str("Сеть стока в полях, озёра и R2 ещё не подключены (T113–T116, T143–T145); T110–T112 — отдельная диагностика.\n");
         out
     }
     pub fn json(&self, base: &RenderOptions, opts: &StatsOptions, model: &HeightModel) -> String {

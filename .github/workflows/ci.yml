@@ -58,10 +58,11 @@ jobs:
         run: |
           set -o pipefail
           cargo run -q -p litho-sandbox --release -- seams --seed 42 --mode scientific --version v1-dev | python3 tools/ci_annotations.py report
-      - name: "Э3.5 — T110/T111 drainage smoke (ещё не реки в игре)"
+      - name: "Э3.5 — T110–T112 drainage smoke (ещё не реки в игре)"
         run: |
           set -o pipefail
           cargo run -q -p litho-sandbox --release -- drainage --seed 42 --mode gameplay --version v1-dev --at 0,0 | python3 tools/ci_annotations.py report
+          cargo run -q -p litho-sandbox --release -- render --seed 42 --mode gameplay --version v1-dev --layers channels --size 32 --bpp 32 --out out/channels-smoke
       - name: Профиль скорости по слоям (Д-027, без подавления ошибок)
         run: cargo run -p litho-sandbox --release -- profile
       - name: sandbox smoke test

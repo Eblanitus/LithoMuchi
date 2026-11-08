@@ -223,9 +223,9 @@ impl Generator {
         local.max(traced)
     }
 
-    /// Сеть стока плиты с климатом и расходом (T110/T111, только v1-dev).
-    /// Пока это диагностика: `field` и ванильные C/E/W/PV её не используют.
-    /// T112 добавит геометрию русел, T115 — влияние на поля.
+    /// Сеть стока плиты с климатом, расходом и геометрией русел
+    /// (T110–T112, только v1-dev). Пока это диагностика: `field` и ванильные
+    /// C/E/W/PV её не используют; влияние на поля добавит T115.
     pub fn drainage_network(&self, plate: &Plate) -> Result<Arc<RiverNet>, RiverNetError> {
         if !self.params.version.is_water_relief_dev() {
             return Err(RiverNetError::UnsupportedVersion(self.params.version));
@@ -266,6 +266,20 @@ impl Generator {
                 },
             )
         })
+    }
+
+    /// Быстрый запрос русла T112 в блочной точке. Пока ищется только сеть
+    /// ближайшей плиты; межплитовые связи и общий радиус долины — T113.
+    pub fn drainage_channel_query(
+        &self,
+        x: f64,
+        z: f64,
+    ) -> Result<crate::channel::ChannelQuery, RiverNetError> {
+        let Some(plate) = self.plate_sample(x, z) else {
+            return Ok(crate::channel::ChannelQuery::default());
+        };
+        let net = self.drainage_network(&plate.a)?;
+        Ok(net.channels().query(self.macro_point(x, z)))
     }
 
     /// Поле глубинной лавы λ (слой `lava`, T53).

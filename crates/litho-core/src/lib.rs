@@ -10,6 +10,7 @@
 #![forbid(unsafe_code)]
 
 pub mod cache;
+pub mod channel;
 pub mod classify;
 pub mod climate;
 pub mod crust;

@@ -31,7 +31,7 @@ pub const CLIMATE_LAYERS: [&str; 9] = [
     "vanilla-height",
 ];
 
-pub const LAYERS: [&str; 21] = [
+pub const LAYERS: [&str; 22] = [
     "noise",
     "warp",
     "plates",
@@ -51,6 +51,7 @@ pub const LAYERS: [&str; 21] = [
     "vanilla",
     "vanilla-height",
     "rivers",
+    "channels",
     "lava",
     "spawn",
 ];
@@ -148,6 +149,9 @@ pub fn render_layer_with_height(
     if layer == "vanilla-height" && height.is_none() {
         return Err("vanilla-height требует --game-data или --synthetic-height".into());
     }
+    if layer == "channels" && !opts.version.is_water_relief_dev() {
+        return Err("channels — диагностика T112 только для --version v1-dev".into());
+    }
     let generator =
         Generator::new(opts.seed, opts.mode, opts.version).map_err(|error| error.to_string())?;
     let params: &Params = generator.params();
@@ -233,6 +237,17 @@ pub fn render_layer_with_height(
                     Some(crust) => palette::river_field(generator.river_sample(x, z), crust.e_km),
                     None => [0, 0, 0],
                 },
+                "channels" => {
+                    let base = match generator.crust_sample(x, z) {
+                        Some(crust) => palette::hypsometric(crust.e_km),
+                        None => [0, 0, 0],
+                    };
+                    let hit = generator
+                        .drainage_channel_query(x, z)
+                        .map_err(|error| error.to_string())?;
+                    let valley = palette::mix(base, [70, 120, 96], hit.valley * 0.55);
+                    palette::mix(valley, [46, 158, 232], hit.core)
+                }
                 "lava" => palette::heat(generator.lava_sample(x, z)),
                 "spawn" => {
                     let quality = generator.spawn_quality(x, z);

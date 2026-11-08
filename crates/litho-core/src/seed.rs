@@ -109,3 +109,5 @@ mod tests {
         assert_eq!(rng.next_u64(), crate::hash::splitmix64(h0));
     }
 }
+// Э3.5 / T112: меандры русел поверх сети стока; соль v0 не меняется.
+pub const SALT_CHANNEL_MEANDER: &str = "channels.meander";

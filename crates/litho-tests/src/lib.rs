@@ -458,8 +458,13 @@ mod drainage_dev {
         let science = Generator::new(42, Mode::Scientific, GenVersion::V1Dev).unwrap();
         let same_plate = science.plate_sample(0.0, 0.0).unwrap().a;
         let other = science.drainage_network(&same_plate).unwrap();
-        // Сеть задана в L и не зависит от блочного масштаба режима.
-        assert_eq!(first, other);
+        // Топография и расход заданы в L и не зависят от режима. Геометрия
+        // T112 имеет блочные ширины/меандры, поэтому сравниваем только основу.
+        assert_eq!(first.nodes(), other.nodes());
+        assert_eq!(first.depressions(), other.depressions());
+        assert_eq!(first.runoff(), other.runoff());
+        assert!(first.channels().total_length_l().is_finite());
+        assert!(other.channels().total_length_l().is_finite());
     }
 
     #[test]

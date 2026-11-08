@@ -339,6 +339,21 @@ pub struct DrainageParams {
     pub et_factor: f64,
 }
 
+/// T112: геометрия русел поверх Q. Числа блочные, поэтому режимы различаются;
+/// сама сеть стока остаётся в L. Используется только v1-dev.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ChannelParams {
+    pub q_min_mm_l2: f64,
+    pub core_min_blocks: f64,
+    pub core_max_blocks: f64,
+    pub depth0_blocks: f64,
+    pub meander_plain: f64,
+    pub meander_mountain: f64,
+    pub valley_plain: f64,
+    pub valley_mountain: f64,
+    pub plain_slope_max: f64,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct LavaParams {
     pub width_blocks: f64,
@@ -586,6 +601,7 @@ pub struct Params {
     pub precip: PrecipParams,
     pub rivers: RiversParams,
     pub drainage: DrainageParams,
+    pub channels: ChannelParams,
     pub lava: LavaParams,
     pub spawn: SpawnParams,
     pub lattice: LatticeParams,
@@ -792,6 +808,27 @@ impl Params {
                 anchor_search_radius_cells: 2,
                 climate_step_l: 1.0,
                 et_factor: 1.0,
+            },
+            channels: ChannelParams {
+                // Стартовый отсев русел; плотность подбирается T151 по 10.1.
+                q_min_mm_l2: 25.0,
+                core_min_blocks: match mode {
+                    Mode::Gameplay => 4.0,
+                    Mode::Scientific => 6.0,
+                },
+                core_max_blocks: match mode {
+                    Mode::Gameplay => 28.0,
+                    Mode::Scientific => 60.0,
+                },
+                depth0_blocks: match mode {
+                    Mode::Gameplay => 1.5,
+                    Mode::Scientific => 2.0,
+                },
+                meander_plain: 1.5,
+                meander_mountain: 0.3,
+                valley_plain: 5.0,
+                valley_mountain: 2.0,
+                plain_slope_max: 0.02,
             },
             lava: LavaParams {
                 width_blocks: block.lava_width_blocks,
@@ -1208,6 +1245,20 @@ impl Params {
                 v = d.anchor_search_radius_cells
             )
             .unwrap();
+            let ch = &self.channels;
+            for (name, value) in [
+                ("channels.q_min_mm_l2", ch.q_min_mm_l2),
+                ("channels.core_min_blocks", ch.core_min_blocks),
+                ("channels.core_max_blocks", ch.core_max_blocks),
+                ("channels.depth0_blocks", ch.depth0_blocks),
+                ("channels.meander_plain", ch.meander_plain),
+                ("channels.meander_mountain", ch.meander_mountain),
+                ("channels.valley_plain", ch.valley_plain),
+                ("channels.valley_mountain", ch.valley_mountain),
+                ("channels.plain_slope_max", ch.plain_slope_max),
+            ] {
+                writeln!(w, "{name}={value:?}").unwrap();
+            }
         }
         out
     }

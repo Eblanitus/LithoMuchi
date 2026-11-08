@@ -1,14 +1,15 @@
 //! Сеть стока плиты (PLAN-REVISION 5.3, T110/T111).
 //!
-//! Здесь топография и годовой водный баланс: узлы, выходы, priority-flood,
-//! впадины, климат и расход Q. Полилинии русел и влияние на C/E/W/PV —
-//! следующие задачи T112–T115. Модуль не меняет v0 и не вызывается из `field`.
+//! Здесь топография, годовой водный баланс и геометрия русел: узлы, выходы,
+//! priority-flood, впадины, климат, расход Q и полилинии T112. Влияние на
+//! C/E/W/PV — T115. Модуль не меняет v0 и не вызывается из `field`.
 
 use std::cmp::Ordering;
 use std::collections::{BinaryHeap, HashMap, VecDeque};
 use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 use std::sync::{Arc, Mutex, OnceLock};
 
+use crate::channel::ChannelNetwork;
 use crate::hash::unit;
 use crate::math::Vec2;
 use crate::params::Params;
@@ -130,6 +131,7 @@ pub struct RiverNet {
     nodes: Vec<DrainageNode>,
     depressions: Vec<Depression>,
     runoff: Runoff,
+    channels: ChannelNetwork,
 }
 
 impl RiverNet {
@@ -181,11 +183,13 @@ impl RiverNet {
         let points: Vec<_> = nodes.iter().map(|node| node.point).collect();
         let grid = ClimateGrid::build(&points, p.climate_step_l, climate)?;
         let runoff = Runoff::calculate(&nodes, &depressions, &grid, params)?;
+        let channels = ChannelNetwork::build(plate.id, seed, &nodes, &runoff, params)?;
         let net = Self {
             plate_id: plate.id,
             nodes,
             depressions,
             runoff,
+            channels,
         };
         net.check_invariants(p.fill_epsilon_km)?;
         Ok(net)
@@ -205,6 +209,10 @@ impl RiverNet {
 
     pub const fn runoff(&self) -> &Runoff {
         &self.runoff
+    }
+
+    pub const fn channels(&self) -> &ChannelNetwork {
+        &self.channels
     }
 
     pub fn plate_node_count(&self) -> usize {
@@ -675,11 +683,13 @@ mod tests {
         })
         .unwrap();
         let runoff = Runoff::calculate(&nodes, &depressions, &grid, &params).unwrap();
+        let channels = ChannelNetwork::build(7, 42, &nodes, &runoff, &params).unwrap();
         RiverNet {
             plate_id: 7,
             nodes,
             depressions,
             runoff,
+            channels,
         }
     }
 
