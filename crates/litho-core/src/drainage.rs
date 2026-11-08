@@ -627,10 +627,11 @@ impl Default for RiverNetCache {
 #[cfg(test)]
 mod tests {
     use super::{
-        DepressionKind, DrainageNode, DrainageOutlet, RiverNet, RiverNetCache, grid_neighbors,
-        route_nodes,
+        ClimateGrid, DepressionKind, DrainageNode, DrainageOutlet, RiverNet, RiverNetCache, Runoff,
+        RunoffClimate, grid_neighbors, route_nodes,
     };
     use crate::math::Vec2;
+    use crate::version::GenVersion;
     use std::collections::HashMap;
     use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering};

@@ -462,27 +462,31 @@ impl FlowGraph {
             if node.depression.is_some() && node.in_plate {
                 units[unit].evaporation += runoff[k].pet_mm * area;
             }
-            if node.depression.is_none() {
-                if let Some(down) = node.downstream {
-                    if down >= n {
-                        return Err(RiverNetError::BrokenInvariant {
-                            node: k,
-                            reason: "индекс стока вне сети",
-                        });
+            match node.depression {
+                None => {
+                    if let Some(down) = node.downstream {
+                        if down >= n {
+                            return Err(RiverNetError::BrokenInvariant {
+                                node: k,
+                                reason: "индекс стока вне сети",
+                            });
+                        }
+                        units[unit].downstream = Some(node_unit[down]);
                     }
-                    units[unit].downstream = Some(node_unit[down]);
                 }
-            } else if let Some(down) = node.downstream {
-                let d = node.depression.expect("узел впадины имеет id");
-                if down >= n || nodes[down].depression != Some(d) {
-                    let exit = n + d;
-                    let better = units[exit]
-                        .exit_node
-                        .is_none_or(|old| (node.filled_km, k) < (nodes[old].filled_km, old));
-                    if better {
-                        units[exit].exit_node = Some(k);
-                        units[exit].control_km = node.filled_km;
-                        units[exit].downstream = Some(node_unit[down]);
+                Some(d) => {
+                    if let Some(down) = node.downstream {
+                        if down >= n || nodes[down].depression != Some(d) {
+                            let exit = n + d;
+                            let better = units[exit].exit_node.is_none_or(|old| {
+                                (node.filled_km, k) < (nodes[old].filled_km, old)
+                            });
+                            if better {
+                                units[exit].exit_node = Some(k);
+                                units[exit].control_km = node.filled_km;
+                                units[exit].downstream = Some(node_unit[down]);
+                            }
+                        }
                     }
                 }
             }
