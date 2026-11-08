@@ -14,7 +14,7 @@ use litho_core::plates::{boundary_type, plate_color, warped_point};
 use litho_core::seed::{SALT_NOISE_DETAIL, subseed};
 use litho_core::version::GenVersion;
 
-use crate::height::{HeightInput, HeightModel, SEA_LEVEL};
+use crate::height::{HeightInput, HeightModel};
 use crate::palette;
 use crate::png::RgbImage;
 

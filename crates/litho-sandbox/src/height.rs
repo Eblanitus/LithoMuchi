@@ -155,6 +155,7 @@ impl Spline {
     }
 }
 
+#[derive(Debug)]
 pub struct HeightModel {
     pub source: HeightSource,
     pub data_hash: u64,

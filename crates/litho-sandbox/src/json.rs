@@ -38,12 +38,6 @@ impl Json {
             _ => None,
         }
     }
-    pub fn as_object(&self) -> Option<&BTreeMap<String, Json>> {
-        match self {
-            Json::Object(a) => Some(a),
-            _ => None,
-        }
-    }
 }
 
 pub fn parse(text: &str) -> Result<Json, String> {

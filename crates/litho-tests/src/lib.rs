@@ -380,8 +380,16 @@ mod water_relief_dev {
                 outside += 1;
             }
         }
-        assert!(valley as f64 / n as f64 < 0.08, "долины {} из {n}", valley);
-        assert!(outside as f64 / n as f64 < 0.05, "не saturated {} из {n}", outside);
+        assert!(
+            valley as f64 / (n as f64) < 0.08,
+            "долины {} из {n}",
+            valley
+        );
+        assert!(
+            outside as f64 / (n as f64) < 0.05,
+            "не saturated {} из {n}",
+            outside
+        );
     }
 
     #[test]
