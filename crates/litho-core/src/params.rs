@@ -891,9 +891,12 @@ impl Params {
                 Mode::Gameplay => 2400.0,
                 Mode::Scientific => 8000.0,
             };
+            // Старт плана 12/24 дал max |ΔW|=0.03478 на seams-скане при
+            // пороге 0.02 (CI 42493770230). Порог не ослабляем: расширяем
+            // сглаживание знака, а не русло. Полоса |W|<0.05 остаётся узкой.
             p.block.w_sign_half_width_blocks = match mode {
-                Mode::Gameplay => 12.0,
-                Mode::Scientific => 24.0,
+                Mode::Gameplay => 48.0,
+                Mode::Scientific => 96.0,
             };
             p.block.jitter_t_c = match mode {
                 Mode::Gameplay => 1.0,
