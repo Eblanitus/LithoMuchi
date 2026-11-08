@@ -31,7 +31,7 @@ pub const CLIMATE_LAYERS: [&str; 9] = [
     "vanilla-height",
 ];
 
-pub const LAYERS: [&str; 22] = [
+pub const LAYERS: [&str; 23] = [
     "noise",
     "warp",
     "plates",
@@ -52,6 +52,7 @@ pub const LAYERS: [&str; 22] = [
     "vanilla-height",
     "rivers",
     "channels",
+    "lakes",
     "lava",
     "spawn",
 ];
@@ -149,8 +150,8 @@ pub fn render_layer_with_height(
     if layer == "vanilla-height" && height.is_none() {
         return Err("vanilla-height требует --game-data или --synthetic-height".into());
     }
-    if layer == "channels" && !opts.version.is_water_relief_dev() {
-        return Err("channels — диагностика T112/T113 только для --version v1-dev".into());
+    if matches!(layer, "channels" | "lakes") && !opts.version.is_water_relief_dev() {
+        return Err("channels/lakes — диагностика T112–T114 только для --version v1-dev".into());
     }
     let generator =
         Generator::new(opts.seed, opts.mode, opts.version).map_err(|error| error.to_string())?;
@@ -242,11 +243,39 @@ pub fn render_layer_with_height(
                         Some(crust) => palette::hypsometric(crust.e_km),
                         None => [0, 0, 0],
                     };
-                    let hit = generator
-                        .drainage_channel_query(x, z)
+                    let (hit, _) = generator
+                        .drainage_surface_query(x, z)
                         .map_err(|error| error.to_string())?;
                     let valley = palette::mix(base, [70, 120, 96], hit.valley * 0.55);
-                    palette::mix(valley, [46, 158, 232], hit.core)
+                    let delta = palette::mix(valley, [96, 170, 120], hit.delta * 0.65);
+                    palette::mix(delta, [46, 158, 232], hit.core)
+                }
+                "lakes" => {
+                    let base = match generator.crust_sample(x, z) {
+                        Some(crust) => palette::hypsometric(crust.e_km),
+                        None => [0, 0, 0],
+                    };
+                    let (_, hit) = generator
+                        .drainage_surface_query(x, z)
+                        .map_err(|error| error.to_string())?;
+                    if let Some(nearest) = hit.nearest {
+                        let water = match nearest.kind {
+                            litho_core::lake::LakeKind::Swamp => [82, 138, 92],
+                            litho_core::lake::LakeKind::DryBasin => [190, 164, 112],
+                            litho_core::lake::LakeKind::ClosedSurplus => [150, 110, 180],
+                            litho_core::lake::LakeKind::SeaConnected => [42, 110, 190],
+                            _ => [38, 120, 210],
+                        };
+                        let water = if nearest.frozen {
+                            palette::mix(water, [220, 238, 248], 0.55)
+                        } else {
+                            water
+                        };
+                        let shore = palette::mix(base, water, hit.shore * 0.45);
+                        palette::mix(shore, water, hit.water)
+                    } else {
+                        base
+                    }
                 }
                 "lava" => palette::heat(generator.lava_sample(x, z)),
                 "spawn" => {

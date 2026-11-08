@@ -352,6 +352,24 @@ pub struct ChannelParams {
     pub valley_plain: f64,
     pub valley_mountain: f64,
     pub plain_slope_max: f64,
+    /// T114: дельта на пологом берегу при большом расходе.
+    pub delta_q_min_mm_l2: f64,
+    pub delta_slope_max: f64,
+    pub delta_length_min_l: f64,
+    pub delta_length_max_l: f64,
+}
+
+/// T114: озёра и котловины поверх впадин T110 и баланса T111.
+/// Макропараметры одинаковы в обоих режимах; высокие озёра требуют R2,
+/// но не отсекаются потолком высоты (решение автора в §5.6).
+#[derive(Clone, Debug, PartialEq)]
+pub struct LakeParams {
+    pub inland_sea_area_l2: f64,
+    pub swamp_max_depth_km: f64,
+    pub swamp_min_p_pet: f64,
+    pub frozen_t_min_c: f64,
+    /// Полуширина сглаживания берега в долях шага решётки стока.
+    pub shore_fraction: f64,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -602,6 +620,7 @@ pub struct Params {
     pub rivers: RiversParams,
     pub drainage: DrainageParams,
     pub channels: ChannelParams,
+    pub lakes: LakeParams,
     pub lava: LavaParams,
     pub spawn: SpawnParams,
     pub lattice: LatticeParams,
@@ -802,7 +821,7 @@ impl Params {
                 step_l: 0.25,
                 jitter_fraction: 0.35,
                 fill_epsilon_km: 1e-4,
-                // Стартовый отсев «луж» глубже 2 м; подбор оставлен T114.
+                // Стартовый отсев «луж» глубже 2 м; подбор оставлен T151.
                 depression_min_depth_km: 0.002,
                 outlet_min_weight: 0.5,
                 anchor_search_radius_cells: 2,
@@ -829,6 +848,18 @@ impl Params {
                 valley_plain: 5.0,
                 valley_mountain: 2.0,
                 plain_slope_max: 0.02,
+                // Стартовые числа §5.4; подбор плотности/болот — T151.
+                delta_q_min_mm_l2: 500.0,
+                delta_slope_max: 0.005,
+                delta_length_min_l: 0.3,
+                delta_length_max_l: 0.8,
+            },
+            lakes: LakeParams {
+                inland_sea_area_l2: 1.0,
+                swamp_max_depth_km: 0.01,
+                swamp_min_p_pet: 1.2,
+                frozen_t_min_c: 0.0,
+                shore_fraction: 0.5,
             },
             lava: LavaParams {
                 width_blocks: block.lava_width_blocks,
@@ -1256,6 +1287,20 @@ impl Params {
                 ("channels.valley_plain", ch.valley_plain),
                 ("channels.valley_mountain", ch.valley_mountain),
                 ("channels.plain_slope_max", ch.plain_slope_max),
+                ("channels.delta_q_min_mm_l2", ch.delta_q_min_mm_l2),
+                ("channels.delta_slope_max", ch.delta_slope_max),
+                ("channels.delta_length_min_l", ch.delta_length_min_l),
+                ("channels.delta_length_max_l", ch.delta_length_max_l),
+            ] {
+                writeln!(w, "{name}={value:?}").unwrap();
+            }
+            let lk = &self.lakes;
+            for (name, value) in [
+                ("lakes.inland_sea_area_l2", lk.inland_sea_area_l2),
+                ("lakes.swamp_max_depth_km", lk.swamp_max_depth_km),
+                ("lakes.swamp_min_p_pet", lk.swamp_min_p_pet),
+                ("lakes.frozen_t_min_c", lk.frozen_t_min_c),
+                ("lakes.shore_fraction", lk.shore_fraction),
             ] {
                 writeln!(w, "{name}={value:?}").unwrap();
             }

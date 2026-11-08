@@ -225,7 +225,7 @@ impl Generator {
     }
 
     /// Сеть стока плиты с климатом, расходом и геометрией русел
-    /// (T110–T113, только v1-dev). Пока это диагностика: `field` и ванильные
+    /// (T110–T114, только v1-dev). Пока это диагностика: `field` и ванильные
     /// C/E/W/PV её не используют; влияние на поля добавит T115.
     pub fn drainage_network(&self, plate: &Plate) -> Result<Arc<RiverNet>, RiverNetError> {
         if !self.params.version.is_water_relief_dev() {
@@ -263,6 +263,7 @@ impl Generator {
                         .map(|sample| crate::runoff::RunoffClimate {
                             p_mm: sample.precip.p_mm,
                             pet_mm: sample.precip.pet_mm,
+                            t_min_c: sample.temperature.t_min,
                         })
                 },
             )
@@ -288,6 +289,29 @@ impl Generator {
             out.merge(net.channels().query(point));
         }
         Ok(out)
+    }
+
+    /// Общий запрос русел и озёр T114 в блочной точке. Окно плит пока
+    /// консервативно по радиусу русла/дельты; крупные межплитовые зеркала и
+    /// точные уровни уточнят T145/T160. В игровые поля не подключено.
+    pub fn drainage_surface_query(
+        &self,
+        x: f64,
+        z: f64,
+    ) -> Result<(crate::channel::ChannelQuery, crate::lake::LakeQuery), RiverNetError> {
+        if !self.params.version.is_water_relief_dev() {
+            return Err(RiverNetError::UnsupportedVersion(self.params.version));
+        }
+        let point = self.macro_point(x, z);
+        let radius = crate::channel::max_query_radius_l(&self.params);
+        let mut channels = crate::channel::ChannelQuery::default();
+        let mut lakes = crate::lake::LakeQuery::default();
+        for plate in plates_near(point, radius, self.seed, &self.params) {
+            let net = self.drainage_network(&plate)?;
+            channels.merge(net.channels().query(point));
+            lakes.merge(net.lakes().query(point));
+        }
+        Ok((channels, lakes))
     }
 
     /// Поле глубинной лавы λ (слой `lava`, T53).

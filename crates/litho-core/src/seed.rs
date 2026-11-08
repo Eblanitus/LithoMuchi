@@ -83,6 +83,8 @@ impl Default for CellRng {
 
 // Э3.5 / T112: меандры русел поверх сети стока; соль v0 не меняется.
 pub const SALT_CHANNEL_MEANDER: &str = "channels.meander";
+/// T114: число и веер рукавов дельты; не меняет меандр T112.
+pub const SALT_CHANNEL_DELTA: &str = "channels.delta";
 
 #[cfg(test)]
 mod tests {

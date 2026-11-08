@@ -11,6 +11,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 
 use crate::channel::ChannelNetwork;
 use crate::hash::unit;
+use crate::lake::LakeNetwork;
 use crate::math::Vec2;
 use crate::params::Params;
 use crate::plates::{Plate, plate_query};
@@ -132,6 +133,7 @@ pub struct RiverNet {
     depressions: Vec<Depression>,
     runoff: Runoff,
     channels: ChannelNetwork,
+    lakes: LakeNetwork,
 }
 
 impl RiverNet {
@@ -184,12 +186,14 @@ impl RiverNet {
         let grid = ClimateGrid::build(&points, p.climate_step_l, climate)?;
         let runoff = Runoff::calculate(&nodes, &depressions, &grid, params)?;
         let channels = ChannelNetwork::build(plate.id, seed, &nodes, &runoff, params)?;
+        let lakes = LakeNetwork::build(plate.id, &nodes, &depressions, &runoff, params)?;
         let net = Self {
             plate_id: plate.id,
             nodes,
             depressions,
             runoff,
             channels,
+            lakes,
         };
         net.check_invariants(p.fill_epsilon_km)?;
         Ok(net)
@@ -213,6 +217,10 @@ impl RiverNet {
 
     pub const fn channels(&self) -> &ChannelNetwork {
         &self.channels
+    }
+
+    pub const fn lakes(&self) -> &LakeNetwork {
+        &self.lakes
     }
 
     pub fn plate_node_count(&self) -> usize {
@@ -642,6 +650,7 @@ mod tests {
         RunoffClimate, grid_neighbors, route_nodes,
     };
     use crate::channel::ChannelNetwork;
+    use crate::lake::LakeNetwork;
     use crate::math::Vec2;
     use crate::version::GenVersion;
     use std::collections::HashMap;
@@ -683,17 +692,20 @@ mod tests {
             Some(RunoffClimate {
                 p_mm: 100.0,
                 pet_mm: 0.0,
+                t_min_c: 10.0,
             })
         })
         .unwrap();
         let runoff = Runoff::calculate(&nodes, &depressions, &grid, &params).unwrap();
         let channels = ChannelNetwork::build(7, 42, &nodes, &runoff, &params).unwrap();
+        let lakes = LakeNetwork::build(7, &nodes, &depressions, &runoff, &params).unwrap();
         RiverNet {
             plate_id: 7,
             nodes,
             depressions,
             runoff,
             channels,
+            lakes,
         }
     }
 

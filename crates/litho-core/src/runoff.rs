@@ -13,11 +13,13 @@ use crate::params::Params;
 
 type Cell = (i64, i64);
 
-/// P и PET в мм/год. Обе величины неотрицательны и конечны.
+/// P и PET в мм/год, неотрицательны и конечны. T114 добавляет температуру
+/// самого холодного месяца для замёрзших озёр; она может быть отрицательной.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct RunoffClimate {
     pub p_mm: f64,
     pub pet_mm: f64,
+    pub t_min_c: f64,
 }
 
 /// Разреженная глобальная решётка климата с шагом T111. Считаются только
@@ -67,6 +69,7 @@ impl ClimateGrid {
                 || !value.pet_mm.is_finite()
                 || value.p_mm < 0.0
                 || value.pet_mm < 0.0
+                || !value.t_min_c.is_finite()
             {
                 return Err(RiverNetError::InvalidClimate { cell: key });
             }
@@ -104,10 +107,24 @@ impl ClimateGrid {
             lerp(c01.pet_mm, c11.pet_mm, fx),
             fz,
         );
-        if !p_mm.is_finite() || !pet_mm.is_finite() || p_mm < 0.0 || pet_mm < 0.0 {
+        let t_min_c = lerp(
+            lerp(c00.t_min_c, c10.t_min_c, fx),
+            lerp(c01.t_min_c, c11.t_min_c, fx),
+            fz,
+        );
+        if !p_mm.is_finite()
+            || !pet_mm.is_finite()
+            || p_mm < 0.0
+            || pet_mm < 0.0
+            || !t_min_c.is_finite()
+        {
             return Err(RiverNetError::InvalidClimate { cell: (i, j) });
         }
-        Ok(RunoffClimate { p_mm, pet_mm })
+        Ok(RunoffClimate {
+            p_mm,
+            pet_mm,
+            t_min_c,
+        })
     }
 
     pub const fn step_l(&self) -> f64 {
@@ -155,6 +172,7 @@ pub enum FlowTerminal {
 pub struct RunoffNode {
     pub p_mm: f64,
     pub pet_mm: f64,
+    pub t_min_c: f64,
     /// Формула плана для суши: max(0, P - k_et·PET)·h².
     pub runoff_mm_l2: f64,
     /// Фактический приход в баланс: на суше равен runoff, на зеркале — P·h².
@@ -229,6 +247,7 @@ impl Runoff {
             runoff_nodes.push(RunoffNode {
                 p_mm: climate.p_mm,
                 pet_mm: climate.pet_mm,
+                t_min_c: climate.t_min_c,
                 runoff_mm_l2: runoff,
                 local_supply_mm_l2: local_supply,
                 discharge_mm_l2: 0.0,
@@ -350,6 +369,7 @@ impl Runoff {
         for (k, node) in self.nodes.iter().enumerate() {
             if !node.p_mm.is_finite()
                 || !node.pet_mm.is_finite()
+                || !node.t_min_c.is_finite()
                 || !node.runoff_mm_l2.is_finite()
                 || !node.local_supply_mm_l2.is_finite()
                 || !node.discharge_mm_l2.is_finite()
@@ -657,6 +677,7 @@ mod tests {
             Some(RunoffClimate {
                 p_mm: p,
                 pet_mm: pet,
+                t_min_c: 10.0,
             })
         })
         .unwrap()
@@ -673,12 +694,14 @@ mod tests {
             Some(RunoffClimate {
                 p_mm: 100.0 + 10.0 * q.x,
                 pet_mm: 20.0 + 2.0 * q.z,
+                t_min_c: 5.0 + q.x - q.z,
             })
         })
         .unwrap();
         let got = grid.sample(Vec2::new(-0.25, 0.5)).unwrap();
         assert!((got.p_mm - 97.5).abs() < 1e-12);
         assert!((got.pet_mm - 21.0).abs() < 1e-12);
+        assert!((got.t_min_c - 4.25).abs() < 1e-12);
     }
 
     #[test]
@@ -815,6 +838,7 @@ mod balance_tests {
             Some(RunoffClimate {
                 p_mm: 100.0,
                 pet_mm: 10.0,
+                t_min_c: 10.0,
             })
         })
         .unwrap();
@@ -867,6 +891,7 @@ mod balance_tests {
             Some(RunoffClimate {
                 p_mm: 400.0,
                 pet_mm: 100.0,
+                t_min_c: 10.0,
             })
         })
         .unwrap();
@@ -889,7 +914,8 @@ mod balance_tests {
         assert!(
             ClimateGrid::build(&points, 1.0, |_| Some(RunoffClimate {
                 p_mm: -1.0,
-                pet_mm: 0.0
+                pet_mm: 0.0,
+                t_min_c: 10.0,
             }))
             .is_err()
         );

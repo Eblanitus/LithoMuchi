@@ -463,6 +463,7 @@ mod drainage_dev {
         assert_eq!(first.nodes(), other.nodes());
         assert_eq!(first.depressions(), other.depressions());
         assert_eq!(first.runoff(), other.runoff());
+        assert_eq!(first.lakes(), other.lakes());
         assert!(first.channels().total_length_l().is_finite());
         assert!(other.channels().total_length_l().is_finite());
     }
@@ -504,6 +505,28 @@ mod drainage_dev {
     }
 
     #[test]
+    fn surface_query_finds_lake_water_and_delta_arms_in_v1_dev() {
+        let generator = Generator::new(42, Mode::Gameplay, GenVersion::V1Dev).unwrap();
+        // Сид 42, точки найдены сканом соседних плит; координаты блочные.
+        let (lake_x, lake_z) = (-36494.287478, 4844.677510);
+        let (_, lake) = generator.drainage_surface_query(lake_x, lake_z).unwrap();
+        assert_eq!(lake.water, 1.0);
+        let hit = lake.nearest.expect("озеро найдено общим запросом");
+        assert_eq!(hit.plate_id, 55136349038982795);
+        assert!(hit.inside);
+        assert!(
+            hit.level_km
+                .is_some_and(|level| (level - 0.412416969).abs() < 1e-6)
+        );
+        assert!(lake.networks_considered > 1);
+
+        let (delta_x, delta_z) = (-47696.263594, 16684.684891);
+        let (channel, _) = generator.drainage_surface_query(delta_x, delta_z).unwrap();
+        assert!(channel.delta > 0.9);
+        assert!(channel.networks_considered > 1);
+    }
+
+    #[test]
     fn frozen_v0_rejects_the_new_network() {
         let generator = Generator::new(42, Mode::Gameplay, GenVersion::V0).unwrap();
         let plate = generator.plate_sample(0.0, 0.0).unwrap().a;
@@ -513,6 +536,10 @@ mod drainage_dev {
         );
         assert_eq!(
             generator.drainage_channel_query(0.0, 0.0).unwrap_err(),
+            RiverNetError::UnsupportedVersion(GenVersion::V0)
+        );
+        assert_eq!(
+            generator.drainage_surface_query(0.0, 0.0).unwrap_err(),
             RiverNetError::UnsupportedVersion(GenVersion::V0)
         );
     }

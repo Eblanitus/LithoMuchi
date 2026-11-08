@@ -1,4 +1,4 @@
-//! Геометрия русел поверх расхода T111 (PLAN-REVISION 5.4, T112).
+//! Геометрия русел поверх расхода T111 (PLAN-REVISION 5.4, T112/T114).
 //!
 //! Цепочки узлов превращаются в сглаженные полилинии, ширина растёт как √Q,
 //! меандры смещают полилинию по нормали, отрезки раскладываются в корзины
@@ -13,13 +13,16 @@ use crate::math::{SQRT_2, Vec2, clamp, dpow, lerp, smoothstep};
 use crate::noise::noise2;
 use crate::params::Params;
 use crate::runoff::{FlowTerminal, Runoff};
-use crate::seed::{SALT_CHANNEL_MEANDER, subseed};
+use crate::seed::{SALT_CHANNEL_DELTA, SALT_CHANNEL_MEANDER, subseed};
 
 type Cell = (i64, i64);
 
 /// Инфраструктурный размер корзины. На ответ не влияет: сегмент кладётся во
 /// все корзины, которых касается его AABB, расширенный на долину.
 pub const BASKET_L: f64 = 0.5;
+/// tan(25°): веер дельты задаётся наклоном к перпендикуляру, без системного
+/// sin/cos. Угол рукава относительнооси русла не превышает 25° (§5.4).
+const DELTA_TAN_HALF_ANGLE: f64 = 0.466_307_658_154_998_6;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ReachEnd {
@@ -61,6 +64,12 @@ impl ReachEnd {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ReachKind {
+    Channel,
+    Delta,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ChannelPoint {
     pub point: Vec2,
@@ -99,6 +108,8 @@ pub struct ChannelReach {
     pub length_l: f64,
     pub sinuosity: f64,
     pub plain: bool,
+    pub kind: ReachKind,
+    pub parent_reach: Option<usize>,
     first_segment: usize,
     segment_count: usize,
 }
@@ -122,12 +133,14 @@ pub struct ChannelHit {
     pub depth_blocks: f64,
     pub core_strength: f64,
     pub valley_strength: f64,
+    pub delta_strength: f64,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct ChannelQuery {
     pub core: f64,
     pub valley: f64,
+    pub delta: f64,
     pub nearest: Option<ChannelHit>,
     /// Диагностика T113: сколько сетей обошёл общий запрос.
     pub networks_considered: usize,
@@ -139,6 +152,7 @@ impl ChannelQuery {
     pub fn merge(&mut self, other: Self) {
         self.core = self.core.max(other.core);
         self.valley = self.valley.max(other.valley);
+        self.delta = self.delta.max(other.delta);
         self.networks_considered += other.networks_considered;
         if let Some(hit) = other.nearest {
             if self.nearest.is_none_or(|old| {
@@ -164,6 +178,7 @@ pub fn max_query_radius_l(params: &Params) -> f64 {
     let core_l = c.core_max_blocks / params.block.l_blocks;
     core_l * (c.valley_plain.max(c.valley_mountain) + 2.0 * c.meander_plain.max(c.meander_mountain))
         + params.drainage.step_l * SQRT_2
+        + c.delta_length_max_l
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -300,10 +315,13 @@ impl ChannelNetwork {
                 length_l,
                 sinuosity: if chord > 1e-9 { length_l / chord } else { 0.0 },
                 plain: mean_slope < params.channels.plain_slope_max,
+                kind: ReachKind::Channel,
+                parent_reach: None,
                 first_segment,
                 segment_count,
             });
         }
+        let (reaches, segments) = append_deltas(reaches, segments, seed, plate_id, params);
         let mut baskets = HashMap::<Cell, Vec<usize>>::new();
         let mut max_valley_l = 0.0_f64;
         for (k, segment) in segments.iter().enumerate() {
@@ -346,12 +364,32 @@ impl ChannelNetwork {
         &self.segments
     }
 
+    pub fn reach_segments(&self, reach: usize) -> &[ChannelSegment] {
+        let reach = &self.reaches[reach];
+        &self.segments[reach.first_segment..reach.first_segment + reach.segment_count]
+    }
+
     pub fn basket_count(&self) -> usize {
         self.baskets.len()
     }
 
     pub const fn max_valley_l(&self) -> f64 {
         self.max_valley_l
+    }
+
+    pub fn delta_count(&self) -> usize {
+        self.reaches
+            .iter()
+            .filter_map(|r| (r.kind == ReachKind::Delta).then_some(r.parent_reach))
+            .collect::<BTreeSet<_>>()
+            .len()
+    }
+
+    pub fn delta_arm_count(&self) -> usize {
+        self.reaches
+            .iter()
+            .filter(|r| r.kind == ReachKind::Delta)
+            .count()
     }
 
     pub fn total_length_l(&self) -> f64 {
@@ -406,6 +444,12 @@ impl ChannelNetwork {
             let valley_strength = 1.0 - smoothstep(0.0, at.valley_l, distance_l);
             out.core = out.core.max(core_strength);
             out.valley = out.valley.max(valley_strength);
+            let delta_strength = if self.reaches[segment.reach].kind == ReachKind::Delta {
+                valley_strength
+            } else {
+                0.0
+            };
+            out.delta = out.delta.max(delta_strength);
             let hit = ChannelHit {
                 plate_id: self.plate_id,
                 segment: k,
@@ -417,6 +461,7 @@ impl ChannelNetwork {
                 depth_blocks: at.depth_blocks,
                 core_strength,
                 valley_strength,
+                delta_strength,
             };
             if out.nearest.is_none_or(|old| distance_l < old.distance_l) {
                 out.nearest = Some(hit);
@@ -447,6 +492,132 @@ impl ChannelNetwork {
     }
 }
 
+/// T114: на пологом устье моря/озера большая река делится на 2–4 рукава.
+/// Главная полилиния укорачивается на длину веера, рукава начинаются в одной
+/// точке разветвления; сумма Q рукавов равна Q реки. Это геометрия дельты,
+/// не перенос Q между плитами и не игровое поле до T115.
+fn append_deltas(
+    old_reaches: Vec<ChannelReach>,
+    old_segments: Vec<ChannelSegment>,
+    seed: u64,
+    plate_id: u64,
+    params: &Params,
+) -> (Vec<ChannelReach>, Vec<ChannelSegment>) {
+    let c = &params.channels;
+    let delta_seed = subseed(seed, SALT_CHANNEL_DELTA);
+    let mut reaches = Vec::with_capacity(old_reaches.len());
+    let mut segments = Vec::with_capacity(old_segments.len());
+    for (old_index, old) in old_reaches.into_iter().enumerate() {
+        let range = old.first_segment..old.first_segment + old.segment_count;
+        let last = old_segments[range.end - 1];
+        let q = last.b.discharge_mm_l2;
+        let eligible = matches!(old.end, ReachEnd::Sea | ReachEnd::Lake)
+            && q >= c.delta_q_min_mm_l2
+            && last.b.slope_km_l <= c.delta_slope_max;
+        let desired = lerp(
+            c.delta_length_min_l,
+            c.delta_length_max_l,
+            clamp((q / c.delta_q_min_mm_l2 - 1.0) / 99.0, 0.0, 1.0),
+        );
+        if !eligible || old.length_l <= desired + 1e-9 {
+            let first_segment = segments.len();
+            for mut segment in old_segments[range].iter().copied() {
+                segment.reach = reaches.len();
+                segments.push(segment);
+            }
+            reaches.push(ChannelReach {
+                first_segment,
+                segment_count: old.segment_count,
+                ..old
+            });
+            continue;
+        }
+        let keep = old.length_l - desired;
+        let mut walked = 0.0;
+        let first_segment = segments.len();
+        let mut apex = last.b;
+        let mut direction = last.b.point.sub(last.a.point).normalized();
+        for segment in old_segments[range].iter().copied() {
+            let len = segment.a.point.sub(segment.b.point).len();
+            if walked + len < keep {
+                segments.push(ChannelSegment {
+                    reach: reaches.len(),
+                    ..segment
+                });
+                walked += len;
+                continue;
+            }
+            let t = if len > 1e-12 {
+                clamp((keep - walked) / len, 0.0, 1.0)
+            } else {
+                0.0
+            };
+            apex = segment.a.lerp(segment.b, t);
+            direction = segment.b.point.sub(segment.a.point).normalized();
+            if t > 0.0 {
+                segments.push(ChannelSegment {
+                    a: segment.a,
+                    b: apex,
+                    reach: reaches.len(),
+                });
+            }
+            break;
+        }
+        let segment_count = segments.len() - first_segment;
+        let main_index = reaches.len();
+        let chord = segments[first_segment].a.point.sub(apex.point).len();
+        reaches.push(ChannelReach {
+            length_l: keep,
+            sinuosity: if chord > 1e-9 { keep / chord } else { 0.0 },
+            first_segment,
+            segment_count,
+            ..old
+        });
+        let arms =
+            2 + (unit(hash3(delta_seed, plate_id as i64, old_index as i64, 0)) * 3.0) as usize;
+        let perpendicular = Vec2::new(-direction.z, direction.x);
+        for arm in 0..arms {
+            let t = if arms == 2 {
+                if arm == 0 {
+                    -DELTA_TAN_HALF_ANGLE
+                } else {
+                    DELTA_TAN_HALF_ANGLE
+                }
+            } else {
+                lerp(
+                    -DELTA_TAN_HALF_ANGLE,
+                    DELTA_TAN_HALF_ANGLE,
+                    arm as f64 / (arms - 1) as f64,
+                )
+            };
+            let dir = direction.add(perpendicular.scale(t)).normalized();
+            let end = apex.point.add(dir.scale(desired));
+            let arm_q = apex.discharge_mm_l2 / arms as f64;
+            let a = vertex(apex.point, arm_q, apex.slope_km_l, params);
+            let b = vertex(end, arm_q, apex.slope_km_l, params);
+            let first_segment = segments.len();
+            segments.push(ChannelSegment {
+                a,
+                b,
+                reach: reaches.len(),
+            });
+            reaches.push(ChannelReach {
+                source_node: old.mouth_node,
+                mouth_node: old.mouth_node,
+                end: old.end,
+                length_l: desired,
+                sinuosity: 1.0,
+                plain: old.plain,
+                kind: ReachKind::Delta,
+                parent_reach: Some(main_index),
+                first_segment,
+                segment_count: 1,
+            });
+        }
+    }
+    (reaches, segments)
+}
+
 fn validate(params: &Params) -> Result<(), RiverNetError> {
     let c = &params.channels;
     let values = [
@@ -459,11 +630,16 @@ fn validate(params: &Params) -> Result<(), RiverNetError> {
         c.valley_plain,
         c.valley_mountain,
         c.plain_slope_max,
+        c.delta_q_min_mm_l2,
+        c.delta_slope_max,
+        c.delta_length_min_l,
+        c.delta_length_max_l,
     ];
     if values.iter().any(|v| !v.is_finite() || *v <= 0.0)
         || c.core_max_blocks < c.core_min_blocks
         || c.valley_plain < 1.0
         || c.valley_mountain < 1.0
+        || c.delta_length_max_l < c.delta_length_min_l
     {
         return Err(RiverNetError::InvalidParameters(
             "параметры русла должны быть положительными, core_max >= core_min, valley >= 1",
@@ -670,6 +846,7 @@ mod tests {
             Some(RunoffClimate {
                 p_mm: 100.0 * q_scale,
                 pet_mm: 0.0,
+                t_min_c: 10.0,
             })
         })
         .unwrap();
@@ -709,6 +886,12 @@ mod tests {
                     let valley = 1.0 - crate::math::smoothstep(0.0, at.valley_l, d);
                     brute.core = brute.core.max(core);
                     brute.valley = brute.valley.max(valley);
+                    let delta = if net.reaches()[segment.reach].kind == super::ReachKind::Delta {
+                        valley
+                    } else {
+                        0.0
+                    };
+                    brute.delta = brute.delta.max(delta);
                     if brute
                         .nearest
                         .is_none_or(|old: super::ChannelHit| d < old.distance_l)
@@ -724,6 +907,7 @@ mod tests {
                             depth_blocks: at.depth_blocks,
                             core_strength: core,
                             valley_strength: valley,
+                            delta_strength: delta,
                         });
                     }
                 }
@@ -780,5 +964,81 @@ mod tests {
         let a = ChannelNetwork::build(7, 42, &nodes, &wet, &p).unwrap();
         let b = ChannelNetwork::build(7, 42, &nodes, &wet, &p).unwrap();
         assert_eq!(a, b);
+    }
+
+    #[test]
+    fn large_gentle_mouth_splits_into_two_to_four_delta_arms() {
+        let p = params();
+        let nodes = vec![
+            node(3, 0.003, Some(1)),
+            node(2, 0.002, Some(2)),
+            node(1, 0.001, Some(3)),
+            node(0, 0.0, None),
+        ];
+        let flow = runoff(&nodes, &p, 100.0);
+        let net = ChannelNetwork::build(7, 42, &nodes, &flow, &p).unwrap();
+        assert_eq!(net.delta_count(), 1);
+        let arms: Vec<_> = net
+            .reaches()
+            .iter()
+            .filter(|r| r.kind == super::ReachKind::Delta)
+            .collect();
+        assert!((2..=4).contains(&arms.len()));
+        let main = &net.reaches()[arms[0].parent_reach.unwrap()];
+        assert!(main.length_l > 0.0);
+        let total_q: f64 = arms
+            .iter()
+            .map(|r| net.segments()[r.first_segment].a.discharge_mm_l2)
+            .sum();
+        let mouth_q = net.segments()[main.first_segment + main.segment_count - 1]
+            .b
+            .discharge_mm_l2;
+        assert!((total_q - mouth_q).abs() < 1e-9);
+        let axis = arms
+            .iter()
+            .fold(Vec2::default(), |acc, arm| {
+                let segment = net.segments()[arm.first_segment];
+                acc.add(segment.b.point.sub(segment.a.point).normalized())
+            })
+            .normalized();
+        for arm in arms {
+            assert!(arm.length_l >= p.channels.delta_length_min_l - 1e-12);
+            assert!(arm.length_l <= p.channels.delta_length_max_l + 1e-12);
+            let segment = net.segments()[arm.first_segment];
+            let dir = segment.b.point.sub(segment.a.point).normalized();
+            let forward = dir.dot(axis);
+            let sideways = dir.dot(axis.perp()).abs();
+            assert!(sideways <= forward * super::DELTA_TAN_HALF_ANGLE + 1e-9);
+            let mid = segment
+                .a
+                .point
+                .add(segment.b.point.sub(segment.a.point).scale(0.5));
+            assert!(net.query(mid).delta > 0.0);
+        }
+    }
+
+    #[test]
+    fn steep_or_small_mouths_do_not_grow_deltas() {
+        let p = params();
+        let nodes = vec![
+            node(3, 3.0, Some(1)),
+            node(2, 2.0, Some(2)),
+            node(1, 1.0, Some(3)),
+            node(0, 0.0, None),
+        ];
+        let steep = runoff(&nodes, &p, 100.0);
+        assert_eq!(
+            ChannelNetwork::build(7, 42, &nodes, &steep, &p)
+                .unwrap()
+                .delta_count(),
+            0
+        );
+        let small = runoff(&nodes, &p, 0.1);
+        assert_eq!(
+            ChannelNetwork::build(7, 42, &nodes, &small, &p)
+                .unwrap()
+                .delta_count(),
+            0
+        );
     }
 }
