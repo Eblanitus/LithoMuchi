@@ -101,7 +101,10 @@ pub fn weirdness(
             - amplitude_fbm(seed_s, (x - 1.0) / lambda_s, z / lambda_s, 1.0, params);
         let dz = amplitude_fbm(seed_s, x / lambda_s, (z + 1.0) / lambda_s, 1.0, params)
             - amplitude_fbm(seed_s, x / lambda_s, (z - 1.0) / lambda_s, 1.0, params);
-        let gradient = (dx * dx + dz * dz).sqrt() * lambda_s * 0.5;
+        // dx/dz уже взяты на расстоянии 2 блока (±1), поэтому делим на 2.
+        // Множитель lambda_s здесь был бы ошибкой: координаты нормированы,
+        // но шаг разности задан в блоках.
+        let gradient = (dx * dx + dz * dz).sqrt() * 0.5;
         let denominator = (gradient * params.block.w_sign_half_width_blocks).max(c.w_sign_epsilon);
         clamp(f / denominator, -1.0, 1.0)
     } else {
