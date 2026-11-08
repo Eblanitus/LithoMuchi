@@ -199,30 +199,32 @@ pub fn classify(
     let sub = subseed(seed, SALT_CLASS_JITTER);
     let u = x / c.jitter_lambda_blocks;
     let v = z / c.jitter_lambda_blocks;
-    let jitter_t;
-    let jitter_r;
-    if params.version.is_water_relief_dev() {
+    let (jitter_t, jitter_r) = if params.version.is_water_relief_dev() {
         // T101: амплитуды в σ. Второй масштаб дрожания остаётся задачей T133.
-        jitter_t = fbm2_unit(sub, u, v, 1.0, c.jitter_octaves, c.jitter_gain);
-        jitter_r = fbm2_unit(
-            sub.wrapping_add(1),
-            u,
-            v,
-            1.0,
-            c.jitter_octaves,
-            c.jitter_gain,
-        );
+        (
+            fbm2_unit(sub, u, v, 1.0, c.jitter_octaves, c.jitter_gain),
+            fbm2_unit(
+                sub.wrapping_add(1),
+                u,
+                v,
+                1.0,
+                c.jitter_octaves,
+                c.jitter_gain,
+            ),
+        )
     } else {
-        jitter_t = fbm2(sub, u, v, 1.0, c.jitter_octaves, c.jitter_gain);
-        jitter_r = fbm2(
-            sub.wrapping_add(1),
-            u,
-            v,
-            1.0,
-            c.jitter_octaves,
-            c.jitter_gain,
-        );
-    }
+        (
+            fbm2(sub, u, v, 1.0, c.jitter_octaves, c.jitter_gain),
+            fbm2(
+                sub.wrapping_add(1),
+                u,
+                v,
+                1.0,
+                c.jitter_octaves,
+                c.jitter_gain,
+            ),
+        )
+    };
     let t_bio = climate.temperature.t_bio + params.block.jitter_t_c * jitter_t;
     let log2_r = clamp(
         dln(climate.precip.ratio.max(1e-9)) / LN_2 + params.block.jitter_r_log2 * jitter_r,

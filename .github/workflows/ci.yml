@@ -40,7 +40,8 @@ jobs:
           grep -Fxq 'gameplay = b48e8037c4e85977' /tmp/v0-hashes.txt
       - name: "Э3.5 — v1-dev smoke (синтетика НЕ является приёмкой)"
         run: |
-          cargo run -q -p litho-sandbox --release -- stats --seed 42 --mode gameplay --version v1-dev --synthetic-height --size 32 --relief-size 16
+          set -o pipefail
+          cargo run -q -p litho-sandbox --release -- stats --seed 42 --mode gameplay --version v1-dev --synthetic-height --size 32 --relief-size 16 | python3 tools/ci_annotations.py report
           cargo run -q -p litho-sandbox --release -- render --seed 42 --mode gameplay --version v1-dev --layers vanilla-height --size 32 --bpp 32 --synthetic-height --out out/v1-dev-smoke
           cargo run -q -p xtask -- params-hash --version v1-dev
       - name: Профиль скорости по слоям (Д-027, без подавления ошибок)
@@ -70,7 +71,10 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - name: tests
-        run: cargo test --workspace
+        shell: bash
+        run: |
+          set -o pipefail
+          cargo test --workspace --no-fail-fast 2>&1 | python tools/ci_annotations.py test
 
   windows-gnu:
     name: Windows gnu (MinGW) · tests
@@ -87,8 +91,9 @@ jobs:
       - name: tests
         shell: bash
         run: |
+          set -o pipefail
           export PATH="/c/msys64/mingw64/bin:$PATH"
-          cargo test --workspace --target x86_64-pc-windows-gnu
+          cargo test --workspace --target x86_64-pc-windows-gnu --no-fail-fast 2>&1 | python tools/ci_annotations.py test
 
   hnmod:
     name: Мод · упаковка litospherity.hnmod

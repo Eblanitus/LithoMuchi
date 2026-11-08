@@ -20,9 +20,13 @@ def emit(path, line, message, level="error"):
 
 mode = sys.argv[1] if len(sys.argv) > 1 else "clippy"
 pending = None
+report = []
 for raw in sys.stdin:
     sys.stdout.write(raw)
     sys.stdout.flush()
+    if mode == "report":
+        report.append(raw.rstrip())
+        continue
     if mode == "clippy":
         try:
             item = json.loads(raw)
@@ -56,3 +60,5 @@ for raw in sys.stdin:
             emit(".github", 1, match.group(0))
 if pending is not None:
     emit(pending[0], pending[1], "\n".join(pending[2]) or "test panic")
+if mode == "report" and report:
+    emit(".github", 1, "\n".join(report), "notice")
