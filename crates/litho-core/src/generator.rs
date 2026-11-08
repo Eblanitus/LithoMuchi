@@ -14,6 +14,7 @@ use crate::climate::{ClimateSample, PrecipSample, SurfaceSample, TemperatureSamp
 use crate::crust::{CrustSample, crust_from_sample};
 use crate::drainage::{DrainageInput, DrainageOutlet, RiverNet, RiverNetCache, RiverNetError};
 use crate::field::{Field, FullSample, to_f32};
+use crate::hydrology::{self, HydrologySample};
 use crate::lattice::{self, Nodes};
 use crate::math::Vec2;
 use crate::mode::Mode;
@@ -62,9 +63,10 @@ pub struct WorldSample {
     pub climate: ClimateSample,
     pub class: ClassSample,
     pub vanilla: VanillaSample,
-    /// Сила реки в W: v0 — локальная плюс трассы; v1-dev — рифт/трансформ
-    /// T113, сеть стока подключится в T115.
+    /// Сила реки в W: v0 — локальная плюс трассы; v1-dev — сеть T115
+    /// плюс рифт/трансформ T113. Внутреннее море идёт через C, болото через E.
     pub river: f64,
+    pub hydrology: HydrologySample,
     pub is_ocean: bool,
 }
 
@@ -73,6 +75,7 @@ pub struct Generator {
     seed: u64,
     params: Params,
     rivers: Arc<RiverCache>,
+    hydrology: Arc<crate::cache::ShardedCache<(i64, i64), Arc<HydrologySample>>>,
     drainage: Arc<RiverNetCache>,
     coarse: Arc<CoarseTiles>,
     spawn_shift: Vec2,
@@ -95,6 +98,7 @@ impl Generator {
             seed: world_seed,
             params,
             rivers: Arc::new(RiverCache::new()),
+            hydrology: Arc::new(crate::cache::ShardedCache::new(shards, 4096)),
             drainage: Arc::new(RiverNetCache::new(
                 shards,
                 crate::drainage::NET_CACHE_CAPACITY,
@@ -169,12 +173,19 @@ impl Generator {
 
     /// Климат, жизненная зона и пять ванильных чисел (T40–T43).
     pub fn world_sample(&self, x: f64, z: f64) -> Option<WorldSample> {
-        let climate = self.climate_sample(x, z)?;
+        self.try_world_sample(x, z).ok().flatten()
+    }
+
+    /// Ошибки сети не маскируются под нулевую реку в диагностике. Игровой
+    /// `field` остаётся infallible; проверяемые пути используют этот результат.
+    pub fn try_world_sample(&self, x: f64, z: f64) -> Result<Option<WorldSample>, RiverNetError> {
+        let Some(climate) = self.climate_sample(x, z) else {
+            return Ok(None);
+        };
         let c = continentalness(climate.surface.e_km, climate.surface.iota_l, &self.params);
         let is_ocean = c < self.params.climate.ocean_c_threshold;
         let class = classify(&climate, is_ocean, x, z, self.seed, &self.params);
-        // Река в W: v0 — рифт/предгорье плюс трассы; v1-dev — рифт/трансформ
-        // T113 без трасс. Сеть стока подключится отдельно в T115.
+        // v0 сохраняет старый путь; v1-dev подключает сеть T115 ниже.
         let point = self.macro_point(x, z);
         let surface = &climate.surface;
         let local = local_r(x, z, surface, self.seed, &self.params);
@@ -192,16 +203,16 @@ impl Generator {
                 &self.rivers,
             )
         };
-        let river = local.max(traced);
-        let vanilla =
-            crate::vanilla::sample(&climate, &class, x, z, self.seed, &self.params, river);
-        Some(WorldSample {
+        let (class, vanilla, river, hydrology, is_ocean) =
+            self.surface_fields(&climate, class, is_ocean, x, z, local.max(traced))?;
+        Ok(Some(WorldSample {
             climate,
             class,
             vanilla,
             river,
+            hydrology,
             is_ocean,
-        })
+        }))
     }
 
     /// Полная сила реки вместе с трассированными руслами (слой `rivers`).
@@ -221,12 +232,17 @@ impl Generator {
                 &self.rivers,
             )
         };
-        local.max(traced)
+        let network = if self.params.version.is_water_relief_dev() {
+            self.hydrology_at(x, z).map(|h| h.river).unwrap_or(0.0)
+        } else {
+            0.0
+        };
+        local.max(traced).max(network)
     }
 
     /// Сеть стока плиты с климатом, расходом и геометрией русел
-    /// (T110–T114, только v1-dev). Пока это диагностика: `field` и ванильные
-    /// C/E/W/PV её не используют; влияние на поля добавит T115.
+    /// (T110–T115, только v1-dev). T115 переводит её в C/E/W и биомы;
+    /// собственного PV и воды выше моря пока нет (T141/T143/T145).
     pub fn drainage_network(&self, plate: &Plate) -> Result<Arc<RiverNet>, RiverNetError> {
         if !self.params.version.is_water_relief_dev() {
             return Err(RiverNetError::UnsupportedVersion(self.params.version));
@@ -291,9 +307,7 @@ impl Generator {
         Ok(out)
     }
 
-    /// Общий запрос русел и озёр T114 в блочной точке. Окно плит пока
-    /// консервативно по радиусу русла/дельты; крупные межплитовые зеркала и
-    /// точные уровни уточнят T145/T160. В игровые поля не подключено.
+    /// Сырой общий запрос русел/озёр для диагностики T114.
     pub fn drainage_surface_query(
         &self,
         x: f64,
@@ -302,16 +316,123 @@ impl Generator {
         if !self.params.version.is_water_relief_dev() {
             return Err(RiverNetError::UnsupportedVersion(self.params.version));
         }
-        let point = self.macro_point(x, z);
+        self.hydrology_queries(self.macro_point(x, z))
+    }
+
+    fn hydrology_queries(
+        &self,
+        point: Vec2,
+    ) -> Result<(crate::channel::ChannelQuery, crate::lake::LakeQuery), RiverNetError> {
         let radius = crate::channel::max_query_radius_l(&self.params);
         let mut channels = crate::channel::ChannelQuery::default();
         let mut lakes = crate::lake::LakeQuery::default();
+        // T115:консервативный фильтр полупространства Вороного до построения сети.
+        // A plate owns nodes only on its side of the bisector; the ring adds
+        // one grid step outside it. The margin also covers warp and the query
+        // radius, so a cross-plate channel is not dropped at a seam.
+        let nearest = crate::plates::plate_query(point, self.seed, &self.params);
+        let warp_bound = self.params.plates.warp_amplitude_l.abs() * crate::math::SQRT_2;
+        let reach = radius + 4.0 * self.params.drainage.step_l + 2.0 * warp_bound;
         for plate in plates_near(point, radius, self.seed, &self.params) {
+            if let Some(n) = &nearest {
+                if plate.id != n.a.id {
+                    let delta = plate.seed_pos.sub(n.a.seed_pos);
+                    let separation = delta.len();
+                    if separation > 0.0 {
+                        let beta = (n.q.dist2(plate.seed_pos) - n.q.dist2(n.a.seed_pos))
+                            / (2.0 * separation);
+                        if beta > reach {
+                            continue;
+                        }
+                    }
+                }
+            }
             let net = self.drainage_network(&plate)?;
             channels.merge(net.channels().query(point));
             lakes.merge(net.lakes().query(point));
         }
         Ok((channels, lakes))
+    }
+
+    /// Эффективная гидрология T115 в блочной точке. Кэш точной колонки не
+    /// квантует координаты: попадание/промах не меняет ответ. Инфраструктурная
+    /// ёмкость не входит в хеш мира; климат разрешается на месте вызова.
+    pub fn hydrology_at(&self, x: f64, z: f64) -> Result<HydrologySample, RiverNetError> {
+        if !self.params.version.is_water_relief_dev() {
+            return Err(RiverNetError::UnsupportedVersion(self.params.version));
+        }
+        hydrology::validate(&self.params)?;
+        let climate = self
+            .climate_sample(x, z)
+            .ok_or(RiverNetError::InvalidInput { cell: (0, 0) })?;
+        let geometry = self.cached_hydrology_queries(x, z)?;
+        Ok(hydrology::resolve(
+            geometry.channels,
+            geometry.lakes,
+            &climate,
+            &self.params,
+        ))
+    }
+
+    fn cached_hydrology_queries(&self, x: f64, z: f64) -> Result<HydrologySample, RiverNetError> {
+        // Сначала проверяем версию/параметры, затем строим сети вне замков.
+        if !self.params.version.is_water_relief_dev() {
+            return Err(RiverNetError::UnsupportedVersion(self.params.version));
+        }
+        hydrology::validate(&self.params)?;
+        let key = (x.to_bits() as i64, z.to_bits() as i64);
+        if let Some(hit) = self.hydrology.get(key) {
+            return Ok(*hit);
+        }
+        let (channels, lakes) = self.hydrology_queries(self.macro_point(x, z))?;
+        // Климат зависит от пути (reference/fast), поэтому кэшируем только
+        // геометрию. Хранение готового kind здесь смешало бы два пути.
+        let geometry = HydrologySample {
+            channels,
+            lakes,
+            networks_considered: channels.networks_considered,
+            ..HydrologySample::default()
+        };
+        self.hydrology.get_or_insert(key, || Arc::new(geometry));
+        Ok(geometry)
+    }
+
+    fn surface_fields(
+        &self,
+        climate: &ClimateSample,
+        class: crate::classify::ClassSample,
+        is_ocean: bool,
+        x: f64,
+        z: f64,
+        local_river: f64,
+    ) -> Result<
+        (
+            crate::classify::ClassSample,
+            VanillaSample,
+            f64,
+            HydrologySample,
+            bool,
+        ),
+        RiverNetError,
+    > {
+        if !self.params.version.is_water_relief_dev() {
+            let vanilla =
+                crate::vanilla::sample(climate, &class, x, z, self.seed, &self.params, local_river);
+            return Ok((
+                class,
+                vanilla,
+                local_river,
+                HydrologySample::default(),
+                is_ocean,
+            ));
+        }
+        let geometry = self.cached_hydrology_queries(x, z)?;
+        let water = hydrology::resolve(geometry.channels, geometry.lakes, climate, &self.params);
+        let base = crate::vanilla::sample(climate, &class, x, z, self.seed, &self.params, 0.0);
+        let vanilla = hydrology::apply_fields(base, local_river, &water, &self.params);
+        let class = hydrology::classify_surface(class, &water, climate, &self.params);
+        let river = local_river.max(water.river);
+        Ok((class, vanilla, river, water, class.is_ocean))
     }
 
     /// Поле глубинной лавы λ (слой `lava`, T53).
@@ -330,8 +451,17 @@ impl Generator {
     /// Эталонный путь (14.2): чистая функция, без решётки и кэшей. Истина для
     /// всех проверок и для карт песочницы в режиме `reference`.
     pub fn sample_reference(&self, x: f64, z: f64) -> Option<FullSample> {
-        let world = self.world_sample(x, z)?;
-        Some(self.full_from_world(x, z, world))
+        self.try_sample_reference(x, z).ok().flatten()
+    }
+
+    pub fn try_sample_reference(
+        &self,
+        x: f64,
+        z: f64,
+    ) -> Result<Option<FullSample>, RiverNetError> {
+        Ok(self
+            .try_world_sample(x, z)?
+            .map(|world| self.full_from_world(x, z, world)))
     }
 
     fn full_from_world(&self, x: f64, z: f64, world: WorldSample) -> FullSample {
@@ -428,7 +558,14 @@ impl Generator {
     /// Быстрый путь (T55): рельеф, реки, лава и пять ванильных чисел считаются
     /// точно в блоке, а дорогой климат берётся интерполяцией по грубой решётке.
     pub fn sample(&self, x: f64, z: f64) -> Option<FullSample> {
-        let plates = self.plate_sample(x, z)?;
+        self.try_sample(x, z).ok().flatten()
+    }
+
+    /// Быстрый путь с явной ошибкой сети для песочницы и регрессий.
+    pub fn try_sample(&self, x: f64, z: f64) -> Result<Option<FullSample>, RiverNetError> {
+        let Some(plates) = self.plate_sample(x, z) else {
+            return Ok(None);
+        };
         let point = self.macro_point(x, z);
         let crust = crust_from_sample(point, &plates, self.seed, &self.params);
         let surface = SurfaceSample {
@@ -442,7 +579,9 @@ impl Generator {
         // Д-021: φ и направление ветра берутся точными в самой точке, иначе
         // t_bio дрожит на ±0,4 °C и перескакивает через порог пояса 18 °C.
         // coarse-решётка экономит только на 32 шагах линии тока влаги.
-        let pole = crate::climate::pole_sample(point, self.seed, &self.params)?;
+        let Some(pole) = crate::climate::pole_sample(point, self.seed, &self.params) else {
+            return Ok(None);
+        };
         let wind = crate::climate::wind(pole.phi_deg, pole.north, pole.east, &self.params);
         let wind_len = wind.len();
         let dir = if wind_len > 1e-9 {
@@ -495,19 +634,20 @@ impl Generator {
         let c_value = continentalness(surface.e_km, surface.iota_l, &self.params);
         let is_ocean = c_value < self.params.climate.ocean_c_threshold;
         let class = classify(&climate, is_ocean, x, z, self.seed, &self.params);
-        let river = local_r(x, z, &surface, self.seed, &self.params);
-        let vanilla =
-            crate::vanilla::sample(&climate, &class, x, z, self.seed, &self.params, river);
+        let local = local_r(x, z, &surface, self.seed, &self.params);
+        let (class, vanilla, river, hydrology, is_ocean) =
+            self.surface_fields(&climate, class, is_ocean, x, z, local)?;
         let world = WorldSample {
             climate,
             class,
             vanilla,
             river,
+            hydrology,
             is_ocean,
         };
         let mut full = self.full_from_world(x, z, world);
         full.plate = Some(plates);
-        Some(full)
+        Ok(Some(full))
     }
 
     /// `WorldSample` быстрого пути — для слоёв песочницы с `--path fast`.
@@ -613,6 +753,55 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn t115_network_lake_delta_and_cross_plate_reach_the_game_fields() {
+        let g = Generator::new(42, Mode::Gameplay, GenVersion::V1Dev).unwrap();
+        let points = [
+            (-36494.287478, 4844.677510),
+            (-47696.263594, 16684.684891),
+            (1155.684324, -1143.037898),
+        ];
+        let cold = Generator::new(42, Mode::Gameplay, GenVersion::V1Dev).unwrap();
+        for (x, z) in points {
+            let h = g.hydrology_at(x, z).unwrap();
+            let fast = g.try_sample(x, z).unwrap().unwrap();
+            assert_eq!(fast.world.hydrology.kind, h.kind);
+            assert_eq!(
+                g.sample(x, z).unwrap().vanilla.w.to_bits(),
+                fast.vanilla.w.to_bits()
+            );
+        }
+        let lake = g.hydrology_at(points[0].0, points[0].1).unwrap();
+        assert_eq!(lake.kind, crate::hydrology::SurfaceKind::DeferredWater);
+        assert_eq!(lake.water, 0.0);
+        assert_eq!(lake.r2_deferred, 1.0);
+        let delta = g.sample(points[1].0, points[1].1).unwrap();
+        assert!(delta.world.hydrology.channels.delta > 0.9);
+        assert!(delta.world.hydrology.swamp > 0.9);
+        assert!(delta.cell.biome.ends_with("swamp"));
+        assert!(delta.vanilla.e > 0.55);
+        let cross = g.sample(points[2].0, points[2].1).unwrap();
+        assert!(cross.world.hydrology.channels.core > 0.9);
+        assert!(cross.cell.biome.ends_with("river"));
+        assert!(cross.vanilla.w.abs() < 0.01);
+        let reference = cold
+            .try_sample_reference(points[2].0, points[2].1)
+            .unwrap()
+            .unwrap();
+        assert_eq!(cross.world.river.to_bits(), reference.world.river.to_bits());
+        assert_eq!(cross.vanilla.c.to_bits(), reference.vanilla.c.to_bits());
+        assert_eq!(cross.vanilla.e.to_bits(), reference.vanilla.e.to_bits());
+        assert_eq!(cross.vanilla.w.to_bits(), reference.vanilla.w.to_bits());
+    }
+
+    #[test]
+    fn v0_world_has_no_dev_hydrology() {
+        let g = Generator::new(42, Mode::Gameplay, GenVersion::V0).unwrap();
+        let w = g.world_sample(123.0, -456.0).unwrap();
+        assert_eq!(w.hydrology, crate::hydrology::HydrologySample::default());
+        assert!(g.hydrology_at(123.0, -456.0).is_err());
     }
 
     #[test]

@@ -138,7 +138,8 @@ fn cmd_render(args: &[String]) -> Result<(), String> {
         Some(text) if text == "all" => LAYERS
             .iter()
             .filter(|layer| {
-                !matches!(**layer, "channels" | "lakes") || opts.version.is_water_relief_dev()
+                !matches!(**layer, "channels" | "lakes" | "hydrology")
+                    || opts.version.is_water_relief_dev()
             })
             .map(|layer| (*layer).to_string())
             .collect(),
@@ -584,8 +585,8 @@ fn cmd_stats_all(args: &[String]) -> Result<(), String> {
     Ok(())
 }
 
-/// T110–T114: диагностика сети стока, русел, озёр и дельт. Это ещё не реки
-/// в игре: влияние сети на C/E/W/PV (T115) не подключено.
+/// T110–T115: диагностика сети стока, русел, озёр и дельт плюс эффективная
+/// поверхность R1. Собственного PV и воды выше моря пока нет.
 fn cmd_drainage(args: &[String]) -> Result<(), String> {
     let opts = options_from(args)?;
     let (x, z) = parse_pair(&value(args, "--at").unwrap_or_else(|| "0,0".to_string()))?;
@@ -691,6 +692,16 @@ fn cmd_drainage(args: &[String]) -> Result<(), String> {
         .drainage_surface_query(x, z)
         .map_err(|error| error.to_string())?;
     let query_ms = query_start.elapsed().as_secs_f64() * 1000.0;
+    let effective = generator
+        .hydrology_at(x, z)
+        .map_err(|error| error.to_string())?;
+    let effective_kind = effective.kind.as_str();
+    let effective_river = effective.river;
+    let effective_water = effective.water;
+    let effective_deferred = effective.r2_deferred;
+    let effective_swamp = effective.swamp;
+    let effective_dry = effective.dry_basin;
+    let effective_floodplain = effective.floodplain;
     let query_radius = litho_core::channel::max_query_radius_l(generator.params());
     let query_networks = channel_query.networks_considered;
     let query_core = channel_query.core;
@@ -716,7 +727,7 @@ fn cmd_drainage(args: &[String]) -> Result<(), String> {
     let hash = generator.params().params_hash();
     if args.iter().any(|arg| arg == "--json") {
         println!(
-            "{{\"stage\":\"T110-T114\",\"acceptance\":false,\"connected_to_game_fields\":false,\"seed\":{},\"mode\":\"{}\",\"version\":\"{}\",\"params_hash\":\"{hash:016x}\",\"plate_id\":{},\"at\":[{x},{z}],\"nodes_total\":{},\"nodes_plate\":{},\"nodes_ring\":{},\"outlets_sea\":{sea},\"outlets_rift\":{rift},\"outlets_transform\":{transform},\"depressions_filled\":{filled},\"depressions_closed\":{closed},\"max_depth_km\":{max_depth:.9},\"climate_nodes\":{climate_nodes},\"endorheic_basins\":{endorheic},\"max_discharge_mm_l2\":{max_q:.9},\"export_mm_l2\":{export:.9},\"evaporation_mm_l2\":{evaporation:.9},\"storage_mm_l2\":{storage:.9},\"channel_reaches\":{reaches},\"channel_segments\":{channel_segments},\"channel_baskets\":{baskets},\"channel_length_l\":{channel_length:.9},\"channel_unresolved\":{unresolved},\"channel_boundary\":{channel_boundary},\"channel_below_threshold\":{channel_below_threshold},\"channel_closed_surplus\":{channel_closed_surplus},\"plain_sinuosity_median\":{median_sinuosity:.9},\"channel_query_networks\":{query_networks},\"channel_query_radius_l\":{query_radius:.9},\"channel_query_core\":{query_core:.9},\"channel_query_valley\":{query_valley:.9},\"channel_query_plate\":{query_plate},\"channel_query_distance_l\":{query_distance},\"channel_query_delta\":{query_delta:.9},\"delta_fans\":{delta_count},\"delta_arms\":{delta_arms},\"lake_surfaces\":{lake_count},\"lake_water\":{lake_water},\"lake_inland_sea\":{lake_inland_sea},\"lake_swamp\":{lake_swamp},\"lake_dry_basin\":{lake_dry},\"lake_closed_surplus\":{lake_closed},\"lake_sea_connected\":{lake_sea_connected},\"lake_frozen\":{lake_frozen},\"lake_rift\":{lake_rift},\"lake_high_r2\":{lake_high},\"lake_water_area_l2\":{lake_water_area:.9},\"lake_unresolved\":{lake_unresolved},\"lake_query_water\":{lake_query_water:.9},\"lake_query_shore\":{lake_query_shore:.9},\"lake_query_basin\":{lake_query_basin:.9},\"lake_query_kind\":\"{lake_query_kind}\",\"lake_query_level_km\":{lake_query_level},\"channel_query_ms\":{query_ms:.6},\"cold_ms\":{cold_ms:.6},\"warm_ms\":{warm_ms:.6}}}",
+            "{{\"stage\":\"T110-T115\",\"acceptance\":false,\"connected_to_game_fields\":true,\"effective_kind\":\"{effective_kind}\",\"effective_river\":{effective_river:.9},\"effective_water\":{effective_water:.9},\"effective_deferred\":{effective_deferred:.9},\"effective_swamp\":{effective_swamp:.9},\"effective_dry\":{effective_dry:.9},\"effective_floodplain\":{effective_floodplain:.9},\"seed\":{},\"mode\":\"{}\",\"version\":\"{}\",\"params_hash\":\"{hash:016x}\",\"plate_id\":{},\"at\":[{x},{z}],\"nodes_total\":{},\"nodes_plate\":{},\"nodes_ring\":{},\"outlets_sea\":{sea},\"outlets_rift\":{rift},\"outlets_transform\":{transform},\"depressions_filled\":{filled},\"depressions_closed\":{closed},\"max_depth_km\":{max_depth:.9},\"climate_nodes\":{climate_nodes},\"endorheic_basins\":{endorheic},\"max_discharge_mm_l2\":{max_q:.9},\"export_mm_l2\":{export:.9},\"evaporation_mm_l2\":{evaporation:.9},\"storage_mm_l2\":{storage:.9},\"channel_reaches\":{reaches},\"channel_segments\":{channel_segments},\"channel_baskets\":{baskets},\"channel_length_l\":{channel_length:.9},\"channel_unresolved\":{unresolved},\"channel_boundary\":{channel_boundary},\"channel_below_threshold\":{channel_below_threshold},\"channel_closed_surplus\":{channel_closed_surplus},\"plain_sinuosity_median\":{median_sinuosity:.9},\"channel_query_networks\":{query_networks},\"channel_query_radius_l\":{query_radius:.9},\"channel_query_core\":{query_core:.9},\"channel_query_valley\":{query_valley:.9},\"channel_query_plate\":{query_plate},\"channel_query_distance_l\":{query_distance},\"channel_query_delta\":{query_delta:.9},\"delta_fans\":{delta_count},\"delta_arms\":{delta_arms},\"lake_surfaces\":{lake_count},\"lake_water\":{lake_water},\"lake_inland_sea\":{lake_inland_sea},\"lake_swamp\":{lake_swamp},\"lake_dry_basin\":{lake_dry},\"lake_closed_surplus\":{lake_closed},\"lake_sea_connected\":{lake_sea_connected},\"lake_frozen\":{lake_frozen},\"lake_rift\":{lake_rift},\"lake_high_r2\":{lake_high},\"lake_water_area_l2\":{lake_water_area:.9},\"lake_unresolved\":{lake_unresolved},\"lake_query_water\":{lake_query_water:.9},\"lake_query_shore\":{lake_query_shore:.9},\"lake_query_basin\":{lake_query_basin:.9},\"lake_query_kind\":\"{lake_query_kind}\",\"lake_query_level_km\":{lake_query_level},\"channel_query_ms\":{query_ms:.6},\"cold_ms\":{cold_ms:.6},\"warm_ms\":{warm_ms:.6}}}",
             opts.seed,
             opts.mode.as_str(),
             opts.version.as_str(),
@@ -727,7 +738,7 @@ fn cmd_drainage(args: &[String]) -> Result<(), String> {
         );
     } else {
         println!(
-            "T110–T114 drainage: диагностика, НЕ реки в игре (сеть не подключена к C/E/W/PV до T115)\n\
+            "T110–T115 drainage: сеть подключена к C/E/W и биомам (R1); собственного PV/воды выше моря нет\n\
              seed={seed} mode={mode} version={version} params={hash:016x} plate={plate}\n\
              узлы: всего {total}, своей плиты {plate_nodes}, кольцо {ring}; выходы: море {sea}, рифт {rift}, трансформ {transform}\n\
              впадины: заполненные {filled}, замкнутые без выхода {closed}, бессточные {endorheic}; max глубина {max_depth:.6} км\n\
@@ -735,6 +746,7 @@ fn cmd_drainage(args: &[String]) -> Result<(), String> {
              русла T112: {reaches} цепочек, {channel_segments} отрезков, {baskets} корзин, длина {channel_length:.3} L; незакрытых концов {unresolved} (граница плиты {channel_boundary}, ниже Q_min {channel_below_threshold}, замкнутый избыток {channel_closed_surplus}); медиана извилистости равнинных {median_sinuosity:.3}\n\
              дельты T114: вееров {delta_count}, рукавов {delta_arms}; озёра/котловины: поверхностей {lake_count} (озеро {lake_water}, внутр. море {lake_inland_sea}, болото {lake_swamp}, сухая {lake_dry}, замкнутый избыток {lake_closed}, морская связь {lake_sea_connected}), замёрзших {lake_frozen}, рифтовых {lake_rift}, высоких R2 {lake_high}, площадь воды {lake_water_area:.3} L², без уровня {lake_unresolved}\n\
              общий запрос T113/T114: сетей {query_networks}, радиус {query_radius:.3} L, ядро {query_core:.3}, долина {query_valley:.3}, дельта {query_delta:.3}; ближайшее русло плиты {query_plate}, расстояние {query_distance} L; озеро вода {lake_query_water:.3}, берег {lake_query_shore:.3}, котловина {lake_query_basin:.3}, тип {lake_query_kind}, уровень {lake_query_level} км; запрос {query_ms:.3} мс\n\
+             T115 эффективно: тип {effective_kind}, река {effective_river:.3}, вода R1 {effective_water:.3}, отложено R2 {effective_deferred:.3}\n\
              время: cold {cold_ms:.3} мс, warm {warm_ms:.3} мс (один раннер, не приёмка T160)",
             seed = opts.seed,
             mode = opts.mode.as_str(),
@@ -1021,7 +1033,7 @@ fn usage() -> &'static str {
        stats        метрики 12.4; с --game-data/--synthetic-height — T100\n\
        stats-all    16 сидов × 2 режима; принимает те же флаги высоты\n\
        seams        скачки C/E/W между соседними блоками\n\
-       drainage     T110–T114: сток, расход, русла, озёра и дельты в --at x,z (v1-dev)\n\
+       drainage     T110–T115: сток, русла, озёра, дельты и поверхность R1 в --at x,z (v1-dev)\n\
        bench        время эталонного и быстрого пути\n\
        profile      разбивка времени по слоям\n\
        hash         хеши параметров для замка v0\n\
@@ -1034,7 +1046,7 @@ fn usage() -> &'static str {
        --bpp N, --path reference|fast,\n\
        --layers plates|all|список через запятую, --out ПАПКА\n\
      Слои: шум/плиты/кора, климат, зоны, биомы, пять ванильных чисел,\n\
-       реки, лава и точка появления (rivers,lava,spawn); channels/lakes — T112–T114 v1-dev.\n\
+       реки, лава и точка появления (rivers,lava,spawn); channels/lakes — T112–T114, hydrology — T115 v1-dev.\n\
      T100: --game-data ПУТЬ (распакованные данные игры) или --synthetic-height.\n\
        stats: --span-l 200 --size 64 --relief-size 32 --relief-step 32 --json.\n\
        По умолчанию статистика высоты идёт быстрым путём; --path reference переключает.\n\

@@ -93,6 +93,19 @@ pub struct LakeQuery {
     pub shore: f64,
     pub basin: f64,
     pub nearest: Option<LakeHit>,
+    /// T115: вид воды и берега выбирается отдельно от геометрически ближайшей
+    /// сухой котловины. Иначе максимум воды мог бы получить чужой сухой тип.
+    pub water_hit: Option<LakeHit>,
+    pub shore_hit: Option<LakeHit>,
+    /// T115: непрерывные максимумы по классам, а не один выбранный берег.
+    /// Перекрывающиеся болото/котловина смешиваются в E без скачка типа.
+    pub r1_water: f64,
+    pub river_lake: f64,
+    pub inland_sea: f64,
+    pub swamp: f64,
+    pub dry_basin: f64,
+    pub deferred_water: f64,
+    pub sea_depth_km: f64,
     pub networks_considered: usize,
 }
 
@@ -102,19 +115,57 @@ impl LakeQuery {
         self.shore = self.shore.max(other.shore);
         self.basin = self.basin.max(other.basin);
         self.networks_considered += other.networks_considered;
-        if let Some(hit) = other.nearest {
-            if self.nearest.is_none_or(|old| {
-                hit.distance_l.total_cmp(&old.distance_l).then_with(|| {
-                    (hit.plate_id, hit.lake, hit.depression).cmp(&(
-                        old.plate_id,
-                        old.lake,
-                        old.depression,
-                    ))
-                }) == std::cmp::Ordering::Less
-            }) {
-                self.nearest = Some(hit);
-            }
+        self.nearest = prefer_distance(self.nearest, other.nearest);
+        self.water_hit = prefer_distance(self.water_hit, other.water_hit);
+        self.shore_hit = prefer_shore(self.shore_hit, other.shore_hit);
+        self.r1_water = self.r1_water.max(other.r1_water);
+        self.river_lake = self.river_lake.max(other.river_lake);
+        if other.inland_sea > self.inland_sea
+            || (other.inland_sea == self.inland_sea && other.sea_depth_km > self.sea_depth_km)
+        {
+            self.inland_sea = other.inland_sea;
+            self.sea_depth_km = other.sea_depth_km;
         }
+        self.swamp = self.swamp.max(other.swamp);
+        self.dry_basin = self.dry_basin.max(other.dry_basin);
+        self.deferred_water = self.deferred_water.max(other.deferred_water);
+    }
+}
+
+fn lake_order(hit: LakeHit, old: LakeHit) -> std::cmp::Ordering {
+    hit.distance_l.total_cmp(&old.distance_l).then_with(|| {
+        (hit.plate_id, hit.lake, hit.depression).cmp(&(old.plate_id, old.lake, old.depression))
+    })
+}
+
+fn prefer_distance(a: Option<LakeHit>, b: Option<LakeHit>) -> Option<LakeHit> {
+    match (a, b) {
+        (Some(a), Some(b)) => Some(if lake_order(a, b) == std::cmp::Ordering::Less {
+            a
+        } else {
+            b
+        }),
+        (Some(a), None) => Some(a),
+        (None, Some(b)) => Some(b),
+        (None, None) => None,
+    }
+}
+
+fn prefer_shore(a: Option<LakeHit>, b: Option<LakeHit>) -> Option<LakeHit> {
+    fn order(hit: LakeHit, old: LakeHit) -> std::cmp::Ordering {
+        old.shore_strength
+            .total_cmp(&hit.shore_strength)
+            .then_with(|| lake_order(hit, old))
+    }
+    match (a, b) {
+        (Some(a), Some(b)) => Some(if order(b, a) == std::cmp::Ordering::Less {
+            b
+        } else {
+            a
+        }),
+        (Some(a), None) => Some(a),
+        (None, Some(b)) => Some(b),
+        (None, None) => None,
     }
 }
 
@@ -123,6 +174,8 @@ pub struct LakeNetwork {
     plate_id: u64,
     lakes: Vec<LakeSurface>,
     baskets: HashMap<Cell, Vec<usize>>,
+    field_fade_l: f64,
+    r1_max_level_km: f64,
 }
 
 impl LakeNetwork {
@@ -311,10 +364,11 @@ impl LakeNetwork {
         for (k, lake) in lakes.iter().enumerate() {
             let lo = lake.bounds.0;
             let hi = lake.bounds.1;
-            let i0 = ((lo.x - lake.shore_l) / BASKET_L).floor() as i64;
-            let i1 = ((hi.x + lake.shore_l) / BASKET_L).floor() as i64;
-            let j0 = ((lo.z - lake.shore_l) / BASKET_L).floor() as i64;
-            let j1 = ((hi.z + lake.shore_l) / BASKET_L).floor() as i64;
+            let shore = lake.shore_l.max(params.hydrology.field_fade_l);
+            let i0 = ((lo.x - shore) / BASKET_L).floor() as i64;
+            let i1 = ((hi.x + shore) / BASKET_L).floor() as i64;
+            let j0 = ((lo.z - shore) / BASKET_L).floor() as i64;
+            let j1 = ((hi.z + shore) / BASKET_L).floor() as i64;
             for i in i0..=i1 {
                 for j in j0..=j1 {
                     baskets.entry((i, j)).or_default().push(k);
@@ -325,6 +379,8 @@ impl LakeNetwork {
             plate_id,
             lakes,
             baskets,
+            field_fade_l: params.hydrology.field_fade_l,
+            r1_max_level_km: params.hydrology.r1_max_level_km,
         };
         net.check()?;
         Ok(net)
@@ -388,13 +444,14 @@ impl LakeNetwork {
             if inside {
                 distance_l = 0.0;
             }
-            if !inside && distance_l > lake.shore_l {
+            let shore_l = lake.shore_l.max(self.field_fade_l);
+            if !inside && distance_l > shore_l {
                 continue;
             }
             let shore_strength = if inside {
                 1.0
             } else {
-                1.0 - smoothstep(0.0, lake.shore_l, distance_l)
+                1.0 - smoothstep(0.0, shore_l, distance_l)
             };
             let water_strength = if inside && lake.kind.has_water() {
                 1.0
@@ -404,6 +461,45 @@ impl LakeNetwork {
             out.water = out.water.max(water_strength);
             out.shore = out.shore.max(shore_strength);
             out.basin = out.basin.max(shore_strength);
+            let r1 = lake
+                .level_km
+                .is_some_and(|level| level <= self.r1_max_level_km);
+            if inside && lake.kind.has_water() && r1 {
+                out.r1_water = 1.0;
+            }
+            match lake.kind {
+                LakeKind::Swamp => {
+                    out.swamp = out.swamp.max(shore_strength);
+                    if lake.high {
+                        out.deferred_water = out.deferred_water.max(shore_strength);
+                    }
+                }
+                LakeKind::DryBasin | LakeKind::ClosedSurplus => {
+                    out.dry_basin = out.dry_basin.max(shore_strength);
+                }
+                LakeKind::InlandSea | LakeKind::SeaConnected => {
+                    if r1 {
+                        if shore_strength > out.inland_sea
+                            || (shore_strength == out.inland_sea
+                                && lake.max_depth_km > out.sea_depth_km)
+                        {
+                            out.inland_sea = shore_strength;
+                            out.sea_depth_km = lake.max_depth_km;
+                        }
+                    } else {
+                        out.deferred_water = out.deferred_water.max(shore_strength);
+                        out.dry_basin = out.dry_basin.max(shore_strength);
+                    }
+                }
+                LakeKind::Lake => {
+                    if r1 {
+                        out.river_lake = out.river_lake.max(shore_strength);
+                    } else {
+                        out.deferred_water = out.deferred_water.max(shore_strength);
+                        out.dry_basin = out.dry_basin.max(shore_strength);
+                    }
+                }
+            }
             let hit = LakeHit {
                 plate_id: self.plate_id,
                 lake: k,
@@ -419,8 +515,10 @@ impl LakeNetwork {
                 water_strength,
                 shore_strength,
             };
-            if out.nearest.is_none_or(|old| distance_l < old.distance_l) {
-                out.nearest = Some(hit);
+            out.nearest = prefer_distance(out.nearest, Some(hit));
+            out.shore_hit = prefer_shore(out.shore_hit, Some(hit));
+            if water_strength > 0.0 {
+                out.water_hit = prefer_distance(out.water_hit, Some(hit));
             }
         }
         out

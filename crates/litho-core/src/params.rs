@@ -372,6 +372,24 @@ pub struct LakeParams {
     pub shore_fraction: f64,
 }
 
+/// T115: перевод гидрологии в ванильные C/E/W без собственного PV (R1).
+/// Высокие озёра выше порога R1 получают только сушу/болото до T143/T145.
+#[derive(Clone, Debug, PartialEq)]
+pub struct HydrologyParams {
+    pub bank_fraction: f64,
+    /// Минимальная ширина сглаживания C/E/W вокруг русла/берега, L.
+    /// 0.48 L = 120 блоков gameplay при SEAM_LIMIT=0.02; macro-масштаб
+    /// един, поэтому научный режим не меняет геометрию сетей.
+    pub field_fade_l: f64,
+    pub floodplain_e: f64,
+    pub swamp_e: f64,
+    pub dry_basin_e: f64,
+    pub estuary_c: f64,
+    pub estuary_elevation_km: f64,
+    pub inland_sea_c: f64,
+    pub r1_max_level_km: f64,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct LavaParams {
     pub width_blocks: f64,
@@ -621,6 +639,7 @@ pub struct Params {
     pub drainage: DrainageParams,
     pub channels: ChannelParams,
     pub lakes: LakeParams,
+    pub hydrology: HydrologyParams,
     pub lava: LavaParams,
     pub spawn: SpawnParams,
     pub lattice: LatticeParams,
@@ -860,6 +879,17 @@ impl Params {
                 swamp_min_p_pet: 1.2,
                 frozen_t_min_c: 0.0,
                 shore_fraction: 0.5,
+            },
+            hydrology: HydrologyParams {
+                bank_fraction: 0.5,
+                field_fade_l: 0.48,
+                floodplain_e: 0.3,
+                swamp_e: 0.65,
+                dry_basin_e: 0.3,
+                estuary_c: -0.20,
+                estuary_elevation_km: 0.15,
+                inland_sea_c: -0.25,
+                r1_max_level_km: 0.3,
             },
             lava: LavaParams {
                 width_blocks: block.lava_width_blocks,
@@ -1301,6 +1331,20 @@ impl Params {
                 ("lakes.swamp_min_p_pet", lk.swamp_min_p_pet),
                 ("lakes.frozen_t_min_c", lk.frozen_t_min_c),
                 ("lakes.shore_fraction", lk.shore_fraction),
+            ] {
+                writeln!(w, "{name}={value:?}").unwrap();
+            }
+            let hy = &self.hydrology;
+            for (name, value) in [
+                ("hydrology.bank_fraction", hy.bank_fraction),
+                ("hydrology.field_fade_l", hy.field_fade_l),
+                ("hydrology.floodplain_e", hy.floodplain_e),
+                ("hydrology.swamp_e", hy.swamp_e),
+                ("hydrology.dry_basin_e", hy.dry_basin_e),
+                ("hydrology.estuary_c", hy.estuary_c),
+                ("hydrology.estuary_elevation_km", hy.estuary_elevation_km),
+                ("hydrology.inland_sea_c", hy.inland_sea_c),
+                ("hydrology.r1_max_level_km", hy.r1_max_level_km),
             ] {
                 writeln!(w, "{name}={value:?}").unwrap();
             }

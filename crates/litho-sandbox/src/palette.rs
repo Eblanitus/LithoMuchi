@@ -248,6 +248,20 @@ pub fn river_field(r: f64, e_km: f64) -> [u8; 3] {
     mix(base, [46, 158, 232], clamp01(r))
 }
 
+/// T115: эффективная поверхность R1. Фиолетовый — отложенная вода R2,
+/// а не изображение высокого озера на уровне моря.
+pub fn hydrology_field(kind: litho_core::SurfaceKind, strength: f64, base: [u8; 3]) -> [u8; 3] {
+    let color = match kind {
+        litho_core::SurfaceKind::Land => return base,
+        litho_core::SurfaceKind::River | litho_core::SurfaceKind::Lake => [46, 158, 232],
+        litho_core::SurfaceKind::InlandSea => [30, 92, 178],
+        litho_core::SurfaceKind::Swamp => [82, 138, 92],
+        litho_core::SurfaceKind::DryBasin => [190, 164, 112],
+        litho_core::SurfaceKind::DeferredWater => [164, 100, 190],
+    };
+    mix(base, color, clamp01(strength))
+}
+
 /// Точка появления: чем светлее, тем лучше место; белое кольцо — радиус
 /// ванильного поиска 2048 блоков.
 pub fn spawn_field(score: f64, ring: bool) -> [u8; 3] {

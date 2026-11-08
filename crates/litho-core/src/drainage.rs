@@ -23,7 +23,7 @@ type Cell = (i64, i64);
 
 /// Инфраструктурный LRU, не параметр мира: сеть крупнее coarse-тайла, поэтому
 /// держим меньше плит. Вытеснение меняет только скорость, не ответ.
-pub const NET_CACHE_CAPACITY: usize = 64;
+pub const NET_CACHE_CAPACITY: usize = 256;
 
 /// Куда может уйти вода из узла. `None` — не выход.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]

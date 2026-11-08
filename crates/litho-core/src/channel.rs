@@ -134,6 +134,9 @@ pub struct ChannelHit {
     pub core_strength: f64,
     pub valley_strength: f64,
     pub delta_strength: f64,
+    /// T115: тип устья и расстояние вдоль русла до него, не по прямой.
+    pub end: ReachEnd,
+    pub mouth_distance_l: f64,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -179,6 +182,7 @@ pub fn max_query_radius_l(params: &Params) -> f64 {
     core_l * (c.valley_plain.max(c.valley_mountain) + 2.0 * c.meander_plain.max(c.meander_mountain))
         + params.drainage.step_l * SQRT_2
         + c.delta_length_max_l
+        + params.hydrology.field_fade_l
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -188,6 +192,8 @@ pub struct ChannelNetwork {
     segments: Vec<ChannelSegment>,
     baskets: HashMap<Cell, Vec<usize>>,
     max_valley_l: f64,
+    bank_fraction: f64,
+    field_fade_l: f64,
 }
 
 impl ChannelNetwork {
@@ -199,6 +205,7 @@ impl ChannelNetwork {
         params: &Params,
     ) -> Result<Self, RiverNetError> {
         validate(params)?;
+        crate::hydrology::validate(params)?;
         if runoff.nodes().len() != nodes.len() {
             return Err(RiverNetError::BrokenInvariant {
                 node: 0,
@@ -324,8 +331,13 @@ impl ChannelNetwork {
         let (reaches, segments) = append_deltas(reaches, segments, seed, plate_id, params);
         let mut baskets = HashMap::<Cell, Vec<usize>>::new();
         let mut max_valley_l = 0.0_f64;
+        let field_fade_l = params.hydrology.field_fade_l;
         for (k, segment) in segments.iter().enumerate() {
-            let radius = segment.a.valley_l.max(segment.b.valley_l);
+            let end_influence = |p: ChannelPoint| {
+                p.valley_l
+                    .max(p.core_l + (params.hydrology.bank_fraction * p.core_l).max(field_fade_l))
+            };
+            let radius = end_influence(segment.a).max(end_influence(segment.b));
             max_valley_l = max_valley_l.max(radius);
             let min_x = segment.a.point.x.min(segment.b.point.x) - radius;
             let max_x = segment.a.point.x.max(segment.b.point.x) + radius;
@@ -347,6 +359,8 @@ impl ChannelNetwork {
             segments,
             baskets,
             max_valley_l,
+            bank_fraction: params.hydrology.bank_fraction,
+            field_fade_l: params.hydrology.field_fade_l,
         };
         net.check()?;
         Ok(net)
@@ -362,6 +376,10 @@ impl ChannelNetwork {
 
     pub fn segments(&self) -> &[ChannelSegment] {
         &self.segments
+    }
+
+    pub fn reach_first_segment(&self, reach: usize) -> usize {
+        self.reaches[reach].first_segment
     }
 
     pub fn reach_segments(&self, reach: usize) -> &[ChannelSegment] {
@@ -437,11 +455,13 @@ impl ChannelNetwork {
             };
             let at = segment.a.lerp(segment.b, t);
             let distance_l = point.sub(at.point).len();
-            if distance_l > at.valley_l {
+            let fade = (self.bank_fraction * at.core_l).max(self.field_fade_l);
+            let influence_l = at.valley_l.max(at.core_l + fade);
+            if distance_l > influence_l {
                 continue;
             }
-            let core_strength = 1.0 - smoothstep(at.core_l, 1.5 * at.core_l, distance_l);
-            let valley_strength = 1.0 - smoothstep(0.0, at.valley_l, distance_l);
+            let core_strength = 1.0 - smoothstep(at.core_l, at.core_l + fade, distance_l);
+            let valley_strength = 1.0 - smoothstep(0.0, influence_l, distance_l);
             out.core = out.core.max(core_strength);
             out.valley = out.valley.max(valley_strength);
             let delta_strength = if self.reaches[segment.reach].kind == ReachKind::Delta {
@@ -450,6 +470,13 @@ impl ChannelNetwork {
                 0.0
             };
             out.delta = out.delta.max(delta_strength);
+            let reach = &self.reaches[segment.reach];
+            let last = reach.first_segment + reach.segment_count;
+            let mouth_distance_l = (1.0 - t) * len2.sqrt()
+                + self.segments[k + 1..last]
+                    .iter()
+                    .map(|s| s.a.point.sub(s.b.point).len())
+                    .sum::<f64>();
             let hit = ChannelHit {
                 plate_id: self.plate_id,
                 segment: k,
@@ -457,11 +484,13 @@ impl ChannelNetwork {
                 distance_l,
                 discharge_mm_l2: at.discharge_mm_l2,
                 core_l: at.core_l,
-                valley_l: at.valley_l,
+                valley_l: influence_l,
                 depth_blocks: at.depth_blocks,
                 core_strength,
                 valley_strength,
                 delta_strength,
+                end: reach.end,
+                mouth_distance_l,
             };
             if out.nearest.is_none_or(|old| distance_l < old.distance_l) {
                 out.nearest = Some(hit);
@@ -881,9 +910,11 @@ mod tests {
                     crate::math::clamp(point.sub(segment.a.point).dot(ab) / ab.dot(ab), 0.0, 1.0);
                 let at = segment.a.lerp(segment.b, t);
                 let d = point.sub(at.point).len();
-                if d <= at.valley_l {
-                    let core = 1.0 - crate::math::smoothstep(at.core_l, 1.5 * at.core_l, d);
-                    let valley = 1.0 - crate::math::smoothstep(0.0, at.valley_l, d);
+                let fade = (net.bank_fraction * at.core_l).max(net.field_fade_l);
+                let influence_l = at.valley_l.max(at.core_l + fade);
+                if d <= influence_l {
+                    let core = 1.0 - crate::math::smoothstep(at.core_l, at.core_l + fade, d);
+                    let valley = 1.0 - crate::math::smoothstep(0.0, influence_l, d);
                     brute.core = brute.core.max(core);
                     brute.valley = brute.valley.max(valley);
                     let delta = if net.reaches()[segment.reach].kind == super::ReachKind::Delta {
@@ -903,11 +934,20 @@ mod tests {
                             distance_l: d,
                             discharge_mm_l2: at.discharge_mm_l2,
                             core_l: at.core_l,
-                            valley_l: at.valley_l,
+                            valley_l: influence_l,
                             depth_blocks: at.depth_blocks,
                             core_strength: core,
                             valley_strength: valley,
                             delta_strength: delta,
+                            end: net.reaches()[segment.reach].end,
+                            mouth_distance_l: (1.0 - t) * ab.dot(ab).sqrt()
+                                + net
+                                    .reach_segments(segment.reach)
+                                    .iter()
+                                    .skip(s - net.reach_first_segment(segment.reach))
+                                    .skip(1)
+                                    .map(|s| s.a.point.sub(s.b.point).len())
+                                    .sum::<f64>(),
                         });
                     }
                 }

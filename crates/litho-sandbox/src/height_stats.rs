@@ -69,6 +69,11 @@ pub struct HeightStats {
     pub land: usize,
     pub river_samples: usize,
     pub river_water: usize,
+    pub water_samples: usize,
+    pub swamp_samples: usize,
+    pub dry_samples: usize,
+    pub estuary_samples: usize,
+    pub deferred_samples: usize,
     pub hyps: [usize; 5],
     pub erosion: [usize; 7],
     pub valley: usize,
@@ -92,6 +97,11 @@ impl HeightStats {
             land: 0,
             river_samples: 0,
             river_water: 0,
+            water_samples: 0,
+            swamp_samples: 0,
+            dry_samples: 0,
+            estuary_samples: 0,
+            deferred_samples: 0,
             hyps: [0; 5],
             erosion: [0; 7],
             valley: 0,
@@ -120,8 +130,15 @@ impl HeightStats {
                         out.river_water += 1;
                     }
                 }
-                // До T114 озёр ещё нет; русла r >= 0.5 исключены из суши.
-                if !c_land || river {
+                let h = world.hydrology;
+                out.water_samples += usize::from(h.water > 0.5);
+                out.swamp_samples += usize::from(h.swamp > 0.5);
+                out.dry_samples += usize::from(h.dry_basin > 0.5);
+                out.estuary_samples += usize::from(h.estuary > 0.5);
+                out.deferred_samples += usize::from(h.r2_deferred > 0.5);
+                // T115: вода R1 исключена из сухопутной гипсометрии; высокое
+                // озеро осталось суша/болото и честно учтено deferred_samples.
+                if !c_land || river || h.water > 0.5 {
                     continue;
                 }
                 out.land += 1;
@@ -244,7 +261,8 @@ impl HeightStats {
              E4 {e4:.2}% (быстрая цель ≤60%); E2+E3 {e23:.2}%; E0+E1 {e01:.2}%; E5+E6 {e56:.2}%\n\
              долина PV<-0.85 {valley:.2}% (v1 ≤8% gameplay / ≤6% scientific)\n\
              окна {window}×{window} блоков: медиана перепада {median:.2} (быстрая цель ≥8), <4 блоков {flat:.2}%, окон={windows}\n\
-             вода в руслах r≥0.5: {water:.2}% из {river} точек (R1: поверхность ниже y=63)\n",
+             вода в руслах r≥0.5: {water:.2}% из {river} точек (R1: поверхность ниже y=63)\n\
+             T115 от всех точек: вода {surface_water:.2}%, болото {swamp:.2}%, сухая котловина {dry:.2}%, эстуарий {estuary:.2}%, отложено R2 {deferred:.2}%\n",
             base.seed,
             base.mode.as_str(),
             base.version.as_str(),
@@ -271,6 +289,11 @@ impl HeightStats {
             windows = self.relief_windows,
             water = self.river_water_pct(),
             river = self.river_samples,
+            surface_water = self.pct(self.water_samples, self.samples),
+            swamp = self.pct(self.swamp_samples, self.samples),
+            dry = self.pct(self.dry_samples, self.samples),
+            estuary = self.pct(self.estuary_samples, self.samples),
+            deferred = self.pct(self.deferred_samples, self.samples),
         );
         if model.is_synthetic() {
             out.push_str(
@@ -280,7 +303,7 @@ impl HeightStats {
         if self.land == 0 || self.relief_windows == 0 {
             out.push_str("WARNING: нет суши/полных сухопутных окон; проценты и медиана не являются оценкой рельефа.\n");
         }
-        out.push_str("Сеть стока в полях, озёра и R2 ещё не подключены (T114–T116, T143–T145); T110–T113 — отдельная диагностика.\n");
+        out.push_str("T115: сеть/низкие озёра подключены к C/E/W и биомам (R1). Галерейные леса — T116; высокие озёра и собственный PV — T141/T143/T145. Проценты воды здесь не заменяют проверку реальной высоты.\n");
         out
     }
     pub fn json(&self, base: &RenderOptions, opts: &StatsOptions, model: &HeightModel) -> String {

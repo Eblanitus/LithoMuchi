@@ -19,7 +19,7 @@ use crate::palette;
 use crate::png::RgbImage;
 
 /// Слои климата и выхода (12.3) считаются через `Generator::world_sample`.
-pub const CLIMATE_LAYERS: [&str; 9] = [
+pub const CLIMATE_LAYERS: [&str; 10] = [
     "poles",
     "temp",
     "wind",
@@ -29,9 +29,10 @@ pub const CLIMATE_LAYERS: [&str; 9] = [
     "biomes",
     "vanilla",
     "vanilla-height",
+    "hydrology",
 ];
 
-pub const LAYERS: [&str; 23] = [
+pub const LAYERS: [&str; 24] = [
     "noise",
     "warp",
     "plates",
@@ -53,6 +54,7 @@ pub const LAYERS: [&str; 23] = [
     "rivers",
     "channels",
     "lakes",
+    "hydrology",
     "lava",
     "spawn",
 ];
@@ -150,8 +152,10 @@ pub fn render_layer_with_height(
     if layer == "vanilla-height" && height.is_none() {
         return Err("vanilla-height требует --game-data или --synthetic-height".into());
     }
-    if matches!(layer, "channels" | "lakes") && !opts.version.is_water_relief_dev() {
-        return Err("channels/lakes — диагностика T112–T114 только для --version v1-dev".into());
+    if matches!(layer, "channels" | "lakes" | "hydrology") && !opts.version.is_water_relief_dev() {
+        return Err(
+            "channels/lakes/hydrology — диагностика T112–T115 только для --version v1-dev".into(),
+        );
     }
     let generator =
         Generator::new(opts.seed, opts.mode, opts.version).map_err(|error| error.to_string())?;
@@ -276,6 +280,23 @@ pub fn render_layer_with_height(
                     } else {
                         base
                     }
+                }
+                "hydrology" => {
+                    let w = world
+                        .as_ref()
+                        .ok_or("hydrology требует климатического образца")?;
+                    let h = w.hydrology;
+                    let strength = h
+                        .river
+                        .max(h.water)
+                        .max(h.swamp)
+                        .max(h.dry_basin)
+                        .max(h.estuary * 0.7);
+                    palette::hydrology_field(
+                        h.kind,
+                        strength,
+                        palette::hypsometric(w.climate.surface.e_km),
+                    )
                 }
                 "lava" => palette::heat(generator.lava_sample(x, z)),
                 "spawn" => {
