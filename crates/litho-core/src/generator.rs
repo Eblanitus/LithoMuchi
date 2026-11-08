@@ -61,7 +61,7 @@ pub struct WorldSample {
     pub climate: ClimateSample,
     pub class: ClassSample,
     pub vanilla: VanillaSample,
-    /// Сила реки в W: локальная (рифтовая/предгорная) плюс трассированные русла.
+    /// Сила реки в W: v0 — локальная плюс трассы; v1-dev до T110 — только локальная.
     pub river: f64,
     pub is_ocean: bool,
 }
@@ -79,8 +79,9 @@ impl Generator {
     /// Создаётся один раз на мир. Пока дёшево; после T54 здесь появится поиск
     /// сдвига точки появления `p*` (около 256 эталонных расчётов).
     pub fn new(seed: i64, mode: Mode, version: GenVersion) -> Result<Self, GenError> {
-        if version != GenVersion::V0 {
-            return Err(GenError::UnsupportedVersion(version));
+        match version {
+            GenVersion::V0 | GenVersion::V1Dev => {}
+            GenVersion::V1 => return Err(GenError::UnsupportedVersion(version)),
         }
         let world_seed = from_world_seed(seed);
         let params = Params::defaults(version, mode);
@@ -170,14 +171,20 @@ impl Generator {
         let point = self.macro_point(x, z);
         let surface = &climate.surface;
         let local = local_r(x, z, surface, self.seed, &self.params);
-        let traced = traced_r(
-            point,
-            surface.e_km,
-            self.seed,
-            &self.params,
-            &|q| self.surface_at(q),
-            &self.rivers,
-        );
+        // T103: до сети T110 быстрый и эталонный пути v1-dev используют
+        // одинаковые локальные реки. Старые трассы не создают расхождение путей.
+        let traced = if self.params.version.is_water_relief_dev() {
+            0.0
+        } else {
+            traced_r(
+                point,
+                surface.e_km,
+                self.seed,
+                &self.params,
+                &|q| self.surface_at(q),
+                &self.rivers,
+            )
+        };
         let river = local.max(traced);
         let vanilla =
             crate::vanilla::sample(&climate, &class, x, z, self.seed, &self.params, river);
@@ -195,14 +202,18 @@ impl Generator {
         let point = self.macro_point(x, z);
         let surface = self.surface_at(point);
         let local = local_r(x, z, &surface, self.seed, &self.params);
-        let traced = traced_r(
-            point,
-            surface.e_km,
-            self.seed,
-            &self.params,
-            &|q| self.surface_at(q),
-            &self.rivers,
-        );
+        let traced = if self.params.version.is_water_relief_dev() {
+            0.0
+        } else {
+            traced_r(
+                point,
+                surface.e_km,
+                self.seed,
+                &self.params,
+                &|q| self.surface_at(q),
+                &self.rivers,
+            )
+        };
         local.max(traced)
     }
 
@@ -466,6 +477,20 @@ mod tests {
             Generator::new(1, Mode::Gameplay, GenVersion::V1).unwrap_err(),
             GenError::UnsupportedVersion(GenVersion::V1)
         );
+    }
+
+    #[test]
+    fn v1_dev_fast_and_reference_rivers_agree() {
+        let generator = Generator::new(42, Mode::Gameplay, GenVersion::V1Dev).unwrap();
+        for k in 0..24 {
+            let x = k as f64 * 173.0 - 1800.0;
+            let z = k as f64 * -97.0 + 900.0;
+            let reference = generator.sample_reference(x, z).unwrap();
+            let fast = generator.sample(x, z).unwrap();
+            assert_eq!(reference.world.river, fast.world.river);
+            assert_eq!(reference.vanilla.w.to_bits(), fast.vanilla.w.to_bits());
+            assert_eq!(reference.vanilla.e.to_bits(), fast.vanilla.e.to_bits());
+        }
     }
 
     #[test]

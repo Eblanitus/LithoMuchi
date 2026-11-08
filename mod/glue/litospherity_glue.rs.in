@@ -13,7 +13,7 @@ pub struct NoiseSpec {
     pub field: Field,
 }
 
-/// Строгий разбор `litospherity:v0/scientific/continents`.
+/// Строгий разбор `litospherity:v0/scientific/continents` или `v1-dev/...`.
 /// Неизвестная версия, режим или поле -> None (мир не падает, см. 10.2).
 pub fn parse_noise_name(name: &str) -> Option<NoiseSpec> {
     let rest = name.strip_prefix("litospherity:")?;
@@ -54,7 +54,7 @@ type Key = (i64, u8, u8);
 static REGISTRY: Mutex<Vec<(Key, Weak<Generator>)>> = Mutex::new(Vec::new());
 
 fn key(seed: i64, spec: NoiseSpec) -> Key {
-    let version = if spec.version == GenVersion::V0 { 0 } else { 1 };
+    let version = spec.version as u8;
     let mode = if spec.mode == Mode::Scientific { 0 } else { 1 };
     (seed, version, mode)
 }

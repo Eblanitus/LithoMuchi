@@ -34,6 +34,11 @@ jobs:
           cat /tmp/v0-hashes.txt
           grep -Fxq 'scientific = 5cdbe1d36ef8d16a' /tmp/v0-hashes.txt
           grep -Fxq 'gameplay = b48e8037c4e85977' /tmp/v0-hashes.txt
+      - name: "Э3.5 — v1-dev smoke (синтетика НЕ является приёмкой)"
+        run: |
+          cargo run -q -p litho-sandbox --release -- stats --seed 42 --mode gameplay --version v1-dev --synthetic-height --size 32 --relief-size 16
+          cargo run -q -p litho-sandbox --release -- render --seed 42 --mode gameplay --version v1-dev --layers vanilla-height --size 32 --bpp 32 --synthetic-height --out out/v1-dev-smoke
+          cargo run -q -p xtask -- params-hash --version v1-dev
       - name: Профиль скорости по слоям (Д-027, без подавления ошибок)
         run: cargo run -p litho-sandbox --release -- profile
       - name: sandbox smoke test

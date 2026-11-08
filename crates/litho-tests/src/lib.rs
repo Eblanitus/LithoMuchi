@@ -288,3 +288,122 @@ mod fast_path {
         }
     }
 }
+
+#[cfg(test)]
+mod water_relief_dev {
+    use litho_core::hash::{splitmix64, unit};
+    use litho_core::noise::{fbm_sigma, fbm2, fbm2_unit};
+    use litho_core::{Field, GenVersion, Generator, Mode, Params};
+
+    fn points(count: usize) -> Vec<(f64, f64)> {
+        (0..count)
+            .map(|k| {
+                (
+                    unit(splitmix64(k as u64 + 31)) * 16_000.0 - 8_000.0,
+                    unit(splitmix64(k as u64 + 900_031)) * 16_000.0 - 8_000.0,
+                )
+            })
+            .collect()
+    }
+
+    #[test]
+    fn unit_noise_has_the_calibrated_spread() {
+        for (octaves, gain, expected) in [(1, 0.5, 0.30), (3, 0.5, 0.20), (4, 0.45, 0.19)] {
+            assert_eq!(fbm_sigma(octaves, gain), expected);
+            let mut sum = 0.0;
+            let mut sum2 = 0.0;
+            let n = 40_000;
+            for k in 0..n {
+                let x = unit(splitmix64(k as u64 + 17)) * 400.0;
+                let z = unit(splitmix64(k as u64 + 900_017)) * 400.0;
+                let raw = fbm2(77, x, z, 1.0, octaves, gain);
+                let value = fbm2_unit(77, x, z, 1.0, octaves, gain);
+                assert_eq!(value, raw / expected);
+                sum += value;
+                sum2 += value * value;
+            }
+            let sigma = (sum2 / n as f64 - (sum / n as f64).powi(2)).sqrt();
+            assert!(
+                (sigma - 1.0).abs() < 0.12,
+                "octaves={octaves}, gain={gain}, sigma={sigma}"
+            );
+        }
+    }
+
+    #[test]
+    fn dev_paths_agree_and_preserve_macro_scale() {
+        for mode in Mode::ALL {
+            let generator = Generator::new(-7249957072115989875, mode, GenVersion::V1Dev).unwrap();
+            for (x, z) in points(80) {
+                let reference = generator.sample_reference(x, z).unwrap();
+                let fast = generator.sample(x, z).unwrap();
+                for (a, b) in [
+                    (reference.vanilla.c, fast.vanilla.c),
+                    (reference.vanilla.e, fast.vanilla.e),
+                    (reference.vanilla.w, fast.vanilla.w),
+                    (reference.world.river, fast.world.river),
+                ] {
+                    assert_eq!(a.to_bits(), b.to_bits());
+                }
+            }
+        }
+        let game = Generator::new(42, Mode::Gameplay, GenVersion::V1Dev).unwrap();
+        let science = Generator::new(42, Mode::Scientific, GenVersion::V1Dev).unwrap();
+        for (x, z) in points(80) {
+            assert_eq!(
+                game.macro_point(x, z),
+                science.macro_point(4.0 * x, 4.0 * z)
+            );
+            assert_eq!(
+                game.crust_sample(x, z).unwrap().e_km.to_bits(),
+                science
+                    .crust_sample(4.0 * x, 4.0 * z)
+                    .unwrap()
+                    .e_km
+                    .to_bits()
+            );
+        }
+    }
+
+    #[test]
+    fn dev_sign_is_saturated_away_from_narrow_zero_lines() {
+        let params = Params::defaults(GenVersion::V1Dev, Mode::Gameplay);
+        let mut valley = 0;
+        let mut outside = 0;
+        let n = 10_000;
+        for (x, z) in points(n) {
+            let w = litho_core::vanilla::weirdness(x, z, 0.0, 0.0, 42, &params, 0.0).abs();
+            if w < 0.05 {
+                valley += 1;
+            }
+            if (w - params.climate.w_plain_base).abs() > 0.20 {
+                outside += 1;
+            }
+        }
+        assert!(valley as f64 / n as f64 < 0.08, "долины {} из {n}", valley);
+        assert!(outside as f64 / n as f64 < 0.05, "не saturated {} из {n}", outside);
+    }
+
+    #[test]
+    fn dev_fields_are_finite_and_bounded() {
+        for mode in Mode::ALL {
+            let generator = Generator::new(42, mode, GenVersion::V1Dev).unwrap();
+            for (x, z) in points(100) {
+                for field in Field::ALL {
+                    let value = generator.field(field, x, 64.0, z);
+                    assert!(value.is_finite());
+                    if matches!(
+                        field,
+                        Field::Continents
+                            | Field::Erosion
+                            | Field::Ridges
+                            | Field::Temperature
+                            | Field::Vegetation
+                    ) {
+                        assert!((-1.0..=1.0).contains(&value), "{field:?}={value}");
+                    }
+                }
+            }
+        }
+    }
+}

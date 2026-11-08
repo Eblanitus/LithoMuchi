@@ -5,7 +5,7 @@
 use crate::classify::ClassSample;
 use crate::climate::ClimateSample;
 use crate::math::{clamp, clamp01, lerp, piecewise, smoothstep};
-use crate::noise::{fbm2, ridged2};
+use crate::noise::{fbm2, fbm2_unit, ridged2};
 use crate::params::Params;
 use crate::seed::{SALT_VANILLA_E, SALT_VANILLA_S, SALT_VANILLA_W, subseed};
 
@@ -16,6 +16,21 @@ pub struct VanillaSample {
     pub w: f64,
     pub t: f64,
     pub h: f64,
+}
+
+/// Амплитудный fBm пяти полей. Только v1-dev читает amplitude как σ.
+/// Соли, октавы, gain и порядок операций v0 не меняются.
+pub(crate) fn amplitude_fbm(seed: u64, x: f64, z: f64, lambda: f64, params: &Params) -> f64 {
+    if params.version.is_water_relief_dev() {
+        fbm2_unit(seed, x, z, lambda, 3, 0.5)
+    } else {
+        fbm2(seed, x, z, lambda, 3, 0.5)
+    }
+}
+
+/// Ванильная производная PV от W. Собственного Field::Pv пока нет (T141).
+pub fn peaks_valleys(w: f64) -> f64 {
+    1.0 - (3.0 * w.abs() - 2.0).abs()
 }
 
 /// Континентальность C: на море по глубине, на суше по удалённости от берега.
@@ -34,23 +49,27 @@ pub fn continentalness(e_km: f64, iota_l: f64, params: &Params) -> f64 {
 pub fn erosion(x: f64, z: f64, mountain: f64, plateau: f64, seed: u64, params: &Params) -> f64 {
     let c = &params.climate;
     let lambda = params.block.lambda_e_blocks;
-    let n = fbm2(
+    let n = amplitude_fbm(
         subseed(seed, SALT_VANILLA_E),
         x / lambda,
         z / lambda,
         1.0,
-        3,
-        0.5,
+        params,
     );
     let m_e = smoothstep(c.m_e_lo, c.m_e_hi, mountain);
     let base = c.e_base + c.e_noise * n;
     let mountains = c.e_mnt + c.e_mnt_noise * n;
     let value = lerp(base, mountains, m_e);
-    lerp(value, c.e_plateau, clamp01(plateau * (1.0 - m_e)))
+    let result = lerp(value, c.e_plateau, clamp01(plateau * (1.0 - m_e)));
+    if params.version.is_water_relief_dev() {
+        clamp(result, -1.0, 1.0)
+    } else {
+        result
+    }
 }
 
 /// Странность W: модуль задаёт срез рельефа, знак — вариант биома (7.9.3).
-/// `r` — сила реки (7.10); до T50 рек нет, поэтому `r = 0`.
+/// `r` — сила реки. В v0 это локальные реки быстрого пути; сеть стока — T110.
 pub fn weirdness(
     x: f64,
     z: f64,
@@ -63,7 +82,7 @@ pub fn weirdness(
     let c = &params.climate;
     let lambda = params.block.lambda_w_blocks;
     let sub_e = subseed(seed, SALT_VANILLA_W);
-    let n = fbm2(sub_e, x / lambda, z / lambda, 1.0, 3, 0.5);
+    let n = amplitude_fbm(sub_e, x / lambda, z / lambda, 1.0, params);
     let ridge = ridged2(sub_e, x / lambda, z / lambda, 1.0, 3, 0.5);
     let m_plain = c.w_plain_base + c.w_plain_noise * n;
     let m_mnt = c.w_mnt_base + c.w_mnt_noise * ridge;
@@ -71,20 +90,41 @@ pub fn weirdness(
     let mut m = lerp(m_plain, m_mnt, m_e);
     m = lerp(m, c.w_plateau, clamp01(plateau * (1.0 - m_e)));
     m = m.min(c.w_max);
-    let sign = clamp(
-        c.w_sign_scale
-            * fbm2(
-                subseed(seed, SALT_VANILLA_S),
-                x / params.block.lambda_s_blocks,
-                z / params.block.lambda_s_blocks,
-                1.0,
-                3,
-                0.5,
-            ),
-        -1.0,
-        1.0,
-    );
-    sign * m * (1.0 - clamp01(r))
+    let sign = if params.version.is_water_relief_dev() {
+        // f/g — приближённое расстояние до нуля f в блоках. Центральные
+        // разности берутся с шагом ровно 1 блок, а не с шагом coarse-решётки.
+        m = clamp(m, 0.0, c.w_max);
+        let lambda_s = params.block.lambda_s_blocks;
+        let seed_s = subseed(seed, SALT_VANILLA_S);
+        let f = amplitude_fbm(seed_s, x / lambda_s, z / lambda_s, 1.0, params);
+        let dx = amplitude_fbm(seed_s, (x + 1.0) / lambda_s, z / lambda_s, 1.0, params)
+            - amplitude_fbm(seed_s, (x - 1.0) / lambda_s, z / lambda_s, 1.0, params);
+        let dz = amplitude_fbm(seed_s, x / lambda_s, (z + 1.0) / lambda_s, 1.0, params)
+            - amplitude_fbm(seed_s, x / lambda_s, (z - 1.0) / lambda_s, 1.0, params);
+        let gradient = (dx * dx + dz * dz).sqrt() * lambda_s * 0.5;
+        let denominator = (gradient * params.block.w_sign_half_width_blocks).max(c.w_sign_epsilon);
+        clamp(f / denominator, -1.0, 1.0)
+    } else {
+        clamp(
+            c.w_sign_scale
+                * fbm2(
+                    subseed(seed, SALT_VANILLA_S),
+                    x / params.block.lambda_s_blocks,
+                    z / params.block.lambda_s_blocks,
+                    1.0,
+                    3,
+                    0.5,
+                ),
+            -1.0,
+            1.0,
+        )
+    };
+    let result = sign * m * (1.0 - clamp01(r));
+    if params.version.is_water_relief_dev() {
+        clamp(result, -1.0, 1.0)
+    } else {
+        result
+    }
 }
 
 /// Пять чисел для ванили. `t` и `h` — центры полос, остальные непрерывны.

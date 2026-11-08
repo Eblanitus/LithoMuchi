@@ -434,6 +434,8 @@ pub struct ClimateParams {
     pub w_plateau: f64,
     pub w_max: f64,
     pub w_sign_scale: f64,
+    /// T102: нижняя граница |∇f|·w_s, только v1-dev.
+    pub w_sign_epsilon: f64,
     pub t_centers: [f64; 5],
     pub h_centers: [f64; 5],
     pub h4_base: f64,
@@ -865,6 +867,7 @@ impl Params {
                 w_plateau: 0.33,
                 w_max: 0.75,
                 w_sign_scale: 3.0,
+                w_sign_epsilon: 0.0,
                 t_centers: [-0.70, -0.30, 0.00, 0.37, 0.77],
                 h_centers: [-0.65, -0.22, 0.00, 0.20, 0.45],
                 h4_base: 0.45,
@@ -879,6 +882,32 @@ impl Params {
             },
             config_key: 0,
         };
+        // T103 / Д-030: отдельный набор Э3.5. Ни одно число v0 не меняется.
+        // *_noise у fBm и jitter теперь означает σ, а не амплитуду сырого fBm.
+        // w_mnt_noise остаётся амплитудой положительного ridged2, не fBm.
+        if version.is_water_relief_dev() {
+            p.block.lambda_e_blocks *= 2.0;
+            p.block.lambda_s_blocks = match mode {
+                Mode::Gameplay => 2400.0,
+                Mode::Scientific => 8000.0,
+            };
+            p.block.w_sign_half_width_blocks = match mode {
+                Mode::Gameplay => 12.0,
+                Mode::Scientific => 24.0,
+            };
+            p.block.jitter_t_c = match mode {
+                Mode::Gameplay => 1.0,
+                Mode::Scientific => 0.5,
+            };
+            p.block.jitter_r_log2 = p.block.jitter_t_c * 0.25;
+            let c = &mut p.climate;
+            c.c_coast_e_km = 0.20;
+            c.e_base = 0.15;
+            c.e_noise = 0.20;
+            c.w_plain_base = 0.30;
+            c.w_plain_noise = 0.10;
+            c.w_sign_epsilon = 1e-3;
+        }
         p.config_key = p.params_hash();
         p
     }
@@ -1111,6 +1140,23 @@ impl Params {
         writeln!(w, "lattice.tile_nodes={v}", v = l.tile_nodes).unwrap();
         writeln!(w, "lattice.halo_nodes={v}", v = l.halo_nodes).unwrap();
         writeln!(w, "lattice.cache_shards={v}", v = l.cache_shards).unwrap();
+        // Новые ключи дописываются только для новой версии. Побайтовая запись
+        // v0 остаётся прежней, включая порядок строк иDebug f64.
+        if self.version.is_water_relief_dev() {
+            writeln!(
+                w,
+                "block.w_sign_half_width_blocks={v}",
+                v = b.w_sign_half_width_blocks
+            )
+            .unwrap();
+            writeln!(
+                w,
+                "climate.w_sign_epsilon={v}",
+                v = self.climate.w_sign_epsilon
+            )
+            .unwrap();
+            writeln!(w, "noise.amplitude_units=sigma").unwrap();
+        }
         out
     }
 
@@ -1135,6 +1181,29 @@ mod tests {
         assert_eq!(sci.precip, game.precip);
         assert_eq!(sci.climate, game.climate);
         assert_ne!(sci.block, game.block);
+    }
+
+    #[test]
+    fn v0_is_frozen_and_v1_dev_has_its_own_parameters() {
+        for (mode, hash) in [
+            (Mode::Scientific, 0x5cdbe1d36ef8d16a),
+            (Mode::Gameplay, 0xb48e8037c4e85977),
+        ] {
+            let old = Params::defaults(GenVersion::V0, mode);
+            assert_eq!(old.params_hash(), hash);
+            assert!(!old.canonical_text().contains("noise.amplitude_units"));
+            let dev = Params::defaults(GenVersion::V1Dev, mode);
+            assert_ne!(old.params_hash(), dev.params_hash());
+            assert_eq!(dev.climate.c_coast_e_km, 0.20);
+            assert_eq!(dev.climate.e_base, 0.15);
+            assert_eq!(dev.climate.e_noise, 0.20);
+            assert_eq!(dev.climate.w_plain_base, 0.30);
+            assert_eq!(dev.block.lambda_e_blocks, 2.0 * old.block.lambda_e_blocks);
+            assert!(dev.block.w_sign_half_width_blocks > 0.0);
+            assert_eq!(dev.plates, old.plates);
+            assert_eq!(dev.crust, old.crust);
+            assert_eq!(dev.poles, old.poles);
+        }
     }
 
     #[test]

@@ -1,5 +1,8 @@
 //! Песочница Litospherity: карты, метрики, атлас и пробы (план 12.2).
 
+mod height;
+mod height_stats;
+mod json;
 mod palette;
 mod png;
 mod render;
@@ -7,6 +10,7 @@ mod render;
 use std::path::Path;
 use std::time::Instant;
 
+use height::{HeightModel, HeightSource};
 use litho_core::{Field, GenVersion, Generator, Mode, Params};
 use render::{LAYERS, RenderOptions};
 
@@ -111,6 +115,20 @@ fn generator(opts: &RenderOptions) -> Result<Generator, String> {
     Generator::new(opts.seed, opts.mode, opts.version).map_err(|error| error.to_string())
 }
 
+fn height_source(args: &[String]) -> Result<Option<HeightSource>, String> {
+    let data = value(args, "--game-data");
+    let synthetic = args.iter().any(|arg| arg == "--synthetic-height");
+    if args.iter().any(|arg| arg == "--pv") {
+        return Err("--pv требует собственного Field::Pv (T141); он ещё не реализован. Сейчас PV вычисляется из W.".into());
+    }
+    match (data, synthetic) {
+        (Some(_), true) => Err("--game-data и --synthetic-height взаимоисключающи".into()),
+        (Some(path), false) => Ok(Some(HeightSource::GameData(path.into()))),
+        (None, true) => Ok(Some(HeightSource::Synthetic)),
+        (None, false) => Ok(None),
+    }
+}
+
 fn cmd_render(args: &[String]) -> Result<(), String> {
     let opts = options_from(args)?;
     let layers = match value(args, "--layers") {
@@ -122,9 +140,17 @@ fn cmd_render(args: &[String]) -> Result<(), String> {
     let dir = Path::new(&out);
     std::fs::create_dir_all(dir).map_err(|e| format!("не могу создать '{out}': {e}"))?;
     let params_hash = Params::defaults(opts.version, opts.mode).params_hash();
-
+    let height = match height_source(args)? {
+        Some(source) => Some(HeightModel::load(source)?),
+        None => None,
+    };
+    if layers.iter().any(|layer| layer == "vanilla-height") && height.is_none() {
+        return Err(
+            "слой vanilla-height требует --game-data ПУТЬ или явный --synthetic-height".into(),
+        );
+    }
     for layer in layers {
-        let image = render::render_layer(&opts, &layer)?;
+        let image = render::render_layer_with_height(&opts, &layer, height.as_ref())?;
         let png_path = dir.join(format!("{layer}.png"));
         png::write_png(&png_path, &image).map_err(|e| {
             let path = png_path.display();
@@ -134,7 +160,7 @@ fn cmd_render(args: &[String]) -> Result<(), String> {
         let meta_opts = render::options_for_layer(&opts, &layer);
         std::fs::write(
             &json_path,
-            render::metadata(&meta_opts, &layer, params_hash),
+            render::metadata_with_height(&meta_opts, &layer, params_hash, height.as_ref()),
         )
         .map_err(|e| {
             let path = json_path.display();
@@ -400,6 +426,17 @@ fn stats_row(seed: i64, mode: Mode) -> Result<StatsRow, String> {
 
 fn cmd_stats(args: &[String]) -> Result<(), String> {
     let opts = options_from(args)?;
+    if let Some(source) = height_source(args)? {
+        let stats_opts = height_stats::StatsOptions::parse(args, &opts)?;
+        let model = HeightModel::load(source)?;
+        let stats = height_stats::HeightStats::collect(&opts, &stats_opts, &model)?;
+        if args.iter().any(|arg| arg == "--json") {
+            print!("{}", stats.json(&opts, &stats_opts, &model));
+        } else {
+            print!("{}", stats.text(&opts, &stats_opts, &model));
+        }
+        return Ok(());
+    }
     let row = stats_row(opts.seed, opts.mode)?;
     println!(
         "сид={seed} режим={mode} область=200×200 L точек=4096\n\
@@ -430,7 +467,44 @@ fn cmd_stats(args: &[String]) -> Result<(), String> {
 }
 
 /// Оценка 12.5 / Э1h: те же метрики на 16 сидах × 2 режима, без картинок.
-fn cmd_stats_all() -> Result<(), String> {
+fn cmd_stats_all(args: &[String]) -> Result<(), String> {
+    if let Some(source) = height_source(args)? {
+        let base = options_from(args)?;
+        let opts = height_stats::StatsOptions::parse(args, &base)?;
+        let model = HeightModel::load(source)?;
+        let json_output = args.iter().any(|arg| arg == "--json");
+        let mut rows = Vec::new();
+        if !json_output {
+            println!("T100: 16 сидов × 2 режима; {}", model.source.label());
+            if model.is_synthetic() {
+                println!("WARNING: синтетический сплайн, НЕ ваниль; приёмка требует --game-data.");
+            }
+            println!("{}", height_stats::COMPACT_HEADER);
+        }
+        for seed in SWEEP_SEEDS {
+            for mode in Mode::ALL {
+                let mut run = base.clone();
+                run.seed = seed;
+                run.mode = mode;
+                let stats = height_stats::HeightStats::collect(&run, &opts, &model)?;
+                if json_output {
+                    rows.push(stats.json(&run, &opts, &model));
+                } else {
+                    println!("{}", stats.compact());
+                }
+            }
+        }
+        if json_output {
+            println!(
+                "[{}]",
+                rows.iter()
+                    .map(|row| row.trim())
+                    .collect::<Vec<_>>()
+                    .join(",")
+            );
+        }
+        return Ok(());
+    }
     println!(
         "сид        режим      суша  горы пустыни  леса поляр |     P    PET PET/P     μ     c  t_bio"
     );
@@ -772,8 +846,8 @@ fn usage() -> &'static str {
        render       карты PNG в папку --out\n\
        probe        все поля в точке --at x,z\n\
        layers       список слоёв\n\
-       stats        метрики 12.4 по области 200×200 L\n\
-       stats-all    те же метрики на 16 сидах × 2 режима\n\
+       stats        метрики 12.4; с --game-data/--synthetic-height — T100\n\
+       stats-all    16 сидов × 2 режима; принимает те же флаги высоты\n\
        seams        скачки C/E/W между соседними блоками\n\
        bench        время эталонного и быстрого пути\n\
        profile      разбивка времени по слоям\n\
@@ -783,11 +857,16 @@ fn usage() -> &'static str {
        atlas        пересобрать только HTML-атлас\n\
        help         эта справка\n\n\
      Общие флаги: --seed N (42), --mode scientific|gameplay (gameplay),\n\
-       --version v0|v1 (v0), --center x,z (0,0), --size N (512),\n\
+       --version v0|v1|v1-dev (v0), --center x,z (0,0), --size N (512),\n\
        --bpp N, --path reference|fast,\n\
        --layers plates|all|список через запятую, --out ПАПКА\n\
      Слои: шум/плиты/кора, климат, зоны, биомы, пять ванильных чисел,\n\
-       реки, лава и точка появления (rivers,lava,spawn).\n"
+       реки, лава и точка появления (rivers,lava,spawn).\n\
+     T100: --game-data ПУТЬ (распакованные данные игры) или --synthetic-height.\n\
+       stats: --span-l 200 --size 64 --relief-size 32 --relief-step 32 --json.\n\
+       По умолчанию статистика высоты идёт быстрым путём; --path reference переключает.\n\
+       Высота приближённая (offset без 3D-шума); синтетика не годится для приёмки.\n\
+       --pv отложен до T141 (собственное поле PV).\n"
 }
 
 fn main() -> Result<(), String> {
@@ -800,7 +879,7 @@ fn main() -> Result<(), String> {
         "render" => cmd_render(&args[1..]),
         "probe" => cmd_probe(&args[1..]),
         "stats" => cmd_stats(&args[1..]),
-        "stats-all" => cmd_stats_all(),
+        "stats-all" => cmd_stats_all(&args[1..]),
         "seams" => cmd_seams(&args[1..]),
         "bench" => cmd_bench(&args[1..]),
         "profile" => cmd_profile(),

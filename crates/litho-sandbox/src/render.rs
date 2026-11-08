@@ -14,15 +14,24 @@ use litho_core::plates::{boundary_type, plate_color, warped_point};
 use litho_core::seed::{SALT_NOISE_DETAIL, subseed};
 use litho_core::version::GenVersion;
 
+use crate::height::{HeightInput, HeightModel, SEA_LEVEL};
 use crate::palette;
 use crate::png::RgbImage;
 
 /// Слои климата и выхода (12.3) считаются через `Generator::world_sample`.
-pub const CLIMATE_LAYERS: [&str; 8] = [
-    "poles", "temp", "wind", "moisture", "precip", "zones", "biomes", "vanilla",
+pub const CLIMATE_LAYERS: [&str; 9] = [
+    "poles",
+    "temp",
+    "wind",
+    "moisture",
+    "precip",
+    "zones",
+    "biomes",
+    "vanilla",
+    "vanilla-height",
 ];
 
-pub const LAYERS: [&str; 20] = [
+pub const LAYERS: [&str; 21] = [
     "noise",
     "warp",
     "plates",
@@ -40,6 +49,7 @@ pub const LAYERS: [&str; 20] = [
     "zones",
     "biomes",
     "vanilla",
+    "vanilla-height",
     "rivers",
     "lava",
     "spawn",
@@ -97,10 +107,46 @@ pub fn metadata(opts: &RenderOptions, layer: &str, params_hash: u64) -> String {
     )
 }
 
+pub fn metadata_with_height(
+    opts: &RenderOptions,
+    layer: &str,
+    params_hash: u64,
+    height: Option<&HeightModel>,
+) -> String {
+    let mut text = metadata(opts, layer, params_hash);
+    if layer == "vanilla-height" {
+        if let Some(model) = height {
+            let extra = format!(
+                r#"  "height_source": {},
+  "height_data_hash": "{:016x}",
+  "synthetic_height": {},
+  "height_approximation": "63.52 + 128*offset; no factor/jaggedness/3D noise"
+"#,
+                crate::json::quote(&model.source.label()),
+                model.data_hash,
+                model.is_synthetic()
+            );
+            text = text.replace("}\n", &format!(",\n{extra}}}\n"));
+        }
+    }
+    text
+}
+
 pub fn render_layer(opts: &RenderOptions, layer: &str) -> Result<RgbImage, String> {
+    render_layer_with_height(opts, layer, None)
+}
+
+pub fn render_layer_with_height(
+    opts: &RenderOptions,
+    layer: &str,
+    height: Option<&HeightModel>,
+) -> Result<RgbImage, String> {
     if !LAYERS.contains(&layer) {
         let available = LAYERS.join(", ");
         return Err(format!("неизвестный слой '{layer}'; доступно: {available}"));
+    }
+    if layer == "vanilla-height" && height.is_none() {
+        return Err("vanilla-height требует --game-data или --synthetic-height".into());
     }
     let generator =
         Generator::new(opts.seed, opts.mode, opts.version).map_err(|error| error.to_string())?;
@@ -171,6 +217,18 @@ pub fn render_layer(opts: &RenderOptions, layer: &str) -> Result<RgbImage, Strin
                 "vanilla" => world.as_ref().map_or([0, 0, 0], |w| {
                     palette::vanilla_field(w.vanilla.c, w.vanilla.e, w.vanilla.w)
                 }),
+                "vanilla-height" => {
+                    let world = world.as_ref().ok_or("нет климата для vanilla-height")?;
+                    let v = world.vanilla;
+                    let y = height
+                        .expect("модель проверена")
+                        .surface_y(HeightInput::from_fields(v.c, v.e, v.w))?;
+                    palette::vanilla_height(
+                        y,
+                        v.c >= params.climate.ocean_c_threshold,
+                        world.river >= 0.5,
+                    )
+                }
                 "rivers" => match generator.crust_sample(x, z) {
                     Some(crust) => palette::river_field(generator.river_sample(x, z), crust.e_km),
                     None => [0, 0, 0],
