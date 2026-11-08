@@ -11,6 +11,7 @@ use std::path::Path;
 use std::time::Instant;
 
 use height::{HeightModel, HeightSource};
+use litho_core::channel::ReachEnd;
 use litho_core::drainage::{DepressionKind, DrainageOutlet};
 use litho_core::{Field, GenVersion, Generator, Mode, Params};
 use render::{LAYERS, RenderOptions};
@@ -647,6 +648,9 @@ fn cmd_drainage(args: &[String]) -> Result<(), String> {
     let baskets = channels.basket_count();
     let channel_length = channels.total_length_l();
     let unresolved = channels.unresolved_count();
+    let channel_boundary = channels.end_count(ReachEnd::Boundary);
+    let channel_below_threshold = channels.end_count(ReachEnd::BelowThreshold);
+    let channel_closed_surplus = channels.end_count(ReachEnd::ClosedSurplus);
     let mut plain_sinuosity: Vec<f64> = channels
         .reaches()
         .iter()
@@ -667,7 +671,7 @@ fn cmd_drainage(args: &[String]) -> Result<(), String> {
     let hash = generator.params().params_hash();
     if args.iter().any(|arg| arg == "--json") {
         println!(
-            "{{\"stage\":\"T110-T112\",\"acceptance\":false,\"connected_to_game_fields\":false,\"seed\":{},\"mode\":\"{}\",\"version\":\"{}\",\"params_hash\":\"{hash:016x}\",\"plate_id\":{},\"at\":[{x},{z}],\"nodes_total\":{},\"nodes_plate\":{},\"nodes_ring\":{},\"outlets_sea\":{sea},\"outlets_rift\":{rift},\"outlets_transform\":{transform},\"depressions_filled\":{filled},\"depressions_closed\":{closed},\"max_depth_km\":{max_depth:.9},\"climate_nodes\":{climate_nodes},\"endorheic_basins\":{endorheic},\"max_discharge_mm_l2\":{max_q:.9},\"export_mm_l2\":{export:.9},\"evaporation_mm_l2\":{evaporation:.9},\"storage_mm_l2\":{storage:.9},\"channel_reaches\":{reaches},\"channel_segments\":{channel_segments},\"channel_baskets\":{baskets},\"channel_length_l\":{channel_length:.9},\"channel_unresolved\":{unresolved},\"plain_sinuosity_median\":{median_sinuosity:.9},\"cold_ms\":{cold_ms:.6},\"warm_ms\":{warm_ms:.6}}}",
+            "{{\"stage\":\"T110-T112\",\"acceptance\":false,\"connected_to_game_fields\":false,\"seed\":{},\"mode\":\"{}\",\"version\":\"{}\",\"params_hash\":\"{hash:016x}\",\"plate_id\":{},\"at\":[{x},{z}],\"nodes_total\":{},\"nodes_plate\":{},\"nodes_ring\":{},\"outlets_sea\":{sea},\"outlets_rift\":{rift},\"outlets_transform\":{transform},\"depressions_filled\":{filled},\"depressions_closed\":{closed},\"max_depth_km\":{max_depth:.9},\"climate_nodes\":{climate_nodes},\"endorheic_basins\":{endorheic},\"max_discharge_mm_l2\":{max_q:.9},\"export_mm_l2\":{export:.9},\"evaporation_mm_l2\":{evaporation:.9},\"storage_mm_l2\":{storage:.9},\"channel_reaches\":{reaches},\"channel_segments\":{channel_segments},\"channel_baskets\":{baskets},\"channel_length_l\":{channel_length:.9},\"channel_unresolved\":{unresolved},\"channel_boundary\":{channel_boundary},\"channel_below_threshold\":{channel_below_threshold},\"channel_closed_surplus\":{channel_closed_surplus},\"plain_sinuosity_median\":{median_sinuosity:.9},\"cold_ms\":{cold_ms:.6},\"warm_ms\":{warm_ms:.6}}}",
             opts.seed,
             opts.mode.as_str(),
             opts.version.as_str(),
@@ -683,7 +687,7 @@ fn cmd_drainage(args: &[String]) -> Result<(), String> {
              узлы: всего {total}, своей плиты {plate_nodes}, кольцо {ring}; выходы: море {sea}, рифт {rift}, трансформ {transform}\n\
              впадины: заполненные {filled}, замкнутые без выхода {closed}, бессточные {endorheic}; max глубина {max_depth:.6} км\n\
              климат: {climate_nodes} узлов; max Q {max_q:.3} мм·L²/год; экспорт {export:.3}, испарение {evaporation:.3}, замкнутый избыток {storage:.3}\n\
-             русла T112: {reaches} цепочек, {channel_segments} отрезков, {baskets} корзин, длина {channel_length:.3} L; незакрытых концов {unresolved}; медиана извилистости равнинных {median_sinuosity:.3}\n\
+             русла T112: {reaches} цепочек, {channel_segments} отрезков, {baskets} корзин, длина {channel_length:.3} L; незакрытых концов {unresolved} (граница плиты {channel_boundary}, ниже Q_min {channel_below_threshold}, замкнутый избыток {channel_closed_surplus}); медиана извилистости равнинных {median_sinuosity:.3}\n\
              время: cold {cold_ms:.3} мс, warm {warm_ms:.3} мс (один раннер, не приёмка T160)",
             seed = opts.seed,
             mode = opts.mode.as_str(),

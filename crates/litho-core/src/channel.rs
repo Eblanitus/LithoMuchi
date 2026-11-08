@@ -316,6 +316,10 @@ impl ChannelNetwork {
             .count()
     }
 
+    pub fn end_count(&self, end: ReachEnd) -> usize {
+        self.reaches.iter().filter(|r| r.end == end).count()
+    }
+
     /// Быстрый запрос одной плиты: только корзина точки, потому что сегменты
     /// заранее разложены по AABB с запасом на долину. Межплитовый поиск — T113.
     pub fn query(&self, point: Vec2) -> ChannelQuery {
