@@ -638,6 +638,7 @@ mod tests {
         ClimateGrid, DepressionKind, DrainageNode, DrainageOutlet, RiverNet, RiverNetCache, Runoff,
         RunoffClimate, grid_neighbors, route_nodes,
     };
+    use crate::channel::ChannelNetwork;
     use crate::math::Vec2;
     use crate::version::GenVersion;
     use std::collections::HashMap;

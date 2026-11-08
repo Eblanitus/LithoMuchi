@@ -579,7 +579,7 @@ mod tests {
     use crate::math::Vec2;
     use crate::mode::Mode;
     use crate::params::Params;
-    use crate::runoff::{ClimateGrid, FlowTerminal, Runoff, RunoffClimate};
+    use crate::runoff::{ClimateGrid, Runoff, RunoffClimate};
     use crate::version::GenVersion;
 
     fn params() -> Params {
