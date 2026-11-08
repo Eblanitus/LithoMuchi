@@ -369,15 +369,15 @@ mod water_relief_dev {
     fn dev_sign_is_saturated_away_from_narrow_zero_lines() {
         let params = Params::defaults(GenVersion::V1Dev, Mode::Gameplay);
         let mut valley = 0;
-        let mut outside = 0;
+        let mut unsaturated = 0;
         let n = 10_000;
         for (x, z) in points(n) {
             let w = litho_core::vanilla::weirdness(x, z, 0.0, 0.0, 42, &params, 0.0).abs();
             if w < 0.05 {
                 valley += 1;
             }
-            if (w - params.climate.w_plain_base).abs() > 0.20 {
-                outside += 1;
+            if litho_core::vanilla::weirdness_sign(x, z, 42, &params).abs() < 1.0 {
+                unsaturated += 1;
             }
         }
         assert!(
@@ -386,9 +386,9 @@ mod water_relief_dev {
             valley
         );
         assert!(
-            outside as f64 / (n as f64) < 0.05,
+            unsaturated as f64 / (n as f64) < 0.08,
             "не saturated {} из {n}",
-            outside
+            unsaturated
         );
     }
 

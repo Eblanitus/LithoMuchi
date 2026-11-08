@@ -68,32 +68,13 @@ pub fn erosion(x: f64, z: f64, mountain: f64, plateau: f64, seed: u64, params: &
     }
 }
 
-/// Странность W: модуль задаёт срез рельефа, знак — вариант биома (7.9.3).
-/// `r` — сила реки. В v0 это локальные реки быстрого пути; сеть стока — T110.
-pub fn weirdness(
-    x: f64,
-    z: f64,
-    mountain: f64,
-    plateau: f64,
-    seed: u64,
-    params: &Params,
-    r: f64,
-) -> f64 {
+/// Знак W отдельно от модуля: нужен для диагностики узкого перехода T102.
+/// v0 сохраняет старую формулу; v1-dev использует расстояние до нуля f.
+pub fn weirdness_sign(x: f64, z: f64, seed: u64, params: &Params) -> f64 {
     let c = &params.climate;
-    let lambda = params.block.lambda_w_blocks;
-    let sub_e = subseed(seed, SALT_VANILLA_W);
-    let n = amplitude_fbm(sub_e, x / lambda, z / lambda, 1.0, params);
-    let ridge = ridged2(sub_e, x / lambda, z / lambda, 1.0, 3, 0.5);
-    let m_plain = c.w_plain_base + c.w_plain_noise * n;
-    let m_mnt = c.w_mnt_base + c.w_mnt_noise * ridge;
-    let m_e = smoothstep(0.1, 0.5, mountain);
-    let mut m = lerp(m_plain, m_mnt, m_e);
-    m = lerp(m, c.w_plateau, clamp01(plateau * (1.0 - m_e)));
-    m = m.min(c.w_max);
-    let sign = if params.version.is_water_relief_dev() {
+    if params.version.is_water_relief_dev() {
         // f/g — приближённое расстояние до нуля f в блоках. Центральные
         // разности берутся с шагом ровно 1 блок, а не с шагом coarse-решётки.
-        m = clamp(m, 0.0, c.w_max);
         let lambda_s = params.block.lambda_s_blocks;
         let seed_s = subseed(seed, SALT_VANILLA_S);
         let f = amplitude_fbm(seed_s, x / lambda_s, z / lambda_s, 1.0, params);
@@ -121,7 +102,35 @@ pub fn weirdness(
             -1.0,
             1.0,
         )
-    };
+    }
+}
+
+/// Странность W: модуль задаёт срез рельефа, знак — вариант биома (7.9.3).
+/// `r` — сила реки. В v0 это локальные реки быстрого пути; сеть стока — T110.
+pub fn weirdness(
+    x: f64,
+    z: f64,
+    mountain: f64,
+    plateau: f64,
+    seed: u64,
+    params: &Params,
+    r: f64,
+) -> f64 {
+    let c = &params.climate;
+    let lambda = params.block.lambda_w_blocks;
+    let sub_e = subseed(seed, SALT_VANILLA_W);
+    let n = amplitude_fbm(sub_e, x / lambda, z / lambda, 1.0, params);
+    let ridge = ridged2(sub_e, x / lambda, z / lambda, 1.0, 3, 0.5);
+    let m_plain = c.w_plain_base + c.w_plain_noise * n;
+    let m_mnt = c.w_mnt_base + c.w_mnt_noise * ridge;
+    let m_e = smoothstep(0.1, 0.5, mountain);
+    let mut m = lerp(m_plain, m_mnt, m_e);
+    m = lerp(m, c.w_plateau, clamp01(plateau * (1.0 - m_e)));
+    m = m.min(c.w_max);
+    if params.version.is_water_relief_dev() {
+        m = clamp(m, 0.0, c.w_max);
+    }
+    let sign = weirdness_sign(x, z, seed, params);
     let result = sign * m * (1.0 - clamp01(r));
     if params.version.is_water_relief_dev() {
         clamp(result, -1.0, 1.0)
