@@ -666,7 +666,11 @@ mod tests {
 
     #[test]
     fn bilinear_grid_is_exact_on_linear_field_and_handles_negative_coords() {
-        let points = [Vec2::new(-0.75, -0.25), Vec2::new(0.75, 0.25)];
+        let points = [
+            Vec2::new(-0.75, -0.25),
+            Vec2::new(0.75, 0.25),
+            Vec2::new(-0.75, 0.75),
+        ];
         let grid = ClimateGrid::build(&points, 1.0, |q| {
             Some(RunoffClimate {
                 p_mm: 100.0 + 10.0 * q.x,
