@@ -49,6 +49,7 @@ jobs:
               cargo run -q -p litho-sandbox --release -- stats --seed 42 --mode "$mode" --version "$version" --synthetic-height --size 64 --relief-size 32 | python3 tools/ci_annotations.py report
             done
           done
+          { echo "T100 synthetic sweep v1-dev (НЕ приёмка)"; cargo run -q -p litho-sandbox --release -- stats-all --version v1-dev --synthetic-height --size 32 --relief-size 16; } | python3 tools/ci_annotations.py report
       - name: "Э3.5 — seams v1-dev gameplay (порог 0.02 не ослаблен)"
         run: |
           set -o pipefail
