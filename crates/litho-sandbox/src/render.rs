@@ -150,7 +150,7 @@ pub fn render_layer_with_height(
         return Err("vanilla-height требует --game-data или --synthetic-height".into());
     }
     if layer == "channels" && !opts.version.is_water_relief_dev() {
-        return Err("channels — диагностика T112 только для --version v1-dev".into());
+        return Err("channels — диагностика T112/T113 только для --version v1-dev".into());
     }
     let generator =
         Generator::new(opts.seed, opts.mode, opts.version).map_err(|error| error.to_string())?;

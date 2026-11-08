@@ -62,7 +62,8 @@ pub struct WorldSample {
     pub climate: ClimateSample,
     pub class: ClassSample,
     pub vanilla: VanillaSample,
-    /// Сила реки в W: v0 — локальная плюс трассы; v1-dev до T110 — только локальная.
+    /// Сила реки в W: v0 — локальная плюс трассы; v1-dev — рифт/трансформ
+    /// T113, сеть стока подключится в T115.
     pub river: f64,
     pub is_ocean: bool,
 }
@@ -172,8 +173,8 @@ impl Generator {
         let c = continentalness(climate.surface.e_km, climate.surface.iota_l, &self.params);
         let is_ocean = c < self.params.climate.ocean_c_threshold;
         let class = classify(&climate, is_ocean, x, z, self.seed, &self.params);
-        // Река в W: локальная (рифтовая/предгорная) плюс трассированные русла
-        // (трассы кэшируются в RiverCache, см. `river_sample`).
+        // Река в W: v0 — рифт/предгорье плюс трассы; v1-dev — рифт/трансформ
+        // T113 без трасс. Сеть стока подключится отдельно в T115.
         let point = self.macro_point(x, z);
         let surface = &climate.surface;
         let local = local_r(x, z, surface, self.seed, &self.params);
@@ -224,7 +225,7 @@ impl Generator {
     }
 
     /// Сеть стока плиты с климатом, расходом и геометрией русел
-    /// (T110–T112, только v1-dev). Пока это диагностика: `field` и ванильные
+    /// (T110–T113, только v1-dev). Пока это диагностика: `field` и ванильные
     /// C/E/W/PV её не используют; влияние на поля добавит T115.
     pub fn drainage_network(&self, plate: &Plate) -> Result<Arc<RiverNet>, RiverNetError> {
         if !self.params.version.is_water_relief_dev() {
