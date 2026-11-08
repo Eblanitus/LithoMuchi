@@ -12,12 +12,13 @@ use crate::cache::{CACHE_CAPACITY, ShardedCache};
 use crate::classify::{ClassSample, classify};
 use crate::climate::{ClimateSample, PrecipSample, SurfaceSample, TemperatureSample, dryness};
 use crate::crust::{CrustSample, crust_from_sample};
+use crate::drainage::{DrainageInput, DrainageOutlet, RiverNet, RiverNetCache, RiverNetError};
 use crate::field::{Field, FullSample, to_f32};
 use crate::lattice::{self, Nodes};
 use crate::math::Vec2;
 use crate::mode::Mode;
 use crate::params::Params;
-use crate::plates::{PlateSample, plate_query, warp_jacobian};
+use crate::plates::{Plate, PlateSample, plate_query, warp_jacobian};
 use crate::rivers::{RiverCache, local_r, traced_r};
 use crate::seed::from_world_seed;
 use crate::spawn::{self, SpawnQuality};
@@ -71,6 +72,7 @@ pub struct Generator {
     seed: u64,
     params: Params,
     rivers: Arc<RiverCache>,
+    drainage: Arc<RiverNetCache>,
     coarse: Arc<CoarseTiles>,
     spawn_shift: Vec2,
 }
@@ -92,6 +94,7 @@ impl Generator {
             seed: world_seed,
             params,
             rivers: Arc::new(RiverCache::new()),
+            drainage: Arc::new(RiverNetCache::new(shards, CACHE_CAPACITY)),
             coarse: Arc::new(ShardedCache::new(shards, CACHE_CAPACITY)),
             spawn_shift: shift,
         })
@@ -215,6 +218,39 @@ impl Generator {
             )
         };
         local.max(traced)
+    }
+
+    /// Топографическая сеть стока плиты (T110, только v1-dev). Пока это
+    /// диагностика: `field` и ванильные C/E/W/PV её не используют. T111
+    /// добавит климат/расход, T112 — геометрию, T115 — влияние на поля.
+    pub fn drainage_network(&self, plate: &Plate) -> Result<Arc<RiverNet>, RiverNetError> {
+        if !self.params.version.is_water_relief_dev() {
+            return Err(RiverNetError::UnsupportedVersion(self.params.version));
+        }
+        self.drainage.get_or_build(plate.id, || {
+            RiverNet::build(plate, self.seed, &self.params, &|point| {
+                let surface = self.surface_at(point);
+                let outlet = if surface.e_km < 0.0 {
+                    DrainageOutlet::Sea
+                } else if surface.sigma_l.abs() < self.params.drainage.step_l {
+                    let k = surface.boundary_weights;
+                    let min = self.params.drainage.outlet_min_weight;
+                    if k[4] > min {
+                        DrainageOutlet::Rift
+                    } else if k[6] > min {
+                        DrainageOutlet::Transform
+                    } else {
+                        DrainageOutlet::None
+                    }
+                } else {
+                    DrainageOutlet::None
+                };
+                DrainageInput {
+                    route_km: surface.e_km,
+                    outlet,
+                }
+            })
+        })
     }
 
     /// Поле глубинной лавы λ (слой `lava`, T53).

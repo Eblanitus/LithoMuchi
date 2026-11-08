@@ -323,6 +323,18 @@ pub struct RiversParams {
     pub half_width_length_l: f64,
 }
 
+/// T110: топографическая сеть стока. Используется только v1-dev; ключи v0
+/// не получают новых строк. Климат и расход добавит T111 отдельно.
+#[derive(Clone, Debug, PartialEq)]
+pub struct DrainageParams {
+    pub step_l: f64,
+    pub jitter_fraction: f64,
+    pub fill_epsilon_km: f64,
+    pub depression_min_depth_km: f64,
+    pub outlet_min_weight: f64,
+    pub anchor_search_radius_cells: i64,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct LavaParams {
     pub width_blocks: f64,
@@ -569,6 +581,7 @@ pub struct Params {
     pub wind: WindParams,
     pub precip: PrecipParams,
     pub rivers: RiversParams,
+    pub drainage: DrainageParams,
     pub lava: LavaParams,
     pub spawn: SpawnParams,
     pub lattice: LatticeParams,
@@ -764,6 +777,15 @@ impl Params {
                 foothill_sigma_factor: -1.6,
                 half_width_growth: 0.6,
                 half_width_length_l: 3.0,
+            },
+            drainage: DrainageParams {
+                step_l: 0.25,
+                jitter_fraction: 0.35,
+                fill_epsilon_km: 1e-4,
+                // Стартовый отсев «луж» глубже 2 м; подбор оставлен T114.
+                depression_min_depth_km: 0.002,
+                outlet_min_weight: 0.5,
+                anchor_search_radius_cells: 2,
             },
             lava: LavaParams {
                 width_blocks: block.lava_width_blocks,
@@ -1159,6 +1181,25 @@ impl Params {
             )
             .unwrap();
             writeln!(w, "noise.amplitude_units=sigma").unwrap();
+            let d = &self.drainage;
+            for (name, value) in [
+                ("drainage.step_l", d.step_l),
+                ("drainage.jitter_fraction", d.jitter_fraction),
+                ("drainage.fill_epsilon_km", d.fill_epsilon_km),
+                (
+                    "drainage.depression_min_depth_km",
+                    d.depression_min_depth_km,
+                ),
+                ("drainage.outlet_min_weight", d.outlet_min_weight),
+            ] {
+                writeln!(w, "{name}={value:?}").unwrap();
+            }
+            writeln!(
+                w,
+                "drainage.anchor_search_radius_cells={v}",
+                v = d.anchor_search_radius_cells
+            )
+            .unwrap();
         }
         out
     }

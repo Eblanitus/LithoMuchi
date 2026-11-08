@@ -415,3 +415,55 @@ mod water_relief_dev {
         }
     }
 }
+
+#[cfg(test)]
+mod drainage_dev {
+    use litho_core::drainage::RiverNetError;
+    use litho_core::{GenVersion, Generator, Mode};
+    use std::sync::Arc;
+
+    #[test]
+    fn real_plate_network_is_deterministic_cached_and_mode_independent() {
+        let game = Generator::new(42, Mode::Gameplay, GenVersion::V1Dev).unwrap();
+        let plate = game.plate_sample(0.0, 0.0).unwrap().a;
+        let first = game.drainage_network(&plate).unwrap();
+        let second = game.drainage_network(&plate).unwrap();
+        assert!(Arc::ptr_eq(&first, &second));
+        first
+            .check_invariants(game.params().drainage.fill_epsilon_km)
+            .unwrap();
+        assert_eq!(first.plate_id(), plate.id);
+        assert!(first.plate_node_count() > 0);
+        assert!(first.nodes().iter().any(|node| !node.in_plate));
+        assert!(
+            first
+                .nodes()
+                .windows(2)
+                .all(|pair| pair[0].cell < pair[1].cell)
+        );
+        let h = game.params().drainage.step_l;
+        let jitter = game.params().drainage.jitter_fraction;
+        for node in first.nodes() {
+            let u = node.point.x / h - node.cell.0 as f64;
+            let v = node.point.z / h - node.cell.1 as f64;
+            assert!((0.5 - jitter - 1e-12..=0.5 + jitter + 1e-12).contains(&u));
+            assert!((0.5 - jitter - 1e-12..=0.5 + jitter + 1e-12).contains(&v));
+        }
+
+        let science = Generator::new(42, Mode::Scientific, GenVersion::V1Dev).unwrap();
+        let same_plate = science.plate_sample(0.0, 0.0).unwrap().a;
+        let other = science.drainage_network(&same_plate).unwrap();
+        // Сеть задана в L и не зависит от блочного масштаба режима.
+        assert_eq!(first, other);
+    }
+
+    #[test]
+    fn frozen_v0_rejects_the_new_network() {
+        let generator = Generator::new(42, Mode::Gameplay, GenVersion::V0).unwrap();
+        let plate = generator.plate_sample(0.0, 0.0).unwrap().a;
+        assert_eq!(
+            generator.drainage_network(&plate).unwrap_err(),
+            RiverNetError::UnsupportedVersion(GenVersion::V0)
+        );
+    }
+}

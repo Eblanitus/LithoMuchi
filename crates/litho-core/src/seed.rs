@@ -29,6 +29,8 @@ pub const SALT_VANILLA_W: &str = "vanilla.weirdness";
 pub const SALT_VANILLA_S: &str = "vanilla.sign";
 pub const SALT_RIVERS: &str = "rivers.source";
 pub const SALT_RIVERS_MEANDER: &str = "rivers.meander";
+// Э3.5 / T110: общая решётка стока; не меняет ни одну соль v0.
+pub const SALT_RIVERS_DRAINAGE: &str = "rivers.drainage";
 
 /// Сид Minecraft знаковый 64-битный; биты переносятся без изменения.
 pub const fn from_world_seed(seed: i64) -> u64 {

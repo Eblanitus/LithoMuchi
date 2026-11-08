@@ -11,6 +11,7 @@ use std::path::Path;
 use std::time::Instant;
 
 use height::{HeightModel, HeightSource};
+use litho_core::drainage::{DepressionKind, DrainageOutlet};
 use litho_core::{Field, GenVersion, Generator, Mode, Params};
 use render::{LAYERS, RenderOptions};
 
@@ -575,6 +576,86 @@ fn cmd_stats_all(args: &[String]) -> Result<(), String> {
     Ok(())
 }
 
+/// T110: диагностика сети стока одной плиты. Это ещё не реки в игре:
+/// климат/Q (T111), русла (T112) и влияние на C/E/W (T115) не подключены.
+fn cmd_drainage(args: &[String]) -> Result<(), String> {
+    let opts = options_from(args)?;
+    let (x, z) = parse_pair(&value(args, "--at").unwrap_or_else(|| "0,0".to_string()))?;
+    if !x.is_finite() || !z.is_finite() {
+        return Err("--at требует конечных координат".into());
+    }
+    let generator = generator(&opts)?;
+    let plate = generator
+        .plate_sample(x, z)
+        .ok_or("в этой точке не найдена плита")?
+        .a;
+    let start = Instant::now();
+    let net = generator
+        .drainage_network(&plate)
+        .map_err(|error| error.to_string())?;
+    let cold_ms = start.elapsed().as_secs_f64() * 1000.0;
+    let start = Instant::now();
+    let _warm = generator
+        .drainage_network(&plate)
+        .map_err(|error| error.to_string())?;
+    let warm_ms = start.elapsed().as_secs_f64() * 1000.0;
+    net.check_invariants(generator.params().drainage.fill_epsilon_km)
+        .map_err(|error| error.to_string())?;
+    let nodes = net.nodes();
+    let plate_nodes = net.plate_node_count();
+    let sea = nodes
+        .iter()
+        .filter(|n| n.outlet == DrainageOutlet::Sea)
+        .count();
+    let rift = nodes
+        .iter()
+        .filter(|n| n.outlet == DrainageOutlet::Rift)
+        .count();
+    let transform = nodes
+        .iter()
+        .filter(|n| n.outlet == DrainageOutlet::Transform)
+        .count();
+    let filled = net
+        .depressions()
+        .iter()
+        .filter(|d| matches!(d.kind, DepressionKind::Filled { .. }))
+        .count();
+    let closed = net.depressions().len() - filled;
+    let max_depth = net
+        .depressions()
+        .iter()
+        .map(|d| d.max_depth_km)
+        .fold(0.0, f64::max);
+    let hash = generator.params().params_hash();
+    if args.iter().any(|arg| arg == "--json") {
+        println!(
+            "{{\"stage\":\"T110\",\"acceptance\":false,\"connected_to_game_fields\":false,\"seed\":{},\"mode\":\"{}\",\"version\":\"{}\",\"params_hash\":\"{hash:016x}\",\"plate_id\":{},\"at\":[{x},{z}],\"nodes_total\":{},\"nodes_plate\":{},\"nodes_ring\":{},\"outlets_sea\":{sea},\"outlets_rift\":{rift},\"outlets_transform\":{transform},\"depressions_filled\":{filled},\"depressions_closed\":{closed},\"max_depth_km\":{max_depth:.9},\"cold_ms\":{cold_ms:.6},\"warm_ms\":{warm_ms:.6}}}",
+            opts.seed,
+            opts.mode.as_str(),
+            opts.version.as_str(),
+            plate.id,
+            nodes.len(),
+            plate_nodes,
+            nodes.len() - plate_nodes,
+        );
+    } else {
+        println!(
+            "T110 drainage: диагностика, НЕ реки в игре (T111–T115 не подключены)\n\
+             seed={seed} mode={mode} version={version} params={hash:016x} plate={plate}\n\
+             узлы: всего {total}, своей плиты {plate_nodes}, кольцо {ring}; выходы: море {sea}, рифт {rift}, трансформ {transform}\n\
+             впадины: заполненные {filled}, замкнутые без выхода {closed}; max глубина {max_depth:.6} км\n\
+             время: cold {cold_ms:.3} мс, warm {warm_ms:.3} мс (один раннер, не приёмка T160)",
+            seed = opts.seed,
+            mode = opts.mode.as_str(),
+            version = opts.version.as_str(),
+            plate = plate.id,
+            total = nodes.len(),
+            ring = nodes.len() - plate_nodes,
+        );
+    }
+    Ok(())
+}
+
 fn cmd_bench(args: &[String]) -> Result<(), String> {
     let opts = options_from(args)?;
     let generator = generator(&opts)?;
@@ -849,6 +930,7 @@ fn usage() -> &'static str {
        stats        метрики 12.4; с --game-data/--synthetic-height — T100\n\
        stats-all    16 сидов × 2 режима; принимает те же флаги высоты\n\
        seams        скачки C/E/W между соседними блоками\n\
+       drainage     T110: сеть стока плиты в точке --at x,z (только v1-dev)\n\
        bench        время эталонного и быстрого пути\n\
        profile      разбивка времени по слоям\n\
        hash         хеши параметров для замка v0\n\
@@ -881,6 +963,7 @@ fn main() -> Result<(), String> {
         "stats" => cmd_stats(&args[1..]),
         "stats-all" => cmd_stats_all(&args[1..]),
         "seams" => cmd_seams(&args[1..]),
+        "drainage" => cmd_drainage(&args[1..]),
         "bench" => cmd_bench(&args[1..]),
         "profile" => cmd_profile(),
         "hash" => cmd_hash(),
