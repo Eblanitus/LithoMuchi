@@ -20,9 +20,13 @@ jobs:
       - name: rustfmt
         run: cargo fmt --all -- --check
       - name: clippy
-        run: cargo clippy --workspace --all-targets -- -D warnings
+        run: |
+          set -o pipefail
+          cargo clippy --workspace --all-targets --message-format=json -- -D warnings | python3 tools/ci_annotations.py clippy
       - name: tests
-        run: cargo test --workspace
+        run: |
+          set -o pipefail
+          cargo test --workspace --no-fail-fast 2>&1 | python3 tools/ci_annotations.py test
       - name: "ОБЯЗАТЕЛЬНЫЙ ГЕЙТ — seams пусто и бенч не хуже прошлого"
         run: |
           cargo run -p litho-sandbox --release -- seams --seed 42 --mode gameplay
