@@ -94,6 +94,8 @@ pub const SALT_RELIEF_E: &str = "relief.erosion";
 pub const SALT_RELIEF_PV: &str = "relief.peaks_valleys";
 // T130: гладкий поворот линии тока влаги; соли v0 не меняются.
 pub const SALT_MOISTURE_BEND: &str = "climate.moisture_bend";
+// T132: перевалы вдоль хребтов; соль v0 не меняется.
+pub const SALT_CRUST_PASS: &str = "crust.pass";
 
 #[cfg(test)]
 mod tests {

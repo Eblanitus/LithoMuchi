@@ -921,6 +921,12 @@ pub struct BoundaryParams {
     pub wind_phi_soft_deg: f64,
     /// T131: полуширина плавного перехода поясов ветра в v1-dev, градусы φ.
     pub wind_belt_fade_deg: f64,
+    /// T132: перевалы в хребтах (Б4). Глубина седла — доля положительного
+    /// орографического вклада, λ вдоль границы, одна гладкая октава.
+    pub pass_depth: f64,
+    pub pass_lambda_l: f64,
+    pub pass_octaves: usize,
+    pub pass_gain: f64,
 }
 
 impl BoundaryParams {
@@ -961,6 +967,19 @@ impl BoundaryParams {
         if !self.wind_belt_fade_deg.is_finite() || !(5.0..=21.0).contains(&self.wind_belt_fade_deg)
         {
             return Err("полуширина перехода поясов ветра должна лежать в 5…21°");
+        }
+        if !self.pass_depth.is_finite() || !(0.0..=0.9).contains(&self.pass_depth) {
+            return Err("глубина перевала должна лежать в 0…0.9");
+        }
+        if !self.pass_lambda_l.is_finite() || !(1.0..=3.0).contains(&self.pass_lambda_l) {
+            return Err("λ перевалов должна лежать в 1…3 L");
+        }
+        if !(1..=4).contains(&self.pass_octaves)
+            || !self.pass_gain.is_finite()
+            || self.pass_gain <= 0.0
+            || self.pass_gain >= 1.0
+        {
+            return Err("перевалы: 1…4 октавы, gain ∈ (0, 1)");
         }
         Ok(())
     }
@@ -1329,6 +1348,10 @@ impl Params {
                 wind_pole_fade_l: 16.0,
                 wind_phi_soft_deg: 3.0,
                 wind_belt_fade_deg: 21.0,
+                pass_depth: 0.6,
+                pass_lambda_l: 2.0,
+                pass_octaves: 1,
+                pass_gain: 0.5,
             },
             lava: LavaParams {
                 width_blocks: block.lava_width_blocks,
@@ -1905,6 +1928,14 @@ impl Params {
                 bd.wind_belt_fade_deg
             )
             .unwrap();
+            for (name, value) in [
+                ("boundaries.pass_depth", bd.pass_depth),
+                ("boundaries.pass_lambda_l", bd.pass_lambda_l),
+                ("boundaries.pass_gain", bd.pass_gain),
+            ] {
+                writeln!(w, "{name}={value:?}").unwrap();
+            }
+            writeln!(w, "boundaries.pass_octaves={}", bd.pass_octaves).unwrap();
         }
         out
     }
@@ -1953,6 +1984,17 @@ mod tests {
             assert_eq!(dev.crust, old.crust);
             assert_eq!(dev.poles, old.poles);
         }
+    }
+
+    #[test]
+    fn boundary_keys_are_v1_dev_only_and_hash_sensitive() {
+        let old = Params::defaults(GenVersion::V0, Mode::Gameplay);
+        assert!(!old.canonical_text().contains("boundaries."));
+        let dev = Params::defaults(GenVersion::V1Dev, Mode::Gameplay);
+        assert!(dev.canonical_text().contains("boundaries.pass_depth=0.6"));
+        let mut changed = dev.clone();
+        changed.boundaries.pass_depth = 0.5;
+        assert_ne!(dev.params_hash(), changed.params_hash());
     }
 
     #[test]
