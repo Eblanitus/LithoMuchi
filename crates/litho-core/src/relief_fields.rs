@@ -28,6 +28,20 @@ pub fn apply(
     seed: u64,
     params: &Params,
 ) -> VanillaSample {
+    apply_with_pv(base, climate, relief, weights, point, seed, params).0
+}
+
+/// T141: тот же перевод T122, но отдаёт и собственный PV до среза руслами.
+/// Генератор хранит его в `WorldSample.pv`; ванильный W остаётся непрерывным.
+pub fn apply_with_pv(
+    base: VanillaSample,
+    climate: &ClimateSample,
+    relief: &ReliefSample,
+    weights: &MorphoWeights,
+    point: Vec2,
+    seed: u64,
+    params: &Params,
+) -> (VanillaSample, f64) {
     debug_assert!(relief::validate(params).is_ok());
     debug_assert!(morphoclimate::validate(params).is_ok());
     let c = &params.climate;
@@ -99,13 +113,14 @@ pub fn apply(
         1.0,
     );
 
-    VanillaSample {
+    let vanilla = VanillaSample {
         c: c_value,
         e: e_value,
         w: w_value,
         t: base.t,
         h: base.h,
-    }
+    };
+    (vanilla, pv)
 }
 
 #[cfg(test)]

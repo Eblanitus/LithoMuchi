@@ -70,6 +70,8 @@ pub struct WorldSample {
     pub river: f64,
     pub hydrology: HydrologySample,
     pub is_ocean: bool,
+    /// T141: собственный PV для I2-lite. В v0 это прежняя производная f(W).
+    pub pv: f64,
 }
 
 #[derive(Clone, Debug)]
@@ -309,7 +311,7 @@ impl Generator {
                 &self.rivers,
             )
         };
-        let (class, vanilla, river, hydrology, is_ocean) =
+        let (class, vanilla, river, hydrology, is_ocean, pv) =
             self.surface_fields(&climate, class, is_ocean, x, z, local.max(traced))?;
         Ok(Some(WorldSample {
             climate,
@@ -318,6 +320,7 @@ impl Generator {
             river,
             hydrology,
             is_ocean,
+            pv,
         }))
     }
 
@@ -518,18 +521,21 @@ impl Generator {
             f64,
             HydrologySample,
             bool,
+            f64,
         ),
         RiverNetError,
     > {
         if !self.params.version.is_water_relief_dev() {
             let vanilla =
                 crate::vanilla::sample(climate, &class, x, z, self.seed, &self.params, local_river);
+            let pv = crate::vanilla::peaks_valleys(vanilla.w);
             return Ok((
                 class,
                 vanilla,
                 local_river,
                 HydrologySample::default(),
                 is_ocean,
+                pv,
             ));
         }
         let geometry = self.cached_hydrology_queries(x, z)?;
@@ -546,7 +552,7 @@ impl Generator {
             .morpho_weights(x, z)
             .ok_or(RiverNetError::InvalidInput { cell: (0, 0) })?;
         let base = crate::vanilla::sample(climate, &class, x, z, self.seed, &self.params, 0.0);
-        let base = crate::relief_fields::apply(
+        let (base, pv_relief) = crate::relief_fields::apply_with_pv(
             base,
             climate,
             &relief_sample,
@@ -558,7 +564,9 @@ impl Generator {
         let vanilla = hydrology::apply_fields(base, local_river, &water, &self.params);
         let class = hydrology::classify_surface(class, &water, climate, &self.params);
         let river = local_river.max(water.river);
-        Ok((class, vanilla, river, water, class.is_ocean))
+        // I2-lite: долины режут русла/низкие озёра, а не каждая смена знака W.
+        let pv = crate::math::lerp(pv_relief, -1.0, crate::math::clamp01(river));
+        Ok((class, vanilla, river, water, class.is_ocean, pv))
     }
 
     /// Поле глубинной лавы λ (слой `lava`, T53).
@@ -767,7 +775,7 @@ impl Generator {
         let is_ocean = c_value < self.params.climate.ocean_c_threshold;
         let class = classify(&climate, is_ocean, x, z, self.seed, &self.params);
         let local = local_r(x, z, &surface, self.seed, &self.params);
-        let (class, vanilla, river, hydrology, is_ocean) =
+        let (class, vanilla, river, hydrology, is_ocean, pv) =
             self.surface_fields(&climate, class, is_ocean, x, z, local)?;
         let world = WorldSample {
             climate,
@@ -776,6 +784,7 @@ impl Generator {
             river,
             hydrology,
             is_ocean,
+            pv,
         };
         let mut full = self.full_from_world(x, z, world);
         full.plate = Some(plates);
@@ -800,6 +809,7 @@ impl Generator {
             Field::Vegetation => full.vanilla.h,
             Field::Lava => full.lava,
             Field::Offset => full.climate.surface.e_km,
+            Field::Pv => full.world.pv,
         };
         if value.is_finite() { value } else { 0.0 }
     }
@@ -1006,5 +1016,37 @@ mod tests {
         let a = sci.macro_point(4000.0, -2000.0);
         let b = game.macro_point(1000.0, -500.0);
         assert_eq!(a, b);
+    }
+}
+
+#[cfg(test)]
+mod t141_tests {
+    use super::*;
+
+    #[test]
+    fn pv_field_is_exposed_and_rivers_cut_their_own_valley() {
+        let g = Generator::new(42, Mode::Gameplay, GenVersion::V1Dev).unwrap();
+        // T136-точка межплитового русла: сила реки близка к 1.
+        let (x, z) = (-1536.535205192, -2374.660136579);
+        let s = g.sample(x, z).unwrap();
+        assert!(s.world.river > 0.9);
+        assert!(s.world.pv.is_finite() && (-1.0..=1.0).contains(&s.world.pv));
+        assert!(s.world.pv < -0.8, "русло не прорезало PV: {}", s.world.pv);
+        assert_eq!(
+            g.field(Field::Pv, x, 0.0, z).to_bits(),
+            s.world.pv.to_bits()
+        );
+        assert_eq!(Field::parse("pv"), Some(Field::Pv));
+        assert_eq!(Field::ALL.len(), 8);
+    }
+
+    #[test]
+    fn v0_pv_keeps_the_old_derivative_of_w() {
+        let g = Generator::new(42, Mode::Gameplay, GenVersion::V0).unwrap();
+        let s = g.sample(0.0, 0.0).unwrap();
+        assert_eq!(
+            s.world.pv.to_bits(),
+            crate::vanilla::peaks_valleys(s.vanilla.w).to_bits()
+        );
     }
 }

@@ -20,7 +20,7 @@ pub struct HeightInput {
     pub c: f64,
     pub e: f64,
     pub w: f64,
-    /// Пока PV = f(W). Подмена своим полем появится вместе с T141.
+    /// T141: по умолчанию PV = f(W); `--pv` подставляет собственное поле ядра.
     pub pv: f64,
 }
 impl HeightInput {
@@ -31,6 +31,10 @@ impl HeightInput {
             w,
             pv: peaks_valleys(w),
         }
+    }
+    pub fn with_pv(mut self, pv: f64) -> Self {
+        self.pv = pv;
+        self
     }
 }
 
@@ -402,6 +406,17 @@ mod tests {
             14.0
         );
     }
+    #[test]
+    fn pv_override_replaces_only_the_pv_input() {
+        let input = HeightInput::from_fields(0.4, 0.2, 0.3);
+        assert_eq!(input.pv, litho_core::vanilla::peaks_valleys(0.3));
+        let overridden = input.with_pv(-1.0);
+        assert_eq!(overridden.c, input.c);
+        assert_eq!(overridden.e, input.e);
+        assert_eq!(overridden.w, input.w);
+        assert_eq!(overridden.pv, -1.0);
+    }
+
     #[test]
     fn hermite_spline_uses_slopes_and_clamps_ends() {
         let n = node(

@@ -111,6 +111,7 @@ fn options_from(args: &[String]) -> Result<RenderOptions, String> {
         size,
         bpp,
         path_fast,
+        pv: args.iter().any(|arg| arg == "--pv"),
     })
 }
 
@@ -121,9 +122,6 @@ fn generator(opts: &RenderOptions) -> Result<Generator, String> {
 fn height_source(args: &[String]) -> Result<Option<HeightSource>, String> {
     let data = value(args, "--game-data");
     let synthetic = args.iter().any(|arg| arg == "--synthetic-height");
-    if args.iter().any(|arg| arg == "--pv") {
-        return Err("--pv требует собственного Field::Pv (T141); он ещё не реализован. Сейчас PV вычисляется из W.".into());
-    }
     match (data, synthetic) {
         (Some(_), true) => Err("--game-data и --synthetic-height взаимоисключающи".into()),
         (Some(path), false) => Ok(Some(HeightSource::GameData(path.into()))),
@@ -1006,6 +1004,7 @@ fn cmd_sweep(args: &[String]) -> Result<(), String> {
                 size,
                 bpp,
                 path_fast: false,
+                pv: false,
             };
             let image = render::render_layer(&opts, "height")?;
             let name = format!("s{seed}-{mode}", mode = mode.as_str());

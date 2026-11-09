@@ -17,6 +17,8 @@ const MOD_VERSION: &str = "0.1.0";
 /// Ревизия Horizon из раздела 5 плана; сверить на Windows (T70).
 const HORIZON_REV: &str = "f319701e8c9ab657ff562250b3ba07b2d654e3bc";
 /// Пять полей, которые подменяем в MVP (точка №2 плана 10.1).
+/// v1-dev дополнительно переопределяет `overworld/ridges_folded` полем `pv`
+/// (T141/I2-lite); v0 остаётся ровно с пятью полями.
 const FIELDS: [&str; 5] = [
     "continents",
     "erosion",
@@ -161,12 +163,23 @@ fn make_pack(
             ],
         )?,
     )?;
-    for field in FIELDS {
+    let mut fields: Vec<&str> = FIELDS.to_vec();
+    if version.is_water_relief_dev() {
+        fields.push("pv");
+    }
+    for field in fields {
+        // В ванили PV — именованная функция `ridges_folded`, на неё по имени
+        // ссылаются offset/factor/jaggedness. Сам шум называется `pv`.
+        let df_name = if field == "pv" {
+            "ridges_folded"
+        } else {
+            field
+        };
         let noise_id = format!("{noise_prefix}/{field}");
         let df = render(&density, &[("NOISE", noise_id.as_str())])?;
         write_file(
             &dir.join(format!(
-                "data/minecraft/worldgen/density_function/overworld/{field}.json"
+                "data/minecraft/worldgen/density_function/overworld/{df_name}.json"
             )),
             &df,
         )?;
@@ -337,6 +350,20 @@ fn cmd_bundle_check(out: &Path) -> Result<(), String> {
                 if !f.is_file() {
                     return Err(format!("в паке {} нет {field}", pack.display()));
                 }
+            }
+            let pv_df =
+                pack.join("data/minecraft/worldgen/density_function/overworld/ridges_folded.json");
+            let pv_noise = pack.join(format!(
+                "data/litospherity/worldgen/noise/{}/{}/pv.json",
+                version.as_str(),
+                mode.as_str()
+            ));
+            if version.is_water_relief_dev() {
+                if !pv_df.is_file() || !pv_noise.is_file() {
+                    return Err(format!("в паке {} нет I2-lite PV", pack.display()));
+                }
+            } else if pv_df.exists() {
+                return Err(format!("v0 пак {} не должен меняться", pack.display()));
             }
         }
     }

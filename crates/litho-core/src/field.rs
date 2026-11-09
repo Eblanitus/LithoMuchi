@@ -18,10 +18,12 @@ pub enum Field {
     Lava,
     /// Расширение I2 (Э5): смещение рельефа из нашей высоты.
     Offset,
+    /// T141 / I2-lite: собственный PV (`overworld/ridges_folded`), не f(W).
+    Pv,
 }
 
 impl Field {
-    pub const ALL: [Self; 7] = [
+    pub const ALL: [Self; 8] = [
         Self::Continents,
         Self::Erosion,
         Self::Ridges,
@@ -29,6 +31,7 @@ impl Field {
         Self::Vegetation,
         Self::Lava,
         Self::Offset,
+        Self::Pv,
     ];
 
     pub const fn as_str(self) -> &'static str {
@@ -40,6 +43,7 @@ impl Field {
             Self::Vegetation => "vegetation",
             Self::Lava => "lava",
             Self::Offset => "offset",
+            Self::Pv => "pv",
         }
     }
 

@@ -410,7 +410,13 @@ impl HeightStats {
                 }
                 .ok_or_else(|| format!("нет образца в ({x}, {z})"))?;
                 let v = world.vanilla;
-                let y = model.surface_y(HeightInput::from_fields(v.c, v.e, v.w))?;
+                let input = HeightInput::from_fields(v.c, v.e, v.w);
+                let input = if base.pv {
+                    input.with_pv(world.pv)
+                } else {
+                    input
+                };
+                let y = model.surface_y(input)?;
                 let c_land = v.c >= land_threshold;
                 let river = world.river >= 0.5;
                 if c_land && river {
@@ -434,7 +440,12 @@ impl HeightStats {
                 out.land += 1;
                 out.hyps[HYPS_EDGES.partition_point(|edge| y >= *edge)] += 1;
                 out.erosion[E_EDGES.partition_point(|edge| v.e >= *edge)] += 1;
-                if peaks_valleys(v.w) < -0.85 {
+                let pv = if base.pv {
+                    world.pv
+                } else {
+                    peaks_valleys(v.w)
+                };
+                if pv < -0.85 {
                     out.valley += 1;
                 }
             }
@@ -455,7 +466,13 @@ impl HeightStats {
                 }
                 .ok_or_else(|| format!("нет образца рельефа в ({x}, {z})"))?;
                 let v = world.vanilla;
-                heights[j * n + i] = model.surface_y(HeightInput::from_fields(v.c, v.e, v.w))?;
+                let input = HeightInput::from_fields(v.c, v.e, v.w);
+                let input = if base.pv {
+                    input.with_pv(world.pv)
+                } else {
+                    input
+                };
+                heights[j * n + i] = model.surface_y(input)?;
                 land[j * n + i] = v.c >= land_threshold && world.river < 0.5;
             }
         }
@@ -702,7 +719,7 @@ impl HeightStats {
     }
     pub fn json(&self, base: &RenderOptions, opts: &StatsOptions, model: &HeightModel) -> String {
         format!(
-            "{{\n  \"seed\": {}, \"mode\": {}, \"version\": {}, \"path\": {},\n  \"height_source\": {}, \"height_data_hash\": \"{:016x}\", \"synthetic\": {},\n  \"approximation\": \"63.52 + 128*offset; no factor/jaggedness/3D noise\",\n  \"span_l\": {}, \"size\": {}, \"samples\": {}, \"land_samples\": {},\n  \"flooded_land_pct\": {}, \"hyps_pct\": {:?}, \"erosion_pct\": {:?},\n  \"valley_pct\": {}, \"relief_step\": {}, \"relief_windows\": {}, \"relief_median\": {}, \"flat_windows_pct\": {},\n  \"river_samples\": {}, \"river_water_pct\": {}, \"gallery_samples\": {}, \"gallery_pct\": {},\n  \"boundary\": {{\"size\": {}, \"step\": {}, \"span_l\": {}, \"land\": {}, \"humidity_jump_pct\": {}, \"humidity_jump_pair_pct\": {}, \"humidity_jump_pairs\": {}, \"humidity_pairs\": {}, \"climate_land\": {}, \"climate_humidity_jump_pct\": {}, \"climate_humidity_pair_pct\": {}, \"climate_humidity_jump_pairs\": {}, \"climate_humidity_pairs\": {}, \"wind_max_deg\": {}, \"wind_pairs\": {}, \"straight_pct\": {}, \"straight_edges\": {}, \"boundary_edges\": {}, \"thin_pct\": {}, \"min_strip_blocks\": {}, \"acceptance_volume\": {}}}\n}}\n",
+            "{{\n  \"seed\": {}, \"mode\": {}, \"version\": {}, \"path\": {},\n  \"height_source\": {}, \"height_data_hash\": \"{:016x}\", \"synthetic\": {}, \"pv_field\": {},\n  \"approximation\": \"63.52 + 128*offset; no factor/jaggedness/3D noise\",\n  \"span_l\": {}, \"size\": {}, \"samples\": {}, \"land_samples\": {},\n  \"flooded_land_pct\": {}, \"hyps_pct\": {:?}, \"erosion_pct\": {:?},\n  \"valley_pct\": {}, \"relief_step\": {}, \"relief_windows\": {}, \"relief_median\": {}, \"flat_windows_pct\": {},\n  \"river_samples\": {}, \"river_water_pct\": {}, \"gallery_samples\": {}, \"gallery_pct\": {},\n  \"boundary\": {{\"size\": {}, \"step\": {}, \"span_l\": {}, \"land\": {}, \"humidity_jump_pct\": {}, \"humidity_jump_pair_pct\": {}, \"humidity_jump_pairs\": {}, \"humidity_pairs\": {}, \"climate_land\": {}, \"climate_humidity_jump_pct\": {}, \"climate_humidity_pair_pct\": {}, \"climate_humidity_jump_pairs\": {}, \"climate_humidity_pairs\": {}, \"wind_max_deg\": {}, \"wind_pairs\": {}, \"straight_pct\": {}, \"straight_edges\": {}, \"boundary_edges\": {}, \"thin_pct\": {}, \"min_strip_blocks\": {}, \"acceptance_volume\": {}}}\n}}\n",
             self.seed,
             crate::json::quote(self.mode.as_str()),
             crate::json::quote(base.version.as_str()),
@@ -710,6 +727,7 @@ impl HeightStats {
             crate::json::quote(&model.source.label()),
             model.data_hash,
             model.is_synthetic(),
+            base.pv,
             opts.span_l,
             opts.size,
             self.samples,
@@ -772,6 +790,7 @@ mod tests {
             size: 8,
             bpp: 32.0,
             path_fast: true,
+            pv: false,
         };
         let opts = StatsOptions {
             size: 8,
@@ -788,6 +807,14 @@ mod tests {
         assert!(stats.flooded().is_finite());
         let value = crate::json::parse(&stats.json(&base, &opts, &model)).unwrap();
         assert_eq!(value.get("synthetic"), Some(&crate::json::Json::Bool(true)));
+        let mut pv_base = base.clone();
+        pv_base.pv = true;
+        let pv_stats = HeightStats::collect(&pv_base, &opts, &model).unwrap();
+        let pv_value = crate::json::parse(&pv_stats.json(&pv_base, &opts, &model)).unwrap();
+        assert_eq!(
+            pv_value.get("pv_field"),
+            Some(&crate::json::Json::Bool(true))
+        );
     }
 }
 

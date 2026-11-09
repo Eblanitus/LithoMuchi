@@ -70,6 +70,8 @@ pub struct RenderOptions {
     pub size: usize,
     pub bpp: f64,
     pub path_fast: bool,
+    /// T141: предпросмотр высоты берёт PV из `Field::Pv`, а не из W.
+    pub pv: bool,
 }
 
 impl RenderOptions {
@@ -125,11 +127,13 @@ pub fn metadata_with_height(
                 r#"  "height_source": {},
   "height_data_hash": "{:016x}",
   "synthetic_height": {},
+  "pv_field": {},
   "height_approximation": "63.52 + 128*offset; no factor/jaggedness/3D noise"
 "#,
                 crate::json::quote(&model.source.label()),
                 model.data_hash,
-                model.is_synthetic()
+                model.is_synthetic(),
+                opts.pv
             );
             text = text.replace("}\n", &format!(",\n{extra}}}\n"));
         }
@@ -240,9 +244,13 @@ pub fn render_layer_with_height(
                 "vanilla-height" => {
                     let world = world.as_ref().ok_or("нет климата для vanilla-height")?;
                     let v = world.vanilla;
-                    let y = height
-                        .expect("модель проверена")
-                        .surface_y(HeightInput::from_fields(v.c, v.e, v.w))?;
+                    let input = HeightInput::from_fields(v.c, v.e, v.w);
+                    let input = if opts.pv {
+                        input.with_pv(world.pv)
+                    } else {
+                        input
+                    };
+                    let y = height.expect("модель проверена").surface_y(input)?;
                     palette::vanilla_height(
                         y,
                         v.c >= params.climate.ocean_c_threshold,
