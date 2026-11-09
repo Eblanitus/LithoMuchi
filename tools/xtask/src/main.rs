@@ -49,7 +49,17 @@ fn cmd_params_doc(version: GenVersion) {
     let b = canonical_map(&gameplay);
     println!("# Параметры генератора {}", version.as_str());
     println!();
-    println!("Сгенерировано `cargo run -p xtask -- params-doc > docs/PARAMS.md`.");
+    let out_file = if version.as_str() == "v0" {
+        "docs/PARAMS.md"
+    } else {
+        "docs/PARAMS-V1-DEV.md"
+    };
+    let version_arg = if version.as_str() == "v0" {
+        String::new()
+    } else {
+        format!(" --version {}", version.as_str())
+    };
+    println!("Сгенерировано `cargo run -p xtask -- params-doc{version_arg} > {out_file}`.");
     println!("Источник правды — `Params::defaults` в `crates/litho-core/src/params.rs`.");
     println!();
     println!("| Параметр | scientific | gameplay |");
