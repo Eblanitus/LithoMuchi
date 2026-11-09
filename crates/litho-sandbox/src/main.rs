@@ -1049,7 +1049,7 @@ fn usage() -> &'static str {
      Слои: шум/плиты/кора, климат, зоны, биомы, пять ванильных чисел,\n\
        реки, лава и точка появления (rivers,lava,spawn); channels/lakes — T112–T114, hydrology — T115/T116, relief — T120 v1-dev.\n\
      T100: --game-data ПУТЬ (распакованные данные игры) или --synthetic-height.\n\
-       stats: --span-l 200 --size 64 --relief-size 32 --relief-step 32 --json.\n\
+       stats: --span-l 200 --size 64 --relief-size 32 --relief-step 32 --boundary-size 64 --boundary-step 32 --json.\n\
        По умолчанию статистика высоты идёт быстрым путём; --path reference переключает.\n\
        Высота приближённая (offset без 3D-шума); синтетика не годится для приёмки.\n\
        --pv отложен до T141 (собственное поле PV).\n"

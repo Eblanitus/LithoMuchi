@@ -17,6 +17,10 @@ pub struct StatsOptions {
     pub relief_size: usize,
     pub relief_step: f64,
     pub fast: bool,
+    /// T134: отдельная мелкая сетка границ. Шаг обязан делить 32 блока,
+    /// иначе скачок «в пределах 32 блоков» не измеряется точно.
+    pub boundary_size: usize,
+    pub boundary_step: f64,
 }
 impl StatsOptions {
     pub fn parse(args: &[String], base: &RenderOptions) -> Result<Self, String> {
@@ -45,6 +49,19 @@ impl StatsOptions {
         if !span_l.is_finite() || span_l <= 0.0 || !relief_step.is_finite() || relief_step <= 0.0 {
             return Err("--span-l и --relief-step должны быть конечными и > 0".into());
         }
+        let boundary_size = number("--boundary-size", 64.0)?;
+        let boundary_step = number("--boundary-step", 32.0)?;
+        if !boundary_size.is_finite()
+            || boundary_size < 4.0
+            || boundary_size.fract() != 0.0
+            || boundary_size > 8192.0
+            || !boundary_step.is_finite()
+            || boundary_step <= 0.0
+            || boundary_step > 32.0
+            || (32.0 / boundary_step).fract() != 0.0
+        {
+            return Err("--boundary-size: 4…8192; --boundary-step: делитель 32 в (0, 32]".into());
+        }
         let fast = match crate::value(args, "--path").as_deref() {
             Some("reference") => false,
             Some("fast") | None => true,
@@ -57,6 +74,8 @@ impl StatsOptions {
             relief_size: relief_size as usize,
             relief_step,
             fast,
+            boundary_size: boundary_size as usize,
+            boundary_step,
         })
     }
 }
@@ -81,7 +100,235 @@ pub struct HeightStats {
     pub relief_windows: usize,
     pub relief_median: Option<f64>,
     pub flat_windows: usize,
+    pub boundary: BoundaryMetrics,
 }
+/// T134 / 10.1: метрики границ на отдельной сетке с шагом ≤32 блока.
+/// Суша = C≥порога без рек/озёр. Скачок влажности и ветер считаются на парах
+/// ровно через 32 блока по обеим осям. Прямолинейность пока ищет осевые
+/// участки границ длиннее 512 блоков (отклонение 0<16); диагональная лестница
+/// не засчитывается как прямая, поэтому это консервативная нижняя оценка.
+#[derive(Clone, Debug)]
+pub struct BoundaryMetrics {
+    pub size: usize,
+    pub step: f64,
+    pub span_l: f64,
+    pub samples: usize,
+    pub land: usize,
+    pub humidity_jump_pairs: usize,
+    pub humidity_pairs: usize,
+    pub humidity_jump_land: usize,
+    pub wind_max_deg: f64,
+    pub wind_pairs: usize,
+    pub boundary_edges: usize,
+    pub straight_edges: usize,
+    pub thin_land: usize,
+    pub min_strip_blocks: Option<f64>,
+}
+impl BoundaryMetrics {
+    fn empty(size: usize, step: f64, l_blocks: f64) -> Self {
+        Self {
+            size,
+            step,
+            span_l: size as f64 * step / l_blocks,
+            samples: size * size,
+            land: 0,
+            humidity_jump_pairs: 0,
+            humidity_pairs: 0,
+            humidity_jump_land: 0,
+            wind_max_deg: 0.0,
+            wind_pairs: 0,
+            boundary_edges: 0,
+            straight_edges: 0,
+            thin_land: 0,
+            min_strip_blocks: None,
+        }
+    }
+    pub fn humidity_jump_pct(&self) -> f64 {
+        pct(self.humidity_jump_land, self.land)
+    }
+    pub fn straight_pct(&self) -> f64 {
+        pct(self.straight_edges, self.boundary_edges)
+    }
+    pub fn thin_pct(&self) -> f64 {
+        pct(self.thin_land, self.land)
+    }
+    pub fn acceptance_volume(&self) -> bool {
+        self.span_l >= 200.0 && self.step <= 32.0
+    }
+    fn analyze_grid(&mut self, class: &[u8], land: &[bool], jump: &mut [bool]) {
+        let n = self.size;
+        let offset = (32.0 / self.step).round() as usize;
+        let at = |i: usize, j: usize| j * n + i;
+        for j in 0..n {
+            for i in 0..n {
+                let k = at(i, j);
+                if !land[k] {
+                    continue;
+                }
+                self.land += 1;
+                for (di, dj) in [(offset, 0_usize), (0, offset)] {
+                    let ii = i + di;
+                    let jj = j + dj;
+                    if ii >= n || jj >= n {
+                        continue;
+                    }
+                    let q = at(ii, jj);
+                    if !land[q] {
+                        continue;
+                    }
+                    self.humidity_pairs += 1;
+                    let h0 = class[k] % 5;
+                    let h1 = class[q] % 5;
+                    if h0.abs_diff(h1) >= 2 {
+                        self.humidity_jump_pairs += 1;
+                        jump[k] = true;
+                        jump[q] = true;
+                    }
+                }
+            }
+        }
+        self.humidity_jump_land = jump.iter().filter(|&&v| v).count();
+        // Осевые рёбра границ и прямые прогоны >512 блоков. Помечаем сами
+        // рёбра, а не клетки, чтобы доля длины не превышала 100%.
+        let mut h_edge = vec![false; n * n.saturating_sub(1)];
+        let mut v_edge = vec![false; n * n.saturating_sub(1)];
+        for j in 0..n {
+            for i in 0..n.saturating_sub(1) {
+                let a = at(i, j);
+                let b = at(i + 1, j);
+                h_edge[j * (n - 1) + i] = land[a] && land[b] && class[a] != class[b];
+            }
+        }
+        for i in 0..n {
+            for j in 0..n.saturating_sub(1) {
+                let a = at(i, j);
+                let b = at(i, j + 1);
+                v_edge[j * n + i] = land[a] && land[b] && class[a] != class[b];
+            }
+        }
+        self.boundary_edges =
+            h_edge.iter().filter(|&&v| v).count() + v_edge.iter().filter(|&&v| v).count();
+        let pair_h = |k: usize| -> u16 {
+            let j = k / (n - 1);
+            let i = k % (n - 1);
+            let a = at(i, j);
+            let b = at(i + 1, j);
+            u16::from(class[a].min(class[b])) * 25 + u16::from(class[a].max(class[b]))
+        };
+        let pair_v = |k: usize| -> u16 {
+            let j = k / n;
+            let i = k % n;
+            let a = at(i, j);
+            let b = at(i, j + 1);
+            u16::from(class[a].min(class[b])) * 25 + u16::from(class[a].max(class[b]))
+        };
+        let mark_line =
+            |idx: &[usize], edges: &[bool], pair: &dyn Fn(usize) -> u16, straight: &mut [bool]| {
+                let mut start = 0;
+                while start < idx.len() {
+                    let k0 = idx[start];
+                    if !edges[k0] {
+                        start += 1;
+                        continue;
+                    }
+                    let first = pair(k0);
+                    let mut end = start + 1;
+                    while end < idx.len() && edges[idx[end]] && pair(idx[end]) == first {
+                        end += 1;
+                    }
+                    if (end - start) as f64 * self.step > 512.0 {
+                        for &k in &idx[start..end] {
+                            straight[k] = true;
+                        }
+                    }
+                    start = end;
+                }
+            };
+        let mut h_straight = vec![false; h_edge.len()];
+        let mut v_straight = vec![false; v_edge.len()];
+        if n > 1 {
+            // h_edge — вертикальные рёбра между (i,j) и (i+1,j): прямая
+            // вертикальная граница идёт по столбцу i через строки j.
+            for i in 0..n - 1 {
+                let idx: Vec<usize> = (0..n).map(|j| j * (n - 1) + i).collect();
+                mark_line(&idx, &h_edge, &pair_h, &mut h_straight);
+            }
+            // v_edge — горизонтальные рёбра между (i,j) и (i,j+1): прямая
+            // горизонтальная граница идёт по строке j через столбцы i.
+            for j in 0..n - 1 {
+                let idx: Vec<usize> = (0..n).map(|i| j * n + i).collect();
+                mark_line(&idx, &v_edge, &pair_v, &mut v_straight);
+            }
+        }
+        self.straight_edges =
+            h_straight.iter().filter(|&&v| v).count() + v_straight.iter().filter(|&&v| v).count();
+        // Узкие полоски: прогон одного класса между другими сухопутными
+        // классами уже 32 блоков хотя бы по одной оси.
+        let mut thin = vec![false; n * n];
+        for j in 0..n {
+            let mut start = 0;
+            while start < n {
+                let k = at(start, j);
+                if !land[k] {
+                    start += 1;
+                    continue;
+                }
+                let mut end = start + 1;
+                while end < n && land[at(end, j)] && class[at(end, j)] == class[k] {
+                    end += 1;
+                }
+                let width = (end - start) as f64 * self.step;
+                let bounded = start > 0 && end < n && land[at(start - 1, j)] && land[at(end, j)];
+                if bounded {
+                    self.min_strip_blocks =
+                        Some(self.min_strip_blocks.map_or(width, |m| m.min(width)));
+                    if width < 32.0 {
+                        for q in start..end {
+                            thin[at(q, j)] = true;
+                        }
+                    }
+                }
+                start = end;
+            }
+        }
+        for i in 0..n {
+            let mut start = 0;
+            while start < n {
+                let k = at(i, start);
+                if !land[k] {
+                    start += 1;
+                    continue;
+                }
+                let mut end = start + 1;
+                while end < n && land[at(i, end)] && class[at(i, end)] == class[k] {
+                    end += 1;
+                }
+                let width = (end - start) as f64 * self.step;
+                let bounded = start > 0 && end < n && land[at(i, start - 1)] && land[at(i, end)];
+                if bounded {
+                    self.min_strip_blocks =
+                        Some(self.min_strip_blocks.map_or(width, |m| m.min(width)));
+                    if width < 32.0 {
+                        for q in start..end {
+                            thin[at(i, q)] = true;
+                        }
+                    }
+                }
+                start = end;
+            }
+        }
+        self.thin_land = thin.iter().filter(|&&v| v).count();
+    }
+}
+
+fn pct(count: usize, total: usize) -> f64 {
+    if total == 0 {
+        0.0
+    } else {
+        100.0 * count as f64 / total as f64
+    }
+}
+
 impl HeightStats {
     pub fn collect(
         base: &RenderOptions,
@@ -110,6 +357,11 @@ impl HeightStats {
             relief_windows: 0,
             relief_median: None,
             flat_windows: 0,
+            boundary: BoundaryMetrics::empty(
+                opts.boundary_size,
+                opts.boundary_step,
+                base.mode.l_blocks(),
+            ),
         };
         let land_threshold = generator.params().climate.ocean_c_threshold;
         for j in 0..opts.size {
@@ -204,6 +456,64 @@ impl HeightStats {
                 ranges[mid]
             });
         }
+        // T134: отдельная сетка границ. Ветер сравнивается потоково на парах
+        // через 32 блока, чтобы не хранить два f64 на каждый узел большой карты.
+        let bn = opts.boundary_size;
+        let bstep = opts.boundary_step;
+        let boff = (32.0 / bstep).round() as usize;
+        let mut bclass = vec![u8::MAX; bn * bn];
+        let mut bland = vec![false; bn * bn];
+        let mut bjump = vec![false; bn * bn];
+        let mut wind_rows: Vec<Vec<(f64, f64)>> = vec![vec![(0.0, 0.0); bn]; boff + 1];
+        for j in 0..bn {
+            let row = j % (boff + 1);
+            for i in 0..bn {
+                let x = base.center_x + (i as f64 - bn as f64 * 0.5) * bstep;
+                let z = base.center_z + (j as f64 - bn as f64 * 0.5) * bstep;
+                let world = if opts.fast {
+                    generator.world_sample_fast(x, z)
+                } else {
+                    generator.world_sample(x, z)
+                }
+                .ok_or_else(|| format!("нет образца границы в ({x}, {z})"))?;
+                let v = world.vanilla;
+                let h = world.hydrology;
+                let is_land = v.c >= land_threshold
+                    && world.river < 0.5
+                    && h.water < 0.5
+                    && h.r2_deferred < 0.5;
+                let k = j * bn + i;
+                bland[k] = is_land;
+                bclass[k] = world.class.cell.t * 5 + world.class.cell.h;
+                let w = world.climate.wind;
+                let wl = w.len();
+                let dir = if wl > 1e-12 {
+                    (w.x / wl, w.z / wl)
+                } else {
+                    (0.0, 0.0)
+                };
+                wind_rows[row][i] = dir;
+                if i >= boff {
+                    let prev = wind_rows[row][i - boff];
+                    if prev != (0.0, 0.0) && dir != (0.0, 0.0) {
+                        let dot = (prev.0 * dir.0 + prev.1 * dir.1).clamp(-1.0, 1.0);
+                        let deg = dot.acos() * 180.0 / std::f64::consts::PI;
+                        out.boundary.wind_max_deg = out.boundary.wind_max_deg.max(deg);
+                        out.boundary.wind_pairs += 1;
+                    }
+                }
+                if j >= boff {
+                    let prev = wind_rows[(j - boff) % (boff + 1)][i];
+                    if prev != (0.0, 0.0) && dir != (0.0, 0.0) {
+                        let dot = (prev.0 * dir.0 + prev.1 * dir.1).clamp(-1.0, 1.0);
+                        let deg = dot.acos() * 180.0 / std::f64::consts::PI;
+                        out.boundary.wind_max_deg = out.boundary.wind_max_deg.max(deg);
+                        out.boundary.wind_pairs += 1;
+                    }
+                }
+            }
+        }
+        out.boundary.analyze_grid(&bclass, &bland, &mut bjump);
         Ok(out)
     }
     fn pct(&self, count: usize, total: usize) -> f64 {
@@ -239,7 +549,7 @@ impl HeightStats {
     }
     pub fn compact(&self) -> String {
         format!(
-            "{:>10} {:<10} {:7.2} {:7.2} {:7.2} {:7.2} {:7.2} {:9.2} {:7.2} {:6}/{}",
+            "{:>10} {:<10} {:7.2} {:7.2} {:7.2} {:7.2} {:7.2} {:9.2} {:7.2} {:6}/{} {:7.2} {:7.2} {:8.3} {:7.2}",
             self.seed,
             self.mode.as_str(),
             self.flooded(),
@@ -250,7 +560,11 @@ impl HeightStats {
             self.relief_median.unwrap_or(f64::NAN),
             self.valley_pct(),
             self.relief_windows,
-            self.samples
+            self.samples,
+            self.boundary.humidity_jump_pct(),
+            self.boundary.straight_pct(),
+            self.boundary.wind_max_deg,
+            self.boundary.thin_pct()
         )
     }
     pub fn text(&self, base: &RenderOptions, opts: &StatsOptions, model: &HeightModel) -> String {
@@ -299,6 +613,29 @@ impl HeightStats {
             deferred = self.pct(self.deferred_samples, self.samples),
             gallery = self.pct(self.gallery_samples, self.samples),
         );
+        let b = &self.boundary;
+        out.push_str(&format!(
+            "T134 границы: сетка {bn}×{bn} ({bsamples} точек), шаг {bs:.3} блока, область {span:.3}×{span:.3} L, суша {bl}\n\
+             скачок h≥2 на 32 блоках {jump:.2}% суши ({jp}/{pairs} пар), ветер max {wind:.3}°/32 блока ({wp} пар)\n\
+             прямолинейность осевых границ >512 блоков {straight:.2}% ({se}/{be} рёбер), полоски <32 блоков {thin:.2}% суши, min {minstrip}\n\
+             объём приёмки 10.1 (≥200×200 L, шаг≤32): {accept}\n",
+            bn = b.size,
+            bsamples = b.samples,
+            bs = b.step,
+            span = b.span_l,
+            bl = b.land,
+            jump = b.humidity_jump_pct(),
+            jp = b.humidity_jump_pairs,
+            pairs = b.humidity_pairs,
+            wind = b.wind_max_deg,
+            wp = b.wind_pairs,
+            straight = b.straight_pct(),
+            se = b.straight_edges,
+            be = b.boundary_edges,
+            thin = b.thin_pct(),
+            minstrip = b.min_strip_blocks.map_or("нет".to_string(), |v| format!("{v:.1}")),
+            accept = if b.acceptance_volume() { "да" } else { "НЕТ (малый скан)" },
+        ));
         if model.is_synthetic() {
             out.push_str(
                 "WARNING: синтетический сплайн, НЕ ваниль. Для приёмки нужен --game-data.\n",
@@ -312,7 +649,7 @@ impl HeightStats {
     }
     pub fn json(&self, base: &RenderOptions, opts: &StatsOptions, model: &HeightModel) -> String {
         format!(
-            "{{\n  \"seed\": {}, \"mode\": {}, \"version\": {}, \"path\": {},\n  \"height_source\": {}, \"height_data_hash\": \"{:016x}\", \"synthetic\": {},\n  \"approximation\": \"63.52 + 128*offset; no factor/jaggedness/3D noise\",\n  \"span_l\": {}, \"size\": {}, \"samples\": {}, \"land_samples\": {},\n  \"flooded_land_pct\": {}, \"hyps_pct\": {:?}, \"erosion_pct\": {:?},\n  \"valley_pct\": {}, \"relief_step\": {}, \"relief_windows\": {}, \"relief_median\": {}, \"flat_windows_pct\": {},\n  \"river_samples\": {}, \"river_water_pct\": {}, \"gallery_samples\": {}, \"gallery_pct\": {}\n}}\n",
+            "{{\n  \"seed\": {}, \"mode\": {}, \"version\": {}, \"path\": {},\n  \"height_source\": {}, \"height_data_hash\": \"{:016x}\", \"synthetic\": {},\n  \"approximation\": \"63.52 + 128*offset; no factor/jaggedness/3D noise\",\n  \"span_l\": {}, \"size\": {}, \"samples\": {}, \"land_samples\": {},\n  \"flooded_land_pct\": {}, \"hyps_pct\": {:?}, \"erosion_pct\": {:?},\n  \"valley_pct\": {}, \"relief_step\": {}, \"relief_windows\": {}, \"relief_median\": {}, \"flat_windows_pct\": {},\n  \"river_samples\": {}, \"river_water_pct\": {}, \"gallery_samples\": {}, \"gallery_pct\": {},\n  \"boundary\": {{\"size\": {}, \"step\": {}, \"span_l\": {}, \"land\": {}, \"humidity_jump_pct\": {}, \"humidity_jump_pairs\": {}, \"humidity_pairs\": {}, \"wind_max_deg\": {}, \"wind_pairs\": {}, \"straight_pct\": {}, \"straight_edges\": {}, \"boundary_edges\": {}, \"thin_pct\": {}, \"min_strip_blocks\": {}, \"acceptance_volume\": {}}}\n}}\n",
             self.seed,
             crate::json::quote(self.mode.as_str()),
             crate::json::quote(base.version.as_str()),
@@ -337,11 +674,28 @@ impl HeightStats {
             self.river_water_pct(),
             self.gallery_samples,
             self.pct(self.gallery_samples, self.samples),
+            self.boundary.size,
+            self.boundary.step,
+            self.boundary.span_l,
+            self.boundary.land,
+            self.boundary.humidity_jump_pct(),
+            self.boundary.humidity_jump_pairs,
+            self.boundary.humidity_pairs,
+            self.boundary.wind_max_deg,
+            self.boundary.wind_pairs,
+            self.boundary.straight_pct(),
+            self.boundary.straight_edges,
+            self.boundary.boundary_edges,
+            self.boundary.thin_pct(),
+            self.boundary
+                .min_strip_blocks
+                .map_or("null".to_string(), |v| v.to_string()),
+            self.boundary.acceptance_volume(),
         )
     }
 }
 
-pub const COMPACT_HEADER: &str = "      сид режим        flood%     E4%    E23%    E01%    E56%   relief128 valley% windows/samples";
+pub const COMPACT_HEADER: &str = "      сид режим        flood%     E4%    E23%    E01%    E56%   relief128 valley% windows/samples  hjump% straight%   wind°   thin%";
 
 #[cfg(test)]
 mod tests {
@@ -366,6 +720,8 @@ mod tests {
             relief_size: 8,
             relief_step: 32.0,
             fast: true,
+            boundary_size: 8,
+            boundary_step: 32.0,
         };
         let model = HeightModel::load(HeightSource::Synthetic).unwrap();
         let stats = HeightStats::collect(&base, &opts, &model).unwrap();
@@ -373,5 +729,60 @@ mod tests {
         assert!(stats.flooded().is_finite());
         let value = crate::json::parse(&stats.json(&base, &opts, &model)).unwrap();
         assert_eq!(value.get("synthetic"), Some(&crate::json::Json::Bool(true)));
+    }
+}
+
+#[cfg(test)]
+mod boundary_tests {
+    use super::*;
+
+    #[test]
+    fn axis_metrics_detect_jump_straight_run_and_thin_strip() {
+        let n = 40;
+        let step = 16.0;
+        let mut class = vec![0_u8; n * n];
+        let mut land = vec![true; n * n];
+        // Вертикальная граница h0/h2 длиннее 512 блоков и узкая полоска h1
+        // шириной 16 блоков между ними; скачок h≥2 через 32 блока есть.
+        for j in 0..n {
+            for i in 0..n {
+                class[j * n + i] = if i < 20 {
+                    0
+                } else if i == 20 {
+                    1
+                } else {
+                    2
+                };
+            }
+        }
+        land[0] = false;
+        let mut m = BoundaryMetrics::empty(n, step, 250.0);
+        let mut jump = vec![false; n * n];
+        m.analyze_grid(&class, &land, &mut jump);
+        assert!(m.humidity_jump_pairs > 0);
+        assert!(m.humidity_jump_pct() > 0.0);
+        assert!(m.boundary_edges > 0);
+        assert!(
+            m.straight_pct() > 90.0,
+            "осевая граница должна быть прямой: {}",
+            m.straight_pct()
+        );
+        assert!(m.thin_pct() > 0.0);
+        assert_eq!(m.min_strip_blocks, Some(16.0));
+        assert!(!m.acceptance_volume());
+    }
+
+    #[test]
+    fn no_land_means_zero_percentages_not_nan() {
+        let n = 8;
+        let class = vec![0_u8; n * n];
+        let land = vec![false; n * n];
+        let mut m = BoundaryMetrics::empty(n, 32.0, 250.0);
+        let mut jump = vec![false; n * n];
+        m.analyze_grid(&class, &land, &mut jump);
+        assert_eq!(m.humidity_jump_pct(), 0.0);
+        assert_eq!(m.straight_pct(), 0.0);
+        assert_eq!(m.thin_pct(), 0.0);
+        assert!(m.min_strip_blocks.is_none());
     }
 }
