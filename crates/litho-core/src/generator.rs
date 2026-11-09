@@ -20,6 +20,7 @@ use crate::math::Vec2;
 use crate::mode::Mode;
 use crate::params::Params;
 use crate::plates::{Plate, PlateSample, plate_query, plates_near, warp_jacobian};
+use crate::relief::{self, ReliefSample};
 use crate::rivers::{RiverCache, local_r, traced_r};
 use crate::seed::from_world_seed;
 use crate::spawn::{self, SpawnQuality};
@@ -140,6 +141,52 @@ impl Generator {
         let point = self.macro_point(x, z);
         let sample = plate_query(point, self.seed, &self.params)?;
         Some(crust_from_sample(point, &sample, self.seed, &self.params))
+    }
+
+    /// Потенциал рельефа T120 в блочной точке. Ошибки сети стока не
+    /// маскируются под нулевую котловину; игровой `field` пока не меняется.
+    pub fn try_relief_sample(&self, x: f64, z: f64) -> Result<Option<ReliefSample>, RiverNetError> {
+        relief::validate(&self.params)?;
+        let point = self.macro_point(x, z);
+        let Some(plate) = plate_query(point, self.seed, &self.params) else {
+            return Ok(None);
+        };
+        let crust = crust_from_sample(point, &plate, self.seed, &self.params);
+        let depth = self.relief_basin_depth(point, &plate)?;
+        Ok(Some(relief::sample(
+            &plate,
+            &crust,
+            depth,
+            self.seed,
+            &self.params,
+        )))
+    }
+
+    /// Максимум глубины впадин по плите, чьи узлы могут попасть в носитель
+    /// ядра. Фильтр полупространства Вороного отсекает заведомо далёкие сети.
+    fn relief_basin_depth(&self, point: Vec2, nearest: &PlateSample) -> Result<f64, RiverNetError> {
+        let step = self.params.drainage.step_l;
+        let radius = 2.0 * step;
+        let warp_bound = self.params.plates.warp_amplitude_l.abs() * crate::math::SQRT_2;
+        let reach = radius + 4.0 * step + 2.0 * warp_bound;
+        let mut depth: f64 = 0.0;
+        for plate in plates_near(point, radius, self.seed, &self.params) {
+            if plate.id != nearest.a.id {
+                let delta = plate.seed_pos.sub(nearest.a.seed_pos);
+                let separation = delta.len();
+                if separation > 0.0 {
+                    let beta = (nearest.q.dist2(plate.seed_pos)
+                        - nearest.q.dist2(nearest.a.seed_pos))
+                        / (2.0 * separation);
+                    if beta > reach {
+                        continue;
+                    }
+                }
+            }
+            let net = self.drainage_network(&plate)?;
+            depth = depth.max(net.depression_depth_km(point));
+        }
+        Ok(depth)
     }
 
     /// Диагностика искажения домена (слой `jacobian`).

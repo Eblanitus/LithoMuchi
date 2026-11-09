@@ -396,6 +396,133 @@ pub struct HydrologyParams {
     pub gallery_h_gain: f64,
 }
 
+/// T120: потенциал рельефа A и отрицательные формы (§6.2). Стартовые числа
+/// плана; подбор гипсометрии остаётся T123. В canonical_text только v1-dev.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ReliefParams {
+    pub foothill_m_lo: f64,
+    pub foothill_m_hi: f64,
+    pub foothill_fade: f64,
+    pub foothill_a_min: f64,
+    pub foothill_a_max: f64,
+    pub paleo_lambda_l: f64,
+    /// Полуширина полосы палеошва в единицах гребневого шума.
+    pub paleo_band_lo: f64,
+    pub paleo_band_hi: f64,
+    pub paleo_a_min: f64,
+    pub paleo_a_max: f64,
+    /// Расстояние до ближайшей границы плиты, L: дальше начинается «старая» кора.
+    pub active_boundary_lo: f64,
+    pub active_boundary_hi: f64,
+    pub land_e_fade_km: f64,
+    pub continental_chi_lo: f64,
+    pub continental_chi_hi: f64,
+    pub craton_iota_lo: f64,
+    pub craton_iota_hi: f64,
+    pub craton_a_min: f64,
+    pub craton_a_max: f64,
+    /// Порог |∇Pl| по макро-координате, 1/L.
+    pub escarpment_gradient_lo: f64,
+    pub escarpment_gradient_hi: f64,
+    pub escarpment_a: f64,
+    pub volcanic_hotspot_lo: f64,
+    pub volcanic_hotspot_hi: f64,
+    pub volcanic_a_min: f64,
+    pub volcanic_a_max: f64,
+    pub hills_lambda_l: f64,
+    pub hills_noise_lo: f64,
+    pub hills_noise_hi: f64,
+    pub hills_a: f64,
+    pub basin_lambda_l: f64,
+    pub basin_noise_lo: f64,
+    pub basin_noise_hi: f64,
+    /// Глубина впадины T110, при которой шумовой сигнал заменяется фактическим.
+    pub basin_depth_km: f64,
+    /// Максимальный отрицательный вклад котловины в A.
+    pub basin_strength: f64,
+    /// Доля полуширины рифта, внутри которой дно считается ровным.
+    pub rift_floor_factor: f64,
+    pub rift_flat_strength: f64,
+    pub rift_floor_a: f64,
+    pub rift_shoulder_offset_factor: f64,
+    pub rift_shoulder_width_factor: f64,
+    pub rift_shoulder_a: f64,
+}
+
+impl ReliefParams {
+    pub fn validate(&self) -> Result<(), &'static str> {
+        let positive = [
+            self.foothill_fade,
+            self.paleo_lambda_l,
+            self.hills_lambda_l,
+            self.basin_lambda_l,
+            self.basin_depth_km,
+            self.land_e_fade_km,
+            self.rift_floor_factor,
+            self.rift_shoulder_offset_factor,
+            self.rift_shoulder_width_factor,
+        ];
+        let unit = [
+            self.foothill_a_min,
+            self.foothill_a_max,
+            self.paleo_a_min,
+            self.paleo_a_max,
+            self.craton_a_min,
+            self.craton_a_max,
+            self.escarpment_a,
+            self.volcanic_a_min,
+            self.volcanic_a_max,
+            self.hills_a,
+            self.basin_strength,
+            self.rift_flat_strength,
+            self.rift_floor_a,
+            self.rift_shoulder_a,
+        ];
+        let ordered = [
+            (self.foothill_m_lo, self.foothill_m_hi),
+            (self.paleo_band_lo, self.paleo_band_hi),
+            (self.paleo_a_min, self.paleo_a_max),
+            (self.active_boundary_lo, self.active_boundary_hi),
+            (self.continental_chi_lo, self.continental_chi_hi),
+            (self.craton_iota_lo, self.craton_iota_hi),
+            (self.craton_a_min, self.craton_a_max),
+            (self.escarpment_gradient_lo, self.escarpment_gradient_hi),
+            (self.volcanic_hotspot_lo, self.volcanic_hotspot_hi),
+            (self.hills_noise_lo, self.hills_noise_hi),
+            (self.basin_noise_lo, self.basin_noise_hi),
+            (self.foothill_a_min, self.foothill_a_max),
+        ];
+        if positive.iter().any(|v| !v.is_finite() || *v <= 0.0) {
+            return Err("масштабы relief должны быть положительными");
+        }
+        if unit
+            .iter()
+            .any(|v| !v.is_finite() || !(0.0..=1.0).contains(v))
+        {
+            return Err("амплитуды relief должны лежать в [0, 1]");
+        }
+        if ordered
+            .iter()
+            .any(|(lo, hi)| !lo.is_finite() || !hi.is_finite() || lo >= hi)
+        {
+            return Err("пороги relief должны быть конечны и возрастать");
+        }
+        if self.foothill_m_lo < 0.0 || self.foothill_m_hi > 1.0 {
+            return Err("предгорья должны лежать внутри M ∈ [0, 1]");
+        }
+        if self.foothill_fade > 0.5 * (self.foothill_m_hi - self.foothill_m_lo) {
+            return Err("сглаживание предгорий шире самой полосы M");
+        }
+        if self.active_boundary_lo < 0.0 || self.craton_iota_lo < 0.0 {
+            return Err("расстояния relief не могут быть отрицательными");
+        }
+        if self.continental_chi_lo < 0.0 || self.continental_chi_hi > 1.0 {
+            return Err("порог материковой коры должен лежать в [0, 1]");
+        }
+        Ok(())
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct LavaParams {
     pub width_blocks: f64,
@@ -646,6 +773,8 @@ pub struct Params {
     pub channels: ChannelParams,
     pub lakes: LakeParams,
     pub hydrology: HydrologyParams,
+    /// Потенциал рельефа T120, включён только в `v1-dev`.
+    pub relief: ReliefParams,
     pub lava: LavaParams,
     pub spawn: SpawnParams,
     pub lattice: LatticeParams,
@@ -901,6 +1030,49 @@ impl Params {
                 gallery_dry_r_lo: 1.0,
                 gallery_dry_r_hi: 2.0,
                 gallery_h_gain: 0.65,
+            },
+            relief: ReliefParams {
+                foothill_m_lo: 0.05,
+                foothill_m_hi: 0.5,
+                foothill_fade: 0.1,
+                foothill_a_min: 0.5,
+                foothill_a_max: 0.8,
+                paleo_lambda_l: 8.0,
+                paleo_band_lo: 0.0,
+                paleo_band_hi: 0.15,
+                paleo_a_min: 0.4,
+                paleo_a_max: 0.6,
+                active_boundary_lo: 0.5,
+                active_boundary_hi: 2.0,
+                land_e_fade_km: 0.05,
+                continental_chi_lo: 0.5,
+                continental_chi_hi: 0.8,
+                craton_iota_lo: 0.3,
+                craton_iota_hi: 0.8,
+                craton_a_min: 0.05,
+                craton_a_max: 0.2,
+                escarpment_gradient_lo: 0.5,
+                escarpment_gradient_hi: 2.0,
+                escarpment_a: 0.75,
+                volcanic_hotspot_lo: 0.2,
+                volcanic_hotspot_hi: 0.5,
+                volcanic_a_min: 0.5,
+                volcanic_a_max: 0.8,
+                hills_lambda_l: 1.5,
+                hills_noise_lo: -0.5,
+                hills_noise_hi: 1.5,
+                hills_a: 0.5,
+                basin_lambda_l: 6.0,
+                basin_noise_lo: 0.5,
+                basin_noise_hi: 1.5,
+                basin_depth_km: 0.1,
+                basin_strength: 0.15,
+                rift_floor_factor: 0.7,
+                rift_flat_strength: 0.85,
+                rift_floor_a: 0.05,
+                rift_shoulder_offset_factor: 1.6,
+                rift_shoulder_width_factor: 0.5,
+                rift_shoulder_a: 0.65,
             },
             lava: LavaParams {
                 width_blocks: block.lava_width_blocks,
@@ -1361,6 +1533,58 @@ impl Params {
                 ("hydrology.gallery_dry_r_lo", hy.gallery_dry_r_lo),
                 ("hydrology.gallery_dry_r_hi", hy.gallery_dry_r_hi),
                 ("hydrology.gallery_h_gain", hy.gallery_h_gain),
+            ] {
+                writeln!(w, "{name}={value:?}").unwrap();
+            }
+            let r = &self.relief;
+            for (name, value) in [
+                ("relief.foothill_m_lo", r.foothill_m_lo),
+                ("relief.foothill_m_hi", r.foothill_m_hi),
+                ("relief.foothill_fade", r.foothill_fade),
+                ("relief.foothill_a_min", r.foothill_a_min),
+                ("relief.foothill_a_max", r.foothill_a_max),
+                ("relief.paleo_lambda_l", r.paleo_lambda_l),
+                ("relief.paleo_band_lo", r.paleo_band_lo),
+                ("relief.paleo_band_hi", r.paleo_band_hi),
+                ("relief.paleo_a_min", r.paleo_a_min),
+                ("relief.paleo_a_max", r.paleo_a_max),
+                ("relief.active_boundary_lo", r.active_boundary_lo),
+                ("relief.active_boundary_hi", r.active_boundary_hi),
+                ("relief.land_e_fade_km", r.land_e_fade_km),
+                ("relief.continental_chi_lo", r.continental_chi_lo),
+                ("relief.continental_chi_hi", r.continental_chi_hi),
+                ("relief.craton_iota_lo", r.craton_iota_lo),
+                ("relief.craton_iota_hi", r.craton_iota_hi),
+                ("relief.craton_a_min", r.craton_a_min),
+                ("relief.craton_a_max", r.craton_a_max),
+                ("relief.escarpment_gradient_lo", r.escarpment_gradient_lo),
+                ("relief.escarpment_gradient_hi", r.escarpment_gradient_hi),
+                ("relief.escarpment_a", r.escarpment_a),
+                ("relief.volcanic_hotspot_lo", r.volcanic_hotspot_lo),
+                ("relief.volcanic_hotspot_hi", r.volcanic_hotspot_hi),
+                ("relief.volcanic_a_min", r.volcanic_a_min),
+                ("relief.volcanic_a_max", r.volcanic_a_max),
+                ("relief.hills_lambda_l", r.hills_lambda_l),
+                ("relief.hills_noise_lo", r.hills_noise_lo),
+                ("relief.hills_noise_hi", r.hills_noise_hi),
+                ("relief.hills_a", r.hills_a),
+                ("relief.basin_lambda_l", r.basin_lambda_l),
+                ("relief.basin_noise_lo", r.basin_noise_lo),
+                ("relief.basin_noise_hi", r.basin_noise_hi),
+                ("relief.basin_depth_km", r.basin_depth_km),
+                ("relief.basin_strength", r.basin_strength),
+                ("relief.rift_floor_factor", r.rift_floor_factor),
+                ("relief.rift_flat_strength", r.rift_flat_strength),
+                ("relief.rift_floor_a", r.rift_floor_a),
+                (
+                    "relief.rift_shoulder_offset_factor",
+                    r.rift_shoulder_offset_factor,
+                ),
+                (
+                    "relief.rift_shoulder_width_factor",
+                    r.rift_shoulder_width_factor,
+                ),
+                ("relief.rift_shoulder_a", r.rift_shoulder_a),
             ] {
                 writeln!(w, "{name}={value:?}").unwrap();
             }

@@ -138,7 +138,7 @@ fn cmd_render(args: &[String]) -> Result<(), String> {
         Some(text) if text == "all" => LAYERS
             .iter()
             .filter(|layer| {
-                !matches!(**layer, "channels" | "lakes" | "hydrology")
+                !matches!(**layer, "channels" | "lakes" | "hydrology" | "relief")
                     || opts.version.is_water_relief_dev()
             })
             .map(|layer| (*layer).to_string())
@@ -1047,7 +1047,7 @@ fn usage() -> &'static str {
        --bpp N, --path reference|fast,\n\
        --layers plates|all|список через запятую, --out ПАПКА\n\
      Слои: шум/плиты/кора, климат, зоны, биомы, пять ванильных чисел,\n\
-       реки, лава и точка появления (rivers,lava,spawn); channels/lakes — T112–T114, hydrology — T115/T116 v1-dev.\n\
+       реки, лава и точка появления (rivers,lava,spawn); channels/lakes — T112–T114, hydrology — T115/T116, relief — T120 v1-dev.\n\
      T100: --game-data ПУТЬ (распакованные данные игры) или --synthetic-height.\n\
        stats: --span-l 200 --size 64 --relief-size 32 --relief-step 32 --json.\n\
        По умолчанию статистика высоты идёт быстрым путём; --path reference переключает.\n\

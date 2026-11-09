@@ -32,7 +32,7 @@ pub const CLIMATE_LAYERS: [&str; 10] = [
     "hydrology",
 ];
 
-pub const LAYERS: [&str; 24] = [
+pub const LAYERS: [&str; 25] = [
     "noise",
     "warp",
     "plates",
@@ -41,6 +41,7 @@ pub const LAYERS: [&str; 24] = [
     "hash",
     "crust",
     "height",
+    "relief",
     "mpi",
     "poles",
     "temp",
@@ -152,9 +153,12 @@ pub fn render_layer_with_height(
     if layer == "vanilla-height" && height.is_none() {
         return Err("vanilla-height требует --game-data или --synthetic-height".into());
     }
-    if matches!(layer, "channels" | "lakes" | "hydrology") && !opts.version.is_water_relief_dev() {
+    if matches!(layer, "channels" | "lakes" | "hydrology" | "relief")
+        && !opts.version.is_water_relief_dev()
+    {
         return Err(
-            "channels/lakes/hydrology — диагностика T112–T115 только для --version v1-dev".into(),
+            "channels/lakes/hydrology/relief — диагностика T112–T120 только для --version v1-dev"
+                .into(),
         );
     }
     let generator =
@@ -196,6 +200,13 @@ pub fn render_layer_with_height(
                 },
                 "height" => match generator.crust_sample(x, z) {
                     Some(s) => palette::hypsometric(s.e_km),
+                    None => [0, 0, 0],
+                },
+                "relief" => match generator
+                    .try_relief_sample(x, z)
+                    .map_err(|error| error.to_string())?
+                {
+                    Some(r) => palette::heat(r.a),
                     None => [0, 0, 0],
                 },
                 "mpi" => match generator.crust_sample(x, z) {

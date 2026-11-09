@@ -12,7 +12,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 use crate::channel::ChannelNetwork;
 use crate::hash::unit;
 use crate::lake::LakeNetwork;
-use crate::math::Vec2;
+use crate::math::{Vec2, smoothstep};
 use crate::params::Params;
 use crate::plates::{Plate, plate_query};
 use crate::runoff::{ClimateGrid, Runoff, RunoffClimate};
@@ -129,6 +129,8 @@ pub struct DrainageNode {
 #[derive(Clone, Debug, PartialEq)]
 pub struct RiverNet {
     plate_id: u64,
+    /// Шаг решётки нужен компактному запросу глубины впадины T120.
+    step_l: f64,
     nodes: Vec<DrainageNode>,
     depressions: Vec<Depression>,
     runoff: Runoff,
@@ -189,6 +191,7 @@ impl RiverNet {
         let lakes = LakeNetwork::build(plate.id, &nodes, &depressions, &runoff, params)?;
         let net = Self {
             plate_id: plate.id,
+            step_l: p.step_l,
             nodes,
             depressions,
             runoff,
@@ -205,6 +208,41 @@ impl RiverNet {
 
     pub fn nodes(&self) -> &[DrainageNode] {
         &self.nodes
+    }
+
+    /// T120: непрерывная глубина впадины `filled_km - route_km` в точке.
+    /// Узлы отсортированы по клетке; ядро с компактным носителем 2h не даёт
+    /// скачка при смене набора соседних узлов и не требует новой решётки.
+    pub fn depression_depth_km(&self, point: Vec2) -> f64 {
+        if !point.x.is_finite() || !point.z.is_finite() || self.step_l <= 0.0 {
+            return 0.0;
+        }
+        let h = self.step_l;
+        let i = (point.x / h).floor() as i64;
+        let j = (point.z / h).floor() as i64;
+        let cutoff = 2.0 * h;
+        let mut sum = 0.0;
+        let mut weight = 0.0;
+        for di in -2..=2 {
+            for dj in -2..=2 {
+                let Some(cell) = i.checked_add(di).zip(j.checked_add(dj)) else {
+                    continue;
+                };
+                let Ok(k) = self.nodes.binary_search_by_key(&cell, |node| node.cell) else {
+                    continue;
+                };
+                let node = &self.nodes[k];
+                let d = point.sub(node.point).len();
+                let w = 1.0 - smoothstep(0.0, cutoff, d);
+                if w <= 0.0 {
+                    continue;
+                }
+                let depth = (node.filled_km - node.route_km).max(0.0);
+                sum += w * depth;
+                weight += w;
+            }
+        }
+        if weight > 0.0 { sum / weight } else { 0.0 }
     }
 
     pub fn depressions(&self) -> &[Depression] {
@@ -701,6 +739,7 @@ mod tests {
         let lakes = LakeNetwork::build(7, &nodes, &depressions, &runoff, &params).unwrap();
         RiverNet {
             plate_id: 7,
+            step_l: params.drainage.step_l,
             nodes,
             depressions,
             runoff,
@@ -761,6 +800,19 @@ mod tests {
         assert_eq!(depressions.len(), 1);
         assert_eq!(depressions[0].kind, DepressionKind::Closed);
         assert_eq!(depressions[0].node_count, 4);
+    }
+
+    #[test]
+    fn depression_depth_query_is_compact_and_continuous() {
+        let mut net = tiny_net();
+        net.step_l = 1.0;
+        net.nodes[1].filled_km = net.nodes[1].route_km + 0.5;
+        let point = Vec2::new(1.0, 0.0);
+        let depth = net.depression_depth_km(point);
+        assert!(depth > 0.0 && depth <= 0.5);
+        assert_eq!(net.depression_depth_km(Vec2::new(10.0, 10.0)), 0.0);
+        let shifted = net.depression_depth_km(point.add(Vec2::new(1e-6, 0.0)));
+        assert!((depth - shifted).abs() < 1e-5);
     }
 
     #[test]

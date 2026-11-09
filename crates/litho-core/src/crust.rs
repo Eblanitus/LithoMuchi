@@ -30,10 +30,16 @@ pub struct CrustSample {
     pub mountain: f64,
     /// «Плато» 0…1.
     pub plateau: f64,
+    /// T120: оценка |∇Pl| по знаковым профилям плато, 1/L. Сумма модулей
+    /// вкладов B/C консервативна и не зависит от порядка соседей.
+    pub plateau_gradient: f64,
     /// Приближённое расстояние вглубь от берега, L.
     pub iota_l: f64,
     /// Веса k1…k7 у ближайших границ (для отладки и будущих слоёв).
     pub boundary_weights: [f64; 7],
+    /// T120: непрерывная сумма весов рифта k5 по границам B/C. В отличие от
+    /// `boundary_weights[4]` не скачет при смене ближайшего соседа на стыке.
+    pub rift_weight: f64,
     /// Доля материковой коры χ в точке (из того же κ, что и высота).
     pub chi: f64,
     /// Разложение высоты по физическим вкладам, км (Д-022).
@@ -183,6 +189,26 @@ fn plateau_shape(sigma_l: f64, w_col_l: f64) -> f64 {
         * (1.0 - smoothstep(1.2 * w_col_l, 3.5 * w_col_l, sigma_l))
 }
 
+/// Производная гладкой ступеньки по её аргументу. Нужна только диагностике
+/// уступов T120; на значения высоты v0 не влияет.
+fn smoothstep_derivative(lo: f64, hi: f64, x: f64) -> f64 {
+    if hi <= lo || x <= lo || x >= hi {
+        return 0.0;
+    }
+    let t = (x - lo) / (hi - lo);
+    6.0 * t * (1.0 - t) / (hi - lo)
+}
+
+/// |dPl/dσ| для одного профиля столкновения. Расстояние до границы меняется с
+/// единичным градиентом по макро-координате, поэтому это оценка |∇Pl|.
+fn plateau_shape_gradient(sigma_l: f64, w_col_l: f64) -> f64 {
+    let rise = smoothstep(-w_col_l, 0.5 * w_col_l, sigma_l);
+    let fall = smoothstep(1.2 * w_col_l, 3.5 * w_col_l, sigma_l);
+    let d_rise = smoothstep_derivative(-w_col_l, 0.5 * w_col_l, sigma_l);
+    let d_fall = smoothstep_derivative(1.2 * w_col_l, 3.5 * w_col_l, sigma_l);
+    (d_rise * (1.0 - fall) - rise * d_fall).abs()
+}
+
 /// Знаковое расстояние σ до границы, привязанное к **паре** плит, а не к
 /// ближайшей плите (Д-022). `d_l` из `plate_query` неотрицателен: при смене
 /// A↔B знак терялся, а вместе с ним переворачивались все профили U2/U3/U6 —
@@ -220,6 +246,8 @@ struct BoundaryContrib {
     u: f64,
     positive: f64,
     plateau: f64,
+    plateau_gradient: f64,
+    rift_weight: f64,
     k7_gauss: f64,
     sigma_l: f64,
     upper: bool,
@@ -231,6 +259,8 @@ impl BoundaryContrib {
             u: self.u + other.u,
             positive: self.positive + other.positive,
             plateau: self.plateau + other.plateau,
+            plateau_gradient: self.plateau_gradient + other.plateau_gradient,
+            rift_weight: self.rift_weight + other.rift_weight,
             k7_gauss: self.k7_gauss + other.k7_gauss,
             sigma_l: self.sigma_l,
             upper: self.upper,
@@ -322,6 +352,8 @@ fn boundary_contrib(
         u: weight * u,
         positive: weight * positive,
         plateau: weight * k[0] * plateau_shape(sigma_l, c.w_col_l),
+        plateau_gradient: weight * k[0] * plateau_shape_gradient(sigma_l, c.w_col_l),
+        rift_weight: weight * k[4],
         k7_gauss: weight * k[6] * gauss(d_l, c.mountain_edge_l),
         sigma_l,
         upper: sigma_l > 0.0,
@@ -487,8 +519,10 @@ pub fn crust_from_sample(
         e_km,
         mountain,
         plateau: clamp01(bc.plateau),
+        plateau_gradient: bc.plateau_gradient,
         iota_l,
         boundary_weights: weights,
+        rift_weight: bc.rift_weight,
         chi,
         e_base_km,
         boundary_u_km: bc.u,

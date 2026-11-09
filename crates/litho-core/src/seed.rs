@@ -85,6 +85,10 @@ impl Default for CellRng {
 pub const SALT_CHANNEL_MEANDER: &str = "channels.meander";
 /// T114: число и веер рукавов дельты; не меняет меандр T112.
 pub const SALT_CHANNEL_DELTA: &str = "channels.delta";
+// Э3.5 / T120: формы рельефа. Ни одна соль v0 не меняется.
+pub const SALT_RELIEF_PALEO: &str = "relief.paleosuture";
+pub const SALT_RELIEF_HILLS: &str = "relief.hills";
+pub const SALT_RELIEF_BASIN: &str = "relief.basin";
 
 #[cfg(test)]
 mod tests {
