@@ -930,8 +930,8 @@ mod tests {
 
     #[test]
     fn t116_gallery_forest_reaches_a_real_dry_corridor() {
-        // T132: коридор найден заново после перевалов в хребтах (сид 42).
-        let (x, z) = (-1600.732711869, 3452.146883319);
+        // T133: коридор найден заново после двухмасштабного дрожания (сид 42).
+        let (x, z) = (-1850.723375787, -12623.990320330);
         let g = Generator::new(42, Mode::Gameplay, GenVersion::V1Dev).unwrap();
         let fast = g.sample(x, z).unwrap();
         let reference = g.sample_reference(x, z).unwrap();

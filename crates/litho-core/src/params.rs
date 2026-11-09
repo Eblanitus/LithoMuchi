@@ -927,6 +927,14 @@ pub struct BoundaryParams {
     pub pass_lambda_l: f64,
     pub pass_octaves: usize,
     pub pass_gain: f64,
+    /// T133 / Б5: второй, крупный масштаб дрожания классификации.
+    /// Амплитуды наследуют σ из `block.jitter_*` и умножаются на factor.
+    pub jitter_coarse_lambda_blocks: f64,
+    pub jitter_coarse_sigma_factor: f64,
+    /// T133 / Б6: мозаика переходных биомов у порогов влажности.
+    pub ecotone_width_log2: f64,
+    pub ecotone_max_fraction: f64,
+    pub ecotone_lambda_blocks: f64,
 }
 
 impl BoundaryParams {
@@ -980,6 +988,29 @@ impl BoundaryParams {
             || self.pass_gain >= 1.0
         {
             return Err("перевалы: 1…4 октавы, gain ∈ (0, 1)");
+        }
+        if !self.jitter_coarse_lambda_blocks.is_finite()
+            || !(500.0..=2000.0).contains(&self.jitter_coarse_lambda_blocks)
+        {
+            return Err("λ крупного дрожания должна лежать в 500…2000 блоков");
+        }
+        if !self.jitter_coarse_sigma_factor.is_finite()
+            || !(1.0..=8.0).contains(&self.jitter_coarse_sigma_factor)
+        {
+            return Err("множитель σ крупного дрожания должен лежать в 1…8");
+        }
+        if !self.ecotone_width_log2.is_finite() || !(0.0..=1.0).contains(&self.ecotone_width_log2) {
+            return Err("полуширина экотона по log2 R должна лежать в 0…1");
+        }
+        if !self.ecotone_max_fraction.is_finite()
+            || !(0.0..=0.5).contains(&self.ecotone_max_fraction)
+        {
+            return Err("доля пятен экотона должна лежать в 0…0.5");
+        }
+        if !self.ecotone_lambda_blocks.is_finite()
+            || !(64.0..=512.0).contains(&self.ecotone_lambda_blocks)
+        {
+            return Err("λ пятен экотона должна лежать в 64…512 блоков");
         }
         Ok(())
     }
@@ -1352,6 +1383,11 @@ impl Params {
                 pass_lambda_l: 2.0,
                 pass_octaves: 1,
                 pass_gain: 0.5,
+                jitter_coarse_lambda_blocks: 1000.0,
+                jitter_coarse_sigma_factor: 4.0,
+                ecotone_width_log2: 0.35,
+                ecotone_max_fraction: 0.45,
+                ecotone_lambda_blocks: 256.0,
             },
             lava: LavaParams {
                 width_blocks: block.lava_width_blocks,
@@ -1936,6 +1972,21 @@ impl Params {
                 writeln!(w, "{name}={value:?}").unwrap();
             }
             writeln!(w, "boundaries.pass_octaves={}", bd.pass_octaves).unwrap();
+            for (name, value) in [
+                (
+                    "boundaries.jitter_coarse_lambda_blocks",
+                    bd.jitter_coarse_lambda_blocks,
+                ),
+                (
+                    "boundaries.jitter_coarse_sigma_factor",
+                    bd.jitter_coarse_sigma_factor,
+                ),
+                ("boundaries.ecotone_width_log2", bd.ecotone_width_log2),
+                ("boundaries.ecotone_max_fraction", bd.ecotone_max_fraction),
+                ("boundaries.ecotone_lambda_blocks", bd.ecotone_lambda_blocks),
+            ] {
+                writeln!(w, "{name}={value:?}").unwrap();
+            }
         }
         out
     }

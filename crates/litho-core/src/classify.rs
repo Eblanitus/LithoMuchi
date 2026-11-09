@@ -2,10 +2,10 @@
 //! C/E/W обязаны быть непрерывными, поэтому таблица влияет только на T и H.
 
 use crate::climate::ClimateSample;
-use crate::math::{LN_2, clamp, dexp, dln};
+use crate::math::{LN_2, clamp, clamp01, dexp, dln, smoothstep};
 use crate::noise::{fbm2, fbm2_unit};
 use crate::params::Params;
-use crate::seed::{SALT_CLASS_JITTER, subseed};
+use crate::seed::{SALT_CLASS_JITTER, SALT_CLASS_JITTER_COARSE, SALT_ECOTONE, subseed};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct LifeZone {
@@ -200,13 +200,28 @@ pub fn classify(
     let u = x / c.jitter_lambda_blocks;
     let v = z / c.jitter_lambda_blocks;
     let (jitter_t, jitter_r) = if params.version.is_water_relief_dev() {
-        // T101: амплитуды в σ. Второй масштаб дрожания остаётся задачей T133.
+        // T101/T133: амплитуды в σ. Мелкий масштаб λ240 остаётся прежним;
+        // крупный λ1000 добавляет независимое дрожание с σ в factor раз больше
+        // (стартовый factor 4 ≈ смещение границ ±200 против ±50 блоков).
+        let b = &params.boundaries;
+        let coarse = subseed(seed, SALT_CLASS_JITTER_COARSE);
+        let cu = x / b.jitter_coarse_lambda_blocks;
+        let cv = z / b.jitter_coarse_lambda_blocks;
+        let f = b.jitter_coarse_sigma_factor;
         (
-            fbm2_unit(sub, u, v, 1.0, c.jitter_octaves, c.jitter_gain),
+            fbm2_unit(sub, u, v, 1.0, c.jitter_octaves, c.jitter_gain)
+                + f * fbm2_unit(coarse, cu, cv, 1.0, c.jitter_octaves, c.jitter_gain),
             fbm2_unit(
                 sub.wrapping_add(1),
                 u,
                 v,
+                1.0,
+                c.jitter_octaves,
+                c.jitter_gain,
+            ) + f * fbm2_unit(
+                coarse.wrapping_add(1),
+                cu,
+                cv,
                 1.0,
                 c.jitter_octaves,
                 c.jitter_gain,
@@ -233,6 +248,17 @@ pub fn classify(
     );
     let ratio = dexp(LN_2 * log2_r);
     let mut result = classify_inputs(t_bio, ratio, climate.temperature.t_min, params);
+    if params.version.is_water_relief_dev() && !is_ocean {
+        result.cell = ecotone_cell(
+            result,
+            log2_r,
+            climate.temperature.t_min,
+            x,
+            z,
+            seed,
+            params,
+        );
+    }
     if is_ocean {
         result.cell = ocean_cell(climate.temperature.sst_c, params);
         result.zone = LifeZone {
@@ -242,6 +268,105 @@ pub fn classify(
         result.is_ocean = true;
     }
     result
+}
+
+/// T133 / Б6: у порога влажности часть пятен получает промежуточную ячейку
+/// соседней провинции. Это не сглаживание C/E/W и не новый биом: только
+/// ванильная ячейка `(t,h)` между сухим и влажным классом, чтобы саванна не
+/// стояла вплотную к джунглям. Решение гладкое по координатам, пятно λ≥64.
+fn ecotone_cell(
+    base: ClassSample,
+    log2_r: f64,
+    t_min: f64,
+    x: f64,
+    z: f64,
+    seed: u64,
+    params: &Params,
+) -> VanillaCell {
+    let b = &params.boundaries;
+    if b.ecotone_width_log2 <= 0.0 || b.ecotone_max_fraction <= 0.0 {
+        return base.cell;
+    }
+    let edges = params.climate.province_edges_r;
+    let mut best = f64::INFINITY;
+    let mut neighbor_province = base.zone.province;
+    for (k, edge) in edges.iter().enumerate() {
+        let edge_log2 = dln(*edge) / LN_2;
+        let dist = (log2_r - edge_log2).abs();
+        if dist < best {
+            best = dist;
+            // Провинции нумеруются от влажной K6 к сухой K1; переход через
+            // порог вверх по R уменьшает номер провинции на единицу.
+            neighbor_province = if log2_r < edge_log2 {
+                5_u8.saturating_sub(k as u8)
+            } else {
+                6_u8.saturating_sub(k as u8)
+            }
+            .clamp(1, 6);
+        }
+    }
+    if !best.is_finite() || best >= b.ecotone_width_log2 || neighbor_province == base.zone.province
+    {
+        return base.cell;
+    }
+    let fraction = b.ecotone_max_fraction * (1.0 - smoothstep(0.0, b.ecotone_width_log2, best));
+    let n = fbm2_unit(
+        subseed(seed, SALT_ECOTONE),
+        x / b.ecotone_lambda_blocks,
+        z / b.ecotone_lambda_blocks,
+        1.0,
+        1,
+        0.5,
+    );
+    if clamp01(0.5 + 0.5 * n) >= fraction {
+        return base.cell;
+    }
+    let neighbor_ratio = dexp(
+        LN_2 * (log2_r
+            + if neighbor_province < base.zone.province {
+                0.5
+            } else {
+                -0.5
+            }),
+    );
+    let neighbor = biome_cell(
+        base.zone.belt,
+        neighbor_province,
+        neighbor_ratio,
+        t_min,
+        params,
+    );
+    let dh = neighbor.h as i8 - base.cell.h as i8;
+    if dh == 0 {
+        return base.cell;
+    }
+    // Лестница: пятно делает один шаг от текущего класса к соседнему, а не
+    // повторяет весь скачок h0→h3. Имя берётся из средней таблицы A.2.
+    let h = (base.cell.h as i8 + dh.signum()).clamp(0, 4) as u8;
+    middle_cell(base.cell.t, h)
+}
+
+fn middle_cell(t: u8, h: u8) -> VanillaCell {
+    let name = match (t.min(4), h.min(4)) {
+        (0, 0 | 1) => "snowy_plains",
+        (0, 2) => "snowy_taiga",
+        (0, 3) => "snowy_taiga",
+        (0, _) => "taiga",
+        (1, 0 | 1) => "plains",
+        (1, 2) => "forest",
+        (1, 3) => "taiga",
+        (1, _) => "old_growth_spruce_taiga",
+        (2, 0) => "flower_forest",
+        (2, 1) => "plains",
+        (2, 2) => "forest",
+        (2, 3) => "birch_forest",
+        (2, _) => "dark_forest",
+        (3, 0 | 1) => "savanna",
+        (3, 2) => "forest",
+        (3, _) => "jungle",
+        _ => "desert",
+    };
+    cell(t.min(4), h.min(4), name)
 }
 
 #[cfg(test)]
@@ -317,5 +442,111 @@ mod tests {
         assert_eq!(classify_inputs(27.0, 0.6, 20.0, &p).zone.belt, 6);
         assert_eq!(classify_inputs(27.0, 20.0, 20.0, &p).zone.province, 1);
         assert_eq!(classify_inputs(27.0, 0.2, 20.0, &p).zone.province, 6);
+    }
+}
+
+#[cfg(test)]
+mod t133_tests {
+    use super::*;
+    use crate::climate::{ClimateSample, PrecipSample, SurfaceSample, TemperatureSample};
+    use crate::math::Vec2;
+    use crate::mode::Mode;
+    use crate::version::GenVersion;
+
+    fn climate(t_bio: f64, ratio: f64) -> ClimateSample {
+        ClimateSample {
+            point: Vec2::default(),
+            surface: SurfaceSample::default(),
+            pole: crate::climate::PoleSample {
+                phi_deg: 45.0,
+                north: Vec2::new(0.0, 1.0),
+                east: Vec2::new(1.0, 0.0),
+                pole: Vec2::default(),
+                distance_l: 1.0,
+            },
+            wind: Vec2::new(1.0, 0.0),
+            temperature: TemperatureSample {
+                t_c: t_bio,
+                sst_c: t_bio,
+                amp_c: 8.0,
+                t_bio,
+                t_min: 5.0,
+            },
+            precip: PrecipSample {
+                mu: 0.5,
+                cont: 0.5,
+                p_mm: 1000.0,
+                pet_mm: 1000.0 * ratio,
+                ratio,
+                slope: 0.0,
+            },
+        }
+    }
+
+    #[test]
+    fn coarse_jitter_moves_classes_more_than_fine_and_v0_is_bitwise_unchanged() {
+        let dev = Params::defaults(GenVersion::V1Dev, Mode::Gameplay);
+        let mut fine_only = dev.clone();
+        fine_only.boundaries.jitter_coarse_sigma_factor = 1.0;
+        let old = Params::defaults(GenVersion::V0, Mode::Gameplay);
+        let mut changed_old = old.clone();
+        changed_old.boundaries.jitter_coarse_sigma_factor = 8.0;
+        changed_old.boundaries.ecotone_max_fraction = 0.5;
+        let c = climate(15.0, 1.0);
+        let mut dev_moves = 0;
+        let mut fine_moves = 0;
+        for k in 0..400 {
+            let x = k as f64 * 37.0 - 7000.0;
+            let z = k as f64 * -23.0 + 3000.0;
+            let base = classify_inputs(15.0, 1.0, 5.0, &dev);
+            let d = classify(&c, false, x, z, 42, &dev);
+            let f = classify(&c, false, x, z, 42, &fine_only);
+            dev_moves += usize::from(d.cell != base.cell);
+            fine_moves += usize::from(f.cell != base.cell);
+            let a = classify(&c, false, x, z, 42, &old);
+            let b = classify(&c, false, x, z, 42, &changed_old);
+            assert_eq!(a.cell, b.cell);
+            assert_eq!(a.t_bio.to_bits(), b.t_bio.to_bits());
+            assert_eq!(a.ratio.to_bits(), b.ratio.to_bits());
+        }
+        assert!(
+            dev_moves > fine_moves,
+            "крупный масштаб должен двигать границы сильнее: {dev_moves} vs {fine_moves}"
+        );
+    }
+
+    #[test]
+    fn ecotone_is_one_step_only_near_humidity_thresholds_and_never_in_ocean() {
+        let mut p = Params::defaults(GenVersion::V1Dev, Mode::Gameplay);
+        p.boundaries.ecotone_max_fraction = 0.5;
+        p.boundaries.ecotone_width_log2 = 0.5;
+        let mut no_eco = p.clone();
+        no_eco.boundaries.ecotone_max_fraction = 0.0;
+        let mut seen = 0;
+        for k in 0..2000 {
+            let x = k as f64 * 17.0 - 17000.0;
+            let z = k as f64 * 11.0 - 9000.0;
+            // Точно на пороге R=2 (K4/K5) и вдали от него.
+            for ratio in [2.0, 1000.0] {
+                let c = climate(27.0, ratio);
+                let base = classify(&c, false, x, z, 42, &no_eco);
+                let got = classify(&c, false, x, z, 42, &p);
+                let ocean = classify(&c, true, x, z, 42, &p);
+                assert!(ocean.is_ocean);
+                assert_eq!(ocean.cell, ocean_cell(c.temperature.sst_c, &p));
+                let dh = (got.cell.h as i8 - base.cell.h as i8).abs();
+                assert!(
+                    dh <= 1,
+                    "экотон не должен повторять скачок h0→h3: {base:?} → {got:?}"
+                );
+                if ratio == 1000.0 {
+                    assert_eq!(got.cell, base.cell, "вдали от порога экотона нет");
+                } else if got.cell != base.cell {
+                    seen += 1;
+                    assert_eq!(got.cell.t, base.cell.t);
+                }
+            }
+        }
+        assert!(seen > 0, "мозаика экотона должна встречаться у порога");
     }
 }
