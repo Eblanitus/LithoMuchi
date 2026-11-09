@@ -388,6 +388,12 @@ pub struct HydrologyParams {
     pub estuary_elevation_km: f64,
     pub inland_sea_c: f64,
     pub r1_max_level_km: f64,
+    /// T116 / Б7: галерейный лес только у большой реки в сухой зоне.
+    pub gallery_q_min_mm_l2: f64,
+    pub gallery_width_factor: f64,
+    pub gallery_dry_r_lo: f64,
+    pub gallery_dry_r_hi: f64,
+    pub gallery_h_gain: f64,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -890,6 +896,11 @@ impl Params {
                 estuary_elevation_km: 0.15,
                 inland_sea_c: -0.25,
                 r1_max_level_km: 0.3,
+                gallery_q_min_mm_l2: 500.0,
+                gallery_width_factor: 8.0,
+                gallery_dry_r_lo: 1.0,
+                gallery_dry_r_hi: 2.0,
+                gallery_h_gain: 0.65,
             },
             lava: LavaParams {
                 width_blocks: block.lava_width_blocks,
@@ -1345,6 +1356,11 @@ impl Params {
                 ("hydrology.estuary_elevation_km", hy.estuary_elevation_km),
                 ("hydrology.inland_sea_c", hy.inland_sea_c),
                 ("hydrology.r1_max_level_km", hy.r1_max_level_km),
+                ("hydrology.gallery_q_min_mm_l2", hy.gallery_q_min_mm_l2),
+                ("hydrology.gallery_width_factor", hy.gallery_width_factor),
+                ("hydrology.gallery_dry_r_lo", hy.gallery_dry_r_lo),
+                ("hydrology.gallery_dry_r_hi", hy.gallery_dry_r_hi),
+                ("hydrology.gallery_h_gain", hy.gallery_h_gain),
             ] {
                 writeln!(w, "{name}={value:?}").unwrap();
             }

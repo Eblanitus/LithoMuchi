@@ -797,6 +797,21 @@ mod tests {
     }
 
     #[test]
+    fn t116_gallery_forest_reaches_a_real_dry_corridor() {
+        let (x, z) = (178.059145, 413.141280);
+        let g = Generator::new(42, Mode::Gameplay, GenVersion::V1Dev).unwrap();
+        let fast = g.sample(x, z).unwrap();
+        let reference = g.sample_reference(x, z).unwrap();
+        assert!(fast.world.hydrology.gallery >= 0.5);
+        assert!(fast.world.hydrology.gallery > fast.world.river);
+        assert_eq!(fast.cell.biome, "forest");
+        assert!(fast.vanilla.h > 0.0);
+        assert_eq!(fast.vanilla.h.to_bits(), reference.vanilla.h.to_bits());
+        assert_eq!(fast.vanilla.t.to_bits(), reference.vanilla.t.to_bits());
+        assert_eq!(fast.cell, reference.cell);
+    }
+
+    #[test]
     fn v0_world_has_no_dev_hydrology() {
         let g = Generator::new(42, Mode::Gameplay, GenVersion::V0).unwrap();
         let w = g.world_sample(123.0, -456.0).unwrap();

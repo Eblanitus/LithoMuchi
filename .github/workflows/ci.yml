@@ -66,7 +66,7 @@ jobs:
         run: |
           set -o pipefail
           cargo run -q -p litho-sandbox --release -- seams --seed 42 --mode scientific --version v1-dev | python3 tools/ci_annotations.py report
-      - name: "Э3.5 — T110–T115 drainage/lakes/hydrology smoke (R1 в полях)"
+      - name: "Э3.5 — T110–T116 drainage/lakes/hydrology smoke (R1 + галерейные леса)"
         run: |
           set -o pipefail
           cargo run -q -p litho-sandbox --release -- drainage --seed 42 --mode gameplay --version v1-dev --at 0,0 | python3 tools/ci_annotations.py report

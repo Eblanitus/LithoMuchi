@@ -56,6 +56,8 @@ pub struct HydrologySample {
     pub dry_basin: f64,
     pub estuary: f64,
     pub r2_deferred: f64,
+    /// T116: сила галерейного леса после сухости и выхода из океана.
+    pub gallery: f64,
     pub networks_considered: usize,
 }
 
@@ -77,6 +79,16 @@ pub fn validate(params: &Params) -> Result<(), RiverNetError> {
         || h.r1_max_level_km < 0.0
         || h.estuary_c >= params.climate.ocean_c_threshold
         || h.inland_sea_c >= params.climate.ocean_c_threshold
+        || !h.gallery_q_min_mm_l2.is_finite()
+        || h.gallery_q_min_mm_l2 <= 0.0
+        || !h.gallery_width_factor.is_finite()
+        || h.gallery_width_factor <= 1.0
+        || !h.gallery_dry_r_lo.is_finite()
+        || !h.gallery_dry_r_hi.is_finite()
+        || h.gallery_dry_r_lo < 0.0
+        || h.gallery_dry_r_hi <= h.gallery_dry_r_lo
+        || !h.gallery_h_gain.is_finite()
+        || !(0.0..=2.0).contains(&h.gallery_h_gain)
     {
         return Err(RiverNetError::InvalidParameters(
             "гидрология: ширины/влажность положительны, E/C в [-1,1], моря ниже порога C",
@@ -160,6 +172,11 @@ pub fn resolve(
                 smoothstep(q, 2.0 * q, hit.discharge_mm_l2) * mouth * low * hit.valley_strength;
         }
     }
+    // Б7: только суша и сухая зона. Вес R плавный; порог биомов отдельно
+    // переводит сильный коридор в лес, численные T/H меняются без ступени.
+    let dry = smoothstep(h.gallery_dry_r_lo, h.gallery_dry_r_hi, climate.precip.ratio);
+    let land = smoothstep(0.0, 0.05, climate.surface.e_km);
+    out.gallery = clamp01(channels.gallery * dry * land);
     if out.kind == SurfaceKind::Land && out.river > 0.0 {
         out.kind = SurfaceKind::River;
     }
@@ -184,6 +201,31 @@ pub fn classify_surface(
     let mut out = base;
     let cell = match hydrology.kind {
         SurfaceKind::InlandSea => Some(ocean_cell(climate.temperature.sst_c, params)),
+        SurfaceKind::Land
+        | SurfaceKind::River
+        | SurfaceKind::DryBasin
+        | SurfaceKind::DeferredWater
+            if hydrology.gallery >= 0.5
+                && hydrology.gallery > hydrology.river
+                && hydrology.swamp == 0.0
+                && base.cell.t > 0 =>
+        {
+            // Сильный коридор получает лесную ячейку; слабая кромка только
+            // плавно поднимает H (и опускает t4 к t3 ниже, в apply_fields).
+            Some(match base.zone.belt {
+                0..=1 => base.cell,
+                2 => VanillaCell {
+                    t: 1,
+                    h: 3,
+                    biome: "taiga",
+                },
+                _ => VanillaCell {
+                    t: base.cell.t.saturating_sub(1).max(2),
+                    h: 2,
+                    biome: "forest",
+                },
+            })
+        }
         SurfaceKind::Land
         | SurfaceKind::River
         | SurfaceKind::Lake
@@ -270,6 +312,11 @@ pub fn apply_fields(
     }
     if base.c > h.estuary_c {
         base.c = lerp(base.c, h.estuary_c, hydrology.estuary);
+    }
+    // Б7 не меняет C/E/W: только влажность и жаркая полоса температуры.
+    base.h = clamp(base.h + h.gallery_h_gain * hydrology.gallery, -1.0, 1.0);
+    if base.t > params.climate.t_centers[3] {
+        base.t = lerp(base.t, params.climate.t_centers[3], hydrology.gallery);
     }
     base.c = clamp(base.c, -1.0, 1.0);
     base.e = clamp(base.e, -1.0, 1.0);
@@ -517,6 +564,45 @@ mod tests {
         assert_eq!(estuary.estuary, 1.0);
         let v = apply_fields(base(), 0.0, &estuary, &p);
         assert!((v.c - p.hydrology.estuary_c).abs() < 1e-12);
+    }
+
+    #[test]
+    fn gallery_forest_needs_a_large_river_corridor_and_dry_land() {
+        let p = params();
+        let mut c = climate(5.0, 0.0, 0.2);
+        c.temperature.t_bio = 30.0;
+        c.temperature.t_min = 12.0;
+        let corridor = ChannelQuery {
+            gallery: 1.0,
+            core: 0.0,
+            valley: 0.0,
+            ..ChannelQuery::default()
+        };
+        let h = resolve(corridor, LakeQuery::default(), &c, &p);
+        assert_eq!(h.gallery, 1.0);
+        let dry = classify_inputs(30.0, 5.0, 12.0, &p);
+        assert_eq!(dry.cell.biome, "desert");
+        let forest = classify_surface(dry, &h, &c, &p);
+        assert_eq!(forest.cell.biome, "forest");
+        assert_eq!(forest.cell.t, 3);
+        let mut numbers = base();
+        numbers.t = p.climate.t_centers[4];
+        numbers.h = p.climate.h_centers[0];
+        let v = apply_fields(numbers, 0.0, &h, &p);
+        assert_eq!(v.t, p.climate.t_centers[3]);
+        assert!((v.h - (numbers.h + p.hydrology.gallery_h_gain)).abs() < 1e-12);
+        assert_eq!((v.c, v.e, v.w), (numbers.c, numbers.e, numbers.w));
+        let wet = resolve(corridor, LakeQuery::default(), &climate(0.4, 0.0, 0.2), &p);
+        let sea = resolve(corridor, LakeQuery::default(), &climate(5.0, 0.0, -0.1), &p);
+        assert_eq!(wet.gallery, 0.0);
+        assert_eq!(sea.gallery, 0.0);
+        let edge = ChannelQuery {
+            gallery: 0.25,
+            ..ChannelQuery::default()
+        };
+        let edge = resolve(edge, LakeQuery::default(), &c, &p);
+        assert_eq!(classify_surface(dry, &edge, &c, &p).cell.biome, "desert");
+        assert!(apply_fields(numbers, 0.0, &edge, &p).h > numbers.h);
     }
 
     #[test]

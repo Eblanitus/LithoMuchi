@@ -292,11 +292,12 @@ pub fn render_layer_with_height(
                         .max(h.swamp)
                         .max(h.dry_basin)
                         .max(h.estuary * 0.7);
-                    palette::hydrology_field(
+                    let surface = palette::hydrology_field(
                         h.kind,
                         strength,
                         palette::hypsometric(w.climate.surface.e_km),
-                    )
+                    );
+                    palette::mix(surface, [38, 132, 66], h.gallery * 0.65)
                 }
                 "lava" => palette::heat(generator.lava_sample(x, z)),
                 "spawn" => {

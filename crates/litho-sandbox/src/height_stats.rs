@@ -74,6 +74,7 @@ pub struct HeightStats {
     pub dry_samples: usize,
     pub estuary_samples: usize,
     pub deferred_samples: usize,
+    pub gallery_samples: usize,
     pub hyps: [usize; 5],
     pub erosion: [usize; 7],
     pub valley: usize,
@@ -102,6 +103,7 @@ impl HeightStats {
             dry_samples: 0,
             estuary_samples: 0,
             deferred_samples: 0,
+            gallery_samples: 0,
             hyps: [0; 5],
             erosion: [0; 7],
             valley: 0,
@@ -136,6 +138,7 @@ impl HeightStats {
                 out.dry_samples += usize::from(h.dry_basin > 0.5);
                 out.estuary_samples += usize::from(h.estuary > 0.5);
                 out.deferred_samples += usize::from(h.r2_deferred > 0.5);
+                out.gallery_samples += usize::from(h.gallery >= 0.5 && h.gallery > h.river);
                 // T115: вода R1 исключена из сухопутной гипсометрии; высокое
                 // озеро осталось суша/болото и честно учтено deferred_samples.
                 if !c_land || river || h.water > 0.5 {
@@ -262,7 +265,7 @@ impl HeightStats {
              долина PV<-0.85 {valley:.2}% (v1 ≤8% gameplay / ≤6% scientific)\n\
              окна {window}×{window} блоков: медиана перепада {median:.2} (быстрая цель ≥8), <4 блоков {flat:.2}%, окон={windows}\n\
              вода в руслах r≥0.5: {water:.2}% из {river} точек (R1: поверхность ниже y=63)\n\
-             T115 от всех точек: вода {surface_water:.2}%, болото {swamp:.2}%, сухая котловина {dry:.2}%, эстуарий {estuary:.2}%, отложено R2 {deferred:.2}%\n",
+             T115–T116 от всех точек: вода {surface_water:.2}%, болото {swamp:.2}%, сухая котловина {dry:.2}%, эстуарий {estuary:.2}%, отложено R2 {deferred:.2}%, галерейный лес {gallery:.2}%\n",
             base.seed,
             base.mode.as_str(),
             base.version.as_str(),
@@ -294,6 +297,7 @@ impl HeightStats {
             dry = self.pct(self.dry_samples, self.samples),
             estuary = self.pct(self.estuary_samples, self.samples),
             deferred = self.pct(self.deferred_samples, self.samples),
+            gallery = self.pct(self.gallery_samples, self.samples),
         );
         if model.is_synthetic() {
             out.push_str(
@@ -303,12 +307,12 @@ impl HeightStats {
         if self.land == 0 || self.relief_windows == 0 {
             out.push_str("WARNING: нет суши/полных сухопутных окон; проценты и медиана не являются оценкой рельефа.\n");
         }
-        out.push_str("T115: сеть/низкие озёра подключены к C/E/W и биомам (R1). Галерейные леса — T116; высокие озёра и собственный PV — T141/T143/T145. Проценты воды здесь не заменяют проверку реальной высоты.\n");
+        out.push_str("T115–T116: сеть/низкие озёра подключены к C/E/W и биомам (R1). Галерейные леса T116 включены; высокие озёра и собственный PV — T141/T143/T145. Проценты воды здесь не заменяют проверку реальной высоты.\n");
         out
     }
     pub fn json(&self, base: &RenderOptions, opts: &StatsOptions, model: &HeightModel) -> String {
         format!(
-            "{{\n  \"seed\": {}, \"mode\": {}, \"version\": {}, \"path\": {},\n  \"height_source\": {}, \"height_data_hash\": \"{:016x}\", \"synthetic\": {},\n  \"approximation\": \"63.52 + 128*offset; no factor/jaggedness/3D noise\",\n  \"span_l\": {}, \"size\": {}, \"samples\": {}, \"land_samples\": {},\n  \"flooded_land_pct\": {}, \"hyps_pct\": {:?}, \"erosion_pct\": {:?},\n  \"valley_pct\": {}, \"relief_step\": {}, \"relief_windows\": {}, \"relief_median\": {}, \"flat_windows_pct\": {},\n  \"river_samples\": {}, \"river_water_pct\": {}\n}}\n",
+            "{{\n  \"seed\": {}, \"mode\": {}, \"version\": {}, \"path\": {},\n  \"height_source\": {}, \"height_data_hash\": \"{:016x}\", \"synthetic\": {},\n  \"approximation\": \"63.52 + 128*offset; no factor/jaggedness/3D noise\",\n  \"span_l\": {}, \"size\": {}, \"samples\": {}, \"land_samples\": {},\n  \"flooded_land_pct\": {}, \"hyps_pct\": {:?}, \"erosion_pct\": {:?},\n  \"valley_pct\": {}, \"relief_step\": {}, \"relief_windows\": {}, \"relief_median\": {}, \"flat_windows_pct\": {},\n  \"river_samples\": {}, \"river_water_pct\": {}, \"gallery_samples\": {}, \"gallery_pct\": {}\n}}\n",
             self.seed,
             crate::json::quote(self.mode.as_str()),
             crate::json::quote(base.version.as_str()),
@@ -331,6 +335,8 @@ impl HeightStats {
             self.flat_pct(),
             self.river_samples,
             self.river_water_pct(),
+            self.gallery_samples,
+            self.pct(self.gallery_samples, self.samples),
         )
     }
 }

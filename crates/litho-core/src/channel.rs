@@ -144,6 +144,8 @@ pub struct ChannelQuery {
     pub core: f64,
     pub valley: f64,
     pub delta: f64,
+    /// T116: максимум силы коридора большой реки, без климатического веса.
+    pub gallery: f64,
     pub nearest: Option<ChannelHit>,
     /// Диагностика T113: сколько сетей обошёл общий запрос.
     pub networks_considered: usize,
@@ -156,6 +158,7 @@ impl ChannelQuery {
         self.core = self.core.max(other.core);
         self.valley = self.valley.max(other.valley);
         self.delta = self.delta.max(other.delta);
+        self.gallery = self.gallery.max(other.gallery);
         self.networks_considered += other.networks_considered;
         if let Some(hit) = other.nearest {
             if self.nearest.is_none_or(|old| {
@@ -179,7 +182,10 @@ impl ChannelQuery {
 pub fn max_query_radius_l(params: &Params) -> f64 {
     let c = &params.channels;
     let core_l = c.core_max_blocks / params.block.l_blocks;
-    core_l * (c.valley_plain.max(c.valley_mountain) + 2.0 * c.meander_plain.max(c.meander_mountain))
+    let reach_factor = (c.valley_plain.max(c.valley_mountain)
+        + 2.0 * c.meander_plain.max(c.meander_mountain))
+    .max(params.hydrology.gallery_width_factor);
+    core_l * reach_factor
         + params.drainage.step_l * SQRT_2
         + c.delta_length_max_l
         + params.hydrology.field_fade_l
@@ -194,6 +200,8 @@ pub struct ChannelNetwork {
     max_valley_l: f64,
     bank_fraction: f64,
     field_fade_l: f64,
+    gallery_q_min_mm_l2: f64,
+    gallery_width_factor: f64,
 }
 
 impl ChannelNetwork {
@@ -337,7 +345,11 @@ impl ChannelNetwork {
                 p.valley_l
                     .max(p.core_l + (params.hydrology.bank_fraction * p.core_l).max(field_fade_l))
             };
-            let radius = end_influence(segment.a).max(end_influence(segment.b));
+            let gallery_radius = |p: ChannelPoint| p.core_l * params.hydrology.gallery_width_factor;
+            let radius = end_influence(segment.a)
+                .max(end_influence(segment.b))
+                .max(gallery_radius(segment.a))
+                .max(gallery_radius(segment.b));
             max_valley_l = max_valley_l.max(radius);
             let min_x = segment.a.point.x.min(segment.b.point.x) - radius;
             let max_x = segment.a.point.x.max(segment.b.point.x) + radius;
@@ -361,6 +373,8 @@ impl ChannelNetwork {
             max_valley_l,
             bank_fraction: params.hydrology.bank_fraction,
             field_fade_l: params.hydrology.field_fade_l,
+            gallery_q_min_mm_l2: params.hydrology.gallery_q_min_mm_l2,
+            gallery_width_factor: params.hydrology.gallery_width_factor,
         };
         net.check()?;
         Ok(net)
@@ -456,7 +470,8 @@ impl ChannelNetwork {
             let at = segment.a.lerp(segment.b, t);
             let distance_l = point.sub(at.point).len();
             let fade = (self.bank_fraction * at.core_l).max(self.field_fade_l);
-            let influence_l = at.valley_l.max(at.core_l + fade);
+            let gallery_l = at.core_l * self.gallery_width_factor;
+            let influence_l = at.valley_l.max(at.core_l + fade).max(gallery_l);
             if distance_l > influence_l {
                 continue;
             }
@@ -464,6 +479,14 @@ impl ChannelNetwork {
             let valley_strength = 1.0 - smoothstep(0.0, influence_l, distance_l);
             out.core = out.core.max(core_strength);
             out.valley = out.valley.max(valley_strength);
+            let large = smoothstep(
+                0.5 * self.gallery_q_min_mm_l2,
+                self.gallery_q_min_mm_l2,
+                at.discharge_mm_l2,
+            );
+            out.gallery = out
+                .gallery
+                .max(large * (1.0 - smoothstep(0.0, gallery_l, distance_l)));
             let delta_strength = if self.reaches[segment.reach].kind == ReachKind::Delta {
                 valley_strength
             } else {
@@ -911,12 +934,21 @@ mod tests {
                 let at = segment.a.lerp(segment.b, t);
                 let d = point.sub(at.point).len();
                 let fade = (net.bank_fraction * at.core_l).max(net.field_fade_l);
-                let influence_l = at.valley_l.max(at.core_l + fade);
+                let gallery_l = at.core_l * net.gallery_width_factor;
+                let influence_l = at.valley_l.max(at.core_l + fade).max(gallery_l);
                 if d <= influence_l {
                     let core = 1.0 - crate::math::smoothstep(at.core_l, at.core_l + fade, d);
                     let valley = 1.0 - crate::math::smoothstep(0.0, influence_l, d);
                     brute.core = brute.core.max(core);
                     brute.valley = brute.valley.max(valley);
+                    let large = crate::math::smoothstep(
+                        0.5 * net.gallery_q_min_mm_l2,
+                        net.gallery_q_min_mm_l2,
+                        at.discharge_mm_l2,
+                    );
+                    brute.gallery = brute
+                        .gallery
+                        .max(large * (1.0 - crate::math::smoothstep(0.0, gallery_l, d)));
                     let delta = if net.reaches()[segment.reach].kind == super::ReachKind::Delta {
                         valley
                     } else {
@@ -954,6 +986,7 @@ mod tests {
             }
             assert_eq!(fast.core, brute.core);
             assert_eq!(fast.valley, brute.valley);
+            assert_eq!(fast.gallery, brute.gallery);
             assert_eq!(fast.nearest, brute.nearest);
             assert_eq!(fast.networks_considered, 1);
             assert_eq!(fast, net.query(point), "point={point:?} basket={BASKET_L}");
@@ -1004,6 +1037,45 @@ mod tests {
         let a = ChannelNetwork::build(7, 42, &nodes, &wet, &p).unwrap();
         let b = ChannelNetwork::build(7, 42, &nodes, &wet, &p).unwrap();
         assert_eq!(a, b);
+    }
+
+    #[test]
+    fn gallery_corridor_is_gated_by_discharge_and_fades_with_distance() {
+        let p = params();
+        let nodes = vec![
+            node(3, 0.003, Some(1)),
+            node(2, 0.002, Some(2)),
+            node(1, 0.001, Some(3)),
+            node(0, 0.0, None),
+        ];
+        let small = runoff(&nodes, &p, 4.0);
+        let large = runoff(&nodes, &p, 100.0);
+        let small = ChannelNetwork::build(7, 42, &nodes, &small, &p).unwrap();
+        let large = ChannelNetwork::build(7, 42, &nodes, &large, &p).unwrap();
+        let main = large
+            .reaches()
+            .iter()
+            .find(|r| r.kind == super::ReachKind::Channel)
+            .unwrap();
+        let segment = large.segments()[main.first_segment + main.segment_count - 1];
+        let at = segment.b.point;
+        let core = large.query(at);
+        let edge = large.query(at.add(Vec2::new(
+            0.0,
+            segment.b.core_l * p.hydrology.gallery_width_factor * 0.75,
+        )));
+        assert_eq!(small.query(at).gallery, 0.0);
+        assert!(core.gallery > 0.9);
+        assert!(edge.gallery < core.gallery && edge.gallery > 0.0);
+        assert_eq!(
+            large
+                .query(at.add(Vec2::new(
+                    0.0,
+                    segment.b.core_l * p.hydrology.gallery_width_factor * 1.1
+                )))
+                .gallery,
+            0.0
+        );
     }
 
     #[test]
