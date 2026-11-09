@@ -81,6 +81,9 @@ fn severe_winter(belt: u8, t_min: f64, params: &Params) -> bool {
 
 /// Таблица 7.8.2: пояс × провинция → ванильная ячейка `(t, h)`.
 pub fn biome_cell(belt: u8, province: u8, ratio: f64, t_min: f64, params: &Params) -> VanillaCell {
+    if params.version.is_water_relief_dev() {
+        return biome_cell_ladder(belt, province, t_min, params);
+    }
     let cold = severe_winter(belt, t_min, params);
     match (belt, province) {
         (0, _) => cell(0, 0, "snowy_plains"),
@@ -152,6 +155,74 @@ pub fn biome_cell(belt: u8, province: u8, ratio: f64, t_min: f64, params: &Param
         (6, 6) => cell(3, 4, "jungle"),
         _ => desert(t_min, params),
     }
+}
+
+/// T135 / Б6: пересмотренная таблица 7.8.2 для `v1-dev` — лестница без дыр.
+///
+/// Диагностика T134 показала, что скачки h≥2 на 32 блоках дают не луч влаги,
+/// а сама таблица: соседние провинции/пояса в v0 отличаются на две ступени
+/// (бореальный K3 h1 → K4 h3, тропический K4 h1 → K5 h3, тёплый K3 h0 → K4 h2).
+/// Пятна экотона T133 такие дыры не закрывают: они дают лишь один шаг от
+/// текущего класса, а через границу всё равно стоят h1 и h3.
+///
+/// Здесь h — 1-Липшицева функция по обеим осям таблицы: базовая лестница по
+/// влажности `0,0,1,2,3,4` и потолок по температуре `1,2,3,4,4,4,4`. Соседние
+/// клетки по провинции и по поясу различаются не больше чем на одну ступень,
+/// поэтому переход «саванна → джунгли» всегда идёт через лес. Внутриклеточные
+/// ветки v0 по R (flower_forest при R≈1, birch при R≤0.75, dark_forest при
+/// R≥0.35) убраны: они создавали скачки h внутри одной провинции. Имя биома
+/// берётся из средней таблицы A.2 по итовым `(t,h)`.
+fn biome_cell_ladder(belt: u8, province: u8, t_min: f64, params: &Params) -> VanillaCell {
+    let belt = belt.min(6);
+    let province = province.clamp(1, 6);
+    // Влажность: K1/K2 сухо, дальше по одной ступени на провинцию.
+    let wet = match province {
+        1 | 2 => 0_u8,
+        3 => 1,
+        4 => 2,
+        5 => 3,
+        _ => 4,
+    };
+    // Холодные пояса не дают плотного леса: потолок растёт по одной ступени.
+    let cap = match belt {
+        0 => 1_u8,
+        1 => 2,
+        2 => 3,
+        _ => 4,
+    };
+    let h = wet.min(cap);
+    let cold = severe_winter(belt, t_min, params);
+    let t = match belt {
+        0 | 1 => 0_u8,
+        2 => {
+            if cold {
+                0
+            } else {
+                1
+            }
+        }
+        3 => {
+            if province <= 2 {
+                // Правило ⚑ холодной пустыни сохранено как в v0.
+                return desert(t_min, params);
+            }
+            if cold { 1 } else { 2 }
+        }
+        4 => {
+            if province <= 2 {
+                return desert(t_min, params);
+            }
+            // Тёплый умеренный: сухо — саванна, влажно — лиственный лес.
+            if province >= 5 { 2 } else { 3 }
+        }
+        _ => {
+            if province <= 2 {
+                return desert(t_min, params);
+            }
+            3
+        }
+    };
+    middle_cell(t, h)
 }
 
 /// Океаны по SST (7.8): категория решает только ванильная полоса температуры.
@@ -548,5 +619,96 @@ mod t133_tests {
             }
         }
         assert!(seen > 0, "мозаика экотона должна встречаться у порога");
+    }
+}
+
+#[cfg(test)]
+mod t135_tests {
+    use super::*;
+    use crate::mode::Mode;
+    use crate::version::GenVersion;
+
+    /// Главная причина скачков h≥2 по диагностике T134: дыры в таблице 7.8.2.
+    /// Лестница v1-dev обязана быть 1-Липшицевой по провинции и по поясу.
+    #[test]
+    fn v1_dev_table_neighbors_differ_by_at_most_one_h_step() {
+        for mode in Mode::ALL {
+            let p = Params::defaults(GenVersion::V1Dev, mode);
+            for t_min in [-25.0_f64, -10.0, 0.0, 8.0, 20.0] {
+                for ratio in [0.2_f64, 0.45, 0.8, 1.5, 3.0, 6.0, 12.0] {
+                    for belt in 0..=6_u8 {
+                        for province in 1..=6_u8 {
+                            let here = biome_cell(belt, province, ratio, t_min, &p);
+                            if province < 6 {
+                                let next = biome_cell(belt, province + 1, ratio, t_min, &p);
+                                assert!(
+                                    here.h.abs_diff(next.h) <= 1,
+                                    "провинция {province}→{} пояс {belt} t_min {t_min}: h {}→{}",
+                                    province + 1,
+                                    here.h,
+                                    next.h
+                                );
+                            }
+                            if belt < 6 {
+                                let next = biome_cell(belt + 1, province, ratio, t_min, &p);
+                                assert!(
+                                    here.h.abs_diff(next.h) <= 1,
+                                    "пояс {belt}→{} провинция {province} t_min {t_min}: h {}→{}",
+                                    belt + 1,
+                                    here.h,
+                                    next.h
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Внутри одной провинции h не должен зависеть от R: ветки v0 по R
+    /// (flower_forest/birch/dark_forest) давали скачки без смены класса.
+    #[test]
+    fn v1_dev_h_is_constant_inside_a_province() {
+        let p = Params::defaults(GenVersion::V1Dev, Mode::Gameplay);
+        for belt in 0..=6_u8 {
+            for province in 1..=6_u8 {
+                let edge_lo = match province {
+                    6 => 0.05,
+                    5 => 0.51,
+                    4 => 1.01,
+                    3 => 2.01,
+                    2 => 4.01,
+                    _ => 8.01,
+                };
+                let edge_hi = match province {
+                    6 => 0.49,
+                    5 => 0.99,
+                    4 => 1.99,
+                    3 => 3.99,
+                    2 => 7.99,
+                    _ => 40.0,
+                };
+                let a = biome_cell(belt, province, edge_lo, 5.0, &p);
+                let b = biome_cell(belt, province, edge_hi, 5.0, &p);
+                assert_eq!(a.h, b.h, "пояс {belt} провинция {province}: h зависит от R");
+            }
+        }
+    }
+
+    #[test]
+    fn v0_table_is_untouched_by_the_ladder() {
+        let old = Params::defaults(GenVersion::V0, Mode::Gameplay);
+        // Известные дыры v0 сохранены bitwise: бореальный K3 h1 против K4 h3.
+        assert_eq!(biome_cell(2, 3, 3.0, 5.0, &old).h, 1);
+        assert_eq!(biome_cell(2, 4, 1.5, 5.0, &old).h, 3);
+        assert_eq!(biome_cell(6, 4, 1.5, 20.0, &old).h, 1);
+        assert_eq!(biome_cell(6, 5, 0.8, 20.0, &old).h, 3);
+        assert_eq!(biome_cell(3, 4, 0.9, 5.0, &old).biome, "flower_forest");
+        let dev = Params::defaults(GenVersion::V1Dev, Mode::Gameplay);
+        assert_eq!(biome_cell(2, 3, 3.0, 5.0, &dev).h, 1);
+        assert_eq!(biome_cell(2, 4, 1.5, 5.0, &dev).h, 2);
+        assert_eq!(biome_cell(6, 4, 1.5, 20.0, &dev).h, 2);
+        assert_eq!(biome_cell(6, 5, 0.8, 20.0, &dev).h, 3);
     }
 }
