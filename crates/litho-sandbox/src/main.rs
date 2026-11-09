@@ -807,6 +807,32 @@ fn cmd_bench(args: &[String]) -> Result<(), String> {
         },
         limit = BENCH_MAX_FAST_OVER_REF,
     );
+    // T160: кэш колонки — несколько полей в одной (x,z). Это диагностика,
+    // не новый гейт: cold считает первое поле колонки, warm — попадание кэша.
+    let column_fields = [
+        Field::Continents,
+        Field::Erosion,
+        Field::Ridges,
+        Field::Temperature,
+        Field::Vegetation,
+    ];
+    let cn = 256_usize;
+    let mut column_pass = || {
+        let start = Instant::now();
+        for k in 0..cn {
+            let x = k as f64 * 0.75;
+            for field in column_fields {
+                sink += generator.field(field, x, 64.0, -x * 0.375);
+            }
+        }
+        start.elapsed().as_secs_f64() / (cn * column_fields.len()) as f64 * 1e6
+    };
+    let column_cold = column_pass();
+    let column_warm = column_pass();
+    println!(
+        "bench T160: колонка 5 полей — cold {column_cold:.1} мкс/поле, warm {column_warm:.1} мкс/поле, кэш {ratio:.2}× (sink={sink:.3})",
+        ratio = column_cold / column_warm.max(1e-9)
+    );
     if fast > reference * BENCH_MAX_FAST_OVER_REF {
         return Err(format!(
             "bench: регрессия — быстрый путь {fast:.1} мкс против эталона {reference:.1} мкс \

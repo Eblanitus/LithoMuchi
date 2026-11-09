@@ -33,6 +33,10 @@ use crate::version::GenVersion;
 /// длиной 8 L, который выходит за пределы coarse-тайла в 5 L и при рябистом
 /// береге не интерполируется. Кэш хранит только плавные поля.
 const COARSE_N: usize = 4;
+/// T160: кэш колонок для `field()` — игра спрашивает несколько полей в одной
+/// колонке. Ёмкость инфраструктурная, в хеш мира не входит; вытеснение меняет
+/// только скорость, не ответ.
+const COLUMN_CACHE_CAPACITY: usize = 4096;
 
 type CoarseTiles = ShardedCache<(i64, i64), Arc<Nodes<COARSE_N>>>;
 type LastCoarse = Option<(u64, u64, i64, i64, Arc<Nodes<COARSE_N>>)>;
@@ -100,6 +104,8 @@ pub struct Generator {
     morpho: Arc<crate::cache::ShardedCache<(i64, i64), MorphoWeights>>,
     drainage: Arc<RiverNetCache>,
     coarse: Arc<CoarseTiles>,
+    /// T160: точная колонка `(x,z)` для повторных запросов полей.
+    column: Arc<crate::cache::ShardedCache<(i64, i64), Arc<FullSample>>>,
     spawn_shift: Vec2,
 }
 
@@ -137,6 +143,10 @@ impl Generator {
                 crate::drainage::NET_CACHE_CAPACITY,
             )),
             coarse: Arc::new(ShardedCache::new(shards, CACHE_CAPACITY)),
+            column: Arc::new(crate::cache::ShardedCache::new(
+                shards,
+                COLUMN_CACHE_CAPACITY,
+            )),
             spawn_shift: shift,
         })
     }
@@ -827,9 +837,20 @@ impl Generator {
         self.sample(x, z).map(|full| full.world)
     }
 
+    /// T160: кэш точной колонки. Ключ — биты координат, без квантования;
+    /// попадание/промах не меняет ответ. Ошибки/None не кэшируются.
+    fn cached_full(&self, x: f64, z: f64) -> Option<Arc<FullSample>> {
+        let key = (x.to_bits() as i64, z.to_bits() as i64);
+        if let Some(hit) = self.column.get(key) {
+            return Some(hit);
+        }
+        let full = self.sample(x, z)?;
+        Some(self.column.get_or_insert(key, || Arc::new(full)))
+    }
+
     /// Одно ванильное поле в блочных координатах: то, что зовёт мод (9.4).
     pub fn field(&self, field: Field, x: f64, _y: f64, z: f64) -> f64 {
-        let Some(full) = self.sample(x, z) else {
+        let Some(full) = self.cached_full(x, z) else {
             return 0.0;
         };
         let value = match field {
@@ -1057,6 +1078,53 @@ mod tests {
         let a = sci.macro_point(4000.0, -2000.0);
         let b = game.macro_point(1000.0, -500.0);
         assert_eq!(a, b);
+    }
+}
+
+#[cfg(test)]
+mod t160_tests {
+    use super::Generator;
+    use crate::field::Field;
+    use crate::mode::Mode;
+    use crate::version::GenVersion;
+
+    #[test]
+    fn column_cache_does_not_change_field_answers_or_order() {
+        let g = Generator::new(42, Mode::Gameplay, GenVersion::V1Dev).unwrap();
+        let fields = [
+            Field::Continents,
+            Field::Erosion,
+            Field::Ridges,
+            Field::Temperature,
+            Field::Vegetation,
+            Field::Pv,
+            Field::Offset,
+            Field::Factor,
+            Field::Jaggedness,
+        ];
+        for k in 0..24 {
+            let x = k as f64 * 131.0 - 1500.0;
+            let z = k as f64 * -97.0 + 700.0;
+            let full = g.sample(x, z).unwrap();
+            let expected = |f: Field| match f {
+                Field::Continents => full.vanilla.c,
+                Field::Erosion => full.vanilla.e,
+                Field::Ridges => full.vanilla.w,
+                Field::Temperature => full.vanilla.t,
+                Field::Vegetation => full.vanilla.h,
+                Field::Pv => full.world.pv,
+                Field::Offset => full.world.height.offset,
+                Field::Factor => full.world.height.factor,
+                Field::Jaggedness => full.world.height.jaggedness,
+                Field::Lava => full.lava,
+            };
+            for f in fields {
+                assert_eq!(g.field(f, x, 0.0, z).to_bits(), expected(f).to_bits());
+            }
+            for f in fields.into_iter().rev() {
+                assert_eq!(g.field(f, x, 64.0, z).to_bits(), expected(f).to_bits());
+            }
+        }
     }
 }
 
