@@ -18,6 +18,7 @@ use crate::hydrology::{self, HydrologySample};
 use crate::lattice::{self, Nodes};
 use crate::math::Vec2;
 use crate::mode::Mode;
+use crate::morphoclimate::{self, MorphoWeights};
 use crate::params::Params;
 use crate::plates::{Plate, PlateSample, plate_query, plates_near, warp_jacobian};
 use crate::relief::{self, ReliefSample};
@@ -160,6 +161,19 @@ impl Generator {
             self.seed,
             &self.params,
         )))
+    }
+
+    /// Морфоклиматические веса T121 в блочной точке. Только v1-dev; игровой
+    /// `field` пока не меняется, подключение E/PV/C делает T122.
+    pub fn morpho_weights(&self, x: f64, z: f64) -> Option<MorphoWeights> {
+        morphoclimate::validate(&self.params).ok()?;
+        let climate = self.climate_sample(x, z)?;
+        Some(morphoclimate::weights(
+            climate.temperature.t_bio,
+            climate.precip.ratio,
+            climate.surface.mountain,
+            &self.params,
+        ))
     }
 
     /// Максимум глубины впадин по плите, чьи узлы могут попасть в носитель
@@ -856,6 +870,16 @@ mod tests {
         assert_eq!(fast.vanilla.h.to_bits(), reference.vanilla.h.to_bits());
         assert_eq!(fast.vanilla.t.to_bits(), reference.vanilla.t.to_bits());
         assert_eq!(fast.cell, reference.cell);
+    }
+
+    #[test]
+    fn t121_morpho_weights_are_dev_only_and_sum_to_one() {
+        let v0 = Generator::new(42, Mode::Gameplay, GenVersion::V0).unwrap();
+        assert!(v0.morpho_weights(123.0, -456.0).is_none());
+        let dev = Generator::new(42, Mode::Gameplay, GenVersion::V1Dev).unwrap();
+        let w = dev.morpho_weights(123.0, -456.0).expect("климат есть");
+        assert!((w.sum() - 1.0).abs() < 1e-12);
+        assert!(w.values.iter().all(|v| (0.0..=1.0).contains(v)));
     }
 
     #[test]

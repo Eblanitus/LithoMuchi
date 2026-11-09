@@ -523,6 +523,114 @@ impl ReliefParams {
     }
 }
 
+/// T121: морфоклиматические зоны (§6.3). Веса плавные, сумма 1; числа зон
+/// стартовые, подбор T123. Индексы: 0 полярная, 1 бореальная, 2 умеренная
+/// влажная, 3 полуаридная, 4 аридная, 5 влажная тропическая, 6 горы холодные,
+/// 7 горы тёплые. Ключи только v1-dev.
+pub const MORPHO_ZONES: usize = 8;
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct MorphoParams {
+    pub t_polar_c: f64,
+    pub t_boreal_c: f64,
+    pub t_tropical_c: f64,
+    pub t_fade_c: f64,
+    pub r_tropical_humid: f64,
+    pub r_humid: f64,
+    pub r_arid: f64,
+    pub r_fade: f64,
+    pub mountain_lo: f64,
+    pub mountain_hi: f64,
+    pub mountain_t_split_c: f64,
+    pub mountain_t_fade_c: f64,
+    pub e_flat: [f64; MORPHO_ZONES],
+    pub e_hill: [f64; MORPHO_ZONES],
+    pub pv_flat: [f64; MORPHO_ZONES],
+    pub pv_hill: [f64; MORPHO_ZONES],
+    /// λ_PV в блоках геймплея; научный режим умножается на factor.
+    pub lambda_pv_blocks: [f64; MORPHO_ZONES],
+    pub sigma_e: [f64; MORPHO_ZONES],
+    pub sigma_pv: [f64; MORPHO_ZONES],
+    pub scientific_lambda_factor: f64,
+    pub scientific_sigma_factor: f64,
+}
+
+impl MorphoParams {
+    pub fn validate(&self) -> Result<(), &'static str> {
+        let fades = [self.t_fade_c, self.r_fade, self.mountain_t_fade_c];
+        if fades.iter().any(|v| !v.is_finite() || *v <= 0.0) {
+            return Err("сглаживание morpho должно быть положительным");
+        }
+        if !self.t_polar_c.is_finite()
+            || !self.t_boreal_c.is_finite()
+            || !self.t_tropical_c.is_finite()
+            || self.t_polar_c >= self.t_boreal_c
+            || self.t_boreal_c >= self.t_tropical_c
+        {
+            return Err("температурные пороги morpho должны возрастать");
+        }
+        if self.t_fade_c > 0.5 * (self.t_boreal_c - self.t_polar_c)
+            || self.t_fade_c > 0.5 * (self.t_tropical_c - self.t_boreal_c)
+        {
+            return Err("сглаживание T шире температурной полосы");
+        }
+        if !self.r_tropical_humid.is_finite()
+            || !self.r_humid.is_finite()
+            || !self.r_arid.is_finite()
+            || self.r_tropical_humid < 0.0
+            || self.r_tropical_humid >= self.r_humid
+            || self.r_humid >= self.r_arid
+        {
+            return Err("пороги сухости morpho должны возрастать от нуля");
+        }
+        if self.r_fade > 0.5 * (self.r_humid - self.r_tropical_humid)
+            || self.r_fade > 0.5 * (self.r_arid - self.r_humid)
+        {
+            return Err("сглаживание R шире полосы сухости");
+        }
+        if !self.mountain_lo.is_finite()
+            || !self.mountain_hi.is_finite()
+            || self.mountain_lo < 0.0
+            || self.mountain_hi > 1.0
+            || self.mountain_lo >= self.mountain_hi
+            || !self.mountain_t_split_c.is_finite()
+        {
+            return Err("горная полоса morpho должна лежать в M ∈ [0, 1]");
+        }
+        for array in [&self.e_flat, &self.e_hill, &self.pv_flat, &self.pv_hill] {
+            if array
+                .iter()
+                .any(|v| !v.is_finite() || !(-1.0..=1.0).contains(v))
+            {
+                return Err("E/PV зон morpho должны лежать в [-1, 1]");
+            }
+        }
+        if self
+            .lambda_pv_blocks
+            .iter()
+            .any(|v| !v.is_finite() || *v <= 0.0)
+        {
+            return Err("λ_PV зон morpho должна быть положительной");
+        }
+        for array in [&self.sigma_e, &self.sigma_pv] {
+            if array
+                .iter()
+                .any(|v| !v.is_finite() || !(0.0..=1.0).contains(v))
+            {
+                return Err("σ зон morpho должна лежать в [0, 1]");
+            }
+        }
+        if !self.scientific_lambda_factor.is_finite()
+            || self.scientific_lambda_factor <= 0.0
+            || !self.scientific_sigma_factor.is_finite()
+            || self.scientific_sigma_factor <= 0.0
+        {
+            return Err("научные множители morpho должны быть положительными");
+        }
+        Ok(())
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct LavaParams {
     pub width_blocks: f64,
@@ -775,6 +883,8 @@ pub struct Params {
     pub hydrology: HydrologyParams,
     /// Потенциал рельефа T120, включён только в `v1-dev`.
     pub relief: ReliefParams,
+    /// Морфоклиматические зоны T121, включены только в `v1-dev`.
+    pub morpho: MorphoParams,
     pub lava: LavaParams,
     pub spawn: SpawnParams,
     pub lattice: LatticeParams,
@@ -1073,6 +1183,29 @@ impl Params {
                 rift_shoulder_offset_factor: 1.6,
                 rift_shoulder_width_factor: 0.5,
                 rift_shoulder_a: 0.65,
+            },
+            morpho: MorphoParams {
+                t_polar_c: 3.0,
+                t_boreal_c: 6.0,
+                t_tropical_c: 18.0,
+                t_fade_c: 1.5,
+                r_tropical_humid: 0.5,
+                r_humid: 1.0,
+                r_arid: 2.0,
+                r_fade: 0.2,
+                mountain_lo: 0.5,
+                mountain_hi: 0.7,
+                mountain_t_split_c: 6.0,
+                mountain_t_fade_c: 2.0,
+                e_flat: [0.35, 0.30, 0.25, 0.20, 0.30, 0.15, -0.55, -0.50],
+                e_hill: [0.10, -0.05, -0.15, -0.30, -0.32, -0.12, -0.75, -0.70],
+                pv_flat: [-0.40, -0.30, -0.30, -0.20, -0.10, -0.30, 0.30, 0.20],
+                pv_hill: [0.00, 0.20, 0.35, 0.40, 0.50, 0.30, 0.70, 0.50],
+                lambda_pv_blocks: [250.0, 300.0, 450.0, 600.0, 800.0, 250.0, 450.0, 450.0],
+                sigma_e: [0.08, 0.10, 0.12, 0.10, 0.08, 0.12, 0.15, 0.15],
+                sigma_pv: [0.10, 0.12, 0.15, 0.12, 0.10, 0.15, 0.20, 0.20],
+                scientific_lambda_factor: 2.0,
+                scientific_sigma_factor: 0.6,
             },
             lava: LavaParams {
                 width_blocks: block.lava_width_blocks,
@@ -1588,6 +1721,35 @@ impl Params {
             ] {
                 writeln!(w, "{name}={value:?}").unwrap();
             }
+            let m = &self.morpho;
+            for (name, value) in [
+                ("morpho.t_polar_c", m.t_polar_c),
+                ("morpho.t_boreal_c", m.t_boreal_c),
+                ("morpho.t_tropical_c", m.t_tropical_c),
+                ("morpho.t_fade_c", m.t_fade_c),
+                ("morpho.r_tropical_humid", m.r_tropical_humid),
+                ("morpho.r_humid", m.r_humid),
+                ("morpho.r_arid", m.r_arid),
+                ("morpho.r_fade", m.r_fade),
+                ("morpho.mountain_lo", m.mountain_lo),
+                ("morpho.mountain_hi", m.mountain_hi),
+                ("morpho.mountain_t_split_c", m.mountain_t_split_c),
+                ("morpho.mountain_t_fade_c", m.mountain_t_fade_c),
+                (
+                    "morpho.scientific_lambda_factor",
+                    m.scientific_lambda_factor,
+                ),
+                ("morpho.scientific_sigma_factor", m.scientific_sigma_factor),
+            ] {
+                writeln!(w, "{name}={value:?}").unwrap();
+            }
+            writeln!(w, "morpho.e_flat={:?}", m.e_flat).unwrap();
+            writeln!(w, "morpho.e_hill={:?}", m.e_hill).unwrap();
+            writeln!(w, "morpho.pv_flat={:?}", m.pv_flat).unwrap();
+            writeln!(w, "morpho.pv_hill={:?}", m.pv_hill).unwrap();
+            writeln!(w, "morpho.lambda_pv_blocks={:?}", m.lambda_pv_blocks).unwrap();
+            writeln!(w, "morpho.sigma_e={:?}", m.sigma_e).unwrap();
+            writeln!(w, "morpho.sigma_pv={:?}", m.sigma_pv).unwrap();
         }
         out
     }
