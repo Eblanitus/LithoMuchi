@@ -22,7 +22,7 @@
 | `block.swamps_enabled` | `true` | `true` |
 | `block.w_sign_half_width_blocks` | `96` | `48` |
 | `boundaries.ecotone_lambda_blocks` | `256.0` | `256.0` |
-| `boundaries.ecotone_max_fraction` | `0.45` | `0.45` |
+| `boundaries.ecotone_max_fraction` | `0.0` | `0.0` |
 | `boundaries.ecotone_width_log2` | `0.35` | `0.35` |
 | `boundaries.jitter_coarse_lambda_blocks` | `1000.0` | `1000.0` |
 | `boundaries.jitter_coarse_sigma_factor` | `4.0` | `4.0` |
@@ -35,6 +35,9 @@
 | `boundaries.ray_bend_max_deg` | `18.0` | `18.0` |
 | `boundaries.ray_bend_octaves` | `1` | `1` |
 | `boundaries.ray_bend_sigma_deg` | `6.0` | `6.0` |
+| `boundaries.ray_fan_half_angle_deg` | `20.0` | `20.0` |
+| `boundaries.ray_fan_rays` | `5` | `5` |
+| `boundaries.ray_fan_sigma_deg` | `20.0` | `20.0` |
 | `boundaries.wind_belt_fade_deg` | `21.0` | `21.0` |
 | `boundaries.wind_fd_step_l` | `0.5` | `0.5` |
 | `boundaries.wind_grad_floor_deg_per_l` | `20.0` | `20.0` |
@@ -376,4 +379,4 @@
 | `wind.knot7.phi_deg` | `90` | `90` |
 | `wind.knot7.s` | `0.3` | `0.3` |
 
-params_hash: scientific = 872cf84c45f43a3b, gameplay = 2dcdf7f153c548ef
+params_hash: scientific = 4656ddcab532831e, gameplay = c9467c53ba4a1bca
