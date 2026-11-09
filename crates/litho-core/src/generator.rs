@@ -902,8 +902,8 @@ mod tests {
         let g = Generator::new(42, Mode::Gameplay, GenVersion::V1Dev).unwrap();
         let points = [
             (-35098.064436977, 8022.221972733),
-            (-54558.993374417, 24112.824796256), // T136: веер сдвинул дельту
-            (-1536.535205192, -2374.660136579),  // T136: веер сдвинул Q/русло
+            (-54524.133387731, 24107.233303404), // T136/T160: веер 3 сдвинул дельту
+            (-1536.535252886, -2374.660469732),  // T136/T160: веер 3 сдвинул Q/русло
         ];
         let cold = Generator::new(42, Mode::Gameplay, GenVersion::V1Dev).unwrap();
         for (x, z) in points {
@@ -1027,7 +1027,7 @@ mod t141_tests {
     fn pv_field_is_exposed_and_rivers_cut_their_own_valley() {
         let g = Generator::new(42, Mode::Gameplay, GenVersion::V1Dev).unwrap();
         // T136-точка межплитового русла: сила реки близка к 1.
-        let (x, z) = (-1536.535205192, -2374.660136579);
+        let (x, z) = (-1536.535252886, -2374.660469732);
         let s = g.sample(x, z).unwrap();
         assert!(s.world.river > 0.9);
         assert!(s.world.pv.is_finite() && (-1.0..=1.0).contains(&s.world.pv));

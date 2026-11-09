@@ -474,10 +474,10 @@ mod drainage_dev {
         use litho_core::plates::plates_near;
 
         let generator = Generator::new(42, Mode::Gameplay, GenVersion::V1Dev).unwrap();
-        // T136: после веера влаги середина отрезка перенайдена (сид 42).
+        // T136/T160: после веера 3 середина отрезка перенайдена (сид 42).
         // Середина отрезка соседней плиты попадает внутрь ближайшей
         // плиты. До T113 запрос ближайшей плиты терял это русло.
-        let (x, z) = (-1536.535205192, -2374.660136579);
+        let (x, z) = (-1536.535252886, -2374.660469732);
         let owner = generator.plate_sample(x, z).unwrap().a;
         let query = generator.drainage_channel_query(x, z).unwrap();
         let hit = query.nearest.expect("русло соседней плиты найдено");
@@ -523,7 +523,7 @@ mod drainage_dev {
         );
         assert!(lake.networks_considered > 1);
 
-        let (delta_x, delta_z) = (-54558.993374417, 24112.824796256);
+        let (delta_x, delta_z) = (-54524.133387731, 24107.233303404);
         let (channel, _) = generator.drainage_surface_query(delta_x, delta_z).unwrap();
         assert!(channel.delta > 0.9);
         assert!(channel.networks_considered > 1);

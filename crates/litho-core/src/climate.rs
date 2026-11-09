@@ -1031,11 +1031,54 @@ mod t136_tests {
         assert_eq!(one.slope.to_bits(), again.slope.to_bits());
     }
 
+    /// T160: три луча — явная квадратура −20°/0°/+20° с весами exp(−1/2),
+    /// 1, exp(−1/2). Проверяем не только число лучей в параметрах, но и путь,
+    /// вес и порядок накопления каждого из трёх результатов.
+    #[test]
+    fn default_fan_is_the_three_ray_weighted_sum() {
+        let p = fan_params();
+        assert_eq!(p.boundaries.ray_fan_rays, 3);
+        let field = |q: Vec2| SurfaceSample {
+            e_km: 0.2 * q.x - 0.1 * q.z + 2.0 * crate::math::dexp(-q.x * q.x),
+            ..SurfaceSample::default()
+        };
+        let wind = |q: Vec2| (Vec2::new(1.0, 0.05 * q.z), 30.0);
+        let point = Vec2::new(1.0, 0.3);
+        let dir = Vec2::new(1.0, 0.0);
+        let side = crate::math::dexp(-0.5);
+        let total = 2.0 * side + 1.0;
+        let mut expected = RayResult {
+            mu: 0.0,
+            cont_ray: 0.0,
+            slope: 0.0,
+        };
+        for angle in [-20.0_f64, 0.0, 20.0] {
+            let a = angle * (std::f64::consts::PI / 180.0);
+            let rotated = crate::math::rotate_unit(dir, a);
+            let fan_wind = |q: Vec2| {
+                let (v, phi) = wind(q);
+                (crate::math::rotate_unit(v, a).scale(v.len()), phi)
+            };
+            let ray = super::trace_single_ray(point, &p, &field, rotated, &fan_wind, 42);
+            let weight = if angle == 0.0 { 1.0 } else { side };
+            expected.mu += weight * ray.mu;
+            expected.cont_ray += weight * ray.cont_ray;
+            expected.slope += weight * ray.slope;
+        }
+        let actual = trace_ray(point, &p, &field, dir, &wind, 42);
+        assert_eq!(actual.mu.to_bits(), (expected.mu / total).to_bits());
+        assert_eq!(
+            actual.cont_ray.to_bits(),
+            (expected.cont_ray / total).to_bits()
+        );
+        assert_eq!(actual.slope.to_bits(), (expected.slope / total).to_bits());
+    }
+
     /// На конечной полосе хребта веер сглаживает край тени поперёк ветра.
     #[test]
     fn fan_softens_the_edge_of_a_finite_rain_shadow() {
         let mut fan = fan_params();
-        fan.boundaries.ray_fan_rays = 5;
+        fan.boundaries.ray_fan_rays = 3;
         fan.boundaries.ray_fan_half_angle_deg = 20.0;
         fan.boundaries.ray_fan_sigma_deg = 20.0;
         let mut single = fan.clone();
@@ -1062,9 +1105,9 @@ mod t136_tests {
             worst
         };
         let one = max_step(&single);
-        let five = max_step(&fan);
+        let three = max_step(&fan);
         assert!(one > 0.0, "тест должен видеть край тени");
-        assert!(five < one, "веер не сгладил край: {five} ≥ {one}");
+        assert!(three < one, "веер не сгладил край: {three} ≥ {one}");
     }
 
     #[test]

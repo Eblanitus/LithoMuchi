@@ -71,7 +71,7 @@ jobs:
           set -o pipefail
           cargo run -q -p litho-sandbox --release -- drainage --seed 42 --mode gameplay --version v1-dev --at 0,0 | python3 tools/ci_annotations.py report
           cargo run -q -p litho-sandbox --release -- render --seed 42 --mode gameplay --version v1-dev --layers channels,lakes,hydrology --size 32 --bpp 32 --out out/channels-smoke
-          cargo run -q -p litho-sandbox --release -- render --seed 42 --mode gameplay --version v1-dev --layers channels,lakes,hydrology --center -54558.993374417,24112.824796256 --size 32 --bpp 32 --out out/lakes-delta-smoke
+          cargo run -q -p litho-sandbox --release -- render --seed 42 --mode gameplay --version v1-dev --layers channels,lakes,hydrology --center -54524.133387731,24107.233303404 --size 32 --bpp 32 --out out/lakes-delta-smoke
           # T120–T122: A/зоны переведены в C/E/W; малый кадр проверяет путь
           # relief + глубину впадин без широкого скана T160.
           cargo run -q -p litho-sandbox --release -- render --seed 42 --mode gameplay --version v1-dev --layers relief --size 8 --bpp 32 --out out/relief-smoke
