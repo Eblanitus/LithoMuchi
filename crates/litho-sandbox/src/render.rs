@@ -128,12 +128,17 @@ pub fn metadata_with_height(
   "height_data_hash": "{:016x}",
   "synthetic_height": {},
   "pv_field": {},
-  "height_approximation": "63.52 + 128*offset; no factor/jaggedness/3D noise"
+  "height_approximation": {}
 "#,
                 crate::json::quote(&model.source.label()),
                 model.data_hash,
                 model.is_synthetic(),
-                opts.pv
+                opts.pv,
+                crate::json::quote(if model.is_owned() {
+                    "litho-core owned I2 surface; no vanilla splines"
+                } else {
+                    "63.52 + 128*offset; no factor/jaggedness/3D noise"
+                })
             );
             text = text.replace("}\n", &format!(",\n{extra}}}\n"));
         }
@@ -247,6 +252,11 @@ pub fn render_layer_with_height(
                     let input = HeightInput::from_fields(v.c, v.e, v.w);
                     let input = if opts.pv {
                         input.with_pv(world.pv)
+                    } else {
+                        input
+                    };
+                    let input = if height.is_some_and(|m| m.is_owned()) {
+                        input.with_owned_y(world.height.surface_y)
                     } else {
                         input
                     };

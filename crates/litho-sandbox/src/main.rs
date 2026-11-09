@@ -130,6 +130,18 @@ fn height_source(args: &[String]) -> Result<Option<HeightSource>, String> {
     }
 }
 
+/// T144: v1-dev по умолчанию показывает собственную высоту ядра; явные
+/// --game-data/--synthetic-height остаются явным переопределением предпросмотра.
+fn height_model_for(args: &[String], opts: &RenderOptions) -> Result<Option<HeightModel>, String> {
+    if let Some(source) = height_source(args)? {
+        return Ok(Some(HeightModel::load(source)?));
+    }
+    if opts.version.is_water_relief_dev() {
+        return Ok(Some(HeightModel::load(HeightSource::Owned)?));
+    }
+    Ok(None)
+}
+
 fn cmd_render(args: &[String]) -> Result<(), String> {
     let opts = options_from(args)?;
     let layers = match value(args, "--layers") {
@@ -148,13 +160,10 @@ fn cmd_render(args: &[String]) -> Result<(), String> {
     let dir = Path::new(&out);
     std::fs::create_dir_all(dir).map_err(|e| format!("не могу создать '{out}': {e}"))?;
     let params_hash = Params::defaults(opts.version, opts.mode).params_hash();
-    let height = match height_source(args)? {
-        Some(source) => Some(HeightModel::load(source)?),
-        None => None,
-    };
+    let height = height_model_for(args, &opts)?;
     if layers.iter().any(|layer| layer == "vanilla-height") && height.is_none() {
         return Err(
-            "слой vanilla-height требует --game-data ПУТЬ или явный --synthetic-height".into(),
+            "слой vanilla-height для v0 требует --game-data ПУТЬ или явный --synthetic-height; v1-dev использует собственную высоту автоматически".into(),
         );
     }
     for layer in layers {
@@ -434,9 +443,8 @@ fn stats_row(seed: i64, mode: Mode) -> Result<StatsRow, String> {
 
 fn cmd_stats(args: &[String]) -> Result<(), String> {
     let opts = options_from(args)?;
-    if let Some(source) = height_source(args)? {
+    if let Some(model) = height_model_for(args, &opts)? {
         let stats_opts = height_stats::StatsOptions::parse(args, &opts)?;
-        let model = HeightModel::load(source)?;
         let stats = height_stats::HeightStats::collect(&opts, &stats_opts, &model)?;
         if args.iter().any(|arg| arg == "--json") {
             print!("{}", stats.json(&opts, &stats_opts, &model));
@@ -476,10 +484,9 @@ fn cmd_stats(args: &[String]) -> Result<(), String> {
 
 /// Оценка 12.5 / Э1h: те же метрики на 16 сидах × 2 режима, без картинок.
 fn cmd_stats_all(args: &[String]) -> Result<(), String> {
-    if let Some(source) = height_source(args)? {
+    if let Some(model) = height_model_for(args, &options_from(args)?)? {
         let base = options_from(args)?;
         let opts = height_stats::StatsOptions::parse(args, &base)?;
-        let model = HeightModel::load(source)?;
         let json_output = args.iter().any(|arg| arg == "--json");
         let mut rows = Vec::new();
         if !json_output {
@@ -1050,8 +1057,9 @@ fn usage() -> &'static str {
      T100: --game-data ПУТЬ (распакованные данные игры) или --synthetic-height.\n\
        stats: --span-l 200 --size 64 --relief-size 32 --relief-step 32 --boundary-size 64 --boundary-step 32 --json.\n\
        По умолчанию статистика высоты идёт быстрым путём; --path reference переключает.\n\
-       Высота приближённая (offset без 3D-шума); синтетика не годится для приёмки.\n\
-       --pv отложен до T141 (собственное поле PV).\n"
+       v0: высота приближённая (offset без 3D-шума); синтетика не годится для приёмки.\n\
+       v1-dev: собственная высота T144 автоматически; --game-data/--synthetic-height явно переопределяют.\n\
+       --pv использует собственное поле PV (T141).\n"
 }
 
 fn main() -> Result<(), String> {

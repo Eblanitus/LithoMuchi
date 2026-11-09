@@ -72,6 +72,21 @@ pub struct WorldSample {
     pub is_ocean: bool,
     /// T141: собственный PV для I2-lite. В v0 это прежняя производная f(W).
     pub pv: f64,
+    /// T144: собственная высота/factor/jaggedness (полная I2, только v1-dev).
+    /// В v0 поле не используется паком и остаётся диагностическим значением
+    /// по умолчанию, чтобы не менять замороженные пять полей.
+    pub height: crate::height::HeightSample,
+}
+
+/// Результат перевода колонки в игровые поля (T115/T122/T141/T144).
+struct SurfaceFields {
+    class: crate::classify::ClassSample,
+    vanilla: VanillaSample,
+    river: f64,
+    hydrology: HydrologySample,
+    is_ocean: bool,
+    pv: f64,
+    height: crate::height::HeightSample,
 }
 
 #[derive(Clone, Debug)]
@@ -102,6 +117,10 @@ impl Generator {
             debug_assert!(
                 params.boundaries.validate().is_ok(),
                 "параметры границ v1-dev"
+            );
+            debug_assert!(
+                crate::height::validate(&params).is_ok(),
+                "параметры собственной высоты v1-dev"
             );
         }
         // T54: точка появления ищется один раз на мир, только по сиду и версии.
@@ -311,16 +330,16 @@ impl Generator {
                 &self.rivers,
             )
         };
-        let (class, vanilla, river, hydrology, is_ocean, pv) =
-            self.surface_fields(&climate, class, is_ocean, x, z, local.max(traced))?;
+        let fields = self.surface_fields(&climate, class, is_ocean, x, z, local.max(traced))?;
         Ok(Some(WorldSample {
             climate,
-            class,
-            vanilla,
-            river,
-            hydrology,
-            is_ocean,
-            pv,
+            class: fields.class,
+            vanilla: fields.vanilla,
+            river: fields.river,
+            hydrology: fields.hydrology,
+            is_ocean: fields.is_ocean,
+            pv: fields.pv,
+            height: fields.height,
         }))
     }
 
@@ -514,29 +533,20 @@ impl Generator {
         x: f64,
         z: f64,
         local_river: f64,
-    ) -> Result<
-        (
-            crate::classify::ClassSample,
-            VanillaSample,
-            f64,
-            HydrologySample,
-            bool,
-            f64,
-        ),
-        RiverNetError,
-    > {
+    ) -> Result<SurfaceFields, RiverNetError> {
         if !self.params.version.is_water_relief_dev() {
             let vanilla =
                 crate::vanilla::sample(climate, &class, x, z, self.seed, &self.params, local_river);
             let pv = crate::vanilla::peaks_valleys(vanilla.w);
-            return Ok((
+            return Ok(SurfaceFields {
                 class,
                 vanilla,
-                local_river,
-                HydrologySample::default(),
+                river: local_river,
+                hydrology: HydrologySample::default(),
                 is_ocean,
                 pv,
-            ));
+                height: crate::height::HeightSample::default(),
+            });
         }
         let geometry = self.cached_hydrology_queries(x, z)?;
         let water = hydrology::resolve(geometry.channels, geometry.lakes, climate, &self.params);
@@ -566,7 +576,24 @@ impl Generator {
         let river = local_river.max(water.river);
         // I2-lite: долины режут русла/низкие озёра, а не каждая смена знака W.
         let pv = crate::math::lerp(pv_relief, -1.0, crate::math::clamp01(river));
-        Ok((class, vanilla, river, water, class.is_ocean, pv))
+        let height = crate::height::sample(
+            vanilla.c,
+            vanilla.e,
+            pv,
+            climate.surface.e_km,
+            morpho.values[6],
+            morpho.values[7],
+            &self.params,
+        );
+        Ok(SurfaceFields {
+            class,
+            vanilla,
+            river,
+            hydrology: water,
+            is_ocean: class.is_ocean,
+            pv,
+            height,
+        })
     }
 
     /// Поле глубинной лавы λ (слой `lava`, T53).
@@ -775,16 +802,16 @@ impl Generator {
         let is_ocean = c_value < self.params.climate.ocean_c_threshold;
         let class = classify(&climate, is_ocean, x, z, self.seed, &self.params);
         let local = local_r(x, z, &surface, self.seed, &self.params);
-        let (class, vanilla, river, hydrology, is_ocean, pv) =
-            self.surface_fields(&climate, class, is_ocean, x, z, local)?;
+        let fields = self.surface_fields(&climate, class, is_ocean, x, z, local)?;
         let world = WorldSample {
             climate,
-            class,
-            vanilla,
-            river,
-            hydrology,
-            is_ocean,
-            pv,
+            class: fields.class,
+            vanilla: fields.vanilla,
+            river: fields.river,
+            hydrology: fields.hydrology,
+            is_ocean: fields.is_ocean,
+            pv: fields.pv,
+            height: fields.height,
         };
         let mut full = self.full_from_world(x, z, world);
         full.plate = Some(plates);
@@ -808,8 +835,18 @@ impl Generator {
             Field::Temperature => full.vanilla.t,
             Field::Vegetation => full.vanilla.h,
             Field::Lava => full.lava,
-            Field::Offset => full.climate.surface.e_km,
+            Field::Offset => {
+                if self.params.version.is_water_relief_dev() {
+                    full.world.height.offset
+                } else {
+                    // v0 пак не переопределяет offset; сохраняем старое
+                    // диагностическое значение, не меняя замороженный путь.
+                    full.climate.surface.e_km
+                }
+            }
             Field::Pv => full.world.pv,
+            Field::Factor => full.world.height.factor,
+            Field::Jaggedness => full.world.height.jaggedness,
         };
         if value.is_finite() { value } else { 0.0 }
     }
@@ -1020,6 +1057,49 @@ mod tests {
 }
 
 #[cfg(test)]
+mod t144_tests {
+    use super::Generator;
+    use crate::field::Field;
+    use crate::mode::Mode;
+    use crate::version::GenVersion;
+
+    #[test]
+    fn owned_height_fields_match_the_world_sample_on_both_paths() {
+        let g = Generator::new(42, Mode::Gameplay, GenVersion::V1Dev).unwrap();
+        for k in 0..16 {
+            let x = k as f64 * 211.0 - 1600.0;
+            let z = k as f64 * -173.0 + 900.0;
+            let fast = g.sample(x, z).unwrap();
+            let reference = g.sample_reference(x, z).unwrap();
+            let h = fast.world.height;
+            assert!(h.surface_y.is_finite());
+            assert!((g.params().height.min_y..=g.params().height.max_y).contains(&h.surface_y));
+            assert_eq!(h.offset.to_bits(), reference.world.height.offset.to_bits());
+            assert_eq!(h.factor.to_bits(), reference.world.height.factor.to_bits());
+            assert_eq!(
+                h.jaggedness.to_bits(),
+                reference.world.height.jaggedness.to_bits()
+            );
+            assert_eq!(
+                g.field(Field::Offset, x, 0.0, z).to_bits(),
+                h.offset.to_bits()
+            );
+            assert_eq!(
+                g.field(Field::Factor, x, 0.0, z).to_bits(),
+                h.factor.to_bits()
+            );
+            assert_eq!(
+                g.field(Field::Jaggedness, x, 0.0, z).to_bits(),
+                h.jaggedness.to_bits()
+            );
+        }
+        assert_eq!(Field::ALL.len(), 10);
+        assert_eq!(Field::parse("factor"), Some(Field::Factor));
+        assert_eq!(Field::parse("jaggedness"), Some(Field::Jaggedness));
+    }
+}
+
+#[cfg(test)]
 mod t141_tests {
     use super::*;
 
@@ -1037,7 +1117,7 @@ mod t141_tests {
             s.world.pv.to_bits()
         );
         assert_eq!(Field::parse("pv"), Some(Field::Pv));
-        assert_eq!(Field::ALL.len(), 8);
+        assert_eq!(Field::ALL.len(), 10);
     }
 
     #[test]

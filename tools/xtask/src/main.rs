@@ -18,7 +18,8 @@ const MOD_VERSION: &str = "0.1.0";
 const HORIZON_REV: &str = "f319701e8c9ab657ff562250b3ba07b2d654e3bc";
 /// Пять полей, которые подменяем в MVP (точка №2 плана 10.1).
 /// v1-dev дополнительно переопределяет `overworld/ridges_folded` полем `pv`
-/// (T141/I2-lite); v0 остаётся ровно с пятью полями.
+/// (T141/I2-lite) и `offset/factor/jaggedness` своей высотой (T144/полная I2);
+/// v0 остаётся ровно с пятью полями.
 const FIELDS: [&str; 5] = [
     "continents",
     "erosion",
@@ -140,7 +141,8 @@ fn write_file(path: &Path, text: &str) -> Result<(), String> {
     fs::write(path, text).map_err(|e| format!("не могу записать {}: {e}", path.display()))
 }
 
-/// Один датапак: 1 метаданные + 5 переопределений + 5 фиктивных шумов.
+/// Один датапак: метаданные, переопределения density_function и фиктивные
+/// шумы. v0/smoke — пять полей; v1-dev добавляет pv/offset/factor/jaggedness.
 fn make_pack(
     dir: &Path,
     version: GenVersion,
@@ -166,6 +168,9 @@ fn make_pack(
     let mut fields: Vec<&str> = FIELDS.to_vec();
     if version.is_water_relief_dev() {
         fields.push("pv");
+        fields.push("offset");
+        fields.push("factor");
+        fields.push("jaggedness");
     }
     for field in fields {
         // В ванили PV — именованная функция `ridges_folded`, на неё по имени
@@ -362,8 +367,34 @@ fn cmd_bundle_check(out: &Path) -> Result<(), String> {
                 if !pv_df.is_file() || !pv_noise.is_file() {
                     return Err(format!("в паке {} нет I2-lite PV", pack.display()));
                 }
-            } else if pv_df.exists() {
-                return Err(format!("v0 пак {} не должен меняться", pack.display()));
+                for field in ["offset", "factor", "jaggedness"] {
+                    let df = pack.join(format!(
+                        "data/minecraft/worldgen/density_function/overworld/{field}.json"
+                    ));
+                    let noise = pack.join(format!(
+                        "data/litospherity/worldgen/noise/{}/{}/{field}.json",
+                        version.as_str(),
+                        mode.as_str()
+                    ));
+                    if !df.is_file() || !noise.is_file() {
+                        return Err(format!("в паке {} нет полной I2 {field}", pack.display()));
+                    }
+                }
+            } else {
+                if pv_df.exists() {
+                    return Err(format!("v0 пак {} не должен меняться", pack.display()));
+                }
+                for field in ["offset", "factor", "jaggedness"] {
+                    let df = pack.join(format!(
+                        "data/minecraft/worldgen/density_function/overworld/{field}.json"
+                    ));
+                    if df.exists() {
+                        return Err(format!(
+                            "v0 пак {} не должен менять {field}",
+                            pack.display()
+                        ));
+                    }
+                }
             }
         }
     }

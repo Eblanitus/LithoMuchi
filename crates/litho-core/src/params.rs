@@ -1035,6 +1035,28 @@ impl BoundaryParams {
     }
 }
 
+/// T144: собственная высота (полная I2). Таблицы — наши числа, не данные
+/// Mojang. В canonical_text попадают только в `v1-dev`; v0 заморожен.
+#[derive(Clone, Debug, PartialEq)]
+pub struct HeightParams {
+    /// Границы полос E как в метриках 10.1; крайние узлы продолжают таблицу.
+    pub e_knots: [f64; 8],
+    pub pv_knots: [f64; 5],
+    /// Высота поверхности в блоках для полос E0…E6 на узлах PV.
+    pub land_y: [[f64; 5]; 7],
+    pub ocean_c: [f64; 7],
+    pub ocean_y: [f64; 7],
+    pub factor: [f64; 7],
+    pub jaggedness: [f64; 7],
+    pub coast_width_c: f64,
+    /// Научный режим: реальная `e_km` поверх таблицы; gameplay по умолчанию 0.
+    pub e_gain_blocks_per_km: f64,
+    pub cold_jagged_gain: f64,
+    pub warm_jagged_drop: f64,
+    pub min_y: f64,
+    pub max_y: f64,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct Params {
     pub version: GenVersion,
@@ -1054,6 +1076,8 @@ pub struct Params {
     pub relief: ReliefParams,
     /// Морфоклиматические зоны T121, включены только в `v1-dev`.
     pub morpho: MorphoParams,
+    /// Собственная высота T144; включается только в `v1-dev`.
+    pub height: HeightParams,
     /// Границы биомов T130–T133; включаются только в `v1-dev`.
     pub boundaries: BoundaryParams,
     pub lava: LavaParams,
@@ -1384,6 +1408,34 @@ impl Params {
                 sigma_pv: [0.10, 0.12, 0.15, 0.12, 0.10, 0.15, 0.20, 0.20],
                 scientific_lambda_factor: 2.0,
                 scientific_sigma_factor: 0.6,
+            },
+            height: HeightParams {
+                e_knots: [-1.0, -0.78, -0.375, -0.2225, 0.05, 0.45, 0.55, 1.0],
+                pv_knots: [-1.0, -0.5, 0.0, 0.5, 1.0],
+                // E0/E1 горы, E2 плато с каньоном при PV=-1, E3 холмы,
+                // E4 равнины, E5 разбитый рельеф, E6 болото/низина.
+                land_y: [
+                    [90.0, 120.0, 160.0, 200.0, 240.0],
+                    [80.0, 105.0, 135.0, 165.0, 195.0],
+                    [35.0, 70.0, 105.0, 120.0, 130.0],
+                    [51.0, 70.0, 85.0, 100.0, 117.0],
+                    [64.0, 67.0, 70.0, 73.0, 76.0],
+                    [70.0, 80.0, 90.0, 100.0, 110.0],
+                    [62.0, 62.5, 63.0, 63.5, 64.0],
+                ],
+                ocean_c: [-0.98, -0.70, -0.52, -0.45, -0.40, -0.30, -0.19],
+                ocean_y: [35.0, 42.0, 48.0, 52.0, 55.0, 59.0, 63.0],
+                factor: [0.85, 0.75, 0.60, 0.50, 0.25, 0.55, 0.20],
+                jaggedness: [0.90, 0.70, 0.30, 0.40, 0.10, 0.60, 0.05],
+                coast_width_c: 0.06,
+                e_gain_blocks_per_km: match mode {
+                    Mode::Gameplay => 0.0,
+                    Mode::Scientific => 24.0,
+                },
+                cold_jagged_gain: 0.20,
+                warm_jagged_drop: 0.10,
+                min_y: -64.0,
+                max_y: 319.0,
             },
             boundaries: BoundaryParams {
                 // σ=6° даёт типичные ±6° и хвосты до ±18°, без тонких октав:
@@ -1968,6 +2020,24 @@ impl Params {
             writeln!(w, "morpho.lambda_pv_blocks={:?}", m.lambda_pv_blocks).unwrap();
             writeln!(w, "morpho.sigma_e={:?}", m.sigma_e).unwrap();
             writeln!(w, "morpho.sigma_pv={:?}", m.sigma_pv).unwrap();
+            let hg = &self.height;
+            writeln!(w, "height.e_knots={:?}", hg.e_knots).unwrap();
+            writeln!(w, "height.pv_knots={:?}", hg.pv_knots).unwrap();
+            writeln!(w, "height.land_y={:?}", hg.land_y).unwrap();
+            writeln!(w, "height.ocean_c={:?}", hg.ocean_c).unwrap();
+            writeln!(w, "height.ocean_y={:?}", hg.ocean_y).unwrap();
+            writeln!(w, "height.factor={:?}", hg.factor).unwrap();
+            writeln!(w, "height.jaggedness={:?}", hg.jaggedness).unwrap();
+            for (name, value) in [
+                ("height.coast_width_c", hg.coast_width_c),
+                ("height.e_gain_blocks_per_km", hg.e_gain_blocks_per_km),
+                ("height.cold_jagged_gain", hg.cold_jagged_gain),
+                ("height.warm_jagged_drop", hg.warm_jagged_drop),
+                ("height.min_y", hg.min_y),
+                ("height.max_y", hg.max_y),
+            ] {
+                writeln!(w, "{name}={value:?}").unwrap();
+            }
             let bd = &self.boundaries;
             for (name, value) in [
                 ("boundaries.ray_bend_sigma_deg", bd.ray_bend_sigma_deg),

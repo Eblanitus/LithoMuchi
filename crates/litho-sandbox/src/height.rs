@@ -1,8 +1,11 @@
-//! T100: предпросмотр ванильной высоты по локальным сплайнам игры.
+//! T100/T144: предпросмотр высоты.
 //!
-//! Это НЕ генератор чанков: y = 63.52 + 128·offset, без factor, jaggedness,
-//! 3D-шума и аквиферов. Погрешность — несколько блоков. Файлы Mojang читаются
-//! с диска пользователя, не копируются в репозиторий и не входят в litho-core.
+//! Для v0 и явных --game-data/--synthetic-height это НЕ генератор чанков:
+//! y = 63.52 + 128·offset по локальным сплайнам, без factor/jaggedness/3D-шума.
+//! Для v1-dev без явного источника используется собственная высота ядра
+//! (HeightSource::Owned): сплайны Mojang больше не нужны. Файлы Mojang
+//! читаются с диска пользователя, не копируются в репозиторий и не входят в
+//! litho-core.
 
 use std::path::{Path, PathBuf};
 
@@ -22,6 +25,9 @@ pub struct HeightInput {
     pub w: f64,
     /// T141: по умолчанию PV = f(W); `--pv` подставляет собственное поле ядра.
     pub pv: f64,
+    /// T144: готовая высота ядра для HeightSource::Owned. Сплайны её не
+    /// пересчитывают; явный synthetic/game-data источник это поле игнорирует.
+    pub owned_y: Option<f64>,
 }
 impl HeightInput {
     pub fn from_fields(c: f64, e: f64, w: f64) -> Self {
@@ -30,10 +36,15 @@ impl HeightInput {
             e,
             w,
             pv: peaks_valleys(w),
+            owned_y: None,
         }
     }
     pub fn with_pv(mut self, pv: f64) -> Self {
         self.pv = pv;
+        self
+    }
+    pub fn with_owned_y(mut self, y: f64) -> Self {
+        self.owned_y = Some(y);
         self
     }
 }
@@ -43,12 +54,15 @@ pub enum HeightSource {
     GameData(PathBuf),
     /// Только явный флаг --synthetic-height: собственные тестовые числа.
     Synthetic,
+    /// T144: собственная высота litho-core (v1-dev), без данных Mojang.
+    Owned,
 }
 impl HeightSource {
     pub fn label(&self) -> String {
         match self {
             Self::GameData(path) => format!("local-game-data:{}", path.display()),
             Self::Synthetic => "synthetic-NOT-vanilla".into(),
+            Self::Owned => "litho-core-owned-I2".into(),
         }
     }
 }
@@ -169,6 +183,15 @@ pub struct HeightModel {
 }
 impl HeightModel {
     pub fn load(source: HeightSource) -> Result<Self, String> {
+        if matches!(source, HeightSource::Owned) {
+            return Ok(Self {
+                source,
+                data_hash: fnv1a64("litho-core-owned-I2"),
+                offset: Node::Constant(0.0),
+                factor: Node::Constant(0.0),
+                jaggedness: Node::Constant(0.0),
+            });
+        }
         let (texts, dir) = match &source {
             HeightSource::Synthetic => (
                 [
@@ -178,6 +201,7 @@ impl HeightModel {
                 ],
                 None,
             ),
+            HeightSource::Owned => unreachable!("owned обработан выше"),
             HeightSource::GameData(root) => {
                 let dir = find_density_dir(root)?;
                 let mut texts = Vec::with_capacity(3);
@@ -219,16 +243,26 @@ impl HeightModel {
             e: 0.0,
             w: 0.0,
             pv: -1.0,
+            owned_y: None,
         };
         model.factor.eval(&zero)?;
         model.jaggedness.eval(&zero)?;
         Ok(model)
     }
     pub fn surface_y(&self, input: HeightInput) -> Result<f64, String> {
+        if self.is_owned() {
+            return input
+                .owned_y
+                .filter(|y| y.is_finite())
+                .ok_or_else(|| "owned-height: нет готовой высоты ядра".into());
+        }
         Ok(SURFACE_BASE + OFFSET_SCALE * self.offset.eval(&input)?)
     }
     pub fn is_synthetic(&self) -> bool {
         matches!(self.source, HeightSource::Synthetic)
+    }
+    pub fn is_owned(&self) -> bool {
+        matches!(self.source, HeightSource::Owned)
     }
 }
 
@@ -446,6 +480,21 @@ mod tests {
         ] {
             assert!(parse_node(&parse(text).unwrap()).is_err());
         }
+    }
+    #[test]
+    fn owned_height_uses_core_sample_and_ignores_splines() {
+        let model = HeightModel::load(HeightSource::Owned).unwrap();
+        assert!(model.is_owned());
+        assert!(!model.is_synthetic());
+        let input = HeightInput::from_fields(0.4, 0.2, 0.3).with_owned_y(123.0);
+        assert_eq!(model.surface_y(input).unwrap(), 123.0);
+        assert!(
+            model
+                .surface_y(HeightInput::from_fields(0.4, 0.2, 0.3))
+                .is_err()
+        );
+        let synthetic = HeightModel::load(HeightSource::Synthetic).unwrap();
+        assert!(synthetic.surface_y(input).unwrap().is_finite());
     }
     #[test]
     fn missing_game_data_is_actionable_error() {

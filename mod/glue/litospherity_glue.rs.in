@@ -90,7 +90,13 @@ pub struct LithoNoise {
 
 impl crate::noise::Noise for LithoNoise {
     fn range(&self) -> Result<[f32; 2], crate::noise::NanRange> {
-        Ok([-1.0, 1.0])
+        // T144: offset = (y - 63.52)/128 может выходить за [-1, 1] при
+        // y до 319; JSON base_amplitude=4 уже задаёт графу широкий диапазон.
+        // Остальные поля остаются в [-1, 1]. Сверить с Horizon при T72/T140.
+        match self.field {
+            Field::Offset => Ok([-4.0, 4.0]),
+            _ => Ok([-1.0, 1.0]),
+        }
     }
 
     fn get2(&self, x: f64, z: f64) -> f32 {

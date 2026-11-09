@@ -509,6 +509,11 @@ impl HeightStats {
                 } else {
                     input
                 };
+                let input = if model.is_owned() {
+                    input.with_owned_y(world.height.surface_y)
+                } else {
+                    input
+                };
                 let y = model.surface_y(input)?;
                 let c_land = v.c >= land_threshold;
                 let river = world.river >= 0.5;
@@ -562,6 +567,11 @@ impl HeightStats {
                 let input = HeightInput::from_fields(v.c, v.e, v.w);
                 let input = if base.pv {
                     input.with_pv(world.pv)
+                } else {
+                    input
+                };
+                let input = if model.is_owned() {
+                    input.with_owned_y(world.height.surface_y)
                 } else {
                     input
                 };
@@ -727,7 +737,7 @@ impl HeightStats {
         let mut out = format!(
             "T100: сид={} режим={} версия={} путь={}\n\
              высота: {}\n\
-             WARNING: приближение 63.52 + 128·offset; factor/jaggedness/3D-шум не учтены.\n\
+             {height_note}\n\
              область={span}×{span} L, шаг={step:.3} блока, точек={samples}, суша без русел={land}\n\
              затопленная суша y<63 {flood:6.2}% (быстрая цель ≤10%, v1 ≤5%)\n\
              гипсометрия <63 / 63–70 / 70–90 / 90–130 / ≥130: {h0:.2} / {h1:.2} / {h2:.2} / {h3:.2} / {h4:.2}%\n\
@@ -741,6 +751,11 @@ impl HeightStats {
             base.version.as_str(),
             if opts.fast { "fast" } else { "reference" },
             model.source.label(),
+            height_note = if model.is_owned() {
+                "T144: собственная высота ядра (offset/factor/jaggedness); ванильные сплайны не используются"
+            } else {
+                "WARNING: приближение 63.52 + 128·offset; factor/jaggedness/3D-шум не учтены"
+            },
             span = opts.span_l,
             step = opts.span_l * base.mode.l_blocks() / opts.size as f64,
             samples = self.samples,
@@ -812,7 +827,7 @@ impl HeightStats {
     }
     pub fn json(&self, base: &RenderOptions, opts: &StatsOptions, model: &HeightModel) -> String {
         format!(
-            "{{\n  \"seed\": {}, \"mode\": {}, \"version\": {}, \"path\": {},\n  \"height_source\": {}, \"height_data_hash\": \"{:016x}\", \"synthetic\": {}, \"pv_field\": {},\n  \"approximation\": \"63.52 + 128*offset; no factor/jaggedness/3D noise\",\n  \"span_l\": {}, \"size\": {}, \"samples\": {}, \"land_samples\": {},\n  \"flooded_land_pct\": {}, \"hyps_pct\": {:?}, \"erosion_pct\": {:?},\n  \"valley_pct\": {}, \"relief_step\": {}, \"relief_windows\": {}, \"relief_median\": {}, \"flat_windows_pct\": {},\n  \"river_samples\": {}, \"river_water_pct\": {}, \"gallery_samples\": {}, \"gallery_pct\": {},\n  \"boundary\": {{\"size\": {}, \"step\": {}, \"span_l\": {}, \"land\": {}, \"humidity_jump_pct\": {}, \"humidity_jump_pair_pct\": {}, \"humidity_jump_pairs\": {}, \"humidity_pairs\": {}, \"climate_land\": {}, \"climate_humidity_jump_pct\": {}, \"climate_humidity_pair_pct\": {}, \"climate_humidity_jump_pairs\": {}, \"climate_humidity_pairs\": {}, \"wind_max_deg\": {}, \"wind_pairs\": {}, \"straight_pct\": {}, \"straight_edges\": {}, \"boundary_edges\": {}, \"straight_model\": \"grid-edge-chord-512-deviation-16\", \"thin_pct\": {}, \"min_strip_blocks\": {}, \"acceptance_volume\": {}}}\n}}\n",
+            "{{\n  \"seed\": {}, \"mode\": {}, \"version\": {}, \"path\": {},\n  \"height_source\": {}, \"height_data_hash\": \"{:016x}\", \"synthetic\": {}, \"pv_field\": {},\n  \"approximation\": {},\n  \"span_l\": {}, \"size\": {}, \"samples\": {}, \"land_samples\": {},\n  \"flooded_land_pct\": {}, \"hyps_pct\": {:?}, \"erosion_pct\": {:?},\n  \"valley_pct\": {}, \"relief_step\": {}, \"relief_windows\": {}, \"relief_median\": {}, \"flat_windows_pct\": {},\n  \"river_samples\": {}, \"river_water_pct\": {}, \"gallery_samples\": {}, \"gallery_pct\": {},\n  \"boundary\": {{\"size\": {}, \"step\": {}, \"span_l\": {}, \"land\": {}, \"humidity_jump_pct\": {}, \"humidity_jump_pair_pct\": {}, \"humidity_jump_pairs\": {}, \"humidity_pairs\": {}, \"climate_land\": {}, \"climate_humidity_jump_pct\": {}, \"climate_humidity_pair_pct\": {}, \"climate_humidity_jump_pairs\": {}, \"climate_humidity_pairs\": {}, \"wind_max_deg\": {}, \"wind_pairs\": {}, \"straight_pct\": {}, \"straight_edges\": {}, \"boundary_edges\": {}, \"straight_model\": \"grid-edge-chord-512-deviation-16\", \"thin_pct\": {}, \"min_strip_blocks\": {}, \"acceptance_volume\": {}}}\n}}\n",
             self.seed,
             crate::json::quote(self.mode.as_str()),
             crate::json::quote(base.version.as_str()),
@@ -821,6 +836,11 @@ impl HeightStats {
             model.data_hash,
             model.is_synthetic(),
             base.pv,
+            crate::json::quote(if model.is_owned() {
+                "litho-core owned I2 surface; no vanilla splines"
+            } else {
+                "63.52 + 128*offset; no factor/jaggedness/3D noise"
+            }),
             opts.span_l,
             opts.size,
             self.samples,
@@ -908,6 +928,39 @@ mod tests {
             pv_value.get("pv_field"),
             Some(&crate::json::Json::Bool(true))
         );
+    }
+
+    #[test]
+    fn v1_dev_owned_stats_use_core_height_without_synthetic_warning() {
+        let base = RenderOptions {
+            seed: 42,
+            mode: Mode::Gameplay,
+            version: GenVersion::V1Dev,
+            center_x: 0.0,
+            center_z: 0.0,
+            size: 8,
+            bpp: 32.0,
+            path_fast: true,
+            pv: true,
+        };
+        let opts = StatsOptions {
+            size: 8,
+            span_l: 8.0,
+            relief_size: 8,
+            relief_step: 32.0,
+            fast: true,
+            boundary_size: 8,
+            boundary_step: 32.0,
+        };
+        let model = HeightModel::load(HeightSource::Owned).unwrap();
+        let stats = HeightStats::collect(&base, &opts, &model).unwrap();
+        let value = crate::json::parse(&stats.json(&base, &opts, &model)).unwrap();
+        assert_eq!(
+            value.get("synthetic"),
+            Some(&crate::json::Json::Bool(false))
+        );
+        assert!(stats.flooded().is_finite());
+        assert!(stats.text(&base, &opts, &model).contains("T144"));
     }
 }
 

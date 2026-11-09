@@ -18,6 +18,7 @@ pub mod drainage;
 pub mod field;
 pub mod generator;
 pub mod hash;
+pub mod height;
 pub mod hydrology;
 pub mod lake;
 pub mod lattice;
