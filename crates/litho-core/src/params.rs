@@ -400,6 +400,9 @@ pub struct HydrologyParams {
 /// плана; подбор гипсометрии остаётся T123. В canonical_text только v1-dev.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ReliefParams {
+    /// T122: сглаживание потенциала A перед переводом в E/PV.
+    pub a_lo: f64,
+    pub a_hi: f64,
     pub foothill_m_lo: f64,
     pub foothill_m_hi: f64,
     pub foothill_fade: f64,
@@ -479,6 +482,7 @@ impl ReliefParams {
             self.rift_shoulder_a,
         ];
         let ordered = [
+            (self.a_lo, self.a_hi),
             (self.foothill_m_lo, self.foothill_m_hi),
             (self.paleo_band_lo, self.paleo_band_hi),
             (self.paleo_a_min, self.paleo_a_max),
@@ -506,6 +510,9 @@ impl ReliefParams {
             .any(|(lo, hi)| !lo.is_finite() || !hi.is_finite() || lo >= hi)
         {
             return Err("пороги relief должны быть конечны и возрастать");
+        }
+        if self.a_lo < 0.0 || self.a_hi > 1.0 {
+            return Err("сглаживание A должно лежать в [0, 1]");
         }
         if self.foothill_m_lo < 0.0 || self.foothill_m_hi > 1.0 {
             return Err("предгорья должны лежать внутри M ∈ [0, 1]");
@@ -543,6 +550,15 @@ pub struct MorphoParams {
     pub mountain_hi: f64,
     pub mountain_t_split_c: f64,
     pub mountain_t_fade_c: f64,
+    /// T122: шаг региональной решётки весов зон для рельефа, L. Луч влаги
+    /// даёт скачки R на блок; форма рельефа усредняет их на масштабе 1 L,
+    /// не меняя климат/биомы. Полное сглаживание границ — T130–T133.
+    pub weight_step_l: f64,
+    /// T122: поправки C котловин/нагорий и пределы PV_relief.
+    pub c_basin_drop: f64,
+    pub c_highland_gain: f64,
+    pub pv_min: f64,
+    pub pv_max: f64,
     pub e_flat: [f64; MORPHO_ZONES],
     pub e_hill: [f64; MORPHO_ZONES],
     pub pv_flat: [f64; MORPHO_ZONES],
@@ -596,6 +612,24 @@ impl MorphoParams {
             || !self.mountain_t_split_c.is_finite()
         {
             return Err("горная полоса morpho должна лежать в M ∈ [0, 1]");
+        }
+        if !self.weight_step_l.is_finite() || self.weight_step_l <= 0.0 {
+            return Err("шаг решётки весов morpho должен быть положительным");
+        }
+        if !self.c_basin_drop.is_finite()
+            || !(0.0..=1.0).contains(&self.c_basin_drop)
+            || !self.c_highland_gain.is_finite()
+            || !(0.0..=1.0).contains(&self.c_highland_gain)
+        {
+            return Err("поправки C morpho должны лежать в [0, 1]");
+        }
+        if !self.pv_min.is_finite()
+            || !self.pv_max.is_finite()
+            || self.pv_min < -1.0
+            || self.pv_max > 1.0
+            || self.pv_min >= self.pv_max
+        {
+            return Err("пределы PV morpho должны возрастать внутри [-1, 1]");
         }
         for array in [&self.e_flat, &self.e_hill, &self.pv_flat, &self.pv_hill] {
             if array
@@ -1142,6 +1176,8 @@ impl Params {
                 gallery_h_gain: 0.65,
             },
             relief: ReliefParams {
+                a_lo: 0.15,
+                a_hi: 0.85,
                 foothill_m_lo: 0.05,
                 foothill_m_hi: 0.5,
                 foothill_fade: 0.1,
@@ -1197,6 +1233,11 @@ impl Params {
                 mountain_hi: 0.7,
                 mountain_t_split_c: 6.0,
                 mountain_t_fade_c: 2.0,
+                weight_step_l: 1.0,
+                c_basin_drop: 0.10,
+                c_highland_gain: 0.15,
+                pv_min: -0.9,
+                pv_max: 1.0,
                 e_flat: [0.35, 0.30, 0.25, 0.20, 0.30, 0.15, -0.55, -0.50],
                 e_hill: [0.10, -0.05, -0.15, -0.30, -0.32, -0.12, -0.75, -0.70],
                 pv_flat: [-0.40, -0.30, -0.30, -0.20, -0.10, -0.30, 0.30, 0.20],
@@ -1671,6 +1712,8 @@ impl Params {
             }
             let r = &self.relief;
             for (name, value) in [
+                ("relief.a_lo", r.a_lo),
+                ("relief.a_hi", r.a_hi),
                 ("relief.foothill_m_lo", r.foothill_m_lo),
                 ("relief.foothill_m_hi", r.foothill_m_hi),
                 ("relief.foothill_fade", r.foothill_fade),
@@ -1735,6 +1778,11 @@ impl Params {
                 ("morpho.mountain_hi", m.mountain_hi),
                 ("morpho.mountain_t_split_c", m.mountain_t_split_c),
                 ("morpho.mountain_t_fade_c", m.mountain_t_fade_c),
+                ("morpho.weight_step_l", m.weight_step_l),
+                ("morpho.c_basin_drop", m.c_basin_drop),
+                ("morpho.c_highland_gain", m.c_highland_gain),
+                ("morpho.pv_min", m.pv_min),
+                ("morpho.pv_max", m.pv_max),
                 (
                     "morpho.scientific_lambda_factor",
                     m.scientific_lambda_factor,

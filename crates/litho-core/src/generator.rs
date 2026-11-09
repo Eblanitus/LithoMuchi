@@ -78,6 +78,9 @@ pub struct Generator {
     params: Params,
     rivers: Arc<RiverCache>,
     hydrology: Arc<crate::cache::ShardedCache<(i64, i64), Arc<HydrologySample>>>,
+    /// T122: региональные веса морфозон для рельефа. Кэш не меняет ответ:
+    /// узлы привязаны к мировым блокам, эталон считает ту же решётку.
+    morpho: Arc<crate::cache::ShardedCache<(i64, i64), MorphoWeights>>,
     drainage: Arc<RiverNetCache>,
     coarse: Arc<CoarseTiles>,
     spawn_shift: Vec2,
@@ -101,6 +104,7 @@ impl Generator {
             params,
             rivers: Arc::new(RiverCache::new()),
             hydrology: Arc::new(crate::cache::ShardedCache::new(shards, 4096)),
+            morpho: Arc::new(crate::cache::ShardedCache::new(shards, 4096)),
             drainage: Arc::new(RiverNetCache::new(
                 shards,
                 crate::drainage::NET_CACHE_CAPACITY,
@@ -163,17 +167,52 @@ impl Generator {
         )))
     }
 
-    /// Морфоклиматические веса T121 в блочной точке. Только v1-dev; игровой
-    /// `field` пока не меняется, подключение E/PV/C делает T122.
+    /// Морфоклиматические веса T121/T122 в блочной точке. Только v1-dev.
+    /// Для рельефа веса берутся с региональной решётки шагом `weight_step_l`
+    /// и смешиваются билинейно: скачок R луча влаги на одном блоке не должен
+    /// переключать форму рельефа ступенькой. Климат и биомные T/H этот фильтр
+    /// не меняет; полное сглаживание климатических границ — T130–T133.
     pub fn morpho_weights(&self, x: f64, z: f64) -> Option<MorphoWeights> {
         morphoclimate::validate(&self.params).ok()?;
-        let climate = self.climate_sample(x, z)?;
-        Some(morphoclimate::weights(
-            climate.temperature.t_bio,
-            climate.precip.ratio,
-            climate.surface.mountain,
-            &self.params,
-        ))
+        let step = self.params.block.l_blocks * self.params.morpho.weight_step_l;
+        let ix = (x / step).floor();
+        let iz = (z / step).floor();
+        let fx = x / step - ix;
+        let fz = z / step - iz;
+        let node = |dx: i64, dz: i64| -> Option<MorphoWeights> {
+            let key = (ix as i64 + dx, iz as i64 + dz);
+            if let Some(w) = self.morpho.get(key) {
+                return Some(w);
+            }
+            let bx = key.0 as f64 * step;
+            let bz = key.1 as f64 * step;
+            let climate = self.climate_sample(bx, bz)?;
+            let w = morphoclimate::weights(
+                climate.temperature.t_bio,
+                climate.precip.ratio,
+                climate.surface.mountain,
+                &self.params,
+            );
+            self.morpho.get_or_insert(key, || w);
+            Some(w)
+        };
+        let w00 = node(0, 0)?;
+        let w10 = node(1, 0)?;
+        let w01 = node(0, 1)?;
+        let w11 = node(1, 1)?;
+        let mut out = MorphoWeights::default();
+        for k in 0..crate::params::MORPHO_ZONES {
+            let a = crate::math::lerp(w00.values[k], w10.values[k], fx);
+            let b = crate::math::lerp(w01.values[k], w11.values[k], fx);
+            out.values[k] = crate::math::lerp(a, b, fz);
+        }
+        let sum = out.sum();
+        if sum > 0.0 {
+            for value in out.values.iter_mut() {
+                *value /= sum;
+            }
+        }
+        Some(out)
     }
 
     /// Максимум глубины впадин по плите, чьи узлы могут попасть в носитель
@@ -489,7 +528,27 @@ impl Generator {
         }
         let geometry = self.cached_hydrology_queries(x, z)?;
         let water = hydrology::resolve(geometry.channels, geometry.lakes, climate, &self.params);
+        // T122: потенциал A и морфоклиматические зоны переводятся в C/E/W до
+        // гидрологии T115/T116, чтобы русла/болота/дельты сохранили приоритет.
+        let point = self.macro_point(x, z);
+        let plate = plate_query(point, self.seed, &self.params)
+            .ok_or(RiverNetError::InvalidInput { cell: (0, 0) })?;
+        let crust = crust_from_sample(point, &plate, self.seed, &self.params);
+        let depth = self.relief_basin_depth(point, &plate)?;
+        let relief_sample = relief::sample(&plate, &crust, depth, self.seed, &self.params);
+        let morpho = self
+            .morpho_weights(x, z)
+            .ok_or(RiverNetError::InvalidInput { cell: (0, 0) })?;
         let base = crate::vanilla::sample(climate, &class, x, z, self.seed, &self.params, 0.0);
+        let base = crate::relief_fields::apply(
+            base,
+            climate,
+            &relief_sample,
+            &morpho,
+            Vec2::new(x, z),
+            self.seed,
+            &self.params,
+        );
         let vanilla = hydrology::apply_fields(base, local_river, &water, &self.params);
         let class = hydrology::classify_surface(class, &water, climate, &self.params);
         let river = local_river.max(water.river);
@@ -870,6 +929,43 @@ mod tests {
         assert_eq!(fast.vanilla.h.to_bits(), reference.vanilla.h.to_bits());
         assert_eq!(fast.vanilla.t.to_bits(), reference.vanilla.t.to_bits());
         assert_eq!(fast.cell, reference.cell);
+    }
+
+    #[test]
+    fn t122_former_zone_flip_seams_stay_continuous() {
+        let g = Generator::new(42, Mode::Gameplay, GenVersion::V1Dev).unwrap();
+        // T122: луч влаги здесь переключал полуаридную/аридную зону на одном
+        // блоке. Региональная решётка весов обязана убрать ступень E/W.
+        for (x, z, dx, dz) in [(480.0, -352.0, 1.0, 0.0), (-16.0, 224.0, 0.0, 1.0)] {
+            let a = g.sample(x, z).unwrap();
+            let b = g.sample(x + dx, z + dz).unwrap();
+            assert!((a.vanilla.e - b.vanilla.e).abs() < 0.02);
+            assert!((a.vanilla.w - b.vanilla.w).abs() < 0.02);
+            let wa = g.morpho_weights(x, z).unwrap();
+            let wb = g.morpho_weights(x + dx, z + dz).unwrap();
+            for k in 0..crate::params::MORPHO_ZONES {
+                assert!((wa.values[k] - wb.values[k]).abs() < 0.01);
+            }
+            let r = g.sample_reference(x, z).unwrap();
+            assert_eq!(a.vanilla.e.to_bits(), r.vanilla.e.to_bits());
+            assert_eq!(a.vanilla.w.to_bits(), r.vanilla.w.to_bits());
+        }
+    }
+
+    #[test]
+    fn t122_morpho_weights_are_continuous_across_grid_boundary() {
+        let g = Generator::new(42, Mode::Gameplay, GenVersion::V1Dev).unwrap();
+        let step = g.params().block.l_blocks * g.params().morpho.weight_step_l;
+        let eps = 1e-6;
+        for z in [-333.0, 0.0, 271.0] {
+            let a = g.morpho_weights(step - eps, z).unwrap();
+            let b = g.morpho_weights(step + eps, z).unwrap();
+            for k in 0..crate::params::MORPHO_ZONES {
+                assert!((a.values[k] - b.values[k]).abs() < 1e-6);
+            }
+            assert!((a.sum() - 1.0).abs() < 1e-12);
+            assert!((b.sum() - 1.0).abs() < 1e-12);
+        }
     }
 
     #[test]

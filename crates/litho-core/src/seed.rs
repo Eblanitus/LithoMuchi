@@ -89,6 +89,9 @@ pub const SALT_CHANNEL_DELTA: &str = "channels.delta";
 pub const SALT_RELIEF_PALEO: &str = "relief.paleosuture";
 pub const SALT_RELIEF_HILLS: &str = "relief.hills";
 pub const SALT_RELIEF_BASIN: &str = "relief.basin";
+// T122: шум E/PV поверх зон; знак W остаётся на соли T102.
+pub const SALT_RELIEF_E: &str = "relief.erosion";
+pub const SALT_RELIEF_PV: &str = "relief.peaks_valleys";
 
 #[cfg(test)]
 mod tests {

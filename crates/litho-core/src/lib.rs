@@ -30,6 +30,7 @@ pub mod noise_tables;
 pub mod params;
 pub mod plates;
 pub mod relief;
+pub mod relief_fields;
 pub mod rivers;
 pub mod runoff;
 pub mod seed;

@@ -172,6 +172,9 @@ mod tests {
         let mut bad = params();
         bad.morpho.lambda_pv_blocks[0] = 0.0;
         assert!(validate(&bad).is_err());
+        let mut bad = params();
+        bad.morpho.weight_step_l = 0.0;
+        assert!(validate(&bad).is_err());
     }
 
     #[test]
