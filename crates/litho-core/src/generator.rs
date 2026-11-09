@@ -891,9 +891,9 @@ mod tests {
     fn t115_network_lake_delta_and_cross_plate_reach_the_game_fields() {
         let g = Generator::new(42, Mode::Gameplay, GenVersion::V1Dev).unwrap();
         let points = [
-            (-36494.287478, 4844.677510),
-            (-47744.988600086, 16743.923658071),
-            (1155.677371486, -1143.030802100),
+            (-36371.323285872, 7910.750623531),
+            (-46302.072799347, 3482.980977760),
+            (-1536.548115980, -2374.750321379),
         ];
         let cold = Generator::new(42, Mode::Gameplay, GenVersion::V1Dev).unwrap();
         for (x, z) in points {
@@ -930,8 +930,8 @@ mod tests {
 
     #[test]
     fn t116_gallery_forest_reaches_a_real_dry_corridor() {
-        // T130: коридор найден заново после изгиба лучей влаги (сид 42).
-        let (x, z) = (288.938904524, 598.184585084);
+        // T131: коридор найден заново после непрерывного ветра (сид 42).
+        let (x, z) = (-1806.531215338, -12432.168136492);
         let g = Generator::new(42, Mode::Gameplay, GenVersion::V1Dev).unwrap();
         let fast = g.sample(x, z).unwrap();
         let reference = g.sample_reference(x, z).unwrap();

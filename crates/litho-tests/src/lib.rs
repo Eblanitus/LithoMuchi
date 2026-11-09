@@ -476,7 +476,7 @@ mod drainage_dev {
         let generator = Generator::new(42, Mode::Gameplay, GenVersion::V1Dev).unwrap();
         // Сид 42: середина отрезка соседней плиты попадает внутрь ближайшей
         // плиты. До T113 запрос ближайшей плиты терял это русло.
-        let (x, z) = (1155.677371486, -1143.030802100);
+        let (x, z) = (-1536.548115980, -2374.750321379);
         let owner = generator.plate_sample(x, z).unwrap().a;
         let query = generator.drainage_channel_query(x, z).unwrap();
         let hit = query.nearest.expect("русло соседней плиты найдено");
@@ -508,21 +508,21 @@ mod drainage_dev {
     fn surface_query_finds_lake_water_and_delta_arms_in_v1_dev() {
         let generator = Generator::new(42, Mode::Gameplay, GenVersion::V1Dev).unwrap();
         // Сид 42, точки найдены сканом соседних плит; координаты блочные.
-        // T130 изменил Q/русла: дельта переехала на новый рукав; озеро прежнего
-        // уровня осталось той же контрольной точкой.
-        let (lake_x, lake_z) = (-36494.287478, 4844.677510);
+        // T131 изменил Q/русла и уровни: озеро, дельта и межплитовое русло
+        // найдены заново сканом соседних плит (сид 42, блочные координаты).
+        let (lake_x, lake_z) = (-36371.323285872, 7910.750623531);
         let (_, lake) = generator.drainage_surface_query(lake_x, lake_z).unwrap();
         assert_eq!(lake.water, 1.0);
         let hit = lake.nearest.expect("озеро найдено общим запросом");
-        assert_eq!(hit.plate_id, 55136349038982795);
+        assert_eq!(hit.plate_id, 6101794678220869048);
         assert!(hit.inside);
         assert!(
             hit.level_km
-                .is_some_and(|level| (level - 0.412416969).abs() < 1e-6)
+                .is_some_and(|level| (level - 0.321314598).abs() < 1e-6)
         );
         assert!(lake.networks_considered > 1);
 
-        let (delta_x, delta_z) = (-47744.988600086, 16743.923658071);
+        let (delta_x, delta_z) = (-46302.072799347, 3482.980977760);
         let (channel, _) = generator.drainage_surface_query(delta_x, delta_z).unwrap();
         assert!(channel.delta > 0.9);
         assert!(channel.networks_considered > 1);

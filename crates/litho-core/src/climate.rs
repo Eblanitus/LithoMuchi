@@ -3,7 +3,9 @@
 //! и шумы из `noise.rs`, без системной математики.
 
 use crate::hash::{splitmix64, unit};
-use crate::math::{Vec2, clamp, clamp01, dexp, dpow, lerp, piecewise, smoothstep};
+use crate::math::{
+    Vec2, clamp, clamp01, datan2, dexp, dpow, lerp, piecewise, rotate_unit, smoothstep,
+};
 use crate::noise::{fbm2, fbm2_unit, warp2};
 use crate::params::Params;
 use crate::seed::{
@@ -77,8 +79,10 @@ fn pole_in_cell(seed: u64, i: i64, j: i64, params: &Params) -> Vec2 {
     Vec2::new((i as f64 + fx) * g, (j as f64 + fz) * g)
 }
 
-/// Ближайший и второй по близости полюс, псевдоширота и направления (7.5.1).
-pub fn pole_sample(point: Vec2, seed: u64, params: &Params) -> Option<PoleSample> {
+/// Геометрия двух ближайших полюсов после искажения домена. Выделена отдельно,
+/// чтобы скаляр φ для конечных разностей T131 считался той же формулой, что и
+/// φ в `pole_sample`, без второго расхождения реализаций.
+fn pole_geometry(point: Vec2, seed: u64, params: &Params) -> Option<(Vec2, Vec2, f64, Vec2, f64)> {
     let pol = &params.poles;
     let shifted = warp2(
         subseed(seed, SALT_POLES_WARP_X),
@@ -111,8 +115,18 @@ pub fn pole_sample(point: Vec2, seed: u64, params: &Params) -> Option<PoleSample
     if !best.0.is_finite() || !second.0.is_finite() {
         return None;
     }
-    let f1 = best.0;
-    let f2 = second.0;
+    Some((q, best.1, best.0, second.1, second.0))
+}
+
+/// Скалярная псевдоширота 0…90° (7.5.1 + Д-021). Непрерывна при смене
+/// второго полюса: расстояния f1/f2 входят симметрично через f1/(f1+f2).
+fn phi_scalar(point: Vec2, seed: u64, params: &Params) -> Option<f64> {
+    let (_, _, f1, _, f2) = pole_geometry(point, seed, params)?;
+    Some(phi_from_distances(f1, f2, point, seed, params))
+}
+
+fn phi_from_distances(f1: f64, f2: f64, point: Vec2, seed: u64, params: &Params) -> f64 {
+    let pol = &params.poles;
     let total = f1 + f2;
     let t = if total > 0.0 { f1 / total } else { 0.0 };
     let phi0 = 90.0 * (1.0 - 2.0 * t);
@@ -126,24 +140,88 @@ pub fn pole_sample(point: Vec2, seed: u64, params: &Params) -> Option<PoleSample
         pol.phi_noise_octaves,
         pol.phi_noise_gain,
     );
-    let phi_deg = clamp(phi0 + pol.phi_noise_degrees * jitter, 0.0, 90.0);
-
-    // ∇t с точностью до положительного множителя; «север» — против него.
-    let u1 = q.sub(best.1).scale(1.0 / f1.max(1e-9));
-    let u2 = q.sub(second.1).scale(1.0 / f2.max(1e-9));
-    let grad = u1.scale(f2).sub(u2.scale(f1));
-    let north = if grad.len() > 1e-9 {
-        grad.scale(-1.0).normalized()
+    let raw = phi0 + pol.phi_noise_degrees * jitter;
+    if params.version.is_water_relief_dev() {
+        soft_phi(raw, params.boundaries.wind_phi_soft_deg)
     } else {
-        Vec2::new(0.0, -1.0)
+        clamp(raw, 0.0, 90.0)
+    }
+}
+
+/// T131: C1-насыщение φ у 0 и 90. Жёсткий clamp создавал плато с нулевым
+/// градиентом и разворот «севера» на его границе; экспоненциальный хвост
+/// сохраняет непрерывную производную и не даёт φ выйти за диапазон.
+fn soft_phi(x: f64, margin: f64) -> f64 {
+    if margin <= 0.0 {
+        return clamp(x, 0.0, 90.0);
+    }
+    let lo = if x < margin {
+        margin * dexp((x - margin) / margin)
+    } else {
+        x
+    };
+    if lo > 90.0 - margin {
+        90.0 - margin * dexp((90.0 - margin - lo) / margin)
+    } else {
+        lo
+    }
+}
+
+/// Ближайший и второй по близости полюс, псевдоширота и направления (7.5.1).
+pub fn pole_sample(point: Vec2, seed: u64, params: &Params) -> Option<PoleSample> {
+    let (q, best_pole, f1, second_pole, f2) = pole_geometry(point, seed, params)?;
+    let phi_deg = phi_from_distances(f1, f2, point, seed, params);
+    let north = if params.version.is_water_relief_dev() {
+        // T131 / Б3: «север» — минус градиент скалярной φ центральными
+        // разностями. Шаг 0.25–0.5 L сглаживает смену второго полюса; φ при
+        // этом остаётся той же непрерывной функцией, что и температура.
+        let h = params.boundaries.wind_fd_step_l;
+        let dx = Vec2::new(h, 0.0);
+        let dz = Vec2::new(0.0, h);
+        let pxp = phi_scalar(point.add(dx), seed, params)?;
+        let pxm = phi_scalar(point.sub(dx), seed, params)?;
+        let pzp = phi_scalar(point.add(dz), seed, params)?;
+        let pzm = phi_scalar(point.sub(dz), seed, params)?;
+        let grad = Vec2::new((pxp - pxm) / (2.0 * h), (pzp - pzm) / (2.0 * h));
+        wind_north(grad, f1, params)
+    } else {
+        // v0: прежний аналитический ∇t, побайтово тот же порядок операций.
+        let u1 = q.sub(best_pole).scale(1.0 / f1.max(1e-9));
+        let u2 = q.sub(second_pole).scale(1.0 / f2.max(1e-9));
+        let grad = u1.scale(f2).sub(u2.scale(f1));
+        if grad.len() > 1e-9 {
+            grad.scale(-1.0).normalized()
+        } else {
+            Vec2::new(0.0, -1.0)
+        }
     };
     Some(PoleSample {
         phi_deg,
         north,
         east: north.perp(),
-        pole: best.1,
+        pole: best_pole,
         distance_l: f1,
     })
+}
+
+/// T131: непрерывный «север» из −∇φ. У полюса и на плато φ=0 градиент
+/// вырождается; вместо скачка на запасное направление плавно поворачиваем
+/// к нему. Порог по |∇φ| убирает дрожь на экваторе, радиус у полюса — сингулярность
+/// радиального направления. Поворот идёт по дуге, не через нулевую сумму.
+fn wind_north(grad: Vec2, distance_to_pole_l: f64, params: &Params) -> Vec2 {
+    let fallback = fallback_dir(params);
+    let g = grad.len();
+    if g <= 1e-12 {
+        return fallback;
+    }
+    let target = grad.scale(-1.0 / g);
+    let b = &params.boundaries;
+    let mut t = smoothstep(0.0, b.wind_grad_floor_deg_per_l, g)
+        * smoothstep(0.0, b.wind_pole_fade_l, distance_to_pole_l);
+    // Если target почти противоположен запасному направлению, кратчайшая дуга
+    // меняет знак при переходе через 180°. Гасим вес там, чтобы не было разворота.
+    t *= smoothstep(-0.98, -0.8, fallback.dot(target));
+    blend_unit(fallback, target, t)
 }
 
 /// Среднегодовая температура на уровне моря: `28 − 52·(φ/90)^1.6`.
@@ -214,21 +292,51 @@ pub fn wind(phi_deg: f64, north: Vec2, east: Vec2, params: &Params) -> Vec2 {
         .scale(c.polar_n)
         .add(east.scale(c.polar_e))
         .normalized();
-    let w_t = 1.0 - smoothstep(c.belt_trade_deg[0], c.belt_trade_deg[1], phi_deg);
-    let rise_w = smoothstep(c.belt_west_deg[0], c.belt_west_deg[1], phi_deg);
-    let fall_w = 1.0 - smoothstep(c.belt_polar_deg[0], c.belt_polar_deg[1], phi_deg);
-    let w_w = rise_w * fall_w;
-    let w_p = smoothstep(c.belt_polar_deg[0], c.belt_polar_deg[1], phi_deg);
     let strength = piecewise(
         &params.wind.strength_phi_deg,
         &params.wind.strength_s,
         phi_deg,
     );
+    if params.version.is_water_relief_dev() {
+        // T131: векторная сумма противоположных пассата и западных ветров
+        // проходила через ноль и разворачивала направление на 180° за блок.
+        // В v1-dev поворачиваем само направление по дуге, а силу оставляем
+        // прежней piecewise-функцией φ. У экватора/переходов нет нулевого вектора.
+        // v1-dev расширяет переходы поясов: исходные 10° давали до 15°/блок
+        // при |∇φ|≈5 °/L. Центры поясов прежние, полуширина настраиваемая.
+        let trade_center = 0.5 * (c.belt_trade_deg[0] + c.belt_trade_deg[1]);
+        let polar_center = 0.5 * (c.belt_polar_deg[0] + c.belt_polar_deg[1]);
+        let fade = params.boundaries.wind_belt_fade_deg;
+        let tw = smoothstep(trade_center - fade, trade_center + fade, phi_deg);
+        let wp = smoothstep(polar_center - fade, polar_center + fade, phi_deg);
+        let mid = blend_unit(trade, west, tw);
+        return blend_unit(mid, polar, wp).scale(strength);
+    }
+    let w_t = 1.0 - smoothstep(c.belt_trade_deg[0], c.belt_trade_deg[1], phi_deg);
+    let rise_w = smoothstep(c.belt_west_deg[0], c.belt_west_deg[1], phi_deg);
+    let fall_w = 1.0 - smoothstep(c.belt_polar_deg[0], c.belt_polar_deg[1], phi_deg);
+    let w_w = rise_w * fall_w;
+    let w_p = smoothstep(c.belt_polar_deg[0], c.belt_polar_deg[1], phi_deg);
     trade
         .scale(w_t)
         .add(west.scale(w_w))
         .add(polar.scale(w_p))
         .scale(strength)
+}
+
+/// Кратчайший поворот единичного направления a к b доля t ∈ [0,1].
+/// Используется только v1-dev; при почти противоположных векторах дуга
+/// выбирается знаком det, а не нормализацией вырожденной суммы.
+fn blend_unit(a: Vec2, b: Vec2, t: f64) -> Vec2 {
+    if t <= 0.0 {
+        return a;
+    }
+    if t >= 1.0 {
+        return b;
+    }
+    let cross = a.x * b.z - a.z * b.x;
+    let dot = a.dot(b);
+    rotate_unit(a, t * datan2(cross, dot))
 }
 
 pub fn fallback_dir(params: &Params) -> Vec2 {
@@ -691,6 +799,119 @@ mod tests {
             assert!(s.precip.p_mm.is_finite() && s.precip.p_mm >= 0.0);
             assert!(s.precip.ratio.is_finite() && s.precip.ratio > 0.0);
             assert!((0.0..=1.0).contains(&s.precip.cont));
+        }
+    }
+}
+
+#[cfg(test)]
+mod t131_tests {
+    use super::{fallback_dir, phi_scalar, pole_in_cell, pole_sample, wind, wind_north};
+    use crate::hash::{splitmix64, unit};
+    use crate::math::Vec2;
+    use crate::mode::Mode;
+    use crate::params::Params;
+    use crate::version::GenVersion;
+
+    /// T131 / §10.1: направление ветра между соседними окнами 32 блока
+    /// меняется не больше чем на 5°. Скан включает случайные точки, оба режима,
+    /// оба сиду и кольца вокруг полюсов, где ∇φ вырождается.
+    #[test]
+    fn wind_direction_changes_at_most_five_degrees_per_32_blocks() {
+        for mode in Mode::ALL {
+            let p = Params::defaults(GenVersion::V1Dev, mode);
+            p.boundaries.validate().unwrap();
+            let step = 32.0 / p.block.l_blocks;
+            let mut worst = 0.0_f64;
+            let mut check = |q: Vec2| {
+                for d in [Vec2::new(step, 0.0), Vec2::new(0.0, step)] {
+                    let a = pole_sample(q, 42, &p).unwrap();
+                    let b = pole_sample(q.add(d), 42, &p).unwrap();
+                    let wa = wind(a.phi_deg, a.north, a.east, &p).normalized();
+                    let wb = wind(b.phi_deg, b.north, b.east, &p).normalized();
+                    let deg = wa.dot(wb).clamp(-1.0, 1.0).acos().to_degrees();
+                    worst = worst.max(deg);
+                }
+            };
+            for k in 0..8000 {
+                let q = Vec2::new(
+                    unit(splitmix64(k)) * 512.0 - 256.0,
+                    unit(splitmix64(k + 999_999)) * 512.0 - 256.0,
+                );
+                check(q);
+            }
+            for i in -2..=2_i64 {
+                for j in -2..=2_i64 {
+                    let pole = pole_in_cell(42, i, j, &p);
+                    for r in [0.0, 0.01, 0.1, 0.5, 1.0, 2.0, 4.0, 8.0, 16.0, 32.0] {
+                        for dir in [
+                            Vec2::new(1.0, 0.0),
+                            Vec2::new(0.0, 1.0),
+                            Vec2::new(
+                                -std::f64::consts::FRAC_1_SQRT_2,
+                                std::f64::consts::FRAC_1_SQRT_2,
+                            ),
+                            Vec2::new(
+                                std::f64::consts::FRAC_1_SQRT_2,
+                                std::f64::consts::FRAC_1_SQRT_2,
+                            ),
+                        ] {
+                            check(pole.add(dir.scale(r)));
+                        }
+                    }
+                }
+            }
+            assert!(worst <= 5.0, "mode={mode:?}: скачок ветра {worst:.3}° > 5°");
+        }
+    }
+
+    #[test]
+    fn t131_north_is_unit_and_fallback_is_continuous_at_zero_gradient() {
+        let p = Params::defaults(GenVersion::V1Dev, Mode::Gameplay);
+        let fb = fallback_dir(&p);
+        assert_eq!(wind_north(Vec2::default(), 0.0, &p), fb);
+        for g in [1e-9, 0.01, 0.1, 1.0, 5.0, 20.0, 50.0] {
+            for dir in [
+                Vec2::new(1.0, 0.0),
+                Vec2::new(0.0, 1.0),
+                Vec2::new(-0.6, 0.8),
+            ] {
+                let n = wind_north(dir.scale(g), 4.0, &p);
+                assert!((n.len() - 1.0).abs() < 1e-12);
+            }
+        }
+        // Малый градиент не должен разворачивать север скачком при переходе через ноль.
+        let a = wind_north(Vec2::new(1e-6, 0.0), 40.0, &p);
+        let b = wind_north(Vec2::new(-1e-6, 0.0), 40.0, &p);
+        assert!(a.dot(b) > 0.999);
+    }
+
+    #[test]
+    fn t131_phi_scalar_is_continuous_and_v0_pole_sample_is_bitwise_unchanged() {
+        let dev = Params::defaults(GenVersion::V1Dev, Mode::Gameplay);
+        let old = Params::defaults(GenVersion::V0, Mode::Gameplay);
+        for k in 0..2000 {
+            let q = Vec2::new(k as f64 * 0.037 - 40.0, k as f64 * -0.021 + 15.0);
+            let a = phi_scalar(q, 42, &dev).unwrap();
+            let b = phi_scalar(q.add(Vec2::new(1.0 / 250.0, 0.0)), 42, &dev).unwrap();
+            assert!((0.0..=90.0).contains(&a));
+            assert!((a - b).abs() < 0.1, "Δφ={}", a - b);
+            // v0: прежний аналитический градиент и жёсткий clamp, побитово.
+            let s = pole_sample(q, 42, &old).unwrap();
+            let (qq, best, f1, second, f2) = super::pole_geometry(q, 42, &old).unwrap();
+            let u1 = qq.sub(best).scale(1.0 / f1.max(1e-9));
+            let u2 = qq.sub(second).scale(1.0 / f2.max(1e-9));
+            let grad = u1.scale(f2).sub(u2.scale(f1));
+            let north = if grad.len() > 1e-9 {
+                grad.scale(-1.0).normalized()
+            } else {
+                Vec2::new(0.0, -1.0)
+            };
+            assert_eq!(s.north.x.to_bits(), north.x.to_bits());
+            assert_eq!(s.north.z.to_bits(), north.z.to_bits());
+            assert_eq!(
+                s.phi_deg.to_bits(),
+                super::clamp(super::phi_from_distances(f1, f2, q, 42, &old), 0.0, 90.0).to_bits()
+            );
         }
     }
 }

@@ -110,6 +110,58 @@ pub fn piecewise(xs: &[f64], ys: &[f64], x: f64) -> f64 {
     ys[xs.len() - 1]
 }
 
+/// Детерминированный atan2(y, x), радианы (−π, π]. Нужен T131 для плавного
+/// поворота направления ветра без системного libm. Аргумент сводится к
+/// |u| ≤ √2−1 половинным углом, затем ряд Тейлора; квадранты восстанавливаются
+/// знаками. Точность порядка 1e−12, достаточно для непрерывного направления.
+pub fn datan2(y: f64, x: f64) -> f64 {
+    if x == 0.0 && y == 0.0 {
+        return 0.0;
+    }
+    let ax = x.abs();
+    let ay = y.abs();
+    let steep = ay > ax;
+    let r = if steep { ax / ay } else { ay / ax };
+    let u = r / (1.0 + (1.0 + r * r).sqrt());
+    let u2 = u * u;
+    let mut term = u;
+    let mut sum = u;
+    for k in 1..24 {
+        term *= -u2;
+        sum += term / (2 * k + 1) as f64;
+    }
+    let base = 2.0 * sum;
+    let mut angle = if steep {
+        std::f64::consts::FRAC_PI_2 - base
+    } else {
+        base
+    };
+    if x < 0.0 {
+        angle = std::f64::consts::PI - angle;
+    }
+    if y < 0.0 { -angle } else { angle }
+}
+
+/// Поворот единичного вектора на угол до ±π без системных sin/cos. Ряды
+/// Тейлора до 12-го члена дают ошибку <1e−12 на всём диапазоне; результат
+/// нормируется, чтобы длина оставалась единицей bitwise-независимо от платформы.
+pub fn rotate_unit(v: Vec2, angle: f64) -> Vec2 {
+    let mut sin_a = 0.0;
+    let mut cos_a = 0.0;
+    let mut term_sin = angle;
+    let mut term_cos = 1.0;
+    let a2 = angle * angle;
+    sin_a += term_sin;
+    cos_a += term_cos;
+    for k in 1..13 {
+        term_sin *= -a2 / ((2 * k) * (2 * k + 1)) as f64;
+        term_cos *= -a2 / ((2 * k - 1) * (2 * k)) as f64;
+        sin_a += term_sin;
+        cos_a += term_cos;
+    }
+    Vec2::new(v.x * cos_a - v.z * sin_a, v.x * sin_a + v.z * cos_a).normalized()
+}
+
 /// Детерминированная экспонента. Разложение `exp(x) = 2^k · exp(r)`,
 /// `r ∈ [−ln2/2, ln2/2]`, ряд Тейлора по `r`, степень двойки собирается из бит
 /// числа `f64`. Никаких вызовов системного `libm`.
@@ -177,7 +229,9 @@ pub fn dpow(base: f64, exponent: f64) -> f64 {
 
 #[cfg(test)]
 mod tests {
-    use super::{LN_2, Vec2, clamp, dexp, dln, dpow, lerp, piecewise, smoothstep};
+    use super::{
+        LN_2, Vec2, clamp, datan2, dexp, dln, dpow, lerp, piecewise, rotate_unit, smoothstep,
+    };
 
     #[test]
     fn smoothstep_edges_and_reverse_direction() {
@@ -210,6 +264,42 @@ mod tests {
         assert!((dln(1.0 / 8.0) + 3.0 * std::f64::consts::LN_2).abs() < 1e-12);
         assert!((dpow(2.0, 10.0) - 1024.0).abs() < 1e-9);
         assert!((dpow(0.5, 1.6) - 0.329_876_977_693_223_5).abs() < 1e-12);
+    }
+
+    #[test]
+    fn deterministic_atan2_and_rotation_cover_all_quadrants() {
+        for (y, x) in [
+            (0.0_f64, 1.0_f64),
+            (1.0, 0.0),
+            (0.0, -1.0),
+            (-1.0, 0.0),
+            (1.0, 1.0),
+            (-2.0, 3.0),
+            (4.0, -3.0),
+            (-5.0, -6.0),
+            (1e-12, 1.0),
+        ] {
+            let expected = y.atan2(x);
+            assert!((datan2(y, x) - expected).abs() < 1e-11, "atan2({y},{x})");
+        }
+        let v = Vec2::new(0.6, -0.8);
+        for angle in [
+            -std::f64::consts::PI,
+            -2.0,
+            -0.3,
+            0.0,
+            0.7,
+            2.5,
+            std::f64::consts::PI,
+        ] {
+            let r = rotate_unit(v, angle);
+            assert!((r.len() - 1.0).abs() < 1e-12);
+            let expected = Vec2::new(
+                v.x * angle.cos() - v.z * angle.sin(),
+                v.x * angle.sin() + v.z * angle.cos(),
+            );
+            assert!(r.sub(expected).len() < 1e-11, "angle={angle}");
+        }
     }
 
     #[test]

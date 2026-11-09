@@ -912,6 +912,15 @@ pub struct BoundaryParams {
     pub ray_bend_lambda_l: f64,
     pub ray_bend_octaves: usize,
     pub ray_bend_gain: f64,
+    /// T131: шаг центральных разностей скалярной φ, L (план Б3: 0.25–0.5).
+    pub wind_fd_step_l: f64,
+    /// T131: плавный уход к запасному направлению при малом |∇φ| и у полюса.
+    pub wind_grad_floor_deg_per_l: f64,
+    pub wind_pole_fade_l: f64,
+    /// T131: мягкое насыщение φ у 0/90 вместо жёсткого clamp, градусы.
+    pub wind_phi_soft_deg: f64,
+    /// T131: полуширина плавного перехода поясов ветра в v1-dev, градусы φ.
+    pub wind_belt_fade_deg: f64,
 }
 
 impl BoundaryParams {
@@ -934,6 +943,24 @@ impl BoundaryParams {
             || self.ray_bend_gain >= 1.0
         {
             return Err("изгиб луча: 1…4 октавы, gain ∈ (0, 1)");
+        }
+        if !self.wind_fd_step_l.is_finite() || !(0.25..=0.5).contains(&self.wind_fd_step_l) {
+            return Err("шаг конечных разностей ветра должен лежать в 0.25…0.5 L");
+        }
+        if !self.wind_grad_floor_deg_per_l.is_finite()
+            || !(0.1..=20.0).contains(&self.wind_grad_floor_deg_per_l)
+        {
+            return Err("порог |∇φ| ветра должен лежать в 0.1…20 °/L");
+        }
+        if !self.wind_pole_fade_l.is_finite() || !(1.0..=32.0).contains(&self.wind_pole_fade_l) {
+            return Err("сглаживание ветра у полюса должно лежать в 1…32 L");
+        }
+        if !self.wind_phi_soft_deg.is_finite() || !(0.0..=10.0).contains(&self.wind_phi_soft_deg) {
+            return Err("мягкое насыщение φ должно лежать в 0…10°");
+        }
+        if !self.wind_belt_fade_deg.is_finite() || !(5.0..=21.0).contains(&self.wind_belt_fade_deg)
+        {
+            return Err("полуширина перехода поясов ветра должна лежать в 5…21°");
         }
         Ok(())
     }
@@ -1297,6 +1324,11 @@ impl Params {
                 ray_bend_lambda_l: 1.5,
                 ray_bend_octaves: 1,
                 ray_bend_gain: 0.5,
+                wind_fd_step_l: 0.5,
+                wind_grad_floor_deg_per_l: 20.0,
+                wind_pole_fade_l: 16.0,
+                wind_phi_soft_deg: 3.0,
+                wind_belt_fade_deg: 21.0,
             },
             lava: LavaParams {
                 width_blocks: block.lava_width_blocks,
@@ -1858,6 +1890,21 @@ impl Params {
                 writeln!(w, "{name}={value:?}").unwrap();
             }
             writeln!(w, "boundaries.ray_bend_octaves={}", bd.ray_bend_octaves).unwrap();
+            writeln!(w, "boundaries.wind_fd_step_l={:?}", bd.wind_fd_step_l).unwrap();
+            writeln!(
+                w,
+                "boundaries.wind_grad_floor_deg_per_l={:?}",
+                bd.wind_grad_floor_deg_per_l
+            )
+            .unwrap();
+            writeln!(w, "boundaries.wind_pole_fade_l={:?}", bd.wind_pole_fade_l).unwrap();
+            writeln!(w, "boundaries.wind_phi_soft_deg={:?}", bd.wind_phi_soft_deg).unwrap();
+            writeln!(
+                w,
+                "boundaries.wind_belt_fade_deg={:?}",
+                bd.wind_belt_fade_deg
+            )
+            .unwrap();
         }
         out
     }
