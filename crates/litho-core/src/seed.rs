@@ -92,6 +92,8 @@ pub const SALT_RELIEF_BASIN: &str = "relief.basin";
 // T122: шум E/PV поверх зон; знак W остаётся на соли T102.
 pub const SALT_RELIEF_E: &str = "relief.erosion";
 pub const SALT_RELIEF_PV: &str = "relief.peaks_valleys";
+// T130: гладкий поворот линии тока влаги; соли v0 не меняются.
+pub const SALT_MOISTURE_BEND: &str = "climate.moisture_bend";
 
 #[cfg(test)]
 mod tests {

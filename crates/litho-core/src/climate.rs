@@ -4,10 +4,11 @@
 
 use crate::hash::{splitmix64, unit};
 use crate::math::{Vec2, clamp, clamp01, dexp, dpow, lerp, piecewise, smoothstep};
-use crate::noise::{fbm2, warp2};
+use crate::noise::{fbm2, fbm2_unit, warp2};
 use crate::params::Params;
 use crate::seed::{
-    SALT_PHI_NOISE, SALT_POLES_SEED, SALT_POLES_WARP_X, SALT_POLES_WARP_Z, cell_hash, subseed,
+    SALT_MOISTURE_BEND, SALT_PHI_NOISE, SALT_POLES_SEED, SALT_POLES_WARP_X, SALT_POLES_WARP_Z,
+    cell_hash, subseed,
 };
 
 /// Что нужно климату от слоя коры в произвольной macro-точке.
@@ -273,6 +274,35 @@ pub fn dryness(t_bio: f64, p_mm: f64, params: &Params) -> (f64, f64) {
     (pet, pet / p_mm.max(c.p_min_mm))
 }
 
+/// T130: поворот против ветра гладким полем мировых координат. Поле не
+/// зависит от номера шага/истории луча, поэтому соседние лучи не расходятся
+/// из-за накопленной ошибки. Малый угол считается рядом, затем вектор
+/// нормируется; системных sin/cos нет.
+fn bend_ray(dir: Vec2, point: Vec2, seed: u64, params: &Params) -> Vec2 {
+    if !params.version.is_water_relief_dev() {
+        return dir;
+    }
+    let b = &params.boundaries;
+    let n = fbm2_unit(
+        subseed(seed, SALT_MOISTURE_BEND),
+        point.x,
+        point.z,
+        b.ray_bend_lambda_l,
+        b.ray_bend_octaves,
+        b.ray_bend_gain,
+    );
+    let degrees = clamp(
+        n * b.ray_bend_sigma_deg,
+        -b.ray_bend_max_deg,
+        b.ray_bend_max_deg,
+    );
+    let a = degrees * (std::f64::consts::PI / 180.0);
+    let a2 = a * a;
+    let sin_a = a * (1.0 - a2 / 6.0 * (1.0 - a2 / 20.0));
+    let cos_a = 1.0 - a2 / 2.0 * (1.0 - a2 / 12.0 * (1.0 - a2 / 30.0));
+    Vec2::new(dir.x * cos_a - dir.z * sin_a, dir.x * sin_a + dir.z * cos_a).normalized()
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct RayResult {
     pub mu: f64,
@@ -293,6 +323,7 @@ pub fn trace_ray<F, W>(
     field: &F,
     wind_dir: Vec2,
     wind_fn: &W,
+    seed: u64,
 ) -> RayResult
 where
     F: Fn(Vec2) -> SurfaceSample,
@@ -311,6 +342,7 @@ where
         let (v, phi) = wind_fn(q);
         phis.push(phi);
         let dir = if v.len() < 0.05 { prev } else { v.normalized() };
+        let dir = bend_ray(dir, q, seed, params);
         q = q.sub(dir.scale(ds));
         points.push(q);
         prev = dir;
@@ -378,7 +410,14 @@ where
     } else {
         fallback_dir(params)
     };
-    let ray = trace_ray(point, params, field, dir, &|q| wind_at(q, seed, params));
+    let ray = trace_ray(
+        point,
+        params,
+        field,
+        dir,
+        &|q| wind_at(q, seed, params),
+        seed,
+    );
     let c_iso = smoothstep(0.0, c.c_iso_end_l, surface.iota_l);
     let cont = lerp(
         c_iso,
@@ -408,9 +447,11 @@ where
 #[cfg(test)]
 mod tests {
     use super::{
-        PoleSample, dryness, pole_sample, precipitation, sample, sea_level_temp, temperature, wind,
+        PoleSample, bend_ray, dryness, pole_sample, precipitation, sample, sea_level_temp,
+        temperature, trace_ray, wind,
     };
     use crate::classify::classify_inputs;
+    use crate::climate::SurfaceSample;
     use crate::math::Vec2;
     use crate::mode::Mode;
     use crate::params::Params;
@@ -571,6 +612,66 @@ mod tests {
             assert!(v.len() <= 1.0 + 1e-9, "φ={phi}: |V|={}", v.len());
         }
         assert!(wind(0.0, north, east, &p).len() < 0.4);
+    }
+
+    #[test]
+    fn t130_ray_bend_is_smooth_bounded_and_v0_is_untouched() {
+        let mut p = Params::defaults(GenVersion::V1Dev, Mode::Gameplay);
+        p.boundaries.validate().unwrap();
+        let dir = Vec2::new(1.0, 0.0);
+        let limit = p.boundaries.ray_bend_max_deg.to_radians().cos();
+        let mut min_dot = 1.0_f64;
+        let mut max_step = 0.0_f64;
+        for k in 0..2000 {
+            let q = Vec2::new(k as f64 * 0.013, k as f64 * -0.007);
+            let a = bend_ray(dir, q, 42, &p);
+            assert!((a.len() - 1.0).abs() < 1e-12);
+            assert!(a.dot(dir) >= limit - 1e-12);
+            min_dot = min_dot.min(a.dot(dir));
+            let b = bend_ray(dir, q.add(Vec2::new(1.0 / 250.0, 0.0)), 42, &p);
+            max_step = max_step.max(a.sub(b).len());
+        }
+        assert!(min_dot < 0.995, "луч остался прямым");
+        assert!(max_step < 0.004, "скачок луча на блоке: {max_step}");
+        let old = Params::defaults(GenVersion::V0, Mode::Gameplay);
+        assert_eq!(bend_ray(dir, Vec2::new(3.0, -7.0), 42, &old), dir);
+        let mut bad = p.clone();
+        bad.boundaries.ray_bend_max_deg = 21.0;
+        assert!(bad.boundaries.validate().is_err());
+        bad = p.clone();
+        bad.boundaries.ray_bend_lambda_l = 0.0;
+        assert!(bad.boundaries.validate().is_err());
+        p.boundaries.ray_bend_sigma_deg = 0.0;
+        assert_eq!(bend_ray(dir, Vec2::new(3.0, -7.0), 42, &p), dir);
+    }
+
+    #[test]
+    fn t130_bent_ray_breaks_a_straight_rain_shadow_without_a_block_jump() {
+        let p = Params::defaults(GenVersion::V1Dev, Mode::Gameplay);
+        // Гладкий хребет поперёк ветра: прямоугольная стенка сама создавала бы
+        // скачок при дискретном сэмплировании, которого нет в поле коры.
+        let field = |q: Vec2| SurfaceSample {
+            e_km: -1.0 + 4.0 * crate::math::dexp(-(q.x / 0.35) * (q.x / 0.35)),
+            ..SurfaceSample::default()
+        };
+        let wind = |_| (Vec2::new(1.0, 0.0), 30.0);
+        let ray = |z: f64, p: &Params| {
+            trace_ray(Vec2::new(1.0, z), p, &field, Vec2::new(1.0, 0.0), &wind, 42).mu
+        };
+        let values: Vec<f64> = (-40..40).map(|k| ray(k as f64 * 0.1, &p)).collect();
+        let spread = values.iter().copied().fold(f64::NEG_INFINITY, f64::max)
+            - values.iter().copied().fold(f64::INFINITY, f64::min);
+        // При σ=6° и хребте 3 км разброс μ около 0.007; прямой луч даёт 0.
+        assert!(spread > 0.005, "край тени не изогнулся: {spread}");
+        for pair in values.windows(2) {
+            assert!((pair[0] - pair[1]).abs() < 0.1, "Δμ={}", pair[0] - pair[1]);
+        }
+        let old = Params::defaults(GenVersion::V0, Mode::Gameplay);
+        let mut changed = old.clone();
+        changed.boundaries.ray_bend_sigma_deg = 20.0;
+        for z in [-3.0, 0.0, 3.0] {
+            assert_eq!(ray(z, &old).to_bits(), ray(z, &changed).to_bits());
+        }
     }
 
     #[test]

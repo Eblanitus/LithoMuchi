@@ -96,6 +96,12 @@ impl Generator {
         }
         let world_seed = from_world_seed(seed);
         let params = Params::defaults(version, mode);
+        if version.is_water_relief_dev() {
+            debug_assert!(
+                params.boundaries.validate().is_ok(),
+                "параметры границ v1-dev"
+            );
+        }
         // T54: точка появления ищется один раз на мир, только по сиду и версии.
         let shift = spawn::find_shift(world_seed, &params);
         let shards = params.lattice.cache_shards.max(1);
@@ -715,8 +721,14 @@ impl Generator {
         // роняла совпадение зон до 0,953. Берём ветер точно, как в эталоне:
         // это дешевле, чем ослаблять инвариант 14.2.
         let wind_fn = |q: Vec2| crate::climate::wind_at(q, self.seed, &self.params);
-        let ray =
-            crate::climate::trace_ray(point, &self.params, &|q| self.surface_at(q), dir, &wind_fn);
+        let ray = crate::climate::trace_ray(
+            point,
+            &self.params,
+            &|q| self.surface_at(q),
+            dir,
+            &wind_fn,
+            self.seed,
+        );
         let c = &self.params.climate;
         let c_iso = crate::math::smoothstep(0.0, c.c_iso_end_l, surface.iota_l);
         let cont = crate::math::lerp(
@@ -880,8 +892,8 @@ mod tests {
         let g = Generator::new(42, Mode::Gameplay, GenVersion::V1Dev).unwrap();
         let points = [
             (-36494.287478, 4844.677510),
-            (-47696.263594, 16684.684891),
-            (1155.684324, -1143.037898),
+            (-47744.988600086, 16743.923658071),
+            (1155.677371486, -1143.030802100),
         ];
         let cold = Generator::new(42, Mode::Gameplay, GenVersion::V1Dev).unwrap();
         for (x, z) in points {
@@ -918,7 +930,8 @@ mod tests {
 
     #[test]
     fn t116_gallery_forest_reaches_a_real_dry_corridor() {
-        let (x, z) = (178.059145, 413.141280);
+        // T130: коридор найден заново после изгиба лучей влаги (сид 42).
+        let (x, z) = (288.938904524, 598.184585084);
         let g = Generator::new(42, Mode::Gameplay, GenVersion::V1Dev).unwrap();
         let fast = g.sample(x, z).unwrap();
         let reference = g.sample_reference(x, z).unwrap();

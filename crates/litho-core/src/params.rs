@@ -900,6 +900,45 @@ impl ClimateParams {
     }
 }
 
+/// Границы биомов T130–T133 (PLAN-REVISION §7). Отдельная группа нужна,
+/// чтобы новые ключи не попадали в замороженную каноническую запись v0.
+/// Все значения используются только `v1-dev`; геологический шум перевалов
+/// относится сюда по назначению, а не по слою, в котором вычисляется.
+#[derive(Clone, Debug, PartialEq)]
+pub struct BoundaryParams {
+    /// T130: типичный изгиб луча в градусах и жёсткий предел поворота.
+    pub ray_bend_sigma_deg: f64,
+    pub ray_bend_max_deg: f64,
+    pub ray_bend_lambda_l: f64,
+    pub ray_bend_octaves: usize,
+    pub ray_bend_gain: f64,
+}
+
+impl BoundaryParams {
+    pub fn validate(&self) -> Result<(), &'static str> {
+        if !self.ray_bend_max_deg.is_finite() || !(0.0..=20.0).contains(&self.ray_bend_max_deg) {
+            return Err("предел изгиба луча должен лежать в 0…20°");
+        }
+        if !self.ray_bend_sigma_deg.is_finite()
+            || self.ray_bend_sigma_deg < 0.0
+            || self.ray_bend_sigma_deg > self.ray_bend_max_deg
+        {
+            return Err("σ изгиба луча должна лежать в 0…предела");
+        }
+        if !self.ray_bend_lambda_l.is_finite() || !(1.0..=2.0).contains(&self.ray_bend_lambda_l) {
+            return Err("λ изгиба луча должна лежать в 1…2 L");
+        }
+        if !(1..=4).contains(&self.ray_bend_octaves)
+            || !self.ray_bend_gain.is_finite()
+            || self.ray_bend_gain <= 0.0
+            || self.ray_bend_gain >= 1.0
+        {
+            return Err("изгиб луча: 1…4 октавы, gain ∈ (0, 1)");
+        }
+        Ok(())
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct Params {
     pub version: GenVersion,
@@ -919,6 +958,8 @@ pub struct Params {
     pub relief: ReliefParams,
     /// Морфоклиматические зоны T121, включены только в `v1-dev`.
     pub morpho: MorphoParams,
+    /// Границы биомов T130–T133; включаются только в `v1-dev`.
+    pub boundaries: BoundaryParams,
     pub lava: LavaParams,
     pub spawn: SpawnParams,
     pub lattice: LatticeParams,
@@ -1247,6 +1288,15 @@ impl Params {
                 sigma_pv: [0.10, 0.12, 0.15, 0.12, 0.10, 0.15, 0.20, 0.20],
                 scientific_lambda_factor: 2.0,
                 scientific_sigma_factor: 0.6,
+            },
+            boundaries: BoundaryParams {
+                // σ=6° даёт типичные ±6° и хвосты до ±18°, без тонких октав:
+                // одна гладкая волна не создаёт полоски уже 32 блоков.
+                ray_bend_sigma_deg: 6.0,
+                ray_bend_max_deg: 18.0,
+                ray_bend_lambda_l: 1.5,
+                ray_bend_octaves: 1,
+                ray_bend_gain: 0.5,
             },
             lava: LavaParams {
                 width_blocks: block.lava_width_blocks,
@@ -1798,6 +1848,16 @@ impl Params {
             writeln!(w, "morpho.lambda_pv_blocks={:?}", m.lambda_pv_blocks).unwrap();
             writeln!(w, "morpho.sigma_e={:?}", m.sigma_e).unwrap();
             writeln!(w, "morpho.sigma_pv={:?}", m.sigma_pv).unwrap();
+            let bd = &self.boundaries;
+            for (name, value) in [
+                ("boundaries.ray_bend_sigma_deg", bd.ray_bend_sigma_deg),
+                ("boundaries.ray_bend_max_deg", bd.ray_bend_max_deg),
+                ("boundaries.ray_bend_lambda_l", bd.ray_bend_lambda_l),
+                ("boundaries.ray_bend_gain", bd.ray_bend_gain),
+            ] {
+                writeln!(w, "{name}={value:?}").unwrap();
+            }
+            writeln!(w, "boundaries.ray_bend_octaves={}", bd.ray_bend_octaves).unwrap();
         }
         out
     }
