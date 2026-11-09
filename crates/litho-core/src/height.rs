@@ -6,7 +6,8 @@
 //! Вырез русел/котловин под зеркало воды добавляет T145; здесь считается
 //! крупная форма поверхности, которую предпросмотр может показать точно.
 
-use crate::math::{clamp, piecewise, smoothstep};
+use crate::hydrology::HydrologySample;
+use crate::math::{clamp, clamp01, lerp, piecewise, smoothstep};
 use crate::params::Params;
 
 /// Уровень моря в блоках. Вертикаль Minecraft: 1 блок ≈ 1 м.
@@ -22,7 +23,14 @@ pub struct HeightSample {
     pub factor: f64,
     pub jaggedness: f64,
     /// Крупная форма поверхности в блоках, до ванильной 3D-фактуры/пещер.
+    /// T145: после with_water это дно русла/котловины, вырезанное под зеркало.
     pub surface_y: f64,
+    /// T145: зеркало воды в блоках; вне рек/озёр — уровень моря.
+    pub water_y: f64,
+    /// T145: дно под зеркалом (mirror - depth), до смешивания с берегом.
+    pub bed_y: f64,
+    /// T145: сила выреза русла/озера, 0…1.
+    pub water_strength: f64,
 }
 
 impl Default for HeightSample {
@@ -32,6 +40,9 @@ impl Default for HeightSample {
             factor: 0.0,
             jaggedness: 0.0,
             surface_y: SEA_LEVEL,
+            water_y: SEA_LEVEL,
+            bed_y: SEA_LEVEL,
+            water_strength: 0.0,
         }
     }
 }
@@ -88,7 +99,70 @@ pub fn sample(
         factor,
         jaggedness,
         surface_y: y,
+        water_y: SEA_LEVEL,
+        bed_y: y,
+        water_strength: 0.0,
     }
+}
+
+/// T145: вырез русел/котловин под зеркало воды (§5.9). Река берёт монотонное
+/// зеркало T145 из ChannelHit и не поднимается выше локального берега −1.
+/// Озеро стоит плоским зеркалом на уровне перелива; дно = зеркало − глубина.
+/// Это своя высота для предпросмотра/будущего R2; игра ставит воду через T143.
+pub fn with_water(
+    mut height: HeightSample,
+    hydrology: &HydrologySample,
+    params: &Params,
+) -> HeightSample {
+    let h = &params.height;
+    let land_y = height.surface_y;
+    let mut best = 0.0_f64;
+    let mut water_y = SEA_LEVEL;
+    let mut bed_y = land_y;
+    if let Some(hit) = hydrology.channels.nearest {
+        let cut = clamp01(hydrology.channels.core.max(hit.core_strength));
+        if cut > 0.0 {
+            let mirror = hit.mirror_y.round().min(land_y - 1.0);
+            if mirror >= h.min_y {
+                let depth = hit.depth_blocks.max(1.0);
+                let bed = (mirror - depth).max(h.min_y);
+                if cut > best {
+                    best = cut;
+                    water_y = mirror;
+                    bed_y = bed;
+                }
+            }
+        }
+    }
+    if let Some(hit) = hydrology.lakes.water_hit.filter(|hit| hit.inside) {
+        if let Some(level) = hit.level_km {
+            let cut = clamp01(hit.water_strength);
+            if cut > 0.0 {
+                let mirror = (SEA_LEVEL + level.max(0.0) * h.water_km_to_blocks)
+                    .round()
+                    .min(h.max_y - 1.0);
+                let depth = clamp(
+                    hit.max_depth_km * h.water_km_to_blocks,
+                    1.0,
+                    h.lake_depth_max_blocks,
+                );
+                let bed = (mirror - depth).max(h.min_y);
+                if cut > best || (cut == best && bed < bed_y) {
+                    best = cut;
+                    water_y = mirror;
+                    bed_y = bed;
+                }
+            }
+        }
+    }
+    if best > 0.0 {
+        height.surface_y = lerp(land_y, bed_y, best);
+        height.water_y = water_y;
+        height.bed_y = bed_y;
+        height.water_strength = best;
+        height.offset = (height.surface_y - SURFACE_BASE) / OFFSET_SCALE;
+    }
+    height
 }
 
 pub fn validate(params: &Params) -> Result<(), &'static str> {
@@ -118,6 +192,10 @@ pub fn validate(params: &Params) -> Result<(), &'static str> {
         || !h.min_y.is_finite()
         || !h.max_y.is_finite()
         || h.min_y >= h.max_y
+        || !h.water_km_to_blocks.is_finite()
+        || h.water_km_to_blocks <= 0.0
+        || !h.lake_depth_max_blocks.is_finite()
+        || h.lake_depth_max_blocks < 1.0
     {
         return Err("height: переход берега/вертикальный масштаб/пределы некорректны");
     }
@@ -202,5 +280,76 @@ mod tests {
         let mut bad = dev.clone();
         bad.height.coast_width_c = 0.0;
         assert!(validate(&bad).is_err());
+    }
+
+    fn base_at(y: f64) -> HeightSample {
+        HeightSample {
+            surface_y: y,
+            offset: (y - SURFACE_BASE) / OFFSET_SCALE,
+            bed_y: y,
+            ..HeightSample::default()
+        }
+    }
+
+    fn channel_hit(mirror_y: f64, depth_blocks: f64) -> crate::channel::ChannelHit {
+        crate::channel::ChannelHit {
+            plate_id: 1,
+            segment: 0,
+            reach: 0,
+            distance_l: 0.0,
+            discharge_mm_l2: 100.0,
+            core_l: 0.02,
+            valley_l: 0.1,
+            depth_blocks,
+            core_strength: 1.0,
+            valley_strength: 1.0,
+            delta_strength: 0.0,
+            end: crate::channel::ReachEnd::Confluence,
+            mouth_distance_l: 1.0,
+            mirror_y,
+        }
+    }
+
+    #[test]
+    fn river_cut_keeps_water_below_the_local_bank() {
+        let p = params(Mode::Gameplay);
+        let mut hydro = HydrologySample::default();
+        hydro.channels.core = 1.0;
+        hydro.channels.nearest = Some(channel_hit(80.0, 2.0));
+        let cut = with_water(base_at(100.0), &hydro, &p);
+        assert_eq!(cut.water_y, 80.0);
+        assert_eq!(cut.bed_y, 78.0);
+        assert_eq!(cut.surface_y, 78.0);
+        assert_eq!(cut.water_strength, 1.0);
+        // Берег ниже зеркала: вода не должна висеть над берегом.
+        let low = with_water(base_at(70.0), &hydro, &p);
+        assert_eq!(low.water_y, 69.0);
+        assert!(low.surface_y <= low.water_y - 1.0);
+    }
+
+    #[test]
+    fn lake_mirror_is_flat_at_spill_and_bed_is_below_it() {
+        let p = params(Mode::Gameplay);
+        let mut hydro = HydrologySample::default();
+        hydro.lakes.water_hit = Some(crate::lake::LakeHit {
+            plate_id: 1,
+            lake: 0,
+            depression: 0,
+            kind: crate::lake::LakeKind::Lake,
+            distance_l: 0.0,
+            inside: true,
+            level_km: Some(0.1),
+            max_depth_km: 0.05,
+            frozen: false,
+            rift: false,
+            high: true,
+            water_strength: 1.0,
+            shore_strength: 1.0,
+        });
+        let cut = with_water(base_at(80.0), &hydro, &p);
+        assert_eq!(cut.water_y, 69.0); // 63 + 0.1*64 = 69.4 -> 69
+        assert!((cut.bed_y - 65.8).abs() < 1e-9);
+        assert_eq!(cut.surface_y, cut.bed_y);
+        assert_eq!(cut.water_strength, 1.0);
     }
 }

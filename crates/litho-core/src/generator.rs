@@ -576,13 +576,17 @@ impl Generator {
         let river = local_river.max(water.river);
         // I2-lite: долины режут русла/низкие озёра, а не каждая смена знака W.
         let pv = crate::math::lerp(pv_relief, -1.0, crate::math::clamp01(river));
-        let height = crate::height::sample(
-            vanilla.c,
-            vanilla.e,
-            pv,
-            climate.surface.e_km,
-            morpho.values[6],
-            morpho.values[7],
+        let height = crate::height::with_water(
+            crate::height::sample(
+                vanilla.c,
+                vanilla.e,
+                pv,
+                climate.surface.e_km,
+                morpho.values[6],
+                morpho.values[7],
+                &self.params,
+            ),
+            &water,
             &self.params,
         );
         Ok(SurfaceFields {

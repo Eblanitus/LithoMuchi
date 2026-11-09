@@ -80,6 +80,10 @@ pub struct ChannelPoint {
     pub meander_amplitude_l: f64,
     pub meander_lambda_l: f64,
     pub slope_km_l: f64,
+    /// T145: высота стока узла, км; источник зеркала русла.
+    pub route_km: f64,
+    /// T145: зеркало воды в блоках, округлённое и монотонное вниз по течению.
+    pub mirror_y: f64,
 }
 
 impl ChannelPoint {
@@ -96,6 +100,8 @@ impl ChannelPoint {
             meander_amplitude_l: lerp(self.meander_amplitude_l, other.meander_amplitude_l, t),
             meander_lambda_l: lerp(self.meander_lambda_l, other.meander_lambda_l, t),
             slope_km_l: lerp(self.slope_km_l, other.slope_km_l, t),
+            route_km: lerp(self.route_km, other.route_km, t),
+            mirror_y: lerp(self.mirror_y, other.mirror_y, t),
         }
     }
 }
@@ -137,6 +143,8 @@ pub struct ChannelHit {
     /// T115: тип устья и расстояние вдоль русла до него, не по прямой.
     pub end: ReachEnd,
     pub mouth_distance_l: f64,
+    /// T145: зеркало русла в точке запроса, блоки.
+    pub mirror_y: f64,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -294,9 +302,12 @@ impl ChannelNetwork {
                 continue;
             }
             let base = chain_vertices(&chain, nodes, runoff, params);
+            let mean_slope = base.iter().map(|v| v.slope_km_l).sum::<f64>() / base.len() as f64;
+            let plain = mean_slope < params.channels.plain_slope_max;
             let smoothed = chaikin(&chaikin(&base));
             let sampled = resample(&smoothed, params.drainage.step_l);
-            let meandered = meander(&sampled, meander_seed, plate_id, reaches.len());
+            let mut meandered = meander(&sampled, meander_seed, plate_id, reaches.len());
+            assign_mirror(&mut meandered, plain, params);
             let first_segment = segments.len();
             for pair in meandered.windows(2) {
                 if pair[0].point.dist2(pair[1].point) <= 1e-24 {
@@ -322,14 +333,13 @@ impl ChannelNetwork {
                 .point
                 .sub(meandered.last().expect("полилиния непуста").point)
                 .len();
-            let mean_slope = base.iter().map(|v| v.slope_km_l).sum::<f64>() / base.len() as f64;
             reaches.push(ChannelReach {
                 source_node: head,
                 mouth_node: *chain.last().expect("цепочка непуста"),
                 end,
                 length_l,
                 sinuosity: if chord > 1e-9 { length_l / chord } else { 0.0 },
-                plain: mean_slope < params.channels.plain_slope_max,
+                plain,
                 kind: ReachKind::Channel,
                 parent_reach: None,
                 first_segment,
@@ -514,6 +524,7 @@ impl ChannelNetwork {
                 delta_strength,
                 end: reach.end,
                 mouth_distance_l,
+                mirror_y: at.mirror_y,
             };
             if out.nearest.is_none_or(|old| distance_l < old.distance_l) {
                 out.nearest = Some(hit);
@@ -533,6 +544,9 @@ impl ChannelNetwork {
                 || segment.b.core_l <= 0.0
                 || segment.a.valley_l < segment.a.core_l
                 || segment.b.valley_l < segment.b.core_l
+                || !segment.a.mirror_y.is_finite()
+                || !segment.b.mirror_y.is_finite()
+                || segment.b.mirror_y > segment.a.mirror_y + 1e-9
             {
                 return Err(RiverNetError::BrokenInvariant {
                     node: k,
@@ -645,8 +659,11 @@ fn append_deltas(
             let dir = direction.add(perpendicular.scale(t)).normalized();
             let end = apex.point.add(dir.scale(desired));
             let arm_q = apex.discharge_mm_l2 / arms as f64;
-            let a = vertex(apex.point, arm_q, apex.slope_km_l, params);
-            let b = vertex(end, arm_q, apex.slope_km_l, params);
+            let mut a = vertex(apex.point, arm_q, apex.slope_km_l, apex.route_km, params);
+            let mut b = vertex(end, arm_q, apex.slope_km_l, apex.route_km, params);
+            // Рукава дельты наследуют зеркало главной реки в точке ветвления.
+            a.mirror_y = apex.mirror_y;
+            b.mirror_y = apex.mirror_y;
             let first_segment = segments.len();
             segments.push(ChannelSegment {
                 a,
@@ -670,6 +687,37 @@ fn append_deltas(
     (reaches, segments)
 }
 
+/// T145: зеркало русла из `route_km`, округлённое до блока и не растущее
+/// вниз по течению. Ступень не больше 1 блока; на равнине шаги не чаще
+/// `mirror_step_blocks`, на крутых участках — каскад с меньшим шагом.
+/// Если рельеф падает быстрее, зеркало остаётся выше сырого уровня: русло
+/// прорезается под него, а берег ограничивает воду уже в height::with_water.
+fn assign_mirror(points: &mut [ChannelPoint], plain: bool, params: &Params) {
+    let Some(last) = points.last_mut() else {
+        return;
+    };
+    let scale = params.height.water_km_to_blocks;
+    let step = if plain {
+        params.channels.mirror_step_blocks
+    } else {
+        params.channels.mirror_cascade_step_blocks
+    }
+    .max(1.0);
+    let mut y = (crate::height::SEA_LEVEL + last.route_km.max(0.0) * scale).round();
+    last.mirror_y = y;
+    let l = params.block.l_blocks;
+    for i in (0..points.len() - 1).rev() {
+        let dist_blocks = points[i].point.sub(points[i + 1].point).len() * l;
+        let raw = (crate::height::SEA_LEVEL + points[i].route_km.max(0.0) * scale).round();
+        let allowed = (dist_blocks / step).floor().max(0.0);
+        // Вверх по течению зеркало не ниже downstream, но поднимается не
+        // быстрее одной ступени на разрешённый интервал.
+        let target = raw.max(y).min(y + allowed);
+        points[i].mirror_y = target;
+        y = target;
+    }
+}
+
 fn validate(params: &Params) -> Result<(), RiverNetError> {
     let c = &params.channels;
     let values = [
@@ -686,6 +734,8 @@ fn validate(params: &Params) -> Result<(), RiverNetError> {
         c.delta_slope_max,
         c.delta_length_min_l,
         c.delta_length_max_l,
+        c.mirror_step_blocks,
+        c.mirror_cascade_step_blocks,
     ];
     if values.iter().any(|v| !v.is_finite() || *v <= 0.0)
         || c.core_max_blocks < c.core_min_blocks
@@ -727,7 +777,7 @@ fn slope_at(nodes: &[DrainageNode], k: usize) -> f64 {
     ((nodes[k].filled_km - nodes[down].filled_km) / distance).max(0.0)
 }
 
-fn vertex(point: Vec2, q: f64, slope: f64, params: &Params) -> ChannelPoint {
+fn vertex(point: Vec2, q: f64, slope: f64, route_km: f64, params: &Params) -> ChannelPoint {
     let c = &params.channels;
     let l = params.block.l_blocks;
     let ratio = (q / c.q_min_mm_l2).max(1.0);
@@ -748,6 +798,9 @@ fn vertex(point: Vec2, q: f64, slope: f64, params: &Params) -> ChannelPoint {
         meander_amplitude_l: meander_k * 2.0 * core_blocks / l,
         meander_lambda_l: 11.0 * 2.0 * core_blocks / l,
         slope_km_l: slope,
+        route_km,
+        mirror_y: (crate::height::SEA_LEVEL + route_km.max(0.0) * params.height.water_km_to_blocks)
+            .round(),
     }
 }
 
@@ -769,7 +822,7 @@ fn chain_vertices(
         } else {
             (q, slope)
         };
-        out.push(vertex(nodes[k].point, q, slope, params));
+        out.push(vertex(nodes[k].point, q, slope, nodes[k].route_km, params));
     }
     out
 }
@@ -972,6 +1025,7 @@ mod tests {
                             valley_strength: valley,
                             delta_strength: delta,
                             end: net.reaches()[segment.reach].end,
+                            mirror_y: at.mirror_y,
                             mouth_distance_l: (1.0 - t) * ab.dot(ab).sqrt()
                                 + net
                                     .reach_segments(segment.reach)
@@ -1152,5 +1206,46 @@ mod tests {
                 .delta_count(),
             0
         );
+    }
+}
+
+#[cfg(test)]
+mod mirror_tests {
+    use super::{ChannelPoint, assign_mirror, vertex};
+    use crate::math::Vec2;
+    use crate::mode::Mode;
+    use crate::params::Params;
+    use crate::version::GenVersion;
+
+    fn points(routes: &[f64], params: &Params) -> Vec<ChannelPoint> {
+        routes
+            .iter()
+            .enumerate()
+            .map(|(i, &route)| vertex(Vec2::new(i as f64 * 0.5, 0.0), 100.0, 0.01, route, params))
+            .collect()
+    }
+
+    #[test]
+    fn mirror_is_rounded_monotone_and_step_limited() {
+        let p = Params::defaults(GenVersion::V1Dev, Mode::Gameplay);
+        let mut pts = points(&[0.3, 0.2, 0.1, 0.0], &p);
+        assign_mirror(&mut pts, true, &p);
+        for pair in pts.windows(2) {
+            assert!(pair[1].mirror_y <= pair[0].mirror_y);
+            assert_eq!(pair[0].mirror_y.fract(), 0.0);
+            let dist = pair[0].point.sub(pair[1].point).len() * p.block.l_blocks;
+            let allowed = (dist / p.channels.mirror_step_blocks).floor();
+            assert!(pair[0].mirror_y - pair[1].mirror_y <= allowed);
+        }
+        assert_eq!(pts.last().unwrap().mirror_y, crate::height::SEA_LEVEL);
+    }
+
+    #[test]
+    fn adverse_raw_slope_does_not_make_water_flow_uphill() {
+        let p = Params::defaults(GenVersion::V1Dev, Mode::Gameplay);
+        let mut pts = points(&[0.0, 0.1], &p);
+        assign_mirror(&mut pts, true, &p);
+        assert!(pts[1].mirror_y <= pts[0].mirror_y);
+        assert_eq!(pts[0].mirror_y, pts[1].mirror_y);
     }
 }

@@ -357,6 +357,10 @@ pub struct ChannelParams {
     pub delta_slope_max: f64,
     pub delta_length_min_l: f64,
     pub delta_length_max_l: f64,
+    /// T145: минимальная длина русла между ступенями зеркала на равнине, блоки.
+    pub mirror_step_blocks: f64,
+    /// T145: каскад на крутых участках: минимальная длина между ступенями.
+    pub mirror_cascade_step_blocks: f64,
 }
 
 /// T114: озёра и котловины поверх впадин T110 и баланса T111.
@@ -1055,6 +1059,10 @@ pub struct HeightParams {
     pub warm_jagged_drop: f64,
     pub min_y: f64,
     pub max_y: f64,
+    /// T145: вертикальный масштаб зеркал воды: блоки на км уровня стока.
+    pub water_km_to_blocks: f64,
+    /// T145: предел глубины озера под зеркалом, блоки.
+    pub lake_depth_max_blocks: f64,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -1312,6 +1320,14 @@ impl Params {
                 delta_slope_max: 0.005,
                 delta_length_min_l: 0.3,
                 delta_length_max_l: 0.8,
+                mirror_step_blocks: match mode {
+                    Mode::Gameplay => 64.0,
+                    Mode::Scientific => 128.0,
+                },
+                mirror_cascade_step_blocks: match mode {
+                    Mode::Gameplay => 16.0,
+                    Mode::Scientific => 32.0,
+                },
             },
             lakes: LakeParams {
                 inland_sea_area_l2: 1.0,
@@ -1436,6 +1452,11 @@ impl Params {
                 warm_jagged_drop: 0.10,
                 min_y: -64.0,
                 max_y: 319.0,
+                water_km_to_blocks: match mode {
+                    Mode::Gameplay => 64.0,
+                    Mode::Scientific => 24.0,
+                },
+                lake_depth_max_blocks: 64.0,
             },
             boundaries: BoundaryParams {
                 // σ=6° даёт типичные ±6° и хвосты до ±18°, без тонких октав:
@@ -1900,6 +1921,11 @@ impl Params {
                 ("channels.delta_slope_max", ch.delta_slope_max),
                 ("channels.delta_length_min_l", ch.delta_length_min_l),
                 ("channels.delta_length_max_l", ch.delta_length_max_l),
+                ("channels.mirror_step_blocks", ch.mirror_step_blocks),
+                (
+                    "channels.mirror_cascade_step_blocks",
+                    ch.mirror_cascade_step_blocks,
+                ),
             ] {
                 writeln!(w, "{name}={value:?}").unwrap();
             }
@@ -2035,6 +2061,8 @@ impl Params {
                 ("height.warm_jagged_drop", hg.warm_jagged_drop),
                 ("height.min_y", hg.min_y),
                 ("height.max_y", hg.max_y),
+                ("height.water_km_to_blocks", hg.water_km_to_blocks),
+                ("height.lake_depth_max_blocks", hg.lake_depth_max_blocks),
             ] {
                 writeln!(w, "{name}={value:?}").unwrap();
             }
