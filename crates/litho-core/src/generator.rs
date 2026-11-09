@@ -892,8 +892,8 @@ mod tests {
         let g = Generator::new(42, Mode::Gameplay, GenVersion::V1Dev).unwrap();
         let points = [
             (-35098.064436977, 8022.221972733),
-            (-46962.385766732, 26676.932028836),
-            (-1536.523118131, -2374.575705707),
+            (-54558.993374417, 24112.824796256), // T136: веер сдвинул дельту
+            (-1536.535205192, -2374.660136579),  // T136: веер сдвинул Q/русло
         ];
         let cold = Generator::new(42, Mode::Gameplay, GenVersion::V1Dev).unwrap();
         for (x, z) in points {

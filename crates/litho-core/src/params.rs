@@ -912,6 +912,11 @@ pub struct BoundaryParams {
     pub ray_bend_lambda_l: f64,
     pub ray_bend_octaves: usize,
     pub ray_bend_gain: f64,
+    /// T136 / Б2: веер лучей влаги. 1 отключает веер, 3/5 лучей равномерно
+    /// раскрываются в ±half_angle; веса гауссовы с σ в градусах.
+    pub ray_fan_rays: usize,
+    pub ray_fan_half_angle_deg: f64,
+    pub ray_fan_sigma_deg: f64,
     /// T131: шаг центральных разностей скалярной φ, L (план Б3: 0.25–0.5).
     pub wind_fd_step_l: f64,
     /// T131: плавный уход к запасному направлению при малом |∇φ| и у полюса.
@@ -957,6 +962,20 @@ impl BoundaryParams {
             || self.ray_bend_gain >= 1.0
         {
             return Err("изгиб луча: 1…4 октавы, gain ∈ (0, 1)");
+        }
+        if !matches!(self.ray_fan_rays, 1 | 3 | 5) {
+            return Err("веер влаги: 1, 3 или 5 лучей");
+        }
+        if !self.ray_fan_half_angle_deg.is_finite()
+            || !(0.0..=20.0).contains(&self.ray_fan_half_angle_deg)
+        {
+            return Err("полураствор веера влаги должен лежать в 0…20°");
+        }
+        if !self.ray_fan_sigma_deg.is_finite()
+            || self.ray_fan_sigma_deg <= 0.0
+            || self.ray_fan_sigma_deg > 20.0
+        {
+            return Err("σ весов веера влаги должна лежать в (0, 20]°");
         }
         if !self.wind_fd_step_l.is_finite() || !(0.25..=0.5).contains(&self.wind_fd_step_l) {
             return Err("шаг конечных разностей ветра должен лежать в 0.25…0.5 L");
@@ -1374,6 +1393,12 @@ impl Params {
                 ray_bend_lambda_l: 1.5,
                 ray_bend_octaves: 1,
                 ray_bend_gain: 0.5,
+                // Б2 после замера T134–T136: один изогнутый луч оставлял
+                // резкую кромку тени. Пять лучей с широкой σ дали лучший
+                // скачок h на пробе; цена учтена отдельно в T160.
+                ray_fan_rays: 5,
+                ray_fan_half_angle_deg: 20.0,
+                ray_fan_sigma_deg: 20.0,
                 wind_fd_step_l: 0.5,
                 wind_grad_floor_deg_per_l: 20.0,
                 wind_pole_fade_l: 16.0,
@@ -1386,7 +1411,10 @@ impl Params {
                 jitter_coarse_lambda_blocks: 1000.0,
                 jitter_coarse_sigma_factor: 4.0,
                 ecotone_width_log2: 0.35,
-                ecotone_max_fraction: 0.45,
+                // T136: после лестницы T135 и веера Б2 мозаика T133 стала
+                // добавлять скачки h (проба 42: 0.99% без неё, 1.92% с ней).
+                // Механизм сохранён для подбора T151, но по умолчанию выключен.
+                ecotone_max_fraction: 0.0,
                 ecotone_lambda_blocks: 256.0,
             },
             lava: LavaParams {
@@ -1949,6 +1977,16 @@ impl Params {
                 writeln!(w, "{name}={value:?}").unwrap();
             }
             writeln!(w, "boundaries.ray_bend_octaves={}", bd.ray_bend_octaves).unwrap();
+            writeln!(w, "boundaries.ray_fan_rays={}", bd.ray_fan_rays).unwrap();
+            for (name, value) in [
+                (
+                    "boundaries.ray_fan_half_angle_deg",
+                    bd.ray_fan_half_angle_deg,
+                ),
+                ("boundaries.ray_fan_sigma_deg", bd.ray_fan_sigma_deg),
+            ] {
+                writeln!(w, "{name}={value:?}").unwrap();
+            }
             writeln!(w, "boundaries.wind_fd_step_l={:?}", bd.wind_fd_step_l).unwrap();
             writeln!(
                 w,

@@ -437,6 +437,79 @@ where
     F: Fn(Vec2) -> SurfaceSample,
     W: Fn(Vec2) -> (Vec2, f64),
 {
+    if params.version.is_water_relief_dev() && params.boundaries.ray_fan_rays > 1 {
+        return trace_fan(point, params, field, wind_dir, wind_fn, seed);
+    }
+    trace_single_ray(point, params, field, wind_dir, wind_fn, seed)
+}
+
+/// T136 / Б2: гауссов веер линий тока против ветра. Усредняются μ,
+/// континентальность луча и наветренный уклон: это одна и та же полутень
+/// Smith–Barstad, а не три независимых климата. Порядок лучей фиксирован от
+/// отрицательного угла к положительному, сумма весов нормируется один раз.
+fn trace_fan<F, W>(
+    point: Vec2,
+    params: &Params,
+    field: &F,
+    wind_dir: Vec2,
+    wind_fn: &W,
+    seed: u64,
+) -> RayResult
+where
+    F: Fn(Vec2) -> SurfaceSample,
+    W: Fn(Vec2) -> (Vec2, f64),
+{
+    let b = &params.boundaries;
+    let n = b.ray_fan_rays;
+    let half = b.ray_fan_half_angle_deg;
+    let sigma = b.ray_fan_sigma_deg;
+    let mut mu = 0.0;
+    let mut cont = 0.0;
+    let mut slope = 0.0;
+    let mut total = 0.0;
+    for k in 0..n {
+        let t = k as f64 / (n - 1) as f64 * 2.0 - 1.0;
+        let offset_deg = t * half;
+        let weight = dexp(-0.5 * (offset_deg / sigma) * (offset_deg / sigma));
+        let angle = offset_deg * (std::f64::consts::PI / 180.0);
+        // Поворачиваем сам ветер внутри луча, а не только slope_probe:
+        // иначе веер менял бы уклон, но все линии тока шли бы по одному пути.
+        let fan_wind = |q: Vec2| {
+            let (v, phi) = wind_fn(q);
+            (rotate_unit(v, angle).scale(v.len()), phi)
+        };
+        let ray = trace_single_ray(
+            point,
+            params,
+            field,
+            rotate_unit(wind_dir, angle),
+            &fan_wind,
+            seed,
+        );
+        mu += weight * ray.mu;
+        cont += weight * ray.cont_ray;
+        slope += weight * ray.slope;
+        total += weight;
+    }
+    RayResult {
+        mu: mu / total,
+        cont_ray: cont / total,
+        slope: slope / total,
+    }
+}
+
+fn trace_single_ray<F, W>(
+    point: Vec2,
+    params: &Params,
+    field: &F,
+    wind_dir: Vec2,
+    wind_fn: &W,
+    seed: u64,
+) -> RayResult
+where
+    F: Fn(Vec2) -> SurfaceSample,
+    W: Fn(Vec2) -> (Vec2, f64),
+{
     let pr = &params.precip;
     let c = &params.climate;
     let steps = pr.ray_steps;
@@ -913,5 +986,121 @@ mod t131_tests {
                 super::clamp(super::phi_from_distances(f1, f2, q, 42, &old), 0.0, 90.0).to_bits()
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod t136_tests {
+    use super::{RayResult, SurfaceSample, trace_ray};
+    use crate::math::Vec2;
+    use crate::mode::Mode;
+    use crate::params::Params;
+    use crate::version::GenVersion;
+
+    fn fan_params() -> Params {
+        Params::defaults(GenVersion::V1Dev, Mode::Gameplay)
+    }
+
+    /// Веер обязан менять сам путь линии тока, а не только slope_probe.
+    /// Несимметричный хребет слева от ветра даёт разную μ у лучей веера.
+    #[test]
+    fn fan_averages_real_ray_paths_and_stays_bounded() {
+        let p = fan_params();
+        let field = |q: Vec2| SurfaceSample {
+            e_km: -1.0
+                + 4.0
+                    * crate::math::dexp(-(q.x / 0.35) * (q.x / 0.35))
+                    * crate::math::dexp(-((q.z + 1.0) / 0.6) * ((q.z + 1.0) / 0.6)),
+            ..SurfaceSample::default()
+        };
+        let wind = |_| (Vec2::new(1.0, 0.0), 30.0);
+        let point = Vec2::new(1.0, 0.0);
+        let dir = Vec2::new(1.0, 0.0);
+        let fan = trace_ray(point, &p, &field, dir, &wind, 42);
+        let mut single = p.clone();
+        single.boundaries.ray_fan_rays = 1;
+        let one = trace_ray(point, &single, &field, dir, &wind, 42);
+        assert!((fan.mu - one.mu).abs() > 1e-6, "веер не изменил линию тока");
+        assert!(fan.mu.is_finite() && fan.mu >= 0.0);
+        assert!((0.0..=1.0).contains(&fan.cont_ray));
+        assert!(fan.slope.is_finite() && fan.slope >= 0.0);
+        // Отключение веера возвращает ровно старый одиночный луч v1-dev.
+        let again = trace_ray(point, &single, &field, dir, &wind, 42);
+        assert_eq!(one.mu.to_bits(), again.mu.to_bits());
+        assert_eq!(one.cont_ray.to_bits(), again.cont_ray.to_bits());
+        assert_eq!(one.slope.to_bits(), again.slope.to_bits());
+    }
+
+    /// На конечной полосе хребта веер сглаживает край тени поперёк ветра.
+    #[test]
+    fn fan_softens_the_edge_of_a_finite_rain_shadow() {
+        let mut fan = fan_params();
+        fan.boundaries.ray_fan_rays = 5;
+        fan.boundaries.ray_fan_half_angle_deg = 20.0;
+        fan.boundaries.ray_fan_sigma_deg = 20.0;
+        let mut single = fan.clone();
+        single.boundaries.ray_fan_rays = 1;
+        let field = |q: Vec2| SurfaceSample {
+            e_km: -1.0
+                + 4.0
+                    * crate::math::dexp(-(q.x / 0.35) * (q.x / 0.35))
+                    * crate::math::dexp(-(q.z / 0.7) * (q.z / 0.7)),
+            ..SurfaceSample::default()
+        };
+        let wind = |_| (Vec2::new(1.0, 0.0), 30.0);
+        let max_step = |p: &Params| {
+            let mut prev: Option<RayResult> = None;
+            let mut worst = 0.0_f64;
+            for k in -30..30 {
+                let q = Vec2::new(1.0, k as f64 * 0.08);
+                let r = trace_ray(q, p, &field, Vec2::new(1.0, 0.0), &wind, 42);
+                if let Some(old) = prev {
+                    worst = worst.max((r.mu - old.mu).abs());
+                }
+                prev = Some(r);
+            }
+            worst
+        };
+        let one = max_step(&single);
+        let five = max_step(&fan);
+        assert!(one > 0.0, "тест должен видеть край тени");
+        assert!(five < one, "веер не сгладил край: {five} ≥ {one}");
+    }
+
+    #[test]
+    fn v0_ignores_fan_parameters_bit_for_bit() {
+        let old = Params::defaults(GenVersion::V0, Mode::Gameplay);
+        let mut changed = old.clone();
+        changed.boundaries.ray_fan_rays = 5;
+        changed.boundaries.ray_fan_half_angle_deg = 20.0;
+        changed.boundaries.ray_fan_sigma_deg = 1.0;
+        let field = |q: Vec2| SurfaceSample {
+            e_km: if q.x < 0.0 { -1.0 } else { 0.5 + 0.1 * q.z },
+            ..SurfaceSample::default()
+        };
+        let wind = |q: Vec2| (Vec2::new(1.0, 0.1 * q.x), 30.0);
+        for q in [Vec2::new(0.0, 0.0), Vec2::new(2.0, -3.0)] {
+            let a = trace_ray(q, &old, &field, Vec2::new(1.0, 0.0), &wind, 42);
+            let b = trace_ray(q, &changed, &field, Vec2::new(1.0, 0.0), &wind, 42);
+            assert_eq!(a.mu.to_bits(), b.mu.to_bits());
+            assert_eq!(a.cont_ray.to_bits(), b.cont_ray.to_bits());
+            assert_eq!(a.slope.to_bits(), b.slope.to_bits());
+        }
+    }
+
+    #[test]
+    fn fan_parameters_validate() {
+        let mut p = fan_params();
+        p.boundaries.validate().unwrap();
+        for rays in [0, 2, 4, 6] {
+            let mut bad = p.clone();
+            bad.boundaries.ray_fan_rays = rays;
+            assert!(bad.boundaries.validate().is_err());
+        }
+        p.boundaries.ray_fan_half_angle_deg = 21.0;
+        assert!(p.boundaries.validate().is_err());
+        p = fan_params();
+        p.boundaries.ray_fan_sigma_deg = 0.0;
+        assert!(p.boundaries.validate().is_err());
     }
 }
