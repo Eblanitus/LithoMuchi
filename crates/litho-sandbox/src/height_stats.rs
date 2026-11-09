@@ -104,9 +104,9 @@ pub struct HeightStats {
 }
 /// T134 / 10.1: метрики границ на отдельной сетке с шагом ≤32 блока.
 /// Суша = C≥порога без рек/озёр. Скачок влажности и ветер считаются на парах
-/// ровно через 32 блока по обеим осям. Прямолинейность пока ищет осевые
-/// участки границ длиннее 512 блоков (отклонение 0<16); диагональная лестница
-/// не засчитывается как прямая, поэтому это консервативная нижняя оценка.
+/// ровно через 32 блока по обеим осям. Прямолинейность ищет цепочки рёбер
+/// границ любых направлений: хорда >512 блоков, отклонение середин <16;
+/// диагональная лестница учитывается, ветвления разбивают цепочки.
 #[derive(Clone, Debug)]
 pub struct BoundaryMetrics {
     pub size: usize,
@@ -223,80 +223,12 @@ impl BoundaryMetrics {
         }
         self.humidity_jump_land = jump.iter().filter(|&&v| v).count();
         self.climate_humidity_jump_land = climate_jump.iter().filter(|&&v| v).count();
-        // Осевые рёбра границ и прямые прогоны >512 блоков. Помечаем сами
-        // рёбра, а не клетки, чтобы доля длины не превышала 100%.
-        let mut h_edge = vec![false; n * n.saturating_sub(1)];
-        let mut v_edge = vec![false; n * n.saturating_sub(1)];
-        for j in 0..n {
-            for i in 0..n.saturating_sub(1) {
-                let a = at(i, j);
-                let b = at(i + 1, j);
-                h_edge[j * (n - 1) + i] = land[a] && land[b] && class[a] != class[b];
-            }
-        }
-        for i in 0..n {
-            for j in 0..n.saturating_sub(1) {
-                let a = at(i, j);
-                let b = at(i, j + 1);
-                v_edge[j * n + i] = land[a] && land[b] && class[a] != class[b];
-            }
-        }
-        self.boundary_edges =
-            h_edge.iter().filter(|&&v| v).count() + v_edge.iter().filter(|&&v| v).count();
-        let pair_h = |k: usize| -> u16 {
-            let j = k / (n - 1);
-            let i = k % (n - 1);
-            let a = at(i, j);
-            let b = at(i + 1, j);
-            u16::from(class[a].min(class[b])) * 25 + u16::from(class[a].max(class[b]))
-        };
-        let pair_v = |k: usize| -> u16 {
-            let j = k / n;
-            let i = k % n;
-            let a = at(i, j);
-            let b = at(i, j + 1);
-            u16::from(class[a].min(class[b])) * 25 + u16::from(class[a].max(class[b]))
-        };
-        let mark_line =
-            |idx: &[usize], edges: &[bool], pair: &dyn Fn(usize) -> u16, straight: &mut [bool]| {
-                let mut start = 0;
-                while start < idx.len() {
-                    let k0 = idx[start];
-                    if !edges[k0] {
-                        start += 1;
-                        continue;
-                    }
-                    let first = pair(k0);
-                    let mut end = start + 1;
-                    while end < idx.len() && edges[idx[end]] && pair(idx[end]) == first {
-                        end += 1;
-                    }
-                    if (end - start) as f64 * self.step > 512.0 {
-                        for &k in &idx[start..end] {
-                            straight[k] = true;
-                        }
-                    }
-                    start = end;
-                }
-            };
-        let mut h_straight = vec![false; h_edge.len()];
-        let mut v_straight = vec![false; v_edge.len()];
-        if n > 1 {
-            // h_edge — вертикальные рёбра между (i,j) и (i+1,j): прямая
-            // вертикальная граница идёт по столбцу i через строки j.
-            for i in 0..n - 1 {
-                let idx: Vec<usize> = (0..n).map(|j| j * (n - 1) + i).collect();
-                mark_line(&idx, &h_edge, &pair_h, &mut h_straight);
-            }
-            // v_edge — горизонтальные рёбра между (i,j) и (i,j+1): прямая
-            // горизонтальная граница идёт по строке j через столбцы i.
-            for j in 0..n - 1 {
-                let idx: Vec<usize> = (0..n).map(|i| j * n + i).collect();
-                mark_line(&idx, &v_edge, &pair_v, &mut v_straight);
-            }
-        }
-        self.straight_edges =
-            h_straight.iter().filter(|&&v| v).count() + v_straight.iter().filter(|&&v| v).count();
+        // T134: границы любых направлений, включая диагональную лестницу.
+        // Знаменатель — длина сеточных рёбер; числитель — рёбра на длинной
+        // хорде одного класса с отклонением середин <16 блоков.
+        let (edges, straight) = straight_boundary_edges(class, land, n, self.step);
+        self.boundary_edges = edges;
+        self.straight_edges = straight;
         // Узкие полоски: прогон одного класса между другими сухопутными
         // классами уже 32 блоков хотя бы по одной оси.
         let mut thin = vec![false; n * n];
@@ -354,6 +286,167 @@ impl BoundaryMetrics {
         }
         self.thin_land = thin.iter().filter(|&&v| v).count();
     }
+}
+
+/// T134: ищем длинные прямые участки границ биомов, а не только осевые.
+///
+/// Граница представлена рёбрами между соседними сухопутными клетками разного
+/// класса. Рёбра одного неупорядоченного класса соединяются через общие углы
+/// клеток в цепочки; ветвления разбивают цепочку. Для цепочки (и скользящего
+/// окна внутри неё) берём хорду между серединами крайних рёбер: длина >512
+/// блоков и максимальное отклонение середин всех рёбер <16 блоков. Это ловит
+/// диагональную лестницу и произвольный наклон, но остаётся консервативным на
+/// ветвлениях. Порядок обхода фиксирован порядком рёбер, не итерацией HashMap.
+fn straight_boundary_edges(class: &[u8], land: &[bool], n: usize, step: f64) -> (usize, usize) {
+    use std::collections::HashMap;
+
+    #[derive(Clone, Copy)]
+    struct Edge {
+        a: (u32, u32),
+        b: (u32, u32),
+        mid: (f64, f64),
+        pair: u16,
+    }
+    let at = |i: usize, j: usize| j * n + i;
+    let pair = |a: usize, b: usize| -> u16 {
+        u16::from(class[a].min(class[b])) * 25 + u16::from(class[a].max(class[b]))
+    };
+    let mut edges = Vec::new();
+    let mut adj: HashMap<(u32, u32, u16), Vec<usize>> = HashMap::new();
+    let push = |a: (u32, u32),
+                b: (u32, u32),
+                mid: (f64, f64),
+                p: u16,
+                edges: &mut Vec<Edge>,
+                adj: &mut HashMap<(u32, u32, u16), Vec<usize>>| {
+        let id = edges.len();
+        edges.push(Edge { a, b, mid, pair: p });
+        adj.entry((a.0, a.1, p)).or_default().push(id);
+        adj.entry((b.0, b.1, p)).or_default().push(id);
+    };
+    for j in 0..n {
+        for i in 0..n.saturating_sub(1) {
+            let a = at(i, j);
+            let b = at(i + 1, j);
+            if land[a] && land[b] && class[a] != class[b] {
+                push(
+                    ((i + 1) as u32, j as u32),
+                    ((i + 1) as u32, (j + 1) as u32),
+                    (i as f64 + 1.0, j as f64 + 0.5),
+                    pair(a, b),
+                    &mut edges,
+                    &mut adj,
+                );
+            }
+        }
+    }
+    for i in 0..n {
+        for j in 0..n.saturating_sub(1) {
+            let a = at(i, j);
+            let b = at(i, j + 1);
+            if land[a] && land[b] && class[a] != class[b] {
+                push(
+                    (i as u32, (j + 1) as u32),
+                    ((i + 1) as u32, (j + 1) as u32),
+                    (i as f64 + 0.5, j as f64 + 1.0),
+                    pair(a, b),
+                    &mut edges,
+                    &mut adj,
+                );
+            }
+        }
+    }
+    let total = edges.len();
+    if total == 0 {
+        return (0, 0);
+    }
+    let degree = |v: (u32, u32), p: u16| adj.get(&(v.0, v.1, p)).map_or(0, Vec::len);
+    let mut visited = vec![false; total];
+    let mut chains: Vec<Vec<usize>> = Vec::new();
+    let walk =
+        |start: usize, from: (u32, u32), visited: &mut [bool], chains: &mut Vec<Vec<usize>>| {
+            let mut chain = Vec::new();
+            let mut id = start;
+            let mut v = from;
+            loop {
+                visited[id] = true;
+                chain.push(id);
+                let e = edges[id];
+                let next_v = if e.a == v { e.b } else { e.a };
+                if degree(next_v, e.pair) != 2 {
+                    break;
+                }
+                let Some(list) = adj.get(&(next_v.0, next_v.1, e.pair)) else {
+                    break;
+                };
+                let Some(&next) = list.iter().find(|&&k| !visited[k]) else {
+                    break;
+                };
+                id = next;
+                v = next_v;
+            }
+            chains.push(chain);
+        };
+    // Сначала цепочки с концами/ветвлениями, затем замкнутые контуры.
+    for id in 0..total {
+        if visited[id] {
+            continue;
+        }
+        let e = edges[id];
+        let from = if degree(e.a, e.pair) != 2 {
+            Some(e.a)
+        } else if degree(e.b, e.pair) != 2 {
+            Some(e.b)
+        } else {
+            None
+        };
+        if let Some(v) = from {
+            walk(id, v, &mut visited, &mut chains);
+        }
+    }
+    for id in 0..total {
+        if !visited[id] {
+            walk(id, edges[id].a, &mut visited, &mut chains);
+        }
+    }
+    let mut straight = vec![false; total];
+    let mark = |chain: &[usize], straight: &mut [bool]| -> bool {
+        if chain.len() < 2 {
+            return false;
+        }
+        let a = edges[chain[0]].mid;
+        let b = edges[chain[chain.len() - 1]].mid;
+        let dx = b.0 - a.0;
+        let dz = b.1 - a.1;
+        let chord_grid = (dx * dx + dz * dz).sqrt();
+        if chord_grid * step <= 512.0 {
+            return false;
+        }
+        for &id in chain {
+            let m = edges[id].mid;
+            let dev = ((m.0 - a.0) * dz - (m.1 - a.1) * dx).abs() * step / chord_grid;
+            if dev >= 16.0 {
+                return false;
+            }
+        }
+        for &id in chain {
+            straight[id] = true;
+        }
+        true
+    };
+    // Окно заведомо длиннее 512 блоков даже для худшей диагональной лестницы.
+    let window = ((512.0 * std::f64::consts::SQRT_2 / step).ceil() as usize).saturating_add(2);
+    for chain in &chains {
+        if mark(chain, &mut straight) {
+            continue;
+        }
+        if chain.len() > window {
+            for start in 0..=chain.len() - window {
+                mark(&chain[start..start + window], &mut straight);
+            }
+        }
+    }
+    (total, straight.iter().filter(|&&v| v).count())
 }
 
 fn pct(count: usize, total: usize) -> f64 {
@@ -681,7 +774,7 @@ impl HeightStats {
             "T134 границы: сетка {bn}×{bn} ({bsamples} точек), шаг {bs:.3} блока, область {span:.3}×{span:.3} L, суша {bl}\n\
              скачок h≥2 всей суши {jump:.2}% точек ({jp}/{pairs} пар, {pair_pct:.2}% пар), ветер max {wind:.3}°/32 блока ({wp} пар)\n\
              климатическая суша {cl}: скачок h≥2 {cjump:.2}% точек ({cjp}/{cpairs} пар, {cpair_pct:.2}% пар); гидро-override исключён\n\
-             прямолинейность осевых границ >512 блоков {straight:.2}% ({se}/{be} рёбер), полоски <32 блоков {thin:.2}% суши, min {minstrip}\n\
+             прямолинейность границ (хорда >512, отклонение <16, любые направления) {straight:.2}% ({se}/{be} рёбер), полоски <32 блоков {thin:.2}% суши, min {minstrip}\n\
              объём приёмки 10.1 (≥200×200 L, шаг≤32): {accept}\n",
             bn = b.size,
             bsamples = b.samples,
@@ -714,12 +807,12 @@ impl HeightStats {
         if self.land == 0 || self.relief_windows == 0 {
             out.push_str("WARNING: нет суши/полных сухопутных окон; проценты и медиана не являются оценкой рельефа.\n");
         }
-        out.push_str("T115–T116: сеть/низкие озёра подключены к C/E/W и биомам (R1). Галерейные леса T116 включены; высокие озёра и собственный PV — T141/T143/T145. Проценты воды здесь не заменяют проверку реальной высоты.\n");
+        out.push_str("T115–T116/T141: сеть/низкие озёра подключены к C/E/W и биомам (R1), собственный PV доступен через --pv. Высокие озёра и вода выше моря — T143/T145. Проценты воды здесь не заменяют проверку реальной высоты.\n");
         out
     }
     pub fn json(&self, base: &RenderOptions, opts: &StatsOptions, model: &HeightModel) -> String {
         format!(
-            "{{\n  \"seed\": {}, \"mode\": {}, \"version\": {}, \"path\": {},\n  \"height_source\": {}, \"height_data_hash\": \"{:016x}\", \"synthetic\": {}, \"pv_field\": {},\n  \"approximation\": \"63.52 + 128*offset; no factor/jaggedness/3D noise\",\n  \"span_l\": {}, \"size\": {}, \"samples\": {}, \"land_samples\": {},\n  \"flooded_land_pct\": {}, \"hyps_pct\": {:?}, \"erosion_pct\": {:?},\n  \"valley_pct\": {}, \"relief_step\": {}, \"relief_windows\": {}, \"relief_median\": {}, \"flat_windows_pct\": {},\n  \"river_samples\": {}, \"river_water_pct\": {}, \"gallery_samples\": {}, \"gallery_pct\": {},\n  \"boundary\": {{\"size\": {}, \"step\": {}, \"span_l\": {}, \"land\": {}, \"humidity_jump_pct\": {}, \"humidity_jump_pair_pct\": {}, \"humidity_jump_pairs\": {}, \"humidity_pairs\": {}, \"climate_land\": {}, \"climate_humidity_jump_pct\": {}, \"climate_humidity_pair_pct\": {}, \"climate_humidity_jump_pairs\": {}, \"climate_humidity_pairs\": {}, \"wind_max_deg\": {}, \"wind_pairs\": {}, \"straight_pct\": {}, \"straight_edges\": {}, \"boundary_edges\": {}, \"thin_pct\": {}, \"min_strip_blocks\": {}, \"acceptance_volume\": {}}}\n}}\n",
+            "{{\n  \"seed\": {}, \"mode\": {}, \"version\": {}, \"path\": {},\n  \"height_source\": {}, \"height_data_hash\": \"{:016x}\", \"synthetic\": {}, \"pv_field\": {},\n  \"approximation\": \"63.52 + 128*offset; no factor/jaggedness/3D noise\",\n  \"span_l\": {}, \"size\": {}, \"samples\": {}, \"land_samples\": {},\n  \"flooded_land_pct\": {}, \"hyps_pct\": {:?}, \"erosion_pct\": {:?},\n  \"valley_pct\": {}, \"relief_step\": {}, \"relief_windows\": {}, \"relief_median\": {}, \"flat_windows_pct\": {},\n  \"river_samples\": {}, \"river_water_pct\": {}, \"gallery_samples\": {}, \"gallery_pct\": {},\n  \"boundary\": {{\"size\": {}, \"step\": {}, \"span_l\": {}, \"land\": {}, \"humidity_jump_pct\": {}, \"humidity_jump_pair_pct\": {}, \"humidity_jump_pairs\": {}, \"humidity_pairs\": {}, \"climate_land\": {}, \"climate_humidity_jump_pct\": {}, \"climate_humidity_pair_pct\": {}, \"climate_humidity_jump_pairs\": {}, \"climate_humidity_pairs\": {}, \"wind_max_deg\": {}, \"wind_pairs\": {}, \"straight_pct\": {}, \"straight_edges\": {}, \"boundary_edges\": {}, \"straight_model\": \"grid-edge-chord-512-deviation-16\", \"thin_pct\": {}, \"min_strip_blocks\": {}, \"acceptance_volume\": {}}}\n}}\n",
             self.seed,
             crate::json::quote(self.mode.as_str()),
             crate::json::quote(base.version.as_str()),
@@ -892,5 +985,77 @@ mod boundary_tests {
         assert_eq!(m.straight_pct(), 0.0);
         assert_eq!(m.thin_pct(), 0.0);
         assert!(m.min_strip_blocks.is_none());
+    }
+
+    fn diagonal_grid(n: usize, shift: impl Fn(usize) -> isize) -> Vec<u8> {
+        let mut class = vec![0_u8; n * n];
+        for j in 0..n {
+            for i in 0..n {
+                class[j * n + i] = if (i as isize) < j as isize + shift(j) {
+                    0
+                } else {
+                    2
+                };
+            }
+        }
+        class
+    }
+
+    #[test]
+    fn diagonal_staircase_longer_than_512_blocks_is_straight() {
+        let n = 40;
+        let class = diagonal_grid(n, |_| 0);
+        let land = vec![true; n * n];
+        let (edges, straight) = straight_boundary_edges(&class, &land, n, 16.0);
+        assert!(edges > 0);
+        assert_eq!(
+            straight, edges,
+            "диагональная лестница должна считаться прямой"
+        );
+    }
+
+    #[test]
+    fn short_diagonal_is_not_a_long_straight_boundary() {
+        let n = 20;
+        let class = diagonal_grid(n, |_| 0);
+        let land = vec![true; n * n];
+        let (edges, straight) = straight_boundary_edges(&class, &land, n, 16.0);
+        assert!(edges > 0);
+        assert_eq!(straight, 0);
+    }
+
+    #[test]
+    fn wavy_diagonal_beyond_sixteen_blocks_is_not_straight() {
+        let n = 40;
+        // Ступени смещения ±3 клетки = ±48 блоков: больше допуска 16.
+        let class = diagonal_grid(n, |j| if (j / 6) % 2 == 0 { 3 } else { -3 });
+        let land = vec![true; n * n];
+        let (edges, straight) = straight_boundary_edges(&class, &land, n, 16.0);
+        assert!(edges > 0);
+        assert_eq!(straight, 0);
+    }
+
+    #[test]
+    fn straight_edges_are_a_union_not_double_counted_at_junctions() {
+        let n = 80;
+        let mut class = vec![0_u8; n * n];
+        // Две длинные границы разных классов пересекаются; ветвление делит
+        // цепочки, но каждая половина всё равно длиннее 512 блоков. Рёбра не
+        // должны дать числитель больше знаменателя.
+        for j in 0..n {
+            for i in 0..n {
+                class[j * n + i] = if i < 40 {
+                    0
+                } else if j < 40 {
+                    1
+                } else {
+                    2
+                };
+            }
+        }
+        let land = vec![true; n * n];
+        let (edges, straight) = straight_boundary_edges(&class, &land, n, 16.0);
+        assert!(straight <= edges);
+        assert!(straight > 0);
     }
 }
