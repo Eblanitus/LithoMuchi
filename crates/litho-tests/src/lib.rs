@@ -288,3 +288,262 @@ mod fast_path {
         }
     }
 }
+
+#[cfg(test)]
+mod water_relief_dev {
+    use litho_core::hash::{splitmix64, unit};
+    use litho_core::noise::{fbm_sigma, fbm2, fbm2_unit};
+    use litho_core::{Field, GenVersion, Generator, Mode, Params};
+
+    fn points(count: usize) -> Vec<(f64, f64)> {
+        (0..count)
+            .map(|k| {
+                (
+                    unit(splitmix64(k as u64 + 31)) * 16_000.0 - 8_000.0,
+                    unit(splitmix64(k as u64 + 900_031)) * 16_000.0 - 8_000.0,
+                )
+            })
+            .collect()
+    }
+
+    #[test]
+    fn unit_noise_has_the_calibrated_spread() {
+        for (octaves, gain, expected) in [(1, 0.5, 0.30), (3, 0.5, 0.20), (4, 0.45, 0.19)] {
+            assert_eq!(fbm_sigma(octaves, gain), expected);
+            let mut sum = 0.0;
+            let mut sum2 = 0.0;
+            let n = 40_000;
+            for k in 0..n {
+                let x = unit(splitmix64(k as u64 + 17)) * 400.0;
+                let z = unit(splitmix64(k as u64 + 900_017)) * 400.0;
+                let raw = fbm2(77, x, z, 1.0, octaves, gain);
+                let value = fbm2_unit(77, x, z, 1.0, octaves, gain);
+                assert_eq!(value, raw / expected);
+                sum += value;
+                sum2 += value * value;
+            }
+            let sigma = (sum2 / n as f64 - (sum / n as f64).powi(2)).sqrt();
+            assert!(
+                (sigma - 1.0).abs() < 0.12,
+                "octaves={octaves}, gain={gain}, sigma={sigma}"
+            );
+        }
+    }
+
+    #[test]
+    fn dev_paths_agree_and_preserve_macro_scale() {
+        for mode in Mode::ALL {
+            let generator = Generator::new(-7249957072115989875, mode, GenVersion::V1Dev).unwrap();
+            for (x, z) in points(80) {
+                let reference = generator.sample_reference(x, z).unwrap();
+                let fast = generator.sample(x, z).unwrap();
+                for (a, b) in [
+                    (reference.vanilla.c, fast.vanilla.c),
+                    (reference.vanilla.e, fast.vanilla.e),
+                    (reference.vanilla.w, fast.vanilla.w),
+                    (reference.world.river, fast.world.river),
+                ] {
+                    assert_eq!(a.to_bits(), b.to_bits());
+                }
+            }
+        }
+        let game = Generator::new(42, Mode::Gameplay, GenVersion::V1Dev).unwrap();
+        let science = Generator::new(42, Mode::Scientific, GenVersion::V1Dev).unwrap();
+        for (x, z) in points(80) {
+            assert_eq!(
+                game.macro_point(x, z),
+                science.macro_point(4.0 * x, 4.0 * z)
+            );
+            assert_eq!(
+                game.crust_sample(x, z).unwrap().e_km.to_bits(),
+                science
+                    .crust_sample(4.0 * x, 4.0 * z)
+                    .unwrap()
+                    .e_km
+                    .to_bits()
+            );
+        }
+    }
+
+    #[test]
+    fn dev_sign_is_saturated_away_from_narrow_zero_lines() {
+        let params = Params::defaults(GenVersion::V1Dev, Mode::Gameplay);
+        let mut valley = 0;
+        let mut unsaturated = 0;
+        let n = 10_000;
+        for (x, z) in points(n) {
+            let w = litho_core::vanilla::weirdness(x, z, 0.0, 0.0, 42, &params, 0.0).abs();
+            if w < 0.05 {
+                valley += 1;
+            }
+            if litho_core::vanilla::weirdness_sign(x, z, 42, &params).abs() < 1.0 {
+                unsaturated += 1;
+            }
+        }
+        assert!(
+            valley as f64 / (n as f64) < 0.08,
+            "долины {} из {n}",
+            valley
+        );
+        assert!(
+            unsaturated as f64 / (n as f64) < 0.15,
+            "не saturated {} из {n}",
+            unsaturated
+        );
+    }
+
+    #[test]
+    fn dev_fields_are_finite_and_bounded() {
+        for mode in Mode::ALL {
+            let generator = Generator::new(42, mode, GenVersion::V1Dev).unwrap();
+            for (x, z) in points(100) {
+                for field in Field::ALL {
+                    let value = generator.field(field, x, 64.0, z);
+                    assert!(value.is_finite());
+                    if matches!(
+                        field,
+                        Field::Continents
+                            | Field::Erosion
+                            | Field::Ridges
+                            | Field::Temperature
+                            | Field::Vegetation
+                    ) {
+                        assert!((-1.0..=1.0).contains(&value), "{field:?}={value}");
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod drainage_dev {
+    use litho_core::drainage::RiverNetError;
+    use litho_core::{GenVersion, Generator, Mode};
+    use std::sync::Arc;
+
+    #[test]
+    fn real_plate_network_is_deterministic_cached_and_mode_independent() {
+        let game = Generator::new(42, Mode::Gameplay, GenVersion::V1Dev).unwrap();
+        let plate = game.plate_sample(0.0, 0.0).unwrap().a;
+        let first = game.drainage_network(&plate).unwrap();
+        let second = game.drainage_network(&plate).unwrap();
+        assert!(Arc::ptr_eq(&first, &second));
+        first
+            .check_invariants(game.params().drainage.fill_epsilon_km)
+            .unwrap();
+        assert_eq!(first.plate_id(), plate.id);
+        assert!(first.plate_node_count() > 0);
+        assert_eq!(first.runoff().nodes().len(), first.nodes().len());
+        assert!(first.runoff().climate_nodes() > 0);
+        assert!(first.runoff().export_mm_l2().is_finite());
+        assert!(first.runoff().evaporation_mm_l2().is_finite());
+        assert!(first.runoff().storage_mm_l2().is_finite());
+        assert!(first.nodes().iter().any(|node| !node.in_plate));
+        assert!(
+            first
+                .nodes()
+                .windows(2)
+                .all(|pair| pair[0].cell < pair[1].cell)
+        );
+        let h = game.params().drainage.step_l;
+        let jitter = game.params().drainage.jitter_fraction;
+        for node in first.nodes() {
+            let u = node.point.x / h - node.cell.0 as f64;
+            let v = node.point.z / h - node.cell.1 as f64;
+            assert!((0.5 - jitter - 1e-12..=0.5 + jitter + 1e-12).contains(&u));
+            assert!((0.5 - jitter - 1e-12..=0.5 + jitter + 1e-12).contains(&v));
+        }
+
+        let science = Generator::new(42, Mode::Scientific, GenVersion::V1Dev).unwrap();
+        let same_plate = science.plate_sample(0.0, 0.0).unwrap().a;
+        let other = science.drainage_network(&same_plate).unwrap();
+        // Топография и расход заданы в L и не зависят от режима. Геометрия
+        // T112 имеет блочные ширины/меандры, поэтому сравниваем только основу.
+        assert_eq!(first.nodes(), other.nodes());
+        assert_eq!(first.depressions(), other.depressions());
+        assert_eq!(first.runoff(), other.runoff());
+        assert_eq!(first.lakes(), other.lakes());
+        assert!(first.channels().total_length_l().is_finite());
+        assert!(other.channels().total_length_l().is_finite());
+    }
+
+    #[test]
+    fn channel_query_crosses_the_nearest_plate_boundary_in_fixed_order() {
+        use litho_core::channel::max_query_radius_l;
+        use litho_core::plates::plates_near;
+
+        let generator = Generator::new(42, Mode::Gameplay, GenVersion::V1Dev).unwrap();
+        // T136/T160: после веера 3 середина отрезка перенайдена (сид 42).
+        // Середина отрезка соседней плиты попадает внутрь ближайшей
+        // плиты. До T113 запрос ближайшей плиты терял это русло.
+        let (x, z) = (-1536.535252886, -2374.660469732);
+        let owner = generator.plate_sample(x, z).unwrap().a;
+        let query = generator.drainage_channel_query(x, z).unwrap();
+        let hit = query.nearest.expect("русло соседней плиты найдено");
+        assert_ne!(hit.plate_id, owner.id);
+        assert!(hit.distance_l < 1e-6);
+        assert!(query.networks_considered > 1);
+
+        let point = generator.macro_point(x, z);
+        let radius = max_query_radius_l(generator.params());
+        let neighbors = plates_near(point, radius, generator.seed(), generator.params());
+        let mut forward = litho_core::channel::ChannelQuery::default();
+        let mut reverse = litho_core::channel::ChannelQuery::default();
+        let mut hits = Vec::new();
+        for plate in &neighbors {
+            let net = generator.drainage_network(plate).unwrap();
+            hits.push(net.channels().query(point));
+        }
+        for hit in &hits {
+            forward.merge(*hit);
+        }
+        for hit in hits.iter().rev() {
+            reverse.merge(*hit);
+        }
+        assert_eq!(query, forward);
+        assert_eq!(forward, reverse);
+    }
+
+    #[test]
+    fn surface_query_finds_lake_water_and_delta_arms_in_v1_dev() {
+        let generator = Generator::new(42, Mode::Gameplay, GenVersion::V1Dev).unwrap();
+        // Сид 42, точки найдены сканом соседних плит; координаты блочные.
+        // T132 изменил орографию/Q/русла и уровни: озеро, дельта и межплитовое
+        // русло найдены заново сканом соседних плит (сид 42, блочные координаты).
+        let (lake_x, lake_z) = (-35098.064436977, 8022.221972733);
+        let (_, lake) = generator.drainage_surface_query(lake_x, lake_z).unwrap();
+        assert_eq!(lake.water, 1.0);
+        let hit = lake.nearest.expect("озеро найдено общим запросом");
+        assert_eq!(hit.plate_id, 17385475295529142691);
+        assert!(hit.inside);
+        assert!(
+            hit.level_km
+                .is_some_and(|level| (level - 0.362633481).abs() < 1e-6)
+        );
+        assert!(lake.networks_considered > 1);
+
+        let (delta_x, delta_z) = (-54524.133387731, 24107.233303404);
+        let (channel, _) = generator.drainage_surface_query(delta_x, delta_z).unwrap();
+        assert!(channel.delta > 0.9);
+        assert!(channel.networks_considered > 1);
+    }
+
+    #[test]
+    fn frozen_v0_rejects_the_new_network() {
+        let generator = Generator::new(42, Mode::Gameplay, GenVersion::V0).unwrap();
+        let plate = generator.plate_sample(0.0, 0.0).unwrap().a;
+        assert_eq!(
+            generator.drainage_network(&plate).unwrap_err(),
+            RiverNetError::UnsupportedVersion(GenVersion::V0)
+        );
+        assert_eq!(
+            generator.drainage_channel_query(0.0, 0.0).unwrap_err(),
+            RiverNetError::UnsupportedVersion(GenVersion::V0)
+        );
+        assert_eq!(
+            generator.drainage_surface_query(0.0, 0.0).unwrap_err(),
+            RiverNetError::UnsupportedVersion(GenVersion::V0)
+        );
+    }
+}

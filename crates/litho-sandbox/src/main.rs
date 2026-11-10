@@ -1,5 +1,8 @@
 //! Песочница Litospherity: карты, метрики, атлас и пробы (план 12.2).
 
+mod height;
+mod height_stats;
+mod json;
 mod palette;
 mod png;
 mod render;
@@ -7,6 +10,10 @@ mod render;
 use std::path::Path;
 use std::time::Instant;
 
+use height::{HeightModel, HeightSource};
+use litho_core::channel::{ReachEnd, ReachKind};
+use litho_core::drainage::{DepressionKind, DrainageOutlet};
+use litho_core::lake::LakeKind;
 use litho_core::{Field, GenVersion, Generator, Mode, Params};
 use render::{LAYERS, RenderOptions};
 
@@ -104,6 +111,7 @@ fn options_from(args: &[String]) -> Result<RenderOptions, String> {
         size,
         bpp,
         path_fast,
+        pv: args.iter().any(|arg| arg == "--pv"),
     })
 }
 
@@ -111,10 +119,40 @@ fn generator(opts: &RenderOptions) -> Result<Generator, String> {
     Generator::new(opts.seed, opts.mode, opts.version).map_err(|error| error.to_string())
 }
 
+fn height_source(args: &[String]) -> Result<Option<HeightSource>, String> {
+    let data = value(args, "--game-data");
+    let synthetic = args.iter().any(|arg| arg == "--synthetic-height");
+    match (data, synthetic) {
+        (Some(_), true) => Err("--game-data и --synthetic-height взаимоисключающи".into()),
+        (Some(path), false) => Ok(Some(HeightSource::GameData(path.into()))),
+        (None, true) => Ok(Some(HeightSource::Synthetic)),
+        (None, false) => Ok(None),
+    }
+}
+
+/// T144: v1-dev по умолчанию показывает собственную высоту ядра; явные
+/// --game-data/--synthetic-height остаются явным переопределением предпросмотра.
+fn height_model_for(args: &[String], opts: &RenderOptions) -> Result<Option<HeightModel>, String> {
+    if let Some(source) = height_source(args)? {
+        return Ok(Some(HeightModel::load(source)?));
+    }
+    if opts.version.is_water_relief_dev() {
+        return Ok(Some(HeightModel::load(HeightSource::Owned)?));
+    }
+    Ok(None)
+}
+
 fn cmd_render(args: &[String]) -> Result<(), String> {
     let opts = options_from(args)?;
     let layers = match value(args, "--layers") {
-        Some(text) if text == "all" => LAYERS.iter().map(|layer| (*layer).to_string()).collect(),
+        Some(text) if text == "all" => LAYERS
+            .iter()
+            .filter(|layer| {
+                !matches!(**layer, "channels" | "lakes" | "hydrology" | "relief")
+                    || opts.version.is_water_relief_dev()
+            })
+            .map(|layer| (*layer).to_string())
+            .collect(),
         Some(text) => text.split(',').map(|s| s.trim().to_string()).collect(),
         None => vec!["plates".to_string()],
     };
@@ -122,9 +160,14 @@ fn cmd_render(args: &[String]) -> Result<(), String> {
     let dir = Path::new(&out);
     std::fs::create_dir_all(dir).map_err(|e| format!("не могу создать '{out}': {e}"))?;
     let params_hash = Params::defaults(opts.version, opts.mode).params_hash();
-
+    let height = height_model_for(args, &opts)?;
+    if layers.iter().any(|layer| layer == "vanilla-height") && height.is_none() {
+        return Err(
+            "слой vanilla-height для v0 требует --game-data ПУТЬ или явный --synthetic-height; v1-dev использует собственную высоту автоматически".into(),
+        );
+    }
     for layer in layers {
-        let image = render::render_layer(&opts, &layer)?;
+        let image = render::render_layer_with_height(&opts, &layer, height.as_ref())?;
         let png_path = dir.join(format!("{layer}.png"));
         png::write_png(&png_path, &image).map_err(|e| {
             let path = png_path.display();
@@ -134,7 +177,7 @@ fn cmd_render(args: &[String]) -> Result<(), String> {
         let meta_opts = render::options_for_layer(&opts, &layer);
         std::fs::write(
             &json_path,
-            render::metadata(&meta_opts, &layer, params_hash),
+            render::metadata_with_height(&meta_opts, &layer, params_hash, height.as_ref()),
         )
         .map_err(|e| {
             let path = json_path.display();
@@ -400,6 +443,16 @@ fn stats_row(seed: i64, mode: Mode) -> Result<StatsRow, String> {
 
 fn cmd_stats(args: &[String]) -> Result<(), String> {
     let opts = options_from(args)?;
+    if let Some(model) = height_model_for(args, &opts)? {
+        let stats_opts = height_stats::StatsOptions::parse(args, &opts)?;
+        let stats = height_stats::HeightStats::collect(&opts, &stats_opts, &model)?;
+        if args.iter().any(|arg| arg == "--json") {
+            print!("{}", stats.json(&opts, &stats_opts, &model));
+        } else {
+            print!("{}", stats.text(&opts, &stats_opts, &model));
+        }
+        return Ok(());
+    }
     let row = stats_row(opts.seed, opts.mode)?;
     println!(
         "сид={seed} режим={mode} область=200×200 L точек=4096\n\
@@ -430,7 +483,43 @@ fn cmd_stats(args: &[String]) -> Result<(), String> {
 }
 
 /// Оценка 12.5 / Э1h: те же метрики на 16 сидах × 2 режима, без картинок.
-fn cmd_stats_all() -> Result<(), String> {
+fn cmd_stats_all(args: &[String]) -> Result<(), String> {
+    if let Some(model) = height_model_for(args, &options_from(args)?)? {
+        let base = options_from(args)?;
+        let opts = height_stats::StatsOptions::parse(args, &base)?;
+        let json_output = args.iter().any(|arg| arg == "--json");
+        let mut rows = Vec::new();
+        if !json_output {
+            println!("T100: 16 сидов × 2 режима; {}", model.source.label());
+            if model.is_synthetic() {
+                println!("WARNING: синтетический сплайн, НЕ ваниль; приёмка требует --game-data.");
+            }
+            println!("{}", height_stats::COMPACT_HEADER);
+        }
+        for seed in SWEEP_SEEDS {
+            for mode in Mode::ALL {
+                let mut run = base.clone();
+                run.seed = seed;
+                run.mode = mode;
+                let stats = height_stats::HeightStats::collect(&run, &opts, &model)?;
+                if json_output {
+                    rows.push(stats.json(&run, &opts, &model));
+                } else {
+                    println!("{}", stats.compact());
+                }
+            }
+        }
+        if json_output {
+            println!(
+                "[{}]",
+                rows.iter()
+                    .map(|row| row.trim())
+                    .collect::<Vec<_>>()
+                    .join(",")
+            );
+        }
+        return Ok(());
+    }
     println!(
         "сид        режим      суша  горы пустыни  леса поляр |     P    PET PET/P     μ     c  t_bio"
     );
@@ -501,6 +590,181 @@ fn cmd_stats_all() -> Result<(), String> {
     Ok(())
 }
 
+/// T110–T115: диагностика сети стока, русел, озёр и дельт плюс эффективная
+/// поверхность R1. Собственного PV и воды выше моря пока нет.
+fn cmd_drainage(args: &[String]) -> Result<(), String> {
+    let opts = options_from(args)?;
+    let (x, z) = parse_pair(&value(args, "--at").unwrap_or_else(|| "0,0".to_string()))?;
+    if !x.is_finite() || !z.is_finite() {
+        return Err("--at требует конечных координат".into());
+    }
+    let generator = generator(&opts)?;
+    let plate = generator
+        .plate_sample(x, z)
+        .ok_or("в этой точке не найдена плита")?
+        .a;
+    let start = Instant::now();
+    let net = generator
+        .drainage_network(&plate)
+        .map_err(|error| error.to_string())?;
+    let cold_ms = start.elapsed().as_secs_f64() * 1000.0;
+    let start = Instant::now();
+    let _warm = generator
+        .drainage_network(&plate)
+        .map_err(|error| error.to_string())?;
+    let warm_ms = start.elapsed().as_secs_f64() * 1000.0;
+    net.check_invariants(generator.params().drainage.fill_epsilon_km)
+        .map_err(|error| error.to_string())?;
+    let nodes = net.nodes();
+    let plate_nodes = net.plate_node_count();
+    let sea = nodes
+        .iter()
+        .filter(|n| n.outlet == DrainageOutlet::Sea)
+        .count();
+    let rift = nodes
+        .iter()
+        .filter(|n| n.outlet == DrainageOutlet::Rift)
+        .count();
+    let transform = nodes
+        .iter()
+        .filter(|n| n.outlet == DrainageOutlet::Transform)
+        .count();
+    let filled = net
+        .depressions()
+        .iter()
+        .filter(|d| matches!(d.kind, DepressionKind::Filled { .. }))
+        .count();
+    let closed = net.depressions().len() - filled;
+    let max_depth = net
+        .depressions()
+        .iter()
+        .map(|d| d.max_depth_km)
+        .fold(0.0, f64::max);
+    let runoff = net.runoff();
+    let climate_nodes = runoff.climate_nodes();
+    let endorheic = runoff.endorheic_count();
+    let export = runoff.export_mm_l2();
+    let evaporation = runoff.evaporation_mm_l2();
+    let storage = runoff.storage_mm_l2();
+    let max_q = runoff
+        .nodes()
+        .iter()
+        .map(|node| node.discharge_mm_l2)
+        .fold(0.0, f64::max);
+    let channels = net.channels();
+    let reaches = channels.reaches().len();
+    let channel_segments = channels.segments().len();
+    let baskets = channels.basket_count();
+    let channel_length = channels.total_length_l();
+    let unresolved = channels.unresolved_count();
+    let channel_boundary = channels.end_count(ReachEnd::Boundary);
+    let channel_below_threshold = channels.end_count(ReachEnd::BelowThreshold);
+    let channel_closed_surplus = channels.end_count(ReachEnd::ClosedSurplus);
+    let delta_count = channels.delta_count();
+    let delta_arms = channels.delta_arm_count();
+    let lakes = net.lakes();
+    let lake_count = lakes.lakes().len();
+    let lake_water = lakes.kind_count(LakeKind::Lake);
+    let lake_inland_sea = lakes.kind_count(LakeKind::InlandSea);
+    let lake_swamp = lakes.kind_count(LakeKind::Swamp);
+    let lake_dry = lakes.kind_count(LakeKind::DryBasin);
+    let lake_closed = lakes.kind_count(LakeKind::ClosedSurplus);
+    let lake_sea_connected = lakes.kind_count(LakeKind::SeaConnected);
+    let lake_frozen = lakes.lakes().iter().filter(|lake| lake.frozen).count();
+    let lake_rift = lakes.lakes().iter().filter(|lake| lake.rift).count();
+    let lake_high = lakes.lakes().iter().filter(|lake| lake.high).count();
+    let lake_water_area = lakes.water_area_l2();
+    let lake_unresolved = lakes.unresolved_count();
+    let mut plain_sinuosity: Vec<f64> = channels
+        .reaches()
+        .iter()
+        .filter(|reach| reach.kind == ReachKind::Channel && reach.plain && reach.sinuosity > 0.0)
+        .map(|reach| reach.sinuosity)
+        .collect();
+    plain_sinuosity.sort_by(f64::total_cmp);
+    let median_sinuosity = if plain_sinuosity.is_empty() {
+        0.0
+    } else {
+        let mid = plain_sinuosity.len() / 2;
+        if plain_sinuosity.len() % 2 == 0 {
+            0.5 * (plain_sinuosity[mid - 1] + plain_sinuosity[mid])
+        } else {
+            plain_sinuosity[mid]
+        }
+    };
+    let query_start = Instant::now();
+    let (channel_query, lake_query) = generator
+        .drainage_surface_query(x, z)
+        .map_err(|error| error.to_string())?;
+    let query_ms = query_start.elapsed().as_secs_f64() * 1000.0;
+    let effective = generator
+        .hydrology_at(x, z)
+        .map_err(|error| error.to_string())?;
+    let effective_kind = effective.kind.as_str();
+    let effective_river = effective.river;
+    let effective_water = effective.water;
+    let effective_deferred = effective.r2_deferred;
+    let effective_swamp = effective.swamp;
+    let effective_dry = effective.dry_basin;
+    let effective_floodplain = effective.floodplain;
+    let effective_gallery = effective.gallery;
+    let query_radius = litho_core::channel::max_query_radius_l(generator.params());
+    let query_networks = channel_query.networks_considered;
+    let query_core = channel_query.core;
+    let query_valley = channel_query.valley;
+    let query_plate = channel_query
+        .nearest
+        .map_or_else(|| "null".to_string(), |hit| hit.plate_id.to_string());
+    let query_distance = channel_query.nearest.map_or_else(
+        || "null".to_string(),
+        |hit| format!("{:.9}", hit.distance_l),
+    );
+    let query_delta = channel_query.delta;
+    let lake_query_water = lake_query.water;
+    let lake_query_shore = lake_query.shore;
+    let lake_query_basin = lake_query.basin;
+    let lake_query_kind = lake_query
+        .nearest
+        .map_or_else(|| "null".to_string(), |hit| hit.kind.as_str().to_string());
+    let lake_query_level = lake_query
+        .nearest
+        .and_then(|hit| hit.level_km)
+        .map_or_else(|| "null".to_string(), |level| format!("{level:.9}"));
+    let hash = generator.params().params_hash();
+    if args.iter().any(|arg| arg == "--json") {
+        println!(
+            "{{\"stage\":\"T110-T116\",\"acceptance\":false,\"connected_to_game_fields\":true,\"effective_kind\":\"{effective_kind}\",\"effective_river\":{effective_river:.9},\"effective_water\":{effective_water:.9},\"effective_deferred\":{effective_deferred:.9},\"effective_swamp\":{effective_swamp:.9},\"effective_dry\":{effective_dry:.9},\"effective_floodplain\":{effective_floodplain:.9},\"effective_gallery\":{effective_gallery:.9},\"seed\":{},\"mode\":\"{}\",\"version\":\"{}\",\"params_hash\":\"{hash:016x}\",\"plate_id\":{},\"at\":[{x},{z}],\"nodes_total\":{},\"nodes_plate\":{},\"nodes_ring\":{},\"outlets_sea\":{sea},\"outlets_rift\":{rift},\"outlets_transform\":{transform},\"depressions_filled\":{filled},\"depressions_closed\":{closed},\"max_depth_km\":{max_depth:.9},\"climate_nodes\":{climate_nodes},\"endorheic_basins\":{endorheic},\"max_discharge_mm_l2\":{max_q:.9},\"export_mm_l2\":{export:.9},\"evaporation_mm_l2\":{evaporation:.9},\"storage_mm_l2\":{storage:.9},\"channel_reaches\":{reaches},\"channel_segments\":{channel_segments},\"channel_baskets\":{baskets},\"channel_length_l\":{channel_length:.9},\"channel_unresolved\":{unresolved},\"channel_boundary\":{channel_boundary},\"channel_below_threshold\":{channel_below_threshold},\"channel_closed_surplus\":{channel_closed_surplus},\"plain_sinuosity_median\":{median_sinuosity:.9},\"channel_query_networks\":{query_networks},\"channel_query_radius_l\":{query_radius:.9},\"channel_query_core\":{query_core:.9},\"channel_query_valley\":{query_valley:.9},\"channel_query_plate\":{query_plate},\"channel_query_distance_l\":{query_distance},\"channel_query_delta\":{query_delta:.9},\"delta_fans\":{delta_count},\"delta_arms\":{delta_arms},\"lake_surfaces\":{lake_count},\"lake_water\":{lake_water},\"lake_inland_sea\":{lake_inland_sea},\"lake_swamp\":{lake_swamp},\"lake_dry_basin\":{lake_dry},\"lake_closed_surplus\":{lake_closed},\"lake_sea_connected\":{lake_sea_connected},\"lake_frozen\":{lake_frozen},\"lake_rift\":{lake_rift},\"lake_high_r2\":{lake_high},\"lake_water_area_l2\":{lake_water_area:.9},\"lake_unresolved\":{lake_unresolved},\"lake_query_water\":{lake_query_water:.9},\"lake_query_shore\":{lake_query_shore:.9},\"lake_query_basin\":{lake_query_basin:.9},\"lake_query_kind\":\"{lake_query_kind}\",\"lake_query_level_km\":{lake_query_level},\"channel_query_ms\":{query_ms:.6},\"cold_ms\":{cold_ms:.6},\"warm_ms\":{warm_ms:.6}}}",
+            opts.seed,
+            opts.mode.as_str(),
+            opts.version.as_str(),
+            plate.id,
+            nodes.len(),
+            plate_nodes,
+            nodes.len() - plate_nodes,
+        );
+    } else {
+        println!(
+            "T110–T116 drainage: сеть подключена к C/E/W и биомам (R1); собственного PV/воды выше моря нет\n\
+             seed={seed} mode={mode} version={version} params={hash:016x} plate={plate}\n\
+             узлы: всего {total}, своей плиты {plate_nodes}, кольцо {ring}; выходы: море {sea}, рифт {rift}, трансформ {transform}\n\
+             впадины: заполненные {filled}, замкнутые без выхода {closed}, бессточные {endorheic}; max глубина {max_depth:.6} км\n\
+             климат: {climate_nodes} узлов; max Q {max_q:.3} мм·L²/год; экспорт {export:.3}, испарение {evaporation:.3}, замкнутый избыток {storage:.3}\n\
+             русла T112: {reaches} цепочек, {channel_segments} отрезков, {baskets} корзин, длина {channel_length:.3} L; незакрытых концов {unresolved} (граница плиты {channel_boundary}, ниже Q_min {channel_below_threshold}, замкнутый избыток {channel_closed_surplus}); медиана извилистости равнинных {median_sinuosity:.3}\n\
+             дельты T114: вееров {delta_count}, рукавов {delta_arms}; озёра/котловины: поверхностей {lake_count} (озеро {lake_water}, внутр. море {lake_inland_sea}, болото {lake_swamp}, сухая {lake_dry}, замкнутый избыток {lake_closed}, морская связь {lake_sea_connected}), замёрзших {lake_frozen}, рифтовых {lake_rift}, высоких R2 {lake_high}, площадь воды {lake_water_area:.3} L², без уровня {lake_unresolved}\n\
+             общий запрос T113/T114: сетей {query_networks}, радиус {query_radius:.3} L, ядро {query_core:.3}, долина {query_valley:.3}, дельта {query_delta:.3}; ближайшее русло плиты {query_plate}, расстояние {query_distance} L; озеро вода {lake_query_water:.3}, берег {lake_query_shore:.3}, котловина {lake_query_basin:.3}, тип {lake_query_kind}, уровень {lake_query_level} км; запрос {query_ms:.3} мс\n\
+             T115 эффективно: тип {effective_kind}, река {effective_river:.3}, вода R1 {effective_water:.3}, отложено R2 {effective_deferred:.3}, галерейный лес {effective_gallery:.3}\n\
+             время: cold {cold_ms:.3} мс, warm {warm_ms:.3} мс (один раннер, не приёмка T160)",
+            seed = opts.seed,
+            mode = opts.mode.as_str(),
+            version = opts.version.as_str(),
+            plate = plate.id,
+            total = nodes.len(),
+            ring = nodes.len() - plate_nodes,
+        );
+    }
+    Ok(())
+}
+
 fn cmd_bench(args: &[String]) -> Result<(), String> {
     let opts = options_from(args)?;
     let generator = generator(&opts)?;
@@ -542,6 +806,32 @@ fn cmd_bench(args: &[String]) -> Result<(), String> {
             "НЕ выполнен (Д-019, пункт 5 в работе)"
         },
         limit = BENCH_MAX_FAST_OVER_REF,
+    );
+    // T160: кэш колонки — несколько полей в одной (x,z). Это диагностика,
+    // не новый гейт: cold считает первое поле колонки, warm — попадание кэша.
+    let column_fields = [
+        Field::Continents,
+        Field::Erosion,
+        Field::Ridges,
+        Field::Temperature,
+        Field::Vegetation,
+    ];
+    let cn = 256_usize;
+    let mut column_pass = || {
+        let start = Instant::now();
+        for k in 0..cn {
+            let x = k as f64 * 0.75;
+            for field in column_fields {
+                sink += generator.field(field, x, 64.0, -x * 0.375);
+            }
+        }
+        start.elapsed().as_secs_f64() / (cn * column_fields.len()) as f64 * 1e6
+    };
+    let column_cold = column_pass();
+    let column_warm = column_pass();
+    println!(
+        "bench T160: колонка 5 полей — cold {column_cold:.1} мкс/поле, warm {column_warm:.1} мкс/поле, кэш {ratio:.2}× (sink={sink:.3})",
+        ratio = column_cold / column_warm.max(1e-9)
     );
     if fast > reference * BENCH_MAX_FAST_OVER_REF {
         return Err(format!(
@@ -747,6 +1037,7 @@ fn cmd_sweep(args: &[String]) -> Result<(), String> {
                 size,
                 bpp,
                 path_fast: false,
+                pv: false,
             };
             let image = render::render_layer(&opts, "height")?;
             let name = format!("s{seed}-{mode}", mode = mode.as_str());
@@ -772,9 +1063,10 @@ fn usage() -> &'static str {
        render       карты PNG в папку --out\n\
        probe        все поля в точке --at x,z\n\
        layers       список слоёв\n\
-       stats        метрики 12.4 по области 200×200 L\n\
-       stats-all    те же метрики на 16 сидах × 2 режима\n\
+       stats        метрики 12.4; с --game-data/--synthetic-height — T100\n\
+       stats-all    16 сидов × 2 режима; принимает те же флаги высоты\n\
        seams        скачки C/E/W между соседними блоками\n\
+       drainage     T110–T116: сток, русла, озёра, дельты и поверхность R1 в --at x,z (v1-dev)\n\
        bench        время эталонного и быстрого пути\n\
        profile      разбивка времени по слоям\n\
        hash         хеши параметров для замка v0\n\
@@ -783,11 +1075,17 @@ fn usage() -> &'static str {
        atlas        пересобрать только HTML-атлас\n\
        help         эта справка\n\n\
      Общие флаги: --seed N (42), --mode scientific|gameplay (gameplay),\n\
-       --version v0|v1 (v0), --center x,z (0,0), --size N (512),\n\
+       --version v0|v1|v1-dev (v0), --center x,z (0,0), --size N (512),\n\
        --bpp N, --path reference|fast,\n\
        --layers plates|all|список через запятую, --out ПАПКА\n\
      Слои: шум/плиты/кора, климат, зоны, биомы, пять ванильных чисел,\n\
-       реки, лава и точка появления (rivers,lava,spawn).\n"
+       реки, лава и точка появления (rivers,lava,spawn); channels/lakes — T112–T114, hydrology — T115/T116, relief — T120 v1-dev.\n\
+     T100: --game-data ПУТЬ (распакованные данные игры) или --synthetic-height.\n\
+       stats: --span-l 200 --size 64 --relief-size 32 --relief-step 32 --boundary-size 64 --boundary-step 32 --json.\n\
+       По умолчанию статистика высоты идёт быстрым путём; --path reference переключает.\n\
+       v0: высота приближённая (offset без 3D-шума); синтетика не годится для приёмки.\n\
+       v1-dev: собственная высота T144 автоматически; --game-data/--synthetic-height явно переопределяют.\n\
+       --pv использует собственное поле PV (T141).\n"
 }
 
 fn main() -> Result<(), String> {
@@ -800,8 +1098,9 @@ fn main() -> Result<(), String> {
         "render" => cmd_render(&args[1..]),
         "probe" => cmd_probe(&args[1..]),
         "stats" => cmd_stats(&args[1..]),
-        "stats-all" => cmd_stats_all(),
+        "stats-all" => cmd_stats_all(&args[1..]),
         "seams" => cmd_seams(&args[1..]),
+        "drainage" => cmd_drainage(&args[1..]),
         "bench" => cmd_bench(&args[1..]),
         "profile" => cmd_profile(),
         "hash" => cmd_hash(),

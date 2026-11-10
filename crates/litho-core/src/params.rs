@@ -323,6 +323,352 @@ pub struct RiversParams {
     pub half_width_length_l: f64,
 }
 
+/// T110/T111: сеть стока и климатический расход. Используется только
+/// v1-dev; ключи v0 не получают новых строк.
+#[derive(Clone, Debug, PartialEq)]
+pub struct DrainageParams {
+    pub step_l: f64,
+    pub jitter_fraction: f64,
+    pub fill_epsilon_km: f64,
+    pub depression_min_depth_km: f64,
+    pub outlet_min_weight: f64,
+    pub anchor_search_radius_cells: i64,
+    /// T111: шаг решётки P/PET в L; в узлы — билинейно.
+    pub climate_step_l: f64,
+    /// T111: коэффициент перед PET в стоке суши P - k_et·PET.
+    pub et_factor: f64,
+}
+
+/// T112: геометрия русел поверх Q. Числа блочные, поэтому режимы различаются;
+/// сама сеть стока остаётся в L. Используется только v1-dev.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ChannelParams {
+    pub q_min_mm_l2: f64,
+    pub core_min_blocks: f64,
+    pub core_max_blocks: f64,
+    pub depth0_blocks: f64,
+    pub meander_plain: f64,
+    pub meander_mountain: f64,
+    pub valley_plain: f64,
+    pub valley_mountain: f64,
+    pub plain_slope_max: f64,
+    /// T114: дельта на пологом берегу при большом расходе.
+    pub delta_q_min_mm_l2: f64,
+    pub delta_slope_max: f64,
+    pub delta_length_min_l: f64,
+    pub delta_length_max_l: f64,
+    /// T145: минимальная длина русла между ступенями зеркала на равнине, блоки.
+    pub mirror_step_blocks: f64,
+    /// T145: каскад на крутых участках: минимальная длина между ступенями.
+    pub mirror_cascade_step_blocks: f64,
+}
+
+/// T114: озёра и котловины поверх впадин T110 и баланса T111.
+/// Макропараметры одинаковы в обоих режимах; высокие озёра требуют R2,
+/// но не отсекаются потолком высоты (решение автора в §5.6).
+#[derive(Clone, Debug, PartialEq)]
+pub struct LakeParams {
+    pub inland_sea_area_l2: f64,
+    pub swamp_max_depth_km: f64,
+    pub swamp_min_p_pet: f64,
+    pub frozen_t_min_c: f64,
+    /// Полуширина сглаживания берега в долях шага решётки стока.
+    pub shore_fraction: f64,
+}
+
+/// T115: перевод гидрологии в ванильные C/E/W без собственного PV (R1).
+/// Высокие озёра выше порога R1 получают только сушу/болото до T143/T145.
+#[derive(Clone, Debug, PartialEq)]
+pub struct HydrologyParams {
+    pub bank_fraction: f64,
+    /// Минимальная ширина сглаживания C/E/W вокруг русла/берега, L.
+    /// 0.48 L = 120 блоков gameplay при SEAM_LIMIT=0.02; macro-масштаб
+    /// един, поэтому научный режим не меняет геометрию сетей.
+    pub field_fade_l: f64,
+    pub floodplain_e: f64,
+    pub swamp_e: f64,
+    pub dry_basin_e: f64,
+    pub estuary_c: f64,
+    pub estuary_elevation_km: f64,
+    pub inland_sea_c: f64,
+    pub r1_max_level_km: f64,
+    /// T116 / Б7: галерейный лес только у большой реки в сухой зоне.
+    pub gallery_q_min_mm_l2: f64,
+    pub gallery_width_factor: f64,
+    pub gallery_dry_r_lo: f64,
+    pub gallery_dry_r_hi: f64,
+    pub gallery_h_gain: f64,
+}
+
+/// T120: потенциал рельефа A и отрицательные формы (§6.2). Стартовые числа
+/// плана; подбор гипсометрии остаётся T123. В canonical_text только v1-dev.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ReliefParams {
+    /// T122: сглаживание потенциала A перед переводом в E/PV.
+    pub a_lo: f64,
+    pub a_hi: f64,
+    pub foothill_m_lo: f64,
+    pub foothill_m_hi: f64,
+    pub foothill_fade: f64,
+    pub foothill_a_min: f64,
+    pub foothill_a_max: f64,
+    pub paleo_lambda_l: f64,
+    /// Полуширина полосы палеошва в единицах гребневого шума.
+    pub paleo_band_lo: f64,
+    pub paleo_band_hi: f64,
+    pub paleo_a_min: f64,
+    pub paleo_a_max: f64,
+    /// Расстояние до ближайшей границы плиты, L: дальше начинается «старая» кора.
+    pub active_boundary_lo: f64,
+    pub active_boundary_hi: f64,
+    pub land_e_fade_km: f64,
+    pub continental_chi_lo: f64,
+    pub continental_chi_hi: f64,
+    pub craton_iota_lo: f64,
+    pub craton_iota_hi: f64,
+    pub craton_a_min: f64,
+    pub craton_a_max: f64,
+    /// Порог |∇Pl| по макро-координате, 1/L.
+    pub escarpment_gradient_lo: f64,
+    pub escarpment_gradient_hi: f64,
+    pub escarpment_a: f64,
+    pub volcanic_hotspot_lo: f64,
+    pub volcanic_hotspot_hi: f64,
+    pub volcanic_a_min: f64,
+    pub volcanic_a_max: f64,
+    pub hills_lambda_l: f64,
+    pub hills_noise_lo: f64,
+    pub hills_noise_hi: f64,
+    pub hills_a: f64,
+    pub basin_lambda_l: f64,
+    pub basin_noise_lo: f64,
+    pub basin_noise_hi: f64,
+    /// Глубина впадины T110, при которой шумовой сигнал заменяется фактическим.
+    pub basin_depth_km: f64,
+    /// Максимальный отрицательный вклад котловины в A.
+    pub basin_strength: f64,
+    /// Доля полуширины рифта, внутри которой дно считается ровным.
+    pub rift_floor_factor: f64,
+    pub rift_flat_strength: f64,
+    pub rift_floor_a: f64,
+    pub rift_shoulder_offset_factor: f64,
+    pub rift_shoulder_width_factor: f64,
+    pub rift_shoulder_a: f64,
+}
+
+impl ReliefParams {
+    pub fn validate(&self) -> Result<(), &'static str> {
+        let positive = [
+            self.foothill_fade,
+            self.paleo_lambda_l,
+            self.hills_lambda_l,
+            self.basin_lambda_l,
+            self.basin_depth_km,
+            self.land_e_fade_km,
+            self.rift_floor_factor,
+            self.rift_shoulder_offset_factor,
+            self.rift_shoulder_width_factor,
+        ];
+        let unit = [
+            self.foothill_a_min,
+            self.foothill_a_max,
+            self.paleo_a_min,
+            self.paleo_a_max,
+            self.craton_a_min,
+            self.craton_a_max,
+            self.escarpment_a,
+            self.volcanic_a_min,
+            self.volcanic_a_max,
+            self.hills_a,
+            self.basin_strength,
+            self.rift_flat_strength,
+            self.rift_floor_a,
+            self.rift_shoulder_a,
+        ];
+        let ordered = [
+            (self.a_lo, self.a_hi),
+            (self.foothill_m_lo, self.foothill_m_hi),
+            (self.paleo_band_lo, self.paleo_band_hi),
+            (self.paleo_a_min, self.paleo_a_max),
+            (self.active_boundary_lo, self.active_boundary_hi),
+            (self.continental_chi_lo, self.continental_chi_hi),
+            (self.craton_iota_lo, self.craton_iota_hi),
+            (self.craton_a_min, self.craton_a_max),
+            (self.escarpment_gradient_lo, self.escarpment_gradient_hi),
+            (self.volcanic_hotspot_lo, self.volcanic_hotspot_hi),
+            (self.hills_noise_lo, self.hills_noise_hi),
+            (self.basin_noise_lo, self.basin_noise_hi),
+            (self.foothill_a_min, self.foothill_a_max),
+        ];
+        if positive.iter().any(|v| !v.is_finite() || *v <= 0.0) {
+            return Err("масштабы relief должны быть положительными");
+        }
+        if unit
+            .iter()
+            .any(|v| !v.is_finite() || !(0.0..=1.0).contains(v))
+        {
+            return Err("амплитуды relief должны лежать в [0, 1]");
+        }
+        if ordered
+            .iter()
+            .any(|(lo, hi)| !lo.is_finite() || !hi.is_finite() || lo >= hi)
+        {
+            return Err("пороги relief должны быть конечны и возрастать");
+        }
+        if self.a_lo < 0.0 || self.a_hi > 1.0 {
+            return Err("сглаживание A должно лежать в [0, 1]");
+        }
+        if self.foothill_m_lo < 0.0 || self.foothill_m_hi > 1.0 {
+            return Err("предгорья должны лежать внутри M ∈ [0, 1]");
+        }
+        if self.foothill_fade > 0.5 * (self.foothill_m_hi - self.foothill_m_lo) {
+            return Err("сглаживание предгорий шире самой полосы M");
+        }
+        if self.active_boundary_lo < 0.0 || self.craton_iota_lo < 0.0 {
+            return Err("расстояния relief не могут быть отрицательными");
+        }
+        if self.continental_chi_lo < 0.0 || self.continental_chi_hi > 1.0 {
+            return Err("порог материковой коры должен лежать в [0, 1]");
+        }
+        Ok(())
+    }
+}
+
+/// T121: морфоклиматические зоны (§6.3). Веса плавные, сумма 1; числа зон
+/// стартовые, подбор T123. Индексы: 0 полярная, 1 бореальная, 2 умеренная
+/// влажная, 3 полуаридная, 4 аридная, 5 влажная тропическая, 6 горы холодные,
+/// 7 горы тёплые. Ключи только v1-dev.
+pub const MORPHO_ZONES: usize = 8;
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct MorphoParams {
+    pub t_polar_c: f64,
+    pub t_boreal_c: f64,
+    pub t_tropical_c: f64,
+    pub t_fade_c: f64,
+    pub r_tropical_humid: f64,
+    pub r_humid: f64,
+    pub r_arid: f64,
+    pub r_fade: f64,
+    pub mountain_lo: f64,
+    pub mountain_hi: f64,
+    pub mountain_t_split_c: f64,
+    pub mountain_t_fade_c: f64,
+    /// T122: шаг региональной решётки весов зон для рельефа, L. Луч влаги
+    /// даёт скачки R на блок; форма рельефа усредняет их на масштабе 1 L,
+    /// не меняя климат/биомы. Полное сглаживание границ — T130–T133.
+    pub weight_step_l: f64,
+    /// T122: поправки C котловин/нагорий и пределы PV_relief.
+    pub c_basin_drop: f64,
+    pub c_highland_gain: f64,
+    pub pv_min: f64,
+    pub pv_max: f64,
+    pub e_flat: [f64; MORPHO_ZONES],
+    pub e_hill: [f64; MORPHO_ZONES],
+    pub pv_flat: [f64; MORPHO_ZONES],
+    pub pv_hill: [f64; MORPHO_ZONES],
+    /// λ_PV в блоках геймплея; научный режим умножается на factor.
+    pub lambda_pv_blocks: [f64; MORPHO_ZONES],
+    pub sigma_e: [f64; MORPHO_ZONES],
+    pub sigma_pv: [f64; MORPHO_ZONES],
+    pub scientific_lambda_factor: f64,
+    pub scientific_sigma_factor: f64,
+}
+
+impl MorphoParams {
+    pub fn validate(&self) -> Result<(), &'static str> {
+        let fades = [self.t_fade_c, self.r_fade, self.mountain_t_fade_c];
+        if fades.iter().any(|v| !v.is_finite() || *v <= 0.0) {
+            return Err("сглаживание morpho должно быть положительным");
+        }
+        if !self.t_polar_c.is_finite()
+            || !self.t_boreal_c.is_finite()
+            || !self.t_tropical_c.is_finite()
+            || self.t_polar_c >= self.t_boreal_c
+            || self.t_boreal_c >= self.t_tropical_c
+        {
+            return Err("температурные пороги morpho должны возрастать");
+        }
+        if self.t_fade_c > 0.5 * (self.t_boreal_c - self.t_polar_c)
+            || self.t_fade_c > 0.5 * (self.t_tropical_c - self.t_boreal_c)
+        {
+            return Err("сглаживание T шире температурной полосы");
+        }
+        if !self.r_tropical_humid.is_finite()
+            || !self.r_humid.is_finite()
+            || !self.r_arid.is_finite()
+            || self.r_tropical_humid < 0.0
+            || self.r_tropical_humid >= self.r_humid
+            || self.r_humid >= self.r_arid
+        {
+            return Err("пороги сухости morpho должны возрастать от нуля");
+        }
+        if self.r_fade > 0.5 * (self.r_humid - self.r_tropical_humid)
+            || self.r_fade > 0.5 * (self.r_arid - self.r_humid)
+        {
+            return Err("сглаживание R шире полосы сухости");
+        }
+        if !self.mountain_lo.is_finite()
+            || !self.mountain_hi.is_finite()
+            || self.mountain_lo < 0.0
+            || self.mountain_hi > 1.0
+            || self.mountain_lo >= self.mountain_hi
+            || !self.mountain_t_split_c.is_finite()
+        {
+            return Err("горная полоса morpho должна лежать в M ∈ [0, 1]");
+        }
+        if !self.weight_step_l.is_finite() || self.weight_step_l <= 0.0 {
+            return Err("шаг решётки весов morpho должен быть положительным");
+        }
+        if !self.c_basin_drop.is_finite()
+            || !(0.0..=1.0).contains(&self.c_basin_drop)
+            || !self.c_highland_gain.is_finite()
+            || !(0.0..=1.0).contains(&self.c_highland_gain)
+        {
+            return Err("поправки C morpho должны лежать в [0, 1]");
+        }
+        if !self.pv_min.is_finite()
+            || !self.pv_max.is_finite()
+            || self.pv_min < -1.0
+            || self.pv_max > 1.0
+            || self.pv_min >= self.pv_max
+        {
+            return Err("пределы PV morpho должны возрастать внутри [-1, 1]");
+        }
+        for array in [&self.e_flat, &self.e_hill, &self.pv_flat, &self.pv_hill] {
+            if array
+                .iter()
+                .any(|v| !v.is_finite() || !(-1.0..=1.0).contains(v))
+            {
+                return Err("E/PV зон morpho должны лежать в [-1, 1]");
+            }
+        }
+        if self
+            .lambda_pv_blocks
+            .iter()
+            .any(|v| !v.is_finite() || *v <= 0.0)
+        {
+            return Err("λ_PV зон morpho должна быть положительной");
+        }
+        for array in [&self.sigma_e, &self.sigma_pv] {
+            if array
+                .iter()
+                .any(|v| !v.is_finite() || !(0.0..=1.0).contains(v))
+            {
+                return Err("σ зон morpho должна лежать в [0, 1]");
+            }
+        }
+        if !self.scientific_lambda_factor.is_finite()
+            || self.scientific_lambda_factor <= 0.0
+            || !self.scientific_sigma_factor.is_finite()
+            || self.scientific_sigma_factor <= 0.0
+        {
+            return Err("научные множители morpho должны быть положительными");
+        }
+        Ok(())
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct LavaParams {
     pub width_blocks: f64,
@@ -434,6 +780,8 @@ pub struct ClimateParams {
     pub w_plateau: f64,
     pub w_max: f64,
     pub w_sign_scale: f64,
+    /// T102: нижняя граница |∇f|·w_s, только v1-dev.
+    pub w_sign_epsilon: f64,
     pub t_centers: [f64; 5],
     pub h_centers: [f64; 5],
     pub h4_base: f64,
@@ -556,6 +904,167 @@ impl ClimateParams {
     }
 }
 
+/// Границы биомов T130–T133 (PLAN-REVISION §7). Отдельная группа нужна,
+/// чтобы новые ключи не попадали в замороженную каноническую запись v0.
+/// Все значения используются только `v1-dev`; геологический шум перевалов
+/// относится сюда по назначению, а не по слою, в котором вычисляется.
+#[derive(Clone, Debug, PartialEq)]
+pub struct BoundaryParams {
+    /// T130: типичный изгиб луча в градусах и жёсткий предел поворота.
+    pub ray_bend_sigma_deg: f64,
+    pub ray_bend_max_deg: f64,
+    pub ray_bend_lambda_l: f64,
+    pub ray_bend_octaves: usize,
+    pub ray_bend_gain: f64,
+    /// T136 / Б2: веер лучей влаги. 1 отключает веер, 3/5 лучей равномерно
+    /// раскрываются в ±half_angle; веса гауссовы с σ в градусах.
+    pub ray_fan_rays: usize,
+    pub ray_fan_half_angle_deg: f64,
+    pub ray_fan_sigma_deg: f64,
+    /// T131: шаг центральных разностей скалярной φ, L (план Б3: 0.25–0.5).
+    pub wind_fd_step_l: f64,
+    /// T131: плавный уход к запасному направлению при малом |∇φ| и у полюса.
+    pub wind_grad_floor_deg_per_l: f64,
+    pub wind_pole_fade_l: f64,
+    /// T131: мягкое насыщение φ у 0/90 вместо жёсткого clamp, градусы.
+    pub wind_phi_soft_deg: f64,
+    /// T131: полуширина плавного перехода поясов ветра в v1-dev, градусы φ.
+    pub wind_belt_fade_deg: f64,
+    /// T132: перевалы в хребтах (Б4). Глубина седла — доля положительного
+    /// орографического вклада, λ вдоль границы, одна гладкая октава.
+    pub pass_depth: f64,
+    pub pass_lambda_l: f64,
+    pub pass_octaves: usize,
+    pub pass_gain: f64,
+    /// T133 / Б5: второй, крупный масштаб дрожания классификации.
+    /// Амплитуды наследуют σ из `block.jitter_*` и умножаются на factor.
+    pub jitter_coarse_lambda_blocks: f64,
+    pub jitter_coarse_sigma_factor: f64,
+    /// T133 / Б6: мозаика переходных биомов у порогов влажности.
+    pub ecotone_width_log2: f64,
+    pub ecotone_max_fraction: f64,
+    pub ecotone_lambda_blocks: f64,
+}
+
+impl BoundaryParams {
+    pub fn validate(&self) -> Result<(), &'static str> {
+        if !self.ray_bend_max_deg.is_finite() || !(0.0..=20.0).contains(&self.ray_bend_max_deg) {
+            return Err("предел изгиба луча должен лежать в 0…20°");
+        }
+        if !self.ray_bend_sigma_deg.is_finite()
+            || self.ray_bend_sigma_deg < 0.0
+            || self.ray_bend_sigma_deg > self.ray_bend_max_deg
+        {
+            return Err("σ изгиба луча должна лежать в 0…предела");
+        }
+        if !self.ray_bend_lambda_l.is_finite() || !(1.0..=2.0).contains(&self.ray_bend_lambda_l) {
+            return Err("λ изгиба луча должна лежать в 1…2 L");
+        }
+        if !(1..=4).contains(&self.ray_bend_octaves)
+            || !self.ray_bend_gain.is_finite()
+            || self.ray_bend_gain <= 0.0
+            || self.ray_bend_gain >= 1.0
+        {
+            return Err("изгиб луча: 1…4 октавы, gain ∈ (0, 1)");
+        }
+        if !matches!(self.ray_fan_rays, 1 | 3 | 5) {
+            return Err("веер влаги: 1, 3 или 5 лучей");
+        }
+        if !self.ray_fan_half_angle_deg.is_finite()
+            || !(0.0..=20.0).contains(&self.ray_fan_half_angle_deg)
+        {
+            return Err("полураствор веера влаги должен лежать в 0…20°");
+        }
+        if !self.ray_fan_sigma_deg.is_finite()
+            || self.ray_fan_sigma_deg <= 0.0
+            || self.ray_fan_sigma_deg > 20.0
+        {
+            return Err("σ весов веера влаги должна лежать в (0, 20]°");
+        }
+        if !self.wind_fd_step_l.is_finite() || !(0.25..=0.5).contains(&self.wind_fd_step_l) {
+            return Err("шаг конечных разностей ветра должен лежать в 0.25…0.5 L");
+        }
+        if !self.wind_grad_floor_deg_per_l.is_finite()
+            || !(0.1..=20.0).contains(&self.wind_grad_floor_deg_per_l)
+        {
+            return Err("порог |∇φ| ветра должен лежать в 0.1…20 °/L");
+        }
+        if !self.wind_pole_fade_l.is_finite() || !(1.0..=32.0).contains(&self.wind_pole_fade_l) {
+            return Err("сглаживание ветра у полюса должно лежать в 1…32 L");
+        }
+        if !self.wind_phi_soft_deg.is_finite() || !(0.0..=10.0).contains(&self.wind_phi_soft_deg) {
+            return Err("мягкое насыщение φ должно лежать в 0…10°");
+        }
+        if !self.wind_belt_fade_deg.is_finite() || !(5.0..=21.0).contains(&self.wind_belt_fade_deg)
+        {
+            return Err("полуширина перехода поясов ветра должна лежать в 5…21°");
+        }
+        if !self.pass_depth.is_finite() || !(0.0..=0.9).contains(&self.pass_depth) {
+            return Err("глубина перевала должна лежать в 0…0.9");
+        }
+        if !self.pass_lambda_l.is_finite() || !(1.0..=3.0).contains(&self.pass_lambda_l) {
+            return Err("λ перевалов должна лежать в 1…3 L");
+        }
+        if !(1..=4).contains(&self.pass_octaves)
+            || !self.pass_gain.is_finite()
+            || self.pass_gain <= 0.0
+            || self.pass_gain >= 1.0
+        {
+            return Err("перевалы: 1…4 октавы, gain ∈ (0, 1)");
+        }
+        if !self.jitter_coarse_lambda_blocks.is_finite()
+            || !(500.0..=2000.0).contains(&self.jitter_coarse_lambda_blocks)
+        {
+            return Err("λ крупного дрожания должна лежать в 500…2000 блоков");
+        }
+        if !self.jitter_coarse_sigma_factor.is_finite()
+            || !(1.0..=8.0).contains(&self.jitter_coarse_sigma_factor)
+        {
+            return Err("множитель σ крупного дрожания должен лежать в 1…8");
+        }
+        if !self.ecotone_width_log2.is_finite() || !(0.0..=1.0).contains(&self.ecotone_width_log2) {
+            return Err("полуширина экотона по log2 R должна лежать в 0…1");
+        }
+        if !self.ecotone_max_fraction.is_finite()
+            || !(0.0..=0.5).contains(&self.ecotone_max_fraction)
+        {
+            return Err("доля пятен экотона должна лежать в 0…0.5");
+        }
+        if !self.ecotone_lambda_blocks.is_finite()
+            || !(64.0..=512.0).contains(&self.ecotone_lambda_blocks)
+        {
+            return Err("λ пятен экотона должна лежать в 64…512 блоков");
+        }
+        Ok(())
+    }
+}
+
+/// T144: собственная высота (полная I2). Таблицы — наши числа, не данные
+/// Mojang. В canonical_text попадают только в `v1-dev`; v0 заморожен.
+#[derive(Clone, Debug, PartialEq)]
+pub struct HeightParams {
+    /// Границы полос E как в метриках 10.1; крайние узлы продолжают таблицу.
+    pub e_knots: [f64; 8],
+    pub pv_knots: [f64; 5],
+    /// Высота поверхности в блоках для полос E0…E6 на узлах PV.
+    pub land_y: [[f64; 5]; 7],
+    pub ocean_c: [f64; 7],
+    pub ocean_y: [f64; 7],
+    pub factor: [f64; 7],
+    pub jaggedness: [f64; 7],
+    pub coast_width_c: f64,
+    /// Научный режим: реальная `e_km` поверх таблицы; gameplay по умолчанию 0.
+    pub e_gain_blocks_per_km: f64,
+    pub cold_jagged_gain: f64,
+    pub warm_jagged_drop: f64,
+    pub min_y: f64,
+    pub max_y: f64,
+    /// T145: вертикальный масштаб зеркал воды: блоки на км уровня стока.
+    pub water_km_to_blocks: f64,
+    /// T145: предел глубины озера под зеркалом, блоки.
+    pub lake_depth_max_blocks: f64,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct Params {
     pub version: GenVersion,
@@ -567,6 +1076,18 @@ pub struct Params {
     pub wind: WindParams,
     pub precip: PrecipParams,
     pub rivers: RiversParams,
+    pub drainage: DrainageParams,
+    pub channels: ChannelParams,
+    pub lakes: LakeParams,
+    pub hydrology: HydrologyParams,
+    /// Потенциал рельефа T120, включён только в `v1-dev`.
+    pub relief: ReliefParams,
+    /// Морфоклиматические зоны T121, включены только в `v1-dev`.
+    pub morpho: MorphoParams,
+    /// Собственная высота T144; включается только в `v1-dev`.
+    pub height: HeightParams,
+    /// Границы биомов T130–T133; включаются только в `v1-dev`.
+    pub boundaries: BoundaryParams,
     pub lava: LavaParams,
     pub spawn: SpawnParams,
     pub lattice: LatticeParams,
@@ -763,6 +1284,213 @@ impl Params {
                 half_width_growth: 0.6,
                 half_width_length_l: 3.0,
             },
+            drainage: DrainageParams {
+                step_l: 0.25,
+                jitter_fraction: 0.35,
+                fill_epsilon_km: 1e-4,
+                // Стартовый отсев «луж» глубже 2 м; подбор оставлен T151.
+                depression_min_depth_km: 0.002,
+                outlet_min_weight: 0.5,
+                anchor_search_radius_cells: 2,
+                climate_step_l: 1.0,
+                et_factor: 1.0,
+            },
+            channels: ChannelParams {
+                // Стартовый отсев русел; плотность подбирается T151 по 10.1.
+                q_min_mm_l2: 25.0,
+                core_min_blocks: match mode {
+                    Mode::Gameplay => 4.0,
+                    Mode::Scientific => 6.0,
+                },
+                core_max_blocks: match mode {
+                    Mode::Gameplay => 28.0,
+                    Mode::Scientific => 60.0,
+                },
+                depth0_blocks: match mode {
+                    Mode::Gameplay => 1.5,
+                    Mode::Scientific => 2.0,
+                },
+                meander_plain: 1.5,
+                meander_mountain: 0.3,
+                valley_plain: 5.0,
+                valley_mountain: 2.0,
+                plain_slope_max: 0.02,
+                // Стартовые числа §5.4; подбор плотности/болот — T151.
+                delta_q_min_mm_l2: 500.0,
+                delta_slope_max: 0.005,
+                delta_length_min_l: 0.3,
+                delta_length_max_l: 0.8,
+                mirror_step_blocks: match mode {
+                    Mode::Gameplay => 64.0,
+                    Mode::Scientific => 128.0,
+                },
+                mirror_cascade_step_blocks: match mode {
+                    Mode::Gameplay => 16.0,
+                    Mode::Scientific => 32.0,
+                },
+            },
+            lakes: LakeParams {
+                inland_sea_area_l2: 1.0,
+                swamp_max_depth_km: 0.01,
+                swamp_min_p_pet: 1.2,
+                frozen_t_min_c: 0.0,
+                shore_fraction: 0.5,
+            },
+            hydrology: HydrologyParams {
+                bank_fraction: 0.5,
+                field_fade_l: 0.48,
+                floodplain_e: 0.3,
+                swamp_e: 0.65,
+                dry_basin_e: 0.3,
+                estuary_c: -0.20,
+                estuary_elevation_km: 0.15,
+                inland_sea_c: -0.25,
+                r1_max_level_km: 0.3,
+                gallery_q_min_mm_l2: 500.0,
+                gallery_width_factor: 8.0,
+                gallery_dry_r_lo: 1.0,
+                gallery_dry_r_hi: 2.0,
+                gallery_h_gain: 0.65,
+            },
+            relief: ReliefParams {
+                a_lo: 0.15,
+                a_hi: 0.85,
+                foothill_m_lo: 0.05,
+                foothill_m_hi: 0.5,
+                foothill_fade: 0.1,
+                foothill_a_min: 0.5,
+                foothill_a_max: 0.8,
+                paleo_lambda_l: 8.0,
+                paleo_band_lo: 0.0,
+                paleo_band_hi: 0.15,
+                paleo_a_min: 0.4,
+                paleo_a_max: 0.6,
+                active_boundary_lo: 0.5,
+                active_boundary_hi: 2.0,
+                land_e_fade_km: 0.05,
+                continental_chi_lo: 0.5,
+                continental_chi_hi: 0.8,
+                craton_iota_lo: 0.3,
+                craton_iota_hi: 0.8,
+                craton_a_min: 0.05,
+                craton_a_max: 0.2,
+                escarpment_gradient_lo: 0.5,
+                escarpment_gradient_hi: 2.0,
+                escarpment_a: 0.75,
+                volcanic_hotspot_lo: 0.2,
+                volcanic_hotspot_hi: 0.5,
+                volcanic_a_min: 0.5,
+                volcanic_a_max: 0.8,
+                hills_lambda_l: 1.5,
+                hills_noise_lo: -0.5,
+                hills_noise_hi: 1.5,
+                hills_a: 0.5,
+                basin_lambda_l: 6.0,
+                basin_noise_lo: 0.5,
+                basin_noise_hi: 1.5,
+                basin_depth_km: 0.1,
+                basin_strength: 0.15,
+                rift_floor_factor: 0.7,
+                rift_flat_strength: 0.85,
+                rift_floor_a: 0.05,
+                rift_shoulder_offset_factor: 1.6,
+                rift_shoulder_width_factor: 0.5,
+                rift_shoulder_a: 0.65,
+            },
+            morpho: MorphoParams {
+                t_polar_c: 3.0,
+                t_boreal_c: 6.0,
+                t_tropical_c: 18.0,
+                t_fade_c: 1.5,
+                r_tropical_humid: 0.5,
+                r_humid: 1.0,
+                r_arid: 2.0,
+                r_fade: 0.2,
+                mountain_lo: 0.5,
+                mountain_hi: 0.7,
+                mountain_t_split_c: 6.0,
+                mountain_t_fade_c: 2.0,
+                weight_step_l: 1.0,
+                c_basin_drop: 0.10,
+                c_highland_gain: 0.15,
+                pv_min: -0.9,
+                pv_max: 1.0,
+                e_flat: [0.35, 0.30, 0.25, 0.20, 0.30, 0.15, -0.55, -0.50],
+                e_hill: [0.10, -0.05, -0.15, -0.30, -0.32, -0.12, -0.75, -0.70],
+                pv_flat: [-0.40, -0.30, -0.30, -0.20, -0.10, -0.30, 0.30, 0.20],
+                pv_hill: [0.00, 0.20, 0.35, 0.40, 0.50, 0.30, 0.70, 0.50],
+                lambda_pv_blocks: [250.0, 300.0, 450.0, 600.0, 800.0, 250.0, 450.0, 450.0],
+                sigma_e: [0.08, 0.10, 0.12, 0.10, 0.08, 0.12, 0.15, 0.15],
+                sigma_pv: [0.10, 0.12, 0.15, 0.12, 0.10, 0.15, 0.20, 0.20],
+                scientific_lambda_factor: 2.0,
+                scientific_sigma_factor: 0.6,
+            },
+            height: HeightParams {
+                e_knots: [-1.0, -0.78, -0.375, -0.2225, 0.05, 0.45, 0.55, 1.0],
+                pv_knots: [-1.0, -0.5, 0.0, 0.5, 1.0],
+                // E0/E1 горы, E2 плато с каньоном при PV=-1, E3 холмы,
+                // E4 равнины, E5 разбитый рельеф, E6 болото/низина.
+                land_y: [
+                    [90.0, 120.0, 160.0, 200.0, 240.0],
+                    [80.0, 105.0, 135.0, 165.0, 195.0],
+                    [35.0, 70.0, 105.0, 120.0, 130.0],
+                    [51.0, 70.0, 85.0, 100.0, 117.0],
+                    [64.0, 67.0, 70.0, 73.0, 76.0],
+                    [70.0, 80.0, 90.0, 100.0, 110.0],
+                    [62.0, 62.5, 63.0, 63.5, 64.0],
+                ],
+                ocean_c: [-0.98, -0.70, -0.52, -0.45, -0.40, -0.30, -0.19],
+                ocean_y: [35.0, 42.0, 48.0, 52.0, 55.0, 59.0, 63.0],
+                factor: [0.85, 0.75, 0.60, 0.50, 0.25, 0.55, 0.20],
+                jaggedness: [0.90, 0.70, 0.30, 0.40, 0.10, 0.60, 0.05],
+                coast_width_c: 0.06,
+                e_gain_blocks_per_km: match mode {
+                    Mode::Gameplay => 0.0,
+                    Mode::Scientific => 24.0,
+                },
+                cold_jagged_gain: 0.20,
+                warm_jagged_drop: 0.10,
+                min_y: -64.0,
+                max_y: 319.0,
+                water_km_to_blocks: match mode {
+                    Mode::Gameplay => 64.0,
+                    Mode::Scientific => 24.0,
+                },
+                lake_depth_max_blocks: 64.0,
+            },
+            boundaries: BoundaryParams {
+                // σ=6° даёт типичные ±6° и хвосты до ±18°, без тонких октав:
+                // одна гладкая волна не создаёт полоски уже 32 блоков.
+                ray_bend_sigma_deg: 6.0,
+                ray_bend_max_deg: 18.0,
+                ray_bend_lambda_l: 1.5,
+                ray_bend_octaves: 1,
+                ray_bend_gain: 0.5,
+                // Б2 после замера T134–T136: один изогнутый луч оставлял
+                // резкую кромку тени. При выключенной мозаике T136 три луча
+                // не хуже пяти на сидах 42/7/123/0 и в научном режиме;
+                // оставляем меньшую цену влаги, полный подбор — T151/T160.
+                ray_fan_rays: 3,
+                ray_fan_half_angle_deg: 20.0,
+                ray_fan_sigma_deg: 20.0,
+                wind_fd_step_l: 0.5,
+                wind_grad_floor_deg_per_l: 20.0,
+                wind_pole_fade_l: 16.0,
+                wind_phi_soft_deg: 3.0,
+                wind_belt_fade_deg: 21.0,
+                pass_depth: 0.6,
+                pass_lambda_l: 2.0,
+                pass_octaves: 1,
+                pass_gain: 0.5,
+                jitter_coarse_lambda_blocks: 1000.0,
+                jitter_coarse_sigma_factor: 4.0,
+                ecotone_width_log2: 0.35,
+                // T136: после лестницы T135 и веера Б2 мозаика T133 стала
+                // добавлять скачки h (проба 42: 0.99% без неё, 1.92% с ней).
+                // Механизм сохранён для подбора T151, но по умолчанию выключен.
+                ecotone_max_fraction: 0.0,
+                ecotone_lambda_blocks: 256.0,
+            },
             lava: LavaParams {
                 width_blocks: block.lava_width_blocks,
                 background: block.lava_background,
@@ -865,6 +1593,7 @@ impl Params {
                 w_plateau: 0.33,
                 w_max: 0.75,
                 w_sign_scale: 3.0,
+                w_sign_epsilon: 0.0,
                 t_centers: [-0.70, -0.30, 0.00, 0.37, 0.77],
                 h_centers: [-0.65, -0.22, 0.00, 0.20, 0.45],
                 h4_base: 0.45,
@@ -879,6 +1608,35 @@ impl Params {
             },
             config_key: 0,
         };
+        // T103 / Д-030: отдельный набор Э3.5. Ни одно число v0 не меняется.
+        // *_noise у fBm и jitter теперь означает σ, а не амплитуду сырого fBm.
+        // w_mnt_noise остаётся амплитудой положительного ridged2, не fBm.
+        if version.is_water_relief_dev() {
+            p.block.lambda_e_blocks *= 2.0;
+            p.block.lambda_s_blocks = match mode {
+                Mode::Gameplay => 2400.0,
+                Mode::Scientific => 8000.0,
+            };
+            // Старт плана 12/24 дал max |ΔW|=0.03478 на seams-скане при
+            // пороге 0.02 (CI 42493770230). Порог не ослабляем: расширяем
+            // сглаживание знака, а не русло. Полоса |W|<0.05 остаётся узкой.
+            p.block.w_sign_half_width_blocks = match mode {
+                Mode::Gameplay => 48.0,
+                Mode::Scientific => 96.0,
+            };
+            p.block.jitter_t_c = match mode {
+                Mode::Gameplay => 1.0,
+                Mode::Scientific => 0.5,
+            };
+            p.block.jitter_r_log2 = p.block.jitter_t_c * 0.25;
+            let c = &mut p.climate;
+            c.c_coast_e_km = 0.20;
+            c.e_base = 0.15;
+            c.e_noise = 0.20;
+            c.w_plain_base = 0.30;
+            c.w_plain_noise = 0.10;
+            c.w_sign_epsilon = 1e-3;
+        }
         p.config_key = p.params_hash();
         p
     }
@@ -1111,6 +1869,262 @@ impl Params {
         writeln!(w, "lattice.tile_nodes={v}", v = l.tile_nodes).unwrap();
         writeln!(w, "lattice.halo_nodes={v}", v = l.halo_nodes).unwrap();
         writeln!(w, "lattice.cache_shards={v}", v = l.cache_shards).unwrap();
+        // Новые ключи дописываются только для новой версии. Побайтовая запись
+        // v0 остаётся прежней, включая порядок строк иDebug f64.
+        if self.version.is_water_relief_dev() {
+            writeln!(
+                w,
+                "block.w_sign_half_width_blocks={v}",
+                v = b.w_sign_half_width_blocks
+            )
+            .unwrap();
+            writeln!(
+                w,
+                "climate.w_sign_epsilon={v}",
+                v = self.climate.w_sign_epsilon
+            )
+            .unwrap();
+            writeln!(w, "noise.amplitude_units=sigma").unwrap();
+            let d = &self.drainage;
+            for (name, value) in [
+                ("drainage.step_l", d.step_l),
+                ("drainage.jitter_fraction", d.jitter_fraction),
+                ("drainage.fill_epsilon_km", d.fill_epsilon_km),
+                (
+                    "drainage.depression_min_depth_km",
+                    d.depression_min_depth_km,
+                ),
+                ("drainage.outlet_min_weight", d.outlet_min_weight),
+                ("drainage.climate_step_l", d.climate_step_l),
+                ("drainage.et_factor", d.et_factor),
+            ] {
+                writeln!(w, "{name}={value:?}").unwrap();
+            }
+            writeln!(
+                w,
+                "drainage.anchor_search_radius_cells={v}",
+                v = d.anchor_search_radius_cells
+            )
+            .unwrap();
+            let ch = &self.channels;
+            for (name, value) in [
+                ("channels.q_min_mm_l2", ch.q_min_mm_l2),
+                ("channels.core_min_blocks", ch.core_min_blocks),
+                ("channels.core_max_blocks", ch.core_max_blocks),
+                ("channels.depth0_blocks", ch.depth0_blocks),
+                ("channels.meander_plain", ch.meander_plain),
+                ("channels.meander_mountain", ch.meander_mountain),
+                ("channels.valley_plain", ch.valley_plain),
+                ("channels.valley_mountain", ch.valley_mountain),
+                ("channels.plain_slope_max", ch.plain_slope_max),
+                ("channels.delta_q_min_mm_l2", ch.delta_q_min_mm_l2),
+                ("channels.delta_slope_max", ch.delta_slope_max),
+                ("channels.delta_length_min_l", ch.delta_length_min_l),
+                ("channels.delta_length_max_l", ch.delta_length_max_l),
+                ("channels.mirror_step_blocks", ch.mirror_step_blocks),
+                (
+                    "channels.mirror_cascade_step_blocks",
+                    ch.mirror_cascade_step_blocks,
+                ),
+            ] {
+                writeln!(w, "{name}={value:?}").unwrap();
+            }
+            let lk = &self.lakes;
+            for (name, value) in [
+                ("lakes.inland_sea_area_l2", lk.inland_sea_area_l2),
+                ("lakes.swamp_max_depth_km", lk.swamp_max_depth_km),
+                ("lakes.swamp_min_p_pet", lk.swamp_min_p_pet),
+                ("lakes.frozen_t_min_c", lk.frozen_t_min_c),
+                ("lakes.shore_fraction", lk.shore_fraction),
+            ] {
+                writeln!(w, "{name}={value:?}").unwrap();
+            }
+            let hy = &self.hydrology;
+            for (name, value) in [
+                ("hydrology.bank_fraction", hy.bank_fraction),
+                ("hydrology.field_fade_l", hy.field_fade_l),
+                ("hydrology.floodplain_e", hy.floodplain_e),
+                ("hydrology.swamp_e", hy.swamp_e),
+                ("hydrology.dry_basin_e", hy.dry_basin_e),
+                ("hydrology.estuary_c", hy.estuary_c),
+                ("hydrology.estuary_elevation_km", hy.estuary_elevation_km),
+                ("hydrology.inland_sea_c", hy.inland_sea_c),
+                ("hydrology.r1_max_level_km", hy.r1_max_level_km),
+                ("hydrology.gallery_q_min_mm_l2", hy.gallery_q_min_mm_l2),
+                ("hydrology.gallery_width_factor", hy.gallery_width_factor),
+                ("hydrology.gallery_dry_r_lo", hy.gallery_dry_r_lo),
+                ("hydrology.gallery_dry_r_hi", hy.gallery_dry_r_hi),
+                ("hydrology.gallery_h_gain", hy.gallery_h_gain),
+            ] {
+                writeln!(w, "{name}={value:?}").unwrap();
+            }
+            let r = &self.relief;
+            for (name, value) in [
+                ("relief.a_lo", r.a_lo),
+                ("relief.a_hi", r.a_hi),
+                ("relief.foothill_m_lo", r.foothill_m_lo),
+                ("relief.foothill_m_hi", r.foothill_m_hi),
+                ("relief.foothill_fade", r.foothill_fade),
+                ("relief.foothill_a_min", r.foothill_a_min),
+                ("relief.foothill_a_max", r.foothill_a_max),
+                ("relief.paleo_lambda_l", r.paleo_lambda_l),
+                ("relief.paleo_band_lo", r.paleo_band_lo),
+                ("relief.paleo_band_hi", r.paleo_band_hi),
+                ("relief.paleo_a_min", r.paleo_a_min),
+                ("relief.paleo_a_max", r.paleo_a_max),
+                ("relief.active_boundary_lo", r.active_boundary_lo),
+                ("relief.active_boundary_hi", r.active_boundary_hi),
+                ("relief.land_e_fade_km", r.land_e_fade_km),
+                ("relief.continental_chi_lo", r.continental_chi_lo),
+                ("relief.continental_chi_hi", r.continental_chi_hi),
+                ("relief.craton_iota_lo", r.craton_iota_lo),
+                ("relief.craton_iota_hi", r.craton_iota_hi),
+                ("relief.craton_a_min", r.craton_a_min),
+                ("relief.craton_a_max", r.craton_a_max),
+                ("relief.escarpment_gradient_lo", r.escarpment_gradient_lo),
+                ("relief.escarpment_gradient_hi", r.escarpment_gradient_hi),
+                ("relief.escarpment_a", r.escarpment_a),
+                ("relief.volcanic_hotspot_lo", r.volcanic_hotspot_lo),
+                ("relief.volcanic_hotspot_hi", r.volcanic_hotspot_hi),
+                ("relief.volcanic_a_min", r.volcanic_a_min),
+                ("relief.volcanic_a_max", r.volcanic_a_max),
+                ("relief.hills_lambda_l", r.hills_lambda_l),
+                ("relief.hills_noise_lo", r.hills_noise_lo),
+                ("relief.hills_noise_hi", r.hills_noise_hi),
+                ("relief.hills_a", r.hills_a),
+                ("relief.basin_lambda_l", r.basin_lambda_l),
+                ("relief.basin_noise_lo", r.basin_noise_lo),
+                ("relief.basin_noise_hi", r.basin_noise_hi),
+                ("relief.basin_depth_km", r.basin_depth_km),
+                ("relief.basin_strength", r.basin_strength),
+                ("relief.rift_floor_factor", r.rift_floor_factor),
+                ("relief.rift_flat_strength", r.rift_flat_strength),
+                ("relief.rift_floor_a", r.rift_floor_a),
+                (
+                    "relief.rift_shoulder_offset_factor",
+                    r.rift_shoulder_offset_factor,
+                ),
+                (
+                    "relief.rift_shoulder_width_factor",
+                    r.rift_shoulder_width_factor,
+                ),
+                ("relief.rift_shoulder_a", r.rift_shoulder_a),
+            ] {
+                writeln!(w, "{name}={value:?}").unwrap();
+            }
+            let m = &self.morpho;
+            for (name, value) in [
+                ("morpho.t_polar_c", m.t_polar_c),
+                ("morpho.t_boreal_c", m.t_boreal_c),
+                ("morpho.t_tropical_c", m.t_tropical_c),
+                ("morpho.t_fade_c", m.t_fade_c),
+                ("morpho.r_tropical_humid", m.r_tropical_humid),
+                ("morpho.r_humid", m.r_humid),
+                ("morpho.r_arid", m.r_arid),
+                ("morpho.r_fade", m.r_fade),
+                ("morpho.mountain_lo", m.mountain_lo),
+                ("morpho.mountain_hi", m.mountain_hi),
+                ("morpho.mountain_t_split_c", m.mountain_t_split_c),
+                ("morpho.mountain_t_fade_c", m.mountain_t_fade_c),
+                ("morpho.weight_step_l", m.weight_step_l),
+                ("morpho.c_basin_drop", m.c_basin_drop),
+                ("morpho.c_highland_gain", m.c_highland_gain),
+                ("morpho.pv_min", m.pv_min),
+                ("morpho.pv_max", m.pv_max),
+                (
+                    "morpho.scientific_lambda_factor",
+                    m.scientific_lambda_factor,
+                ),
+                ("morpho.scientific_sigma_factor", m.scientific_sigma_factor),
+            ] {
+                writeln!(w, "{name}={value:?}").unwrap();
+            }
+            writeln!(w, "morpho.e_flat={:?}", m.e_flat).unwrap();
+            writeln!(w, "morpho.e_hill={:?}", m.e_hill).unwrap();
+            writeln!(w, "morpho.pv_flat={:?}", m.pv_flat).unwrap();
+            writeln!(w, "morpho.pv_hill={:?}", m.pv_hill).unwrap();
+            writeln!(w, "morpho.lambda_pv_blocks={:?}", m.lambda_pv_blocks).unwrap();
+            writeln!(w, "morpho.sigma_e={:?}", m.sigma_e).unwrap();
+            writeln!(w, "morpho.sigma_pv={:?}", m.sigma_pv).unwrap();
+            let hg = &self.height;
+            writeln!(w, "height.e_knots={:?}", hg.e_knots).unwrap();
+            writeln!(w, "height.pv_knots={:?}", hg.pv_knots).unwrap();
+            writeln!(w, "height.land_y={:?}", hg.land_y).unwrap();
+            writeln!(w, "height.ocean_c={:?}", hg.ocean_c).unwrap();
+            writeln!(w, "height.ocean_y={:?}", hg.ocean_y).unwrap();
+            writeln!(w, "height.factor={:?}", hg.factor).unwrap();
+            writeln!(w, "height.jaggedness={:?}", hg.jaggedness).unwrap();
+            for (name, value) in [
+                ("height.coast_width_c", hg.coast_width_c),
+                ("height.e_gain_blocks_per_km", hg.e_gain_blocks_per_km),
+                ("height.cold_jagged_gain", hg.cold_jagged_gain),
+                ("height.warm_jagged_drop", hg.warm_jagged_drop),
+                ("height.min_y", hg.min_y),
+                ("height.max_y", hg.max_y),
+                ("height.water_km_to_blocks", hg.water_km_to_blocks),
+                ("height.lake_depth_max_blocks", hg.lake_depth_max_blocks),
+            ] {
+                writeln!(w, "{name}={value:?}").unwrap();
+            }
+            let bd = &self.boundaries;
+            for (name, value) in [
+                ("boundaries.ray_bend_sigma_deg", bd.ray_bend_sigma_deg),
+                ("boundaries.ray_bend_max_deg", bd.ray_bend_max_deg),
+                ("boundaries.ray_bend_lambda_l", bd.ray_bend_lambda_l),
+                ("boundaries.ray_bend_gain", bd.ray_bend_gain),
+            ] {
+                writeln!(w, "{name}={value:?}").unwrap();
+            }
+            writeln!(w, "boundaries.ray_bend_octaves={}", bd.ray_bend_octaves).unwrap();
+            writeln!(w, "boundaries.ray_fan_rays={}", bd.ray_fan_rays).unwrap();
+            for (name, value) in [
+                (
+                    "boundaries.ray_fan_half_angle_deg",
+                    bd.ray_fan_half_angle_deg,
+                ),
+                ("boundaries.ray_fan_sigma_deg", bd.ray_fan_sigma_deg),
+            ] {
+                writeln!(w, "{name}={value:?}").unwrap();
+            }
+            writeln!(w, "boundaries.wind_fd_step_l={:?}", bd.wind_fd_step_l).unwrap();
+            writeln!(
+                w,
+                "boundaries.wind_grad_floor_deg_per_l={:?}",
+                bd.wind_grad_floor_deg_per_l
+            )
+            .unwrap();
+            writeln!(w, "boundaries.wind_pole_fade_l={:?}", bd.wind_pole_fade_l).unwrap();
+            writeln!(w, "boundaries.wind_phi_soft_deg={:?}", bd.wind_phi_soft_deg).unwrap();
+            writeln!(
+                w,
+                "boundaries.wind_belt_fade_deg={:?}",
+                bd.wind_belt_fade_deg
+            )
+            .unwrap();
+            for (name, value) in [
+                ("boundaries.pass_depth", bd.pass_depth),
+                ("boundaries.pass_lambda_l", bd.pass_lambda_l),
+                ("boundaries.pass_gain", bd.pass_gain),
+            ] {
+                writeln!(w, "{name}={value:?}").unwrap();
+            }
+            writeln!(w, "boundaries.pass_octaves={}", bd.pass_octaves).unwrap();
+            for (name, value) in [
+                (
+                    "boundaries.jitter_coarse_lambda_blocks",
+                    bd.jitter_coarse_lambda_blocks,
+                ),
+                (
+                    "boundaries.jitter_coarse_sigma_factor",
+                    bd.jitter_coarse_sigma_factor,
+                ),
+                ("boundaries.ecotone_width_log2", bd.ecotone_width_log2),
+                ("boundaries.ecotone_max_fraction", bd.ecotone_max_fraction),
+                ("boundaries.ecotone_lambda_blocks", bd.ecotone_lambda_blocks),
+            ] {
+                writeln!(w, "{name}={value:?}").unwrap();
+            }
+        }
         out
     }
 
@@ -1135,6 +2149,40 @@ mod tests {
         assert_eq!(sci.precip, game.precip);
         assert_eq!(sci.climate, game.climate);
         assert_ne!(sci.block, game.block);
+    }
+
+    #[test]
+    fn v0_is_frozen_and_v1_dev_has_its_own_parameters() {
+        for (mode, hash) in [
+            (Mode::Scientific, 0x5cdbe1d36ef8d16a),
+            (Mode::Gameplay, 0xb48e8037c4e85977),
+        ] {
+            let old = Params::defaults(GenVersion::V0, mode);
+            assert_eq!(old.params_hash(), hash);
+            assert!(!old.canonical_text().contains("noise.amplitude_units"));
+            let dev = Params::defaults(GenVersion::V1Dev, mode);
+            assert_ne!(old.params_hash(), dev.params_hash());
+            assert_eq!(dev.climate.c_coast_e_km, 0.20);
+            assert_eq!(dev.climate.e_base, 0.15);
+            assert_eq!(dev.climate.e_noise, 0.20);
+            assert_eq!(dev.climate.w_plain_base, 0.30);
+            assert_eq!(dev.block.lambda_e_blocks, 2.0 * old.block.lambda_e_blocks);
+            assert!(dev.block.w_sign_half_width_blocks > 0.0);
+            assert_eq!(dev.plates, old.plates);
+            assert_eq!(dev.crust, old.crust);
+            assert_eq!(dev.poles, old.poles);
+        }
+    }
+
+    #[test]
+    fn boundary_keys_are_v1_dev_only_and_hash_sensitive() {
+        let old = Params::defaults(GenVersion::V0, Mode::Gameplay);
+        assert!(!old.canonical_text().contains("boundaries."));
+        let dev = Params::defaults(GenVersion::V1Dev, Mode::Gameplay);
+        assert!(dev.canonical_text().contains("boundaries.pass_depth=0.6"));
+        let mut changed = dev.clone();
+        changed.boundaries.pass_depth = 0.5;
+        assert_ne!(dev.params_hash(), changed.params_hash());
     }
 
     #[test]

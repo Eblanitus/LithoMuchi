@@ -1,6 +1,7 @@
 //! Реки «карандашом» (план 7.10, задачи T50/T51).
 //!
-//! Рифтовые и предгорные реки берутся прямо из весов границы плиты. Трассы от
+//! В v0 рифтовые и предгорные реки берутся из весов границы плиты. В v1-dev
+//! T113 оставляет рифт и трансформ, а предгорную трассу убирает (§5.5). Трассы от
 //! горных истоков считаются один раз на ячейку сетки истоков и кэшируются:
 //! иначе эталонный расчёт в каждой точке стоил бы дороже всего остального.
 
@@ -157,8 +158,9 @@ where
     segments
 }
 
-/// Сила рифтовой и предгорной реки (7.10.1): дешёвая часть, доступна в
-/// каждой точке без кэша. `σ` берём как расстояние до ближайшей границы плиты.
+/// Дешёвая река границы плиты. v0 сохраняет рифт + предгорье (7.10.1);
+/// v1-dev использует рифт + трансформ с той же постоянной шириной (T113).
+/// `σ` берём как расстояние до ближайшей границы плиты.
 pub fn local_r(x: f64, z: f64, surface: &SurfaceSample, seed: u64, params: &Params) -> f64 {
     if surface.e_km < 0.0 {
         return 0.0;
@@ -171,7 +173,12 @@ pub fn local_r(x: f64, z: f64, surface: &SurfaceSample, seed: u64, params: &Para
     let meander = amplitude * noise2(subseed(seed, SALT_RIVERS_MEANDER), x / lambda, z / lambda);
     let sigma = surface.sigma_l;
     let k = surface.boundary_weights;
-    let rift = k[4] * (1.0 - smoothstep(0.0, width, (sigma * l + meander).abs()));
+    let distance = (sigma * l + meander).abs();
+    let rift = k[4] * (1.0 - smoothstep(0.0, width, distance));
+    if params.version.is_water_relief_dev() {
+        let transform = k[6] * (1.0 - smoothstep(0.0, width, distance));
+        return clamp01(rift.max(transform));
+    }
     let sigma_f = r.foothill_sigma_factor * params.crust.w_col_l;
     let foot = k[0] * (1.0 - smoothstep(0.0, width, ((sigma - sigma_f) * l + meander).abs()));
     clamp01(rift.max(foot))
@@ -223,4 +230,54 @@ where
         }
     }
     clamp01(best)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::local_r;
+    use crate::climate::SurfaceSample;
+    use crate::mode::Mode;
+    use crate::params::Params;
+    use crate::version::GenVersion;
+
+    fn surface(weights: [f64; 7], sigma_l: f64) -> SurfaceSample {
+        SurfaceSample {
+            e_km: 0.5,
+            boundary_weights: weights,
+            sigma_l,
+            ..SurfaceSample::default()
+        }
+    }
+
+    #[test]
+    fn dev_keeps_rift_adds_transform_and_drops_foothill_without_touching_v0() {
+        let dev = Params::defaults(GenVersion::V1Dev, Mode::Gameplay);
+        let frozen = Params::defaults(GenVersion::V0, Mode::Gameplay);
+        let mut transform = [0.0; 7];
+        transform[6] = 1.0;
+        let mut foothill = [0.0; 7];
+        foothill[0] = 1.0;
+        let sigma_f = frozen.rivers.foothill_sigma_factor * frozen.crust.w_col_l;
+        assert!(local_r(0.0, 0.0, &surface(transform, 0.0), 42, &dev) > 0.9);
+        assert_eq!(
+            local_r(0.0, 0.0, &surface(transform, 0.0), 42, &frozen),
+            0.0
+        );
+        assert_eq!(
+            local_r(0.0, 0.0, &surface(foothill, sigma_f), 42, &dev),
+            0.0
+        );
+        assert!(local_r(0.0, 0.0, &surface(foothill, sigma_f), 42, &frozen) > 0.0);
+        let mut rift = [0.0; 7];
+        rift[4] = 1.0;
+        for k in 0..16 {
+            let x = k as f64 * 11.0;
+            let s = surface(rift, 0.01);
+            assert_eq!(
+                local_r(x, -x, &s, 42, &dev).to_bits(),
+                local_r(x, -x, &s, 42, &frozen).to_bits()
+            );
+        }
+        assert_eq!(local_r(0.0, 0.0, &surface(transform, 2.0), 42, &dev), 0.0);
+    }
 }

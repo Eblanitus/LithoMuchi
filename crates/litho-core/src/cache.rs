@@ -46,6 +46,16 @@ where
         (hasher.finish() as usize) % self.shards.len()
     }
 
+    /// Чтение с обновлением LRU; промах не меняет содержимое кэша.
+    pub fn get(&self, key: K) -> Option<V> {
+        let index = self.shard_index(&key);
+        let mut shard = self.shards[index].lock().expect("кэш не отравлен");
+        shard.get_mut(&key).map(|(value, stamp)| {
+            *stamp = self.clock.fetch_add(1, Ordering::Relaxed);
+            value.clone()
+        })
+    }
+
     /// Значение для ключа: из кэша или вычисленное один раз.
     pub fn get_or_insert<F>(&self, key: K, compute: F) -> V
     where

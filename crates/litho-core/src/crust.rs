@@ -9,15 +9,15 @@ use std::rc::Rc;
 
 use crate::hash::{hash3, splitmix64, unit};
 use crate::math::{Vec2, clamp01, dexp, smoothstep};
-use crate::noise::{fbm2, ridged2};
+use crate::noise::{fbm2, fbm2_unit, ridged2};
 use crate::params::Params;
 use crate::plates::{
     BoundaryType, Plate, PlateSample, boundary_type, boundary_weights_from_chi, continent_field,
     continent_fraction, plate_query, seeds_in_cell,
 };
 use crate::seed::{
-    CellRng, SALT_BOUNDARY_SIDE, SALT_CRUST_DETAIL, SALT_CRUST_KAPPA, SALT_HOTSPOT, cell_hash,
-    subseed,
+    CellRng, SALT_BOUNDARY_SIDE, SALT_CRUST_DETAIL, SALT_CRUST_KAPPA, SALT_CRUST_PASS,
+    SALT_HOTSPOT, cell_hash, subseed,
 };
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -30,10 +30,16 @@ pub struct CrustSample {
     pub mountain: f64,
     /// «Плато» 0…1.
     pub plateau: f64,
+    /// T120: оценка |∇Pl| по знаковым профилям плато, 1/L. Сумма модулей
+    /// вкладов B/C консервативна и не зависит от порядка соседей.
+    pub plateau_gradient: f64,
     /// Приближённое расстояние вглубь от берега, L.
     pub iota_l: f64,
     /// Веса k1…k7 у ближайших границ (для отладки и будущих слоёв).
     pub boundary_weights: [f64; 7],
+    /// T120: непрерывная сумма весов рифта k5 по границам B/C. В отличие от
+    /// `boundary_weights[4]` не скачет при смене ближайшего соседа на стыке.
+    pub rift_weight: f64,
     /// Доля материковой коры χ в точке (из того же κ, что и высота).
     pub chi: f64,
     /// Разложение высоты по физическим вкладам, км (Д-022).
@@ -183,6 +189,26 @@ fn plateau_shape(sigma_l: f64, w_col_l: f64) -> f64 {
         * (1.0 - smoothstep(1.2 * w_col_l, 3.5 * w_col_l, sigma_l))
 }
 
+/// Производная гладкой ступеньки по её аргументу. Нужна только диагностике
+/// уступов T120; на значения высоты v0 не влияет.
+fn smoothstep_derivative(lo: f64, hi: f64, x: f64) -> f64 {
+    if hi <= lo || x <= lo || x >= hi {
+        return 0.0;
+    }
+    let t = (x - lo) / (hi - lo);
+    6.0 * t * (1.0 - t) / (hi - lo)
+}
+
+/// |dPl/dσ| для одного профиля столкновения. Расстояние до границы меняется с
+/// единичным градиентом по макро-координате, поэтому это оценка |∇Pl|.
+fn plateau_shape_gradient(sigma_l: f64, w_col_l: f64) -> f64 {
+    let rise = smoothstep(-w_col_l, 0.5 * w_col_l, sigma_l);
+    let fall = smoothstep(1.2 * w_col_l, 3.5 * w_col_l, sigma_l);
+    let d_rise = smoothstep_derivative(-w_col_l, 0.5 * w_col_l, sigma_l);
+    let d_fall = smoothstep_derivative(1.2 * w_col_l, 3.5 * w_col_l, sigma_l);
+    (d_rise * (1.0 - fall) - rise * d_fall).abs()
+}
+
 /// Знаковое расстояние σ до границы, привязанное к **паре** плит, а не к
 /// ближайшей плите (Д-022). `d_l` из `plate_query` неотрицателен: при смене
 /// A↔B знак терялся, а вместе с ним переворачивались все профили U2/U3/U6 —
@@ -220,6 +246,8 @@ struct BoundaryContrib {
     u: f64,
     positive: f64,
     plateau: f64,
+    plateau_gradient: f64,
+    rift_weight: f64,
     k7_gauss: f64,
     sigma_l: f64,
     upper: bool,
@@ -231,6 +259,8 @@ impl BoundaryContrib {
             u: self.u + other.u,
             positive: self.positive + other.positive,
             plateau: self.plateau + other.plateau,
+            plateau_gradient: self.plateau_gradient + other.plateau_gradient,
+            rift_weight: self.rift_weight + other.rift_weight,
             k7_gauss: self.k7_gauss + other.k7_gauss,
             sigma_l: self.sigma_l,
             upper: self.upper,
@@ -318,14 +348,59 @@ fn boundary_contrib(
         + k[4] * c.h_shoulder_km * gauss(d_l - c.rift_shoulder_offset * c.w_rift_l, c.w_rift_l)
         + k[5] * 0.5 * c.h_ridge_km * gauss(sigma_l + c.u6_offset_l, c.w_ridge_l);
 
+    let mut u_out = weight * u;
+    let mut positive_out = weight * positive;
+    if params.version.is_water_relief_dev() {
+        // T132 / Б4: седла понижают и M, и положительный орографический вклад
+        // высоты, чтобы влага действительно проходила через перевал, а не
+        // только меняла диагностику M. Плато/отрицательные профили не трогаем.
+        let pass = pass_factor(&sample.a, neighbor, sample.q, seed, params);
+        u_out -= (1.0 - pass) * positive_out;
+        positive_out *= pass;
+    }
+
     BoundaryContrib {
-        u: weight * u,
-        positive: weight * positive,
+        u: u_out,
+        positive: positive_out,
         plateau: weight * k[0] * plateau_shape(sigma_l, c.w_col_l),
+        plateau_gradient: weight * k[0] * plateau_shape_gradient(sigma_l, c.w_col_l),
+        rift_weight: weight * k[4],
         k7_gauss: weight * k[6] * gauss(d_l, c.mountain_edge_l),
         sigma_l,
         upper: sigma_l > 0.0,
     }
+}
+
+/// T132: множитель перевала 1−depth…1 вдоль границы A|N. Координата берётся
+/// вдоль касательной к серединному перпендикуляру, ориентация каноническая по
+/// id плит, поэтому с обеих сторон границы седло одно и то же. Шум гладкий,
+/// λ 1–3 L; седло понижает положительный вклад, но не отрицательные жёлоба/рифты.
+fn pass_factor(a: &Plate, neighbor: &Plate, q: Vec2, seed: u64, params: &Params) -> f64 {
+    let b = &params.boundaries;
+    let (low, high) = if a.id <= neighbor.id {
+        (a, neighbor)
+    } else {
+        (neighbor, a)
+    };
+    let delta = high.seed_pos.sub(low.seed_pos);
+    let tangent = if delta.len() > 1e-9 {
+        delta.perp().normalized()
+    } else {
+        Vec2::new(0.0, 1.0)
+    };
+    let pass_seed = subseed(seed, SALT_CRUST_PASS);
+    let offset = unit(hash3(pass_seed, low.id as i64, high.id as i64, 0)) * 1024.0;
+    let s = q.dot(tangent) + offset;
+    let n = fbm2_unit(
+        pass_seed,
+        s,
+        0.0,
+        b.pass_lambda_l,
+        b.pass_octaves,
+        b.pass_gain,
+    );
+    let saddle = smoothstep(0.25, 0.75, 0.5 + 0.5 * n);
+    1.0 - b.pass_depth * saddle
 }
 
 /// Горячие точки и цепочки затонувших гор (7.4.4). Смотрим ячейки 3×3 вокруг
@@ -487,8 +562,10 @@ pub fn crust_from_sample(
         e_km,
         mountain,
         plateau: clamp01(bc.plateau),
+        plateau_gradient: bc.plateau_gradient,
         iota_l,
         boundary_weights: weights,
+        rift_weight: bc.rift_weight,
         chi,
         e_base_km,
         boundary_u_km: bc.u,
@@ -586,6 +663,116 @@ mod tests {
                 (a - b).abs() < 1e-3,
                 "разрыв на границе ячеек: {a} и {b} при z = {z}"
             );
+        }
+    }
+}
+
+#[cfg(test)]
+mod t132_tests {
+    use super::{crust_from_sample, pass_factor};
+    use crate::math::Vec2;
+    use crate::mode::Mode;
+    use crate::params::Params;
+    use crate::plates::{plate_query, seeds_in_cell};
+    use crate::version::GenVersion;
+
+    #[test]
+    fn pass_factor_is_bounded_smooth_and_varies_along_the_boundary() {
+        let p = Params::defaults(GenVersion::V1Dev, Mode::Gameplay);
+        p.boundaries.validate().unwrap();
+        let mut plates = Vec::new();
+        for j in -2..=2_i64 {
+            for i in -2..=2_i64 {
+                plates = seeds_in_cell(42, i, j, &p);
+                if plates.len() >= 2 {
+                    break;
+                }
+            }
+            if plates.len() >= 2 {
+                break;
+            }
+        }
+        assert!(plates.len() >= 2, "нужны две плиты для границы");
+        // Разные клетки гарантируют разные плиты: два семени одной клетки —
+        // под-центры одной плиты, у них нет самостоятельной тектонической границы.
+        let a = &plates[0];
+        let other_cell = seeds_in_cell(42, a.cell_i + 1, a.cell_j, &p);
+        let b = other_cell.iter().find(|plate| plate.id != a.id).unwrap();
+        let tangent = b.seed_pos.sub(a.seed_pos).perp().normalized();
+        let mid = a.seed_pos.add(b.seed_pos).scale(0.5);
+        let lo = 1.0 - p.boundaries.pass_depth;
+        let mut min = 1.0_f64;
+        let mut max = 0.0_f64;
+        let mut max_step = 0.0_f64;
+        let mut prev: Option<f64> = None;
+        for k in -2500..=2500 {
+            let q = mid.add(tangent.scale(k as f64 / 250.0));
+            let f = pass_factor(a, b, q, 42, &p);
+            assert!((lo - 1e-12..=1.0 + 1e-12).contains(&f), "factor={f}");
+            min = min.min(f);
+            max = max.max(f);
+            if let Some(prev) = prev {
+                max_step = max_step.max((f - prev).abs());
+            }
+            prev = Some(f);
+        }
+        assert!(
+            max - min > 0.2,
+            "перевалы не модулируют хребет: {min}…{max}"
+        );
+        assert!(max_step < 0.01, "скачок перевала на блоке: {max_step}");
+    }
+
+    #[test]
+    fn passes_are_order_invariant_and_lower_the_orographic_barrier() {
+        for mode in Mode::ALL {
+            let p = Params::defaults(GenVersion::V1Dev, mode);
+            let mut checked = 0;
+            let mut lowered = 0;
+            for j in -3..=3_i64 {
+                for i in -3..=3_i64 {
+                    let plates = seeds_in_cell(42, i, j, &p);
+                    let Some(a) = plates.first() else { continue };
+                    let sample = plate_query(a.seed_pos, 42, &p).unwrap();
+                    let mut no_pass = p.clone();
+                    no_pass.boundaries.pass_depth = 0.0;
+                    let base = crust_from_sample(sample.q, &sample, 42, &no_pass);
+                    let with_pass = crust_from_sample(sample.q, &sample, 42, &p);
+                    assert!(with_pass.mountain <= base.mountain + 1e-12);
+                    if base.mountain > with_pass.mountain + 0.005 {
+                        lowered += 1;
+                    }
+                    for neighbor in [&sample.b, &sample.c].into_iter().flatten() {
+                        let q = a.seed_pos.add(neighbor.seed_pos).scale(0.5);
+                        let f = pass_factor(a, neighbor, q, 42, &p);
+                        assert_eq!(f.to_bits(), pass_factor(neighbor, a, q, 42, &p).to_bits());
+                    }
+                    checked += 1;
+                }
+            }
+            assert!(
+                checked > 0 && lowered > 0,
+                "перевалы должны понизить хотя бы один хребет"
+            );
+        }
+    }
+
+    #[test]
+    fn v0_crust_ignores_pass_parameters_bitwise() {
+        let old = Params::defaults(GenVersion::V0, Mode::Gameplay);
+        let mut changed = old.clone();
+        changed.boundaries.pass_depth = 0.9;
+        changed.boundaries.pass_lambda_l = 1.0;
+        for k in 0..200 {
+            let q = Vec2::new(k as f64 * 0.37 - 40.0, k as f64 * -0.21 + 15.0);
+            let Some(sample) = plate_query(q, 42, &old) else {
+                continue;
+            };
+            let a = crust_from_sample(q, &sample, 42, &old);
+            let b = crust_from_sample(q, &sample, 42, &changed);
+            assert_eq!(a.e_km.to_bits(), b.e_km.to_bits());
+            assert_eq!(a.mountain.to_bits(), b.mountain.to_bits());
+            assert_eq!(a.boundary_u_km.to_bits(), b.boundary_u_km.to_bits());
         }
     }
 }

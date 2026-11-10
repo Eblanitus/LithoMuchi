@@ -24,11 +24,15 @@ pub const SALT_BOUNDARY_SIDE: &str = "boundary.side";
 pub const SALT_SPAWN: &str = "spawn";
 pub const SALT_PHI_NOISE: &str = "poles.phi_noise";
 pub const SALT_CLASS_JITTER: &str = "classify.jitter";
+pub const SALT_CLASS_JITTER_COARSE: &str = "classify.jitter.coarse";
+pub const SALT_ECOTONE: &str = "classify.ecotone";
 pub const SALT_VANILLA_E: &str = "vanilla.erosion";
 pub const SALT_VANILLA_W: &str = "vanilla.weirdness";
 pub const SALT_VANILLA_S: &str = "vanilla.sign";
 pub const SALT_RIVERS: &str = "rivers.source";
 pub const SALT_RIVERS_MEANDER: &str = "rivers.meander";
+// Э3.5 / T110: общая решётка стока; не меняет ни одну соль v0.
+pub const SALT_RIVERS_DRAINAGE: &str = "rivers.drainage";
 
 /// Сид Minecraft знаковый 64-битный; биты переносятся без изменения.
 pub const fn from_world_seed(seed: i64) -> u64 {
@@ -78,6 +82,22 @@ impl Default for CellRng {
         Self::from_hash(0)
     }
 }
+
+// Э3.5 / T112: меандры русел поверх сети стока; соль v0 не меняется.
+pub const SALT_CHANNEL_MEANDER: &str = "channels.meander";
+/// T114: число и веер рукавов дельты; не меняет меандр T112.
+pub const SALT_CHANNEL_DELTA: &str = "channels.delta";
+// Э3.5 / T120: формы рельефа. Ни одна соль v0 не меняется.
+pub const SALT_RELIEF_PALEO: &str = "relief.paleosuture";
+pub const SALT_RELIEF_HILLS: &str = "relief.hills";
+pub const SALT_RELIEF_BASIN: &str = "relief.basin";
+// T122: шум E/PV поверх зон; знак W остаётся на соли T102.
+pub const SALT_RELIEF_E: &str = "relief.erosion";
+pub const SALT_RELIEF_PV: &str = "relief.peaks_valleys";
+// T130: гладкий поворот линии тока влаги; соли v0 не меняются.
+pub const SALT_MOISTURE_BEND: &str = "climate.moisture_bend";
+// T132: перевалы вдоль хребтов; соль v0 не меняется.
+pub const SALT_CRUST_PASS: &str = "crust.pass";
 
 #[cfg(test)]
 mod tests {

@@ -66,6 +66,42 @@ pub fn fbm2(seed: u64, x: f64, z: f64, lambda0: f64, octaves: usize, gain: f64) 
     if norm > 0.0 { sum / norm } else { 0.0 }
 }
 
+/// Типичный разброс (σ) нормированного `fbm2`, T101.
+///
+/// Три строки таблицы измерены на 160 тыс. точек (приложение к пересмотру).
+/// Это не граница диапазона: единичный шум может выходить за [-1, 1].
+/// Для ещё не калиброванных октав используется оценка независимых октав;
+/// новые рабочие конфигурации следует добавить в таблицу после замера.
+pub fn fbm_sigma(octaves: usize, gain: f64) -> f64 {
+    match (octaves.min(OCTAVES), gain.to_bits()) {
+        (0, _) => 1.0,
+        (1, _) => 0.30,
+        (3, g) if g == 0.5_f64.to_bits() => 0.20,
+        (4, g) if g == 0.45_f64.to_bits() => 0.19,
+        _ => {
+            let mut amplitude = 1.0;
+            let mut norm = 0.0;
+            let mut norm2 = 0.0;
+            for _ in 0..octaves.min(OCTAVES) {
+                norm += amplitude;
+                norm2 += amplitude * amplitude;
+                amplitude *= gain;
+            }
+            if norm > 0.0 {
+                0.30 * norm2.sqrt() / norm
+            } else {
+                1.0
+            }
+        }
+    }
+}
+
+/// fBm для амплитуд, заданных в σ-единицах: `a * fbm2_unit` имеет σ ≈ a.
+/// `warp2`, кора и полюса намеренно продолжают использовать старый `fbm2`.
+pub fn fbm2_unit(seed: u64, x: f64, z: f64, lambda0: f64, octaves: usize, gain: f64) -> f64 {
+    fbm2(seed, x, z, lambda0, octaves, gain) / fbm_sigma(octaves, gain)
+}
+
 /// Гребневый шум: острые гребни для структуры хребтов.
 pub fn ridged2(seed: u64, x: f64, z: f64, lambda0: f64, octaves: usize, gain: f64) -> f64 {
     let count = octaves.min(OCTAVES);

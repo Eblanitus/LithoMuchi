@@ -13,7 +13,7 @@ pub struct NoiseSpec {
     pub field: Field,
 }
 
-/// Строгий разбор `litospherity:v0/scientific/continents`.
+/// Строгий разбор `litospherity:v0/scientific/continents` или `v1-dev/...`.
 /// Неизвестная версия, режим или поле -> None (мир не падает, см. 10.2).
 pub fn parse_noise_name(name: &str) -> Option<NoiseSpec> {
     let rest = name.strip_prefix("litospherity:")?;
@@ -54,7 +54,7 @@ type Key = (i64, u8, u8);
 static REGISTRY: Mutex<Vec<(Key, Weak<Generator>)>> = Mutex::new(Vec::new());
 
 fn key(seed: i64, spec: NoiseSpec) -> Key {
-    let version = if spec.version == GenVersion::V0 { 0 } else { 1 };
+    let version = spec.version as u8;
     let mode = if spec.mode == Mode::Scientific { 0 } else { 1 };
     (seed, version, mode)
 }
@@ -90,7 +90,13 @@ pub struct LithoNoise {
 
 impl crate::noise::Noise for LithoNoise {
     fn range(&self) -> Result<[f32; 2], crate::noise::NanRange> {
-        Ok([-1.0, 1.0])
+        // T144: offset = (y - 63.52)/128 может выходить за [-1, 1] при
+        // y до 319; JSON base_amplitude=4 уже задаёт графу широкий диапазон.
+        // Остальные поля остаются в [-1, 1]. Сверить с Horizon при T72/T140.
+        match self.field {
+            Field::Offset => Ok([-4.0, 4.0]),
+            _ => Ok([-1.0, 1.0]),
+        }
     }
 
     fn get2(&self, x: f64, z: f64) -> f32 {

@@ -80,6 +80,32 @@ pub fn hypsometric(e_km: f64) -> [u8; 3] {
     STOPS[STOPS.len() - 1].1
 }
 
+/// T100: Bands высоты; голубой выделяет именно затопленную C-сушу.
+pub fn vanilla_height(y: f64, continental_land: bool, river: bool) -> [u8; 3] {
+    if continental_land && river && y < 63.0 {
+        return [20, 90, 180];
+    }
+    if continental_land && y < 63.0 {
+        return [80, 220, 235];
+    }
+    if y < 63.0 {
+        return mix([8, 24, 64], [38, 100, 160], clamp01((y - 30.0) / 33.0));
+    }
+    if y < 70.0 {
+        [92, 148, 78]
+    } else if y < 90.0 {
+        mix([92, 148, 78], [154, 154, 82], clamp01((y - 70.0) / 20.0))
+    } else if y < 130.0 {
+        mix([154, 154, 82], [150, 112, 86], clamp01((y - 90.0) / 40.0))
+    } else {
+        mix(
+            [150, 112, 86],
+            [242, 246, 250],
+            clamp01((y - 130.0) / 100.0),
+        )
+    }
+}
+
 /// Поле материка κ: синий океан, зелёная суша, светлая береговая линия.
 pub fn kappa(value_l: f64) -> [u8; 3] {
     if value_l < 0.0 {
@@ -220,6 +246,20 @@ pub fn river_field(r: f64, e_km: f64) -> [u8; 3] {
         mix([198, 206, 152], [92, 150, 90], clamp01(e_km / 3.0))
     };
     mix(base, [46, 158, 232], clamp01(r))
+}
+
+/// T115: эффективная поверхность R1. Фиолетовый — отложенная вода R2,
+/// а не изображение высокого озера на уровне моря.
+pub fn hydrology_field(kind: litho_core::SurfaceKind, strength: f64, base: [u8; 3]) -> [u8; 3] {
+    let color = match kind {
+        litho_core::SurfaceKind::Land => return base,
+        litho_core::SurfaceKind::River | litho_core::SurfaceKind::Lake => [46, 158, 232],
+        litho_core::SurfaceKind::InlandSea => [30, 92, 178],
+        litho_core::SurfaceKind::Swamp => [82, 138, 92],
+        litho_core::SurfaceKind::DryBasin => [190, 164, 112],
+        litho_core::SurfaceKind::DeferredWater => [164, 100, 190],
+    };
+    mix(base, color, clamp01(strength))
 }
 
 /// Точка появления: чем светлее, тем лучше место; белое кольцо — радиус

@@ -2,10 +2,10 @@
 //! C/E/W обязаны быть непрерывными, поэтому таблица влияет только на T и H.
 
 use crate::climate::ClimateSample;
-use crate::math::{LN_2, clamp, dexp, dln};
-use crate::noise::fbm2;
+use crate::math::{LN_2, clamp, clamp01, dexp, dln, smoothstep};
+use crate::noise::{fbm2, fbm2_unit};
 use crate::params::Params;
-use crate::seed::{SALT_CLASS_JITTER, subseed};
+use crate::seed::{SALT_CLASS_JITTER, SALT_CLASS_JITTER_COARSE, SALT_ECOTONE, subseed};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct LifeZone {
@@ -81,6 +81,9 @@ fn severe_winter(belt: u8, t_min: f64, params: &Params) -> bool {
 
 /// Таблица 7.8.2: пояс × провинция → ванильная ячейка `(t, h)`.
 pub fn biome_cell(belt: u8, province: u8, ratio: f64, t_min: f64, params: &Params) -> VanillaCell {
+    if params.version.is_water_relief_dev() {
+        return biome_cell_ladder(belt, province, t_min, params);
+    }
     let cold = severe_winter(belt, t_min, params);
     match (belt, province) {
         (0, _) => cell(0, 0, "snowy_plains"),
@@ -154,6 +157,74 @@ pub fn biome_cell(belt: u8, province: u8, ratio: f64, t_min: f64, params: &Param
     }
 }
 
+/// T135 / Б6: пересмотренная таблица 7.8.2 для `v1-dev` — лестница без дыр.
+///
+/// Диагностика T134 показала, что скачки h≥2 на 32 блоках дают не луч влаги,
+/// а сама таблица: соседние провинции/пояса в v0 отличаются на две ступени
+/// (бореальный K3 h1 → K4 h3, тропический K4 h1 → K5 h3, тёплый K3 h0 → K4 h2).
+/// Пятна экотона T133 такие дыры не закрывают: они дают лишь один шаг от
+/// текущего класса, а через границу всё равно стоят h1 и h3.
+///
+/// Здесь h — 1-Липшицева функция по обеим осям таблицы: базовая лестница по
+/// влажности `0,0,1,2,3,4` и потолок по температуре `1,2,3,4,4,4,4`. Соседние
+/// клетки по провинции и по поясу различаются не больше чем на одну ступень,
+/// поэтому переход «саванна → джунгли» всегда идёт через лес. Внутриклеточные
+/// ветки v0 по R (flower_forest при R≈1, birch при R≤0.75, dark_forest при
+/// R≥0.35) убраны: они создавали скачки h внутри одной провинции. Имя биома
+/// берётся из средней таблицы A.2 по итовым `(t,h)`.
+fn biome_cell_ladder(belt: u8, province: u8, t_min: f64, params: &Params) -> VanillaCell {
+    let belt = belt.min(6);
+    let province = province.clamp(1, 6);
+    // Влажность: K1/K2 сухо, дальше по одной ступени на провинцию.
+    let wet = match province {
+        1 | 2 => 0_u8,
+        3 => 1,
+        4 => 2,
+        5 => 3,
+        _ => 4,
+    };
+    // Холодные пояса не дают плотного леса: потолок растёт по одной ступени.
+    let cap = match belt {
+        0 => 1_u8,
+        1 => 2,
+        2 => 3,
+        _ => 4,
+    };
+    let h = wet.min(cap);
+    let cold = severe_winter(belt, t_min, params);
+    let t = match belt {
+        0 | 1 => 0_u8,
+        2 => {
+            if cold {
+                0
+            } else {
+                1
+            }
+        }
+        3 => {
+            if province <= 2 {
+                // Правило ⚑ холодной пустыни сохранено как в v0.
+                return desert(t_min, params);
+            }
+            if cold { 1 } else { 2 }
+        }
+        4 => {
+            if province <= 2 {
+                return desert(t_min, params);
+            }
+            // Тёплый умеренный: сухо — саванна, влажно — лиственный лес.
+            if province >= 5 { 2 } else { 3 }
+        }
+        _ => {
+            if province <= 2 {
+                return desert(t_min, params);
+            }
+            3
+        }
+    };
+    middle_cell(t, h)
+}
+
 /// Океаны по SST (7.8): категория решает только ванильная полоса температуры.
 pub fn ocean_cell(sst_c: f64, params: &Params) -> VanillaCell {
     let bands = params.climate.sst_bands_c;
@@ -199,15 +270,47 @@ pub fn classify(
     let sub = subseed(seed, SALT_CLASS_JITTER);
     let u = x / c.jitter_lambda_blocks;
     let v = z / c.jitter_lambda_blocks;
-    let jitter_t = fbm2(sub, u, v, 1.0, c.jitter_octaves, c.jitter_gain);
-    let jitter_r = fbm2(
-        sub.wrapping_add(1),
-        u,
-        v,
-        1.0,
-        c.jitter_octaves,
-        c.jitter_gain,
-    );
+    let (jitter_t, jitter_r) = if params.version.is_water_relief_dev() {
+        // T101/T133: амплитуды в σ. Мелкий масштаб λ240 остаётся прежним;
+        // крупный λ1000 добавляет независимое дрожание с σ в factor раз больше
+        // (стартовый factor 4 ≈ смещение границ ±200 против ±50 блоков).
+        let b = &params.boundaries;
+        let coarse = subseed(seed, SALT_CLASS_JITTER_COARSE);
+        let cu = x / b.jitter_coarse_lambda_blocks;
+        let cv = z / b.jitter_coarse_lambda_blocks;
+        let f = b.jitter_coarse_sigma_factor;
+        (
+            fbm2_unit(sub, u, v, 1.0, c.jitter_octaves, c.jitter_gain)
+                + f * fbm2_unit(coarse, cu, cv, 1.0, c.jitter_octaves, c.jitter_gain),
+            fbm2_unit(
+                sub.wrapping_add(1),
+                u,
+                v,
+                1.0,
+                c.jitter_octaves,
+                c.jitter_gain,
+            ) + f * fbm2_unit(
+                coarse.wrapping_add(1),
+                cu,
+                cv,
+                1.0,
+                c.jitter_octaves,
+                c.jitter_gain,
+            ),
+        )
+    } else {
+        (
+            fbm2(sub, u, v, 1.0, c.jitter_octaves, c.jitter_gain),
+            fbm2(
+                sub.wrapping_add(1),
+                u,
+                v,
+                1.0,
+                c.jitter_octaves,
+                c.jitter_gain,
+            ),
+        )
+    };
     let t_bio = climate.temperature.t_bio + params.block.jitter_t_c * jitter_t;
     let log2_r = clamp(
         dln(climate.precip.ratio.max(1e-9)) / LN_2 + params.block.jitter_r_log2 * jitter_r,
@@ -216,6 +319,17 @@ pub fn classify(
     );
     let ratio = dexp(LN_2 * log2_r);
     let mut result = classify_inputs(t_bio, ratio, climate.temperature.t_min, params);
+    if params.version.is_water_relief_dev() && !is_ocean {
+        result.cell = ecotone_cell(
+            result,
+            log2_r,
+            climate.temperature.t_min,
+            x,
+            z,
+            seed,
+            params,
+        );
+    }
     if is_ocean {
         result.cell = ocean_cell(climate.temperature.sst_c, params);
         result.zone = LifeZone {
@@ -225,6 +339,105 @@ pub fn classify(
         result.is_ocean = true;
     }
     result
+}
+
+/// T133 / Б6: у порога влажности часть пятен получает промежуточную ячейку
+/// соседней провинции. Это не сглаживание C/E/W и не новый биом: только
+/// ванильная ячейка `(t,h)` между сухим и влажным классом, чтобы саванна не
+/// стояла вплотную к джунглям. Решение гладкое по координатам, пятно λ≥64.
+fn ecotone_cell(
+    base: ClassSample,
+    log2_r: f64,
+    t_min: f64,
+    x: f64,
+    z: f64,
+    seed: u64,
+    params: &Params,
+) -> VanillaCell {
+    let b = &params.boundaries;
+    if b.ecotone_width_log2 <= 0.0 || b.ecotone_max_fraction <= 0.0 {
+        return base.cell;
+    }
+    let edges = params.climate.province_edges_r;
+    let mut best = f64::INFINITY;
+    let mut neighbor_province = base.zone.province;
+    for (k, edge) in edges.iter().enumerate() {
+        let edge_log2 = dln(*edge) / LN_2;
+        let dist = (log2_r - edge_log2).abs();
+        if dist < best {
+            best = dist;
+            // Провинции нумеруются от влажной K6 к сухой K1; переход через
+            // порог вверх по R уменьшает номер провинции на единицу.
+            neighbor_province = if log2_r < edge_log2 {
+                5_u8.saturating_sub(k as u8)
+            } else {
+                6_u8.saturating_sub(k as u8)
+            }
+            .clamp(1, 6);
+        }
+    }
+    if !best.is_finite() || best >= b.ecotone_width_log2 || neighbor_province == base.zone.province
+    {
+        return base.cell;
+    }
+    let fraction = b.ecotone_max_fraction * (1.0 - smoothstep(0.0, b.ecotone_width_log2, best));
+    let n = fbm2_unit(
+        subseed(seed, SALT_ECOTONE),
+        x / b.ecotone_lambda_blocks,
+        z / b.ecotone_lambda_blocks,
+        1.0,
+        1,
+        0.5,
+    );
+    if clamp01(0.5 + 0.5 * n) >= fraction {
+        return base.cell;
+    }
+    let neighbor_ratio = dexp(
+        LN_2 * (log2_r
+            + if neighbor_province < base.zone.province {
+                0.5
+            } else {
+                -0.5
+            }),
+    );
+    let neighbor = biome_cell(
+        base.zone.belt,
+        neighbor_province,
+        neighbor_ratio,
+        t_min,
+        params,
+    );
+    let dh = neighbor.h as i8 - base.cell.h as i8;
+    if dh == 0 {
+        return base.cell;
+    }
+    // Лестница: пятно делает один шаг от текущего класса к соседнему, а не
+    // повторяет весь скачок h0→h3. Имя берётся из средней таблицы A.2.
+    let h = (base.cell.h as i8 + dh.signum()).clamp(0, 4) as u8;
+    middle_cell(base.cell.t, h)
+}
+
+fn middle_cell(t: u8, h: u8) -> VanillaCell {
+    let name = match (t.min(4), h.min(4)) {
+        (0, 0 | 1) => "snowy_plains",
+        (0, 2) => "snowy_taiga",
+        (0, 3) => "snowy_taiga",
+        (0, _) => "taiga",
+        (1, 0 | 1) => "plains",
+        (1, 2) => "forest",
+        (1, 3) => "taiga",
+        (1, _) => "old_growth_spruce_taiga",
+        (2, 0) => "flower_forest",
+        (2, 1) => "plains",
+        (2, 2) => "forest",
+        (2, 3) => "birch_forest",
+        (2, _) => "dark_forest",
+        (3, 0 | 1) => "savanna",
+        (3, 2) => "forest",
+        (3, _) => "jungle",
+        _ => "desert",
+    };
+    cell(t.min(4), h.min(4), name)
 }
 
 #[cfg(test)]
@@ -300,5 +513,202 @@ mod tests {
         assert_eq!(classify_inputs(27.0, 0.6, 20.0, &p).zone.belt, 6);
         assert_eq!(classify_inputs(27.0, 20.0, 20.0, &p).zone.province, 1);
         assert_eq!(classify_inputs(27.0, 0.2, 20.0, &p).zone.province, 6);
+    }
+}
+
+#[cfg(test)]
+mod t133_tests {
+    use super::*;
+    use crate::climate::{ClimateSample, PrecipSample, SurfaceSample, TemperatureSample};
+    use crate::math::Vec2;
+    use crate::mode::Mode;
+    use crate::version::GenVersion;
+
+    fn climate(t_bio: f64, ratio: f64) -> ClimateSample {
+        ClimateSample {
+            point: Vec2::default(),
+            surface: SurfaceSample::default(),
+            pole: crate::climate::PoleSample {
+                phi_deg: 45.0,
+                north: Vec2::new(0.0, 1.0),
+                east: Vec2::new(1.0, 0.0),
+                pole: Vec2::default(),
+                distance_l: 1.0,
+            },
+            wind: Vec2::new(1.0, 0.0),
+            temperature: TemperatureSample {
+                t_c: t_bio,
+                sst_c: t_bio,
+                amp_c: 8.0,
+                t_bio,
+                t_min: 5.0,
+            },
+            precip: PrecipSample {
+                mu: 0.5,
+                cont: 0.5,
+                p_mm: 1000.0,
+                pet_mm: 1000.0 * ratio,
+                ratio,
+                slope: 0.0,
+            },
+        }
+    }
+
+    #[test]
+    fn coarse_jitter_moves_classes_more_than_fine_and_v0_is_bitwise_unchanged() {
+        let dev = Params::defaults(GenVersion::V1Dev, Mode::Gameplay);
+        let mut fine_only = dev.clone();
+        fine_only.boundaries.jitter_coarse_sigma_factor = 1.0;
+        let old = Params::defaults(GenVersion::V0, Mode::Gameplay);
+        let mut changed_old = old.clone();
+        changed_old.boundaries.jitter_coarse_sigma_factor = 8.0;
+        changed_old.boundaries.ecotone_max_fraction = 0.5;
+        let c = climate(15.0, 1.0);
+        let mut dev_moves = 0;
+        let mut fine_moves = 0;
+        for k in 0..400 {
+            let x = k as f64 * 37.0 - 7000.0;
+            let z = k as f64 * -23.0 + 3000.0;
+            let base = classify_inputs(15.0, 1.0, 5.0, &dev);
+            let d = classify(&c, false, x, z, 42, &dev);
+            let f = classify(&c, false, x, z, 42, &fine_only);
+            dev_moves += usize::from(d.cell != base.cell);
+            fine_moves += usize::from(f.cell != base.cell);
+            let a = classify(&c, false, x, z, 42, &old);
+            let b = classify(&c, false, x, z, 42, &changed_old);
+            assert_eq!(a.cell, b.cell);
+            assert_eq!(a.t_bio.to_bits(), b.t_bio.to_bits());
+            assert_eq!(a.ratio.to_bits(), b.ratio.to_bits());
+        }
+        assert!(
+            dev_moves > fine_moves,
+            "крупный масштаб должен двигать границы сильнее: {dev_moves} vs {fine_moves}"
+        );
+    }
+
+    #[test]
+    fn ecotone_is_one_step_only_near_humidity_thresholds_and_never_in_ocean() {
+        let mut p = Params::defaults(GenVersion::V1Dev, Mode::Gameplay);
+        p.boundaries.ecotone_max_fraction = 0.5;
+        p.boundaries.ecotone_width_log2 = 0.5;
+        let mut no_eco = p.clone();
+        no_eco.boundaries.ecotone_max_fraction = 0.0;
+        let mut seen = 0;
+        for k in 0..2000 {
+            let x = k as f64 * 17.0 - 17000.0;
+            let z = k as f64 * 11.0 - 9000.0;
+            // Точно на пороге R=2 (K4/K5) и вдали от него.
+            for ratio in [2.0, 1000.0] {
+                let c = climate(27.0, ratio);
+                let base = classify(&c, false, x, z, 42, &no_eco);
+                let got = classify(&c, false, x, z, 42, &p);
+                let ocean = classify(&c, true, x, z, 42, &p);
+                assert!(ocean.is_ocean);
+                assert_eq!(ocean.cell, ocean_cell(c.temperature.sst_c, &p));
+                let dh = (got.cell.h as i8 - base.cell.h as i8).abs();
+                assert!(
+                    dh <= 1,
+                    "экотон не должен повторять скачок h0→h3: {base:?} → {got:?}"
+                );
+                if ratio == 1000.0 {
+                    assert_eq!(got.cell, base.cell, "вдали от порога экотона нет");
+                } else if got.cell != base.cell {
+                    seen += 1;
+                    assert_eq!(got.cell.t, base.cell.t);
+                }
+            }
+        }
+        assert!(seen > 0, "мозаика экотона должна встречаться у порога");
+    }
+}
+
+#[cfg(test)]
+mod t135_tests {
+    use super::*;
+    use crate::mode::Mode;
+    use crate::version::GenVersion;
+
+    /// Главная причина скачков h≥2 по диагностике T134: дыры в таблице 7.8.2.
+    /// Лестница v1-dev обязана быть 1-Липшицевой по провинции и по поясу.
+    #[test]
+    fn v1_dev_table_neighbors_differ_by_at_most_one_h_step() {
+        for mode in Mode::ALL {
+            let p = Params::defaults(GenVersion::V1Dev, mode);
+            for t_min in [-25.0_f64, -10.0, 0.0, 8.0, 20.0] {
+                for ratio in [0.2_f64, 0.45, 0.8, 1.5, 3.0, 6.0, 12.0] {
+                    for belt in 0..=6_u8 {
+                        for province in 1..=6_u8 {
+                            let here = biome_cell(belt, province, ratio, t_min, &p);
+                            if province < 6 {
+                                let next = biome_cell(belt, province + 1, ratio, t_min, &p);
+                                assert!(
+                                    here.h.abs_diff(next.h) <= 1,
+                                    "провинция {province}→{} пояс {belt} t_min {t_min}: h {}→{}",
+                                    province + 1,
+                                    here.h,
+                                    next.h
+                                );
+                            }
+                            if belt < 6 {
+                                let next = biome_cell(belt + 1, province, ratio, t_min, &p);
+                                assert!(
+                                    here.h.abs_diff(next.h) <= 1,
+                                    "пояс {belt}→{} провинция {province} t_min {t_min}: h {}→{}",
+                                    belt + 1,
+                                    here.h,
+                                    next.h
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Внутри одной провинции h не должен зависеть от R: ветки v0 по R
+    /// (flower_forest/birch/dark_forest) давали скачки без смены класса.
+    #[test]
+    fn v1_dev_h_is_constant_inside_a_province() {
+        let p = Params::defaults(GenVersion::V1Dev, Mode::Gameplay);
+        for belt in 0..=6_u8 {
+            for province in 1..=6_u8 {
+                let edge_lo = match province {
+                    6 => 0.05,
+                    5 => 0.51,
+                    4 => 1.01,
+                    3 => 2.01,
+                    2 => 4.01,
+                    _ => 8.01,
+                };
+                let edge_hi = match province {
+                    6 => 0.49,
+                    5 => 0.99,
+                    4 => 1.99,
+                    3 => 3.99,
+                    2 => 7.99,
+                    _ => 40.0,
+                };
+                let a = biome_cell(belt, province, edge_lo, 5.0, &p);
+                let b = biome_cell(belt, province, edge_hi, 5.0, &p);
+                assert_eq!(a.h, b.h, "пояс {belt} провинция {province}: h зависит от R");
+            }
+        }
+    }
+
+    #[test]
+    fn v0_table_is_untouched_by_the_ladder() {
+        let old = Params::defaults(GenVersion::V0, Mode::Gameplay);
+        // Известные дыры v0 сохранены bitwise: бореальный K3 h1 против K4 h3.
+        assert_eq!(biome_cell(2, 3, 3.0, 5.0, &old).h, 1);
+        assert_eq!(biome_cell(2, 4, 1.5, 5.0, &old).h, 3);
+        assert_eq!(biome_cell(6, 4, 1.5, 20.0, &old).h, 1);
+        assert_eq!(biome_cell(6, 5, 0.8, 20.0, &old).h, 3);
+        assert_eq!(biome_cell(3, 4, 0.9, 5.0, &old).biome, "flower_forest");
+        let dev = Params::defaults(GenVersion::V1Dev, Mode::Gameplay);
+        assert_eq!(biome_cell(2, 3, 3.0, 5.0, &dev).h, 1);
+        assert_eq!(biome_cell(2, 4, 1.5, 5.0, &dev).h, 2);
+        assert_eq!(biome_cell(6, 4, 1.5, 20.0, &dev).h, 2);
+        assert_eq!(biome_cell(6, 5, 0.8, 20.0, &dev).h, 3);
     }
 }

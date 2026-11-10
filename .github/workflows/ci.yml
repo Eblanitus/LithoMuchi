@@ -20,9 +20,16 @@ jobs:
       - name: rustfmt
         run: cargo fmt --all -- --check
       - name: clippy
-        run: cargo clippy --workspace --all-targets -- -D warnings
+        run: |
+          set -o pipefail
+          cargo clippy --workspace --all-targets --message-format=json -- -D warnings | python3 tools/ci_annotations.py clippy
       - name: tests
-        run: cargo test --workspace
+        run: |
+          set -o pipefail
+          cargo test --workspace --exclude litho-tests --no-fail-fast 2>&1 | python3 tools/ci_annotations.py test
+          # T115: случайные межплитовые инварианты строят много сетей стока;
+          # проверяем их в release, чтобы debug-прогон не упёрся в бюджет T160.
+          cargo test -p litho-tests --release --no-fail-fast 2>&1 | python3 tools/ci_annotations.py test
       - name: "ОБЯЗАТЕЛЬНЫЙ ГЕЙТ — seams пусто и бенч не хуже прошлого"
         run: |
           cargo run -p litho-sandbox --release -- seams --seed 42 --mode gameplay
@@ -34,6 +41,40 @@ jobs:
           cat /tmp/v0-hashes.txt
           grep -Fxq 'scientific = 5cdbe1d36ef8d16a' /tmp/v0-hashes.txt
           grep -Fxq 'gameplay = b48e8037c4e85977' /tmp/v0-hashes.txt
+      - name: "Э3.5 — v1-dev smoke (синтетика НЕ является приёмкой)"
+        run: |
+          set -o pipefail
+          cargo run -q -p litho-sandbox --release -- stats --seed 42 --mode gameplay --version v1-dev --synthetic-height --span-l 16 --size 32 --relief-size 16 | python3 tools/ci_annotations.py report
+          cargo run -q -p litho-sandbox --release -- render --seed 42 --mode gameplay --version v1-dev --layers vanilla-height --size 32 --bpp 32 --synthetic-height --out out/v1-dev-smoke
+          cargo run -q -p xtask -- params-hash --version v1-dev | python3 tools/ci_annotations.py report
+          for version in v0 v1-dev; do
+            for mode in gameplay scientific; do
+              # T115: до T160 широкий случайный скан v1-dev строит слишком
+              # много холодных сетей. Локальный smoke не является приёмкой;
+              # v0 остаётся на прежней области 200 L.
+              span=()
+              if [ "$version" = v1-dev ]; then span=(--span-l 16); fi
+              cargo run -q -p litho-sandbox --release -- stats --seed 42 --mode "$mode" --version "$version" --synthetic-height --size 64 --relief-size 32 "${span[@]}" | python3 tools/ci_annotations.py report
+            done
+          done
+          { echo "T100 synthetic sweep v1-dev local 16 L (НЕ приёмка, широкий скан после T160)"; cargo run -q -p litho-sandbox --release -- stats-all --version v1-dev --synthetic-height --span-l 16 --size 16 --relief-size 8 --boundary-size 8; } | python3 tools/ci_annotations.py report
+      - name: "Э3.5 — seams v1-dev gameplay (порог 0.02 не ослаблен)"
+        run: |
+          set -o pipefail
+          cargo run -q -p litho-sandbox --release -- seams --seed 42 --mode gameplay --version v1-dev | python3 tools/ci_annotations.py report
+      - name: "Э3.5 — seams v1-dev scientific (порог 0.02 не ослаблен)"
+        run: |
+          set -o pipefail
+          cargo run -q -p litho-sandbox --release -- seams --seed 42 --mode scientific --version v1-dev | python3 tools/ci_annotations.py report
+      - name: "Э3.5 — T110–T122 drainage/lakes/hydrology/relief smoke (R1 + галерейные леса + A/зоны)"
+        run: |
+          set -o pipefail
+          cargo run -q -p litho-sandbox --release -- drainage --seed 42 --mode gameplay --version v1-dev --at 0,0 | python3 tools/ci_annotations.py report
+          cargo run -q -p litho-sandbox --release -- render --seed 42 --mode gameplay --version v1-dev --layers channels,lakes,hydrology --size 32 --bpp 32 --out out/channels-smoke
+          cargo run -q -p litho-sandbox --release -- render --seed 42 --mode gameplay --version v1-dev --layers channels,lakes,hydrology --center -54524.133387731,24107.233303404 --size 32 --bpp 32 --out out/lakes-delta-smoke
+          # T120–T122: A/зоны переведены в C/E/W; малый кадр проверяет путь
+          # relief + глубину впадин без широкого скана T160.
+          cargo run -q -p litho-sandbox --release -- render --seed 42 --mode gameplay --version v1-dev --layers relief --size 8 --bpp 32 --out out/relief-smoke
       - name: Профиль скорости по слоям (Д-027, без подавления ошибок)
         run: cargo run -p litho-sandbox --release -- profile
       - name: sandbox smoke test
@@ -61,7 +102,11 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - name: tests
-        run: cargo test --workspace
+        shell: bash
+        run: |
+          set -o pipefail
+          cargo test --workspace --exclude litho-tests --no-fail-fast 2>&1 | python tools/ci_annotations.py test
+          cargo test -p litho-tests --release --no-fail-fast 2>&1 | python tools/ci_annotations.py test
 
   windows-gnu:
     name: Windows gnu (MinGW) · tests
@@ -78,8 +123,10 @@ jobs:
       - name: tests
         shell: bash
         run: |
+          set -o pipefail
           export PATH="/c/msys64/mingw64/bin:$PATH"
-          cargo test --workspace --target x86_64-pc-windows-gnu
+          cargo test --workspace --target x86_64-pc-windows-gnu --exclude litho-tests --no-fail-fast 2>&1 | python tools/ci_annotations.py test
+          cargo test -p litho-tests --target x86_64-pc-windows-gnu --release --no-fail-fast 2>&1 | python tools/ci_annotations.py test
 
   hnmod:
     name: Мод · упаковка litospherity.hnmod
