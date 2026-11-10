@@ -36,7 +36,7 @@
 | `boundaries.ray_bend_octaves` | `1` | `1` |
 | `boundaries.ray_bend_sigma_deg` | `6.0` | `6.0` |
 | `boundaries.ray_fan_half_angle_deg` | `20.0` | `20.0` |
-| `boundaries.ray_fan_rays` | `5` | `5` |
+| `boundaries.ray_fan_rays` | `3` | `3` |
 | `boundaries.ray_fan_sigma_deg` | `20.0` | `20.0` |
 | `boundaries.wind_belt_fade_deg` | `21.0` | `21.0` |
 | `boundaries.wind_fd_step_l` | `0.5` | `0.5` |
@@ -52,6 +52,8 @@
 | `channels.depth0_blocks` | `2.0` | `1.5` |
 | `channels.meander_mountain` | `0.3` | `0.3` |
 | `channels.meander_plain` | `1.5` | `1.5` |
+| `channels.mirror_cascade_step_blocks` | `32.0` | `16.0` |
+| `channels.mirror_step_blocks` | `128.0` | `64.0` |
 | `channels.plain_slope_max` | `0.02` | `0.02` |
 | `channels.q_min_mm_l2` | `25.0` | `25.0` |
 | `channels.valley_mountain` | `2.0` | `2.0` |
@@ -192,6 +194,21 @@
 | `drainage.jitter_fraction` | `0.35` | `0.35` |
 | `drainage.outlet_min_weight` | `0.5` | `0.5` |
 | `drainage.step_l` | `0.25` | `0.25` |
+| `height.coast_width_c` | `0.06` | `0.06` |
+| `height.cold_jagged_gain` | `0.2` | `0.2` |
+| `height.e_gain_blocks_per_km` | `24.0` | `0.0` |
+| `height.e_knots` | `[-1.0, -0.78, -0.375, -0.2225, 0.05, 0.45, 0.55, 1.0]` | `[-1.0, -0.78, -0.375, -0.2225, 0.05, 0.45, 0.55, 1.0]` |
+| `height.factor` | `[0.85, 0.75, 0.6, 0.5, 0.25, 0.55, 0.2]` | `[0.85, 0.75, 0.6, 0.5, 0.25, 0.55, 0.2]` |
+| `height.jaggedness` | `[0.9, 0.7, 0.3, 0.4, 0.1, 0.6, 0.05]` | `[0.9, 0.7, 0.3, 0.4, 0.1, 0.6, 0.05]` |
+| `height.lake_depth_max_blocks` | `64.0` | `64.0` |
+| `height.land_y` | `[[90.0, 120.0, 160.0, 200.0, 240.0], [80.0, 105.0, 135.0, 165.0, 195.0], [35.0, 70.0, 105.0, 120.0, 130.0], [51.0, 70.0, 85.0, 100.0, 117.0], [64.0, 67.0, 70.0, 73.0, 76.0], [70.0, 80.0, 90.0, 100.0, 110.0], [62.0, 62.5, 63.0, 63.5, 64.0]]` | `[[90.0, 120.0, 160.0, 200.0, 240.0], [80.0, 105.0, 135.0, 165.0, 195.0], [35.0, 70.0, 105.0, 120.0, 130.0], [51.0, 70.0, 85.0, 100.0, 117.0], [64.0, 67.0, 70.0, 73.0, 76.0], [70.0, 80.0, 90.0, 100.0, 110.0], [62.0, 62.5, 63.0, 63.5, 64.0]]` |
+| `height.max_y` | `319.0` | `319.0` |
+| `height.min_y` | `-64.0` | `-64.0` |
+| `height.ocean_c` | `[-0.98, -0.7, -0.52, -0.45, -0.4, -0.3, -0.19]` | `[-0.98, -0.7, -0.52, -0.45, -0.4, -0.3, -0.19]` |
+| `height.ocean_y` | `[35.0, 42.0, 48.0, 52.0, 55.0, 59.0, 63.0]` | `[35.0, 42.0, 48.0, 52.0, 55.0, 59.0, 63.0]` |
+| `height.pv_knots` | `[-1.0, -0.5, 0.0, 0.5, 1.0]` | `[-1.0, -0.5, 0.0, 0.5, 1.0]` |
+| `height.warm_jagged_drop` | `0.1` | `0.1` |
+| `height.water_km_to_blocks` | `24.0` | `64.0` |
 | `hydrology.bank_fraction` | `0.5` | `0.5` |
 | `hydrology.dry_basin_e` | `0.3` | `0.3` |
 | `hydrology.estuary_c` | `-0.2` | `-0.2` |
@@ -379,4 +396,4 @@
 | `wind.knot7.phi_deg` | `90` | `90` |
 | `wind.knot7.s` | `0.3` | `0.3` |
 
-params_hash: scientific = 4656ddcab532831e, gameplay = c9467c53ba4a1bca
+params_hash: scientific = 0434763b9972834f, gameplay = ae595c5d41aaa656
