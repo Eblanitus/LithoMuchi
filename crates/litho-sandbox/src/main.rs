@@ -1141,7 +1141,7 @@ fn cmd_acceptance(args: &[String]) -> Result<(), String> {
     };
     let opts = height_stats::StatsOptions::parse(args, &base)?;
     let seeds = acceptance_seeds(args, &base)?;
-    let modes = acceptance_modes(args, base.mode)?;
+    let modes = acceptance_modes(args, base.mode);
     let json_output = args.iter().any(|arg| arg == "--json");
     let mut summary = acceptance::Summary::default();
     for seed in seeds {
@@ -1188,11 +1188,11 @@ fn acceptance_seeds(args: &[String], opts: &RenderOptions) -> Result<Vec<i64>, S
 }
 
 /// Режимы для `acceptance`: явный `--mode` ограничивает один режим, иначе оба.
-fn acceptance_modes(args: &[String], default: Mode) -> Result<Vec<Mode>, String> {
+fn acceptance_modes(args: &[String], default: Mode) -> Vec<Mode> {
     if value(args, "--mode").is_some() {
-        return Ok(vec![default]);
+        return vec![default];
     }
-    Ok(Mode::ALL.to_vec())
+    Mode::ALL.to_vec()
 }
 
 fn usage() -> &'static str {

@@ -43,7 +43,7 @@ pub use classify::{ClassSample, LifeZone, VanillaCell};
 pub use climate::{ClimateSample, PoleSample, PrecipSample, TemperatureSample};
 pub use crust::CrustSample;
 pub use field::{Field, FullSample, to_f32};
-pub use generator::{GenError, Generator, WorldSample};
+pub use generator::{GenError, Generator, WorldSample, field_error_log_count};
 pub use hydrology::{HydrologySample, SurfaceKind};
 pub use math::Vec2;
 pub use mode::{BlockParams, Mode};

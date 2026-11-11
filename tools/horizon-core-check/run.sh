@@ -83,7 +83,7 @@ helper = (root / 'mod/glue/noise_hook.rs.in').read_text()
 s = s.replace(
     marker,
     helper
-    + '\n        if let std::ops::ControlFlow::Break(result) = litospherity_noise(self, graph, id) { return result; }\n'
+    + '\n        if let core::ops::ControlFlow::Break(result) = litospherity_noise(self, graph, id) { return result; }\n'
     + marker,
     1,
 )

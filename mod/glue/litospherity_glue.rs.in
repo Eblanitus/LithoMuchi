@@ -90,25 +90,25 @@ pub fn noise_for(seed: i64, spec: NoiseSpec) -> Option<Arc<dyn crate::noise::Noi
     registry.retain(|(_, weak)| weak.strong_count() > 0);
     for (existing, weak) in registry.iter() {
         if *existing == k {
-            if let Some(gen) = weak.upgrade() {
+            if let Some(generator) = weak.upgrade() {
                 return Some(Arc::new(LithoNoise {
-                    gen,
+                    generator,
                     field: spec.field,
                 }));
             }
         }
     }
-    let gen = Arc::new(Generator::new(seed, spec.mode, spec.version).ok()?);
-    registry.push((k, Arc::downgrade(&gen)));
+    let generator = Arc::new(Generator::new(seed, spec.mode, spec.version).ok()?);
+    registry.push((k, Arc::downgrade(&generator)));
     Some(Arc::new(LithoNoise {
-        gen,
+        generator,
         field: spec.field,
     }))
 }
 
 #[derive(Debug)]
 pub struct LithoNoise {
-    gen: Arc<Generator>,
+    generator: Arc<Generator>,
     field: Field,
 }
 
@@ -126,12 +126,12 @@ impl crate::noise::Noise for LithoNoise {
     }
 
     fn get2(&self, x: f64, z: f64) -> f32 {
-        self.gen.field_column(self.field, x, z) as f32
+        self.generator.field_column(self.field, x, z) as f32
     }
 
     fn get3(&self, x: f64, _y: f64, z: f64) -> f32 {
         // Наши поля от y не зависят (кроме лавы, T77).
-        self.gen.field_column(self.field, x, z) as f32
+        self.generator.field_column(self.field, x, z) as f32
     }
 
     // Horizon 66f3981: Z/X/Y layout, scaled coordinates, additive writes.

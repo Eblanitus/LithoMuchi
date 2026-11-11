@@ -81,10 +81,14 @@ fn real_seeded_density_and_volume_dispatch() {
     for legacy in [false, true] {
         let compiler = DensityCompiler::new_seeded(graph.clone(), 1, legacy);
         let injected = compiler.get_noise_sampler(offset_noise).unwrap();
-        assert_eq!(
-            horizon_core::noise::Noise::range(injected.as_ref()).unwrap(),
-            [-2.0, 2.0]
-        );
+        // NanRange в Horizon не реализует Debug: unwrap() на Result нельзя.
+        match horizon_core::noise::Noise::range(injected.as_ref()) {
+            Ok([low, high]) => {
+                assert_eq!(low, -2.0);
+                assert_eq!(high, 2.0);
+            }
+            Err(_) => panic!("внедрённый offset-шум не вернул диапазон"),
+        }
         let samplers: Vec<_> = roots
             .iter()
             .map(|&id| compiler.compile_raw(id).unwrap())

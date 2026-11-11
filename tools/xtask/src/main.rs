@@ -220,7 +220,7 @@ fn reset_dir(path: &Path) -> Result<(), String> {
     fs::create_dir_all(path).map_err(|e| format!("не могу создать {}: {e}", path.display()))
 }
 
-fn owned_packs(out: &Path) -> impl Iterator<Item = PathBuf> {
+fn owned_packs(out: &Path) -> Vec<PathBuf> {
     let mut names = Vec::new();
     for version in PACK_VERSIONS {
         for mode in Mode::ALL {
@@ -228,7 +228,7 @@ fn owned_packs(out: &Path) -> impl Iterator<Item = PathBuf> {
         }
     }
     names.push(out.join("litospherity_smoke"));
-    names.into_iter()
+    names
 }
 
 fn cmd_pack(out: &Path) -> Result<(), String> {
