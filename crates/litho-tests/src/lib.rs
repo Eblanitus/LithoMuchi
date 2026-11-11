@@ -418,7 +418,7 @@ mod water_relief_dev {
 
 #[cfg(test)]
 mod drainage_dev {
-    use litho_core::channel::{max_query_radius_l, ChannelQuery, ReachKind};
+    use litho_core::channel::{ChannelQuery, ReachKind, max_query_radius_l};
     use litho_core::drainage::RiverNetError;
     use litho_core::plates::plates_near;
     use litho_core::{GenVersion, Generator, Mode};
@@ -521,9 +521,7 @@ mod drainage_dev {
             let Some(hit) = query.nearest else {
                 continue;
             };
-            if hit.plate_id != owner.a.id
-                && hit.distance_l < 1e-6
-                && query.networks_considered > 1
+            if hit.plate_id != owner.a.id && hit.distance_l < 1e-6 && query.networks_considered > 1
             {
                 return (x, z);
             }
@@ -628,8 +626,7 @@ mod drainage_dev {
         assert!(lake.networks_considered > 1);
 
         // Прежняя опорная точка дельты; актуальную ищем общим запросом.
-        let (delta_x, delta_z) =
-            delta_arm_point(&generator, (-54524.133387731, 24107.233303404));
+        let (delta_x, delta_z) = delta_arm_point(&generator, (-54524.133387731, 24107.233303404));
         let (channel, _) = generator.drainage_surface_query(delta_x, delta_z).unwrap();
         assert!(channel.delta > 0.9);
         assert!(channel.networks_considered > 1);
