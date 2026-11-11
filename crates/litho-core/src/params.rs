@@ -1635,10 +1635,18 @@ impl Params {
             let c = &mut p.climate;
             c.c_coast_e_km = 0.20;
             c.e_base = 0.15;
-            c.e_noise = 0.20;
+            // Шаг 5 / T123: стартовые 0.20 держали E4 ≈ 73–80 %. Увеличиваем
+            // разброс E и PV, чтобы доли E2/E3 выросли, не трогая v0.
+            c.e_noise = 0.28;
             c.w_plain_base = 0.30;
-            c.w_plain_noise = 0.10;
+            c.w_plain_noise = 0.16;
             c.w_sign_epsilon = 1e-3;
+            // K5: отсечь мелкие «лужи» и ослабить плоское дно котловин.
+            p.drainage.depression_min_depth_km = 0.015;
+            p.relief.basin_strength = 0.08;
+            // T113/T110: равнинные русла были почти прямыми (1,01–1,02).
+            p.channels.meander_plain = 2.2;
+            p.channels.meander_mountain = 0.5;
         }
         p.config_key = p.params_hash();
         p
@@ -2167,7 +2175,7 @@ mod tests {
             assert_ne!(old.params_hash(), dev.params_hash());
             assert_eq!(dev.climate.c_coast_e_km, 0.20);
             assert_eq!(dev.climate.e_base, 0.15);
-            assert_eq!(dev.climate.e_noise, 0.20);
+            assert_eq!(dev.climate.e_noise, 0.28);
             assert_eq!(dev.climate.w_plain_base, 0.30);
             assert_eq!(dev.block.lambda_e_blocks, 2.0 * old.block.lambda_e_blocks);
             assert!(dev.block.w_sign_half_width_blocks > 0.0);
