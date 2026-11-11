@@ -141,7 +141,10 @@ impl RunVerdict {
         }
     }
     pub fn failed(&self) -> usize {
-        self.checks.iter().filter(|c| c.verdict == Verdict::Fail).count()
+        self.checks
+            .iter()
+            .filter(|c| c.verdict == Verdict::Fail)
+            .count()
     }
     pub fn pending(&self) -> usize {
         self.checks
@@ -217,10 +220,16 @@ impl Summary {
         self.runs.push(run);
     }
     pub fn passed(&self) -> usize {
-        self.runs.iter().filter(|r| r.verdict() == Verdict::Pass).count()
+        self.runs
+            .iter()
+            .filter(|r| r.verdict() == Verdict::Pass)
+            .count()
     }
     pub fn failed(&self) -> usize {
-        self.runs.iter().filter(|r| r.verdict() == Verdict::Fail).count()
+        self.runs
+            .iter()
+            .filter(|r| r.verdict() == Verdict::Fail)
+            .count()
     }
     pub fn pending(&self) -> usize {
         self.runs
@@ -255,7 +264,11 @@ impl Summary {
             self.passed(),
             self.failed(),
             self.pending(),
-            if self.is_full_volume() { "да" } else { "НЕТ" },
+            if self.is_full_volume() {
+                "да"
+            } else {
+                "НЕТ"
+            },
             self.verdict().as_str()
         ));
         out
@@ -411,9 +424,7 @@ mod tests {
         );
         let checks = value.get("checks").and_then(|c| c.as_array()).unwrap();
         assert_eq!(checks.len(), 4);
-        let summary = Summary {
-            runs: vec![run],
-        };
+        let summary = Summary { runs: vec![run] };
         let value = crate::json::parse(&summary.json()).unwrap();
         assert_eq!(
             value.get("full_volume"),

@@ -1133,11 +1133,9 @@ fn cmd_sweep(args: &[String]) -> Result<(), String> {
 fn cmd_acceptance(args: &[String]) -> Result<(), String> {
     let base = options_from(args)?;
     let Some(model) = height_model_for(args, &base)? else {
-        return Err(
-            "acceptance требует предпросмотр высоты: --game-data ПУТЬ, \
+        return Err("acceptance требует предпросмотр высоты: --game-data ПУТЬ, \
              --synthetic-height или --version v1-dev"
-                .into(),
-        );
+            .into());
     };
     let opts = height_stats::StatsOptions::parse(args, &base)?;
     let seeds = acceptance_seeds(args, &base)?;

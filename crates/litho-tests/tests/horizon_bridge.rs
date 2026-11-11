@@ -50,7 +50,10 @@ fn names_and_smoke() {
     let expected = field_for(42, name, 12.0, -34.0).unwrap();
     assert_eq!(value.to_bits(), expected.to_bits());
     assert!((-2.0..=2.0).contains(&value));
-    assert_eq!(field_for(42, "litospherity:v0/gameplay/offset", 12.0, -34.0), None);
+    assert_eq!(
+        field_for(42, "litospherity:v0/gameplay/offset", 12.0, -34.0),
+        None
+    );
 }
 
 #[test]

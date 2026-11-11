@@ -889,9 +889,7 @@ impl Generator {
         let full = match self.cached_full(x, z) {
             Ok(Some(full)) => full,
             Ok(None) => {
-                log_field_error(|| {
-                    format!("поле {:?} в ({x}, {z}): сэмпл отсутствует", field)
-                });
+                log_field_error(|| format!("поле {:?} в ({x}, {z}): сэмпл отсутствует", field));
                 return 0.0;
             }
             Err(error) => {

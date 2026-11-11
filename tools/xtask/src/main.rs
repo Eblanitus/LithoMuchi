@@ -215,7 +215,8 @@ fn make_pack(
 /// старые `factor.json`/`jaggedness.json` не должны попасть в `.hnmod`.
 fn reset_dir(path: &Path) -> Result<(), String> {
     if path.exists() {
-        fs::remove_dir_all(path).map_err(|e| format!("не могу очистить {}: {e}", path.display()))?;
+        fs::remove_dir_all(path)
+            .map_err(|e| format!("не могу очистить {}: {e}", path.display()))?;
     }
     fs::create_dir_all(path).map_err(|e| format!("не могу создать {}: {e}", path.display()))
 }
@@ -224,7 +225,11 @@ fn owned_packs(out: &Path) -> Vec<PathBuf> {
     let mut names = Vec::new();
     for version in PACK_VERSIONS {
         for mode in Mode::ALL {
-            names.push(out.join(format!("litospherity_{}_{}", version.as_str(), mode.as_str())));
+            names.push(out.join(format!(
+                "litospherity_{}_{}",
+                version.as_str(),
+                mode.as_str()
+            )));
         }
     }
     names.push(out.join("litospherity_smoke"));
@@ -411,7 +416,11 @@ fn cmd_bundle_check(out: &Path) -> Result<(), String> {
             };
             if version.is_water_relief_dev() {
                 for field in I2_FIELDS {
-                    let df_name = if field == "pv" { "ridges_folded" } else { field };
+                    let df_name = if field == "pv" {
+                        "ridges_folded"
+                    } else {
+                        field
+                    };
                     if !df_path(df_name).is_file() || !noise_path(field).is_file() {
                         return Err(format!("в паке {} нет I2-поля {field}", pack.display()));
                     }
@@ -426,7 +435,11 @@ fn cmd_bundle_check(out: &Path) -> Result<(), String> {
                 }
             } else {
                 for field in I2_FIELDS {
-                    let df_name = if field == "pv" { "ridges_folded" } else { field };
+                    let df_name = if field == "pv" {
+                        "ridges_folded"
+                    } else {
+                        field
+                    };
                     if df_path(df_name).exists() || noise_path(field).exists() {
                         return Err(format!(
                             "v0 пак {} не должен менять {field}",
