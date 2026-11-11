@@ -83,6 +83,27 @@ fn samplers(pack: &str) -> Vec<Arc<dyn DensitySampler>> {
         .collect()
 }
 
+/// `Path::rglob` нет в std: рекурсивно ищем файл шума в дереве пака.
+fn has_noise(dir: &Path, name: &str) -> bool {
+    fn visit(dir: &Path, name: &str) -> bool {
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            return false;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                if visit(&path, name) {
+                    return true;
+                }
+            } else if path.file_name().and_then(|n| n.to_str()) == Some(name) {
+                return true;
+            }
+        }
+        false
+    }
+    visit(dir, name)
+}
+
 fn sample(fields: &[Arc<dyn DensitySampler>], p: [i32; 3]) -> Vec<f32> {
     fields
         .iter()
@@ -104,7 +125,7 @@ fn v1_dev_pack_reaches_real_26_3_depth_graph() {
             "пак не должен переопределять {field} до теста №2"
         );
         assert!(
-            noise.rglob(&format!("{field}.json")).next().is_none(),
+            !has_noise(&noise, &format!("{field}.json")),
             "пак не должен объявлять шум {field} до теста №2"
         );
     }

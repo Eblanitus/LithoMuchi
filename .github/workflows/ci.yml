@@ -15,33 +15,6 @@ env:
   LIBM_TAG: libm-v0.2.16
 
 jobs:
-  rustfmt-fix:
-    # Одноразовый инструмент: запускается только коммитом с маркером, сам
-    # применяет cargo fmt и пушит результат без маркера (рекурсии нет).
-    if: github.event_name == 'push' && contains(github.event.head_commit.message || '', '[apply-rustfmt]')
-    name: Применить rustfmt
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt
-      - name: Форматировать и запушить
-        run: |
-          cargo fmt --all
-          if git diff --quiet; then
-            echo "rustfmt: изменений нет"
-            exit 0
-          fi
-          git config user.name "Arena Agent"
-          git config user.email "agent@arena.ai"
-          git add -A
-          git commit -m "rustfmt: применить cargo fmt --all"
-          BRANCH="${{ github.ref_name }}"
-          git push origin "HEAD:$BRANCH"
-
   linux:
     name: Linux · fmt, clippy, tests
     runs-on: ubuntu-latest
