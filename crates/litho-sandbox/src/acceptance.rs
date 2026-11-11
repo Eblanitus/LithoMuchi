@@ -154,7 +154,7 @@ impl RunVerdict {
     }
     /// Вердикт по прогону: PASS только если объём приёмочный и все проверки прошли.
     pub fn verdict(&self) -> Verdict {
-        if !self.acceptance_volume {
+        if self.pending() > 0 {
             Verdict::NotAcceptance
         } else if self.failed() == 0 {
             Verdict::Pass
@@ -222,7 +222,7 @@ impl Summary {
     pub fn passed(&self) -> usize {
         self.runs
             .iter()
-            .filter(|r| r.verdict() == Verdict::Pass)
+            .filter(|r| r.verdict().passed())
             .count()
     }
     pub fn failed(&self) -> usize {
