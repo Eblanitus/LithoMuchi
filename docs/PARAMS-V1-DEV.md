@@ -396,4 +396,4 @@
 | `wind.knot7.phi_deg` | `90` | `90` |
 | `wind.knot7.s` | `0.3` | `0.3` |
 
-params_hash: scientific = 0434763b9972834f, gameplay = ae595c5d41aaa656
+params_hash: scientific = 0f50636d0a87fec3, gameplay = 92a54ee5a40149c2
