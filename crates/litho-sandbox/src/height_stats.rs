@@ -97,6 +97,10 @@ pub struct HeightStats {
     pub hyps: [usize; 5],
     pub erosion: [usize; 7],
     pub valley: usize,
+    /// Д-057: суша в полосе `river ≥ 0.5` вне выреза русла — плоский сухой
+    /// берег с речным W≈0. В срез «долина» не входит (как и до Д-057, когда
+    /// вся полоса считалась руслом), но печатается отдельно.
+    pub dry_bank: usize,
     pub relief_windows: usize,
     pub relief_median: Option<f64>,
     pub flat_windows: usize,
@@ -478,6 +482,7 @@ impl HeightStats {
             hyps: [0; 5],
             erosion: [0; 7],
             valley: 0,
+            dry_bank: 0,
             relief_windows: 0,
             relief_median: None,
             flat_windows: 0,
@@ -508,6 +513,7 @@ impl HeightStats {
             hyps: [0; 5],
             erosion: [0; 7],
             valley: 0,
+            dry_bank: 0,
             relief_windows: 0,
             relief_median: None,
             flat_windows: 0,
@@ -542,7 +548,14 @@ impl HeightStats {
                 };
                 let y = model.surface_y(input)?;
                 let c_land = v.c >= land_threshold;
-                let river = world.river >= 0.5;
+                // Д-057: в v1-dev «точка русла» — узкий вырез самого русла
+                // (`channels.bank`), где и должна стоять вода. Широкое поле
+                // `river` сглаживает C/E/W вокруг и водой быть не обязано.
+                let river = if base.version.is_water_relief_dev() {
+                    world.hydrology.channels.bank >= 0.5
+                } else {
+                    world.river >= 0.5
+                };
                 if c_land && river {
                     out.river_samples += 1;
                     if y < SEA_LEVEL {
@@ -569,7 +582,9 @@ impl HeightStats {
                 } else {
                     peaks_valleys(v.w)
                 };
-                if pv < -0.85 {
+                if base.version.is_water_relief_dev() && world.river >= 0.5 {
+                    out.dry_bank += 1;
+                } else if pv < -0.85 {
                     out.valley += 1;
                 }
             }
@@ -730,7 +745,11 @@ impl HeightStats {
         self.pct(self.erosion[5] + self.erosion[6], self.land)
     }
     pub fn valley_pct(&self) -> f64 {
-        self.pct(self.valley, self.land)
+        self.pct(self.valley, self.land - self.dry_bank)
+    }
+
+    pub fn dry_bank_pct(&self) -> f64 {
+        self.pct(self.dry_bank, self.land)
     }
     pub fn flat_pct(&self) -> f64 {
         self.pct(self.flat_windows, self.relief_windows)
@@ -770,7 +789,7 @@ impl HeightStats {
              E4 {e4:.2}% (быстрая цель ≤60%); E2+E3 {e23:.2}%; E0+E1 {e01:.2}%; E5+E6 {e56:.2}%\n\
              долина PV<-0.85 {valley:.2}% (v1 ≤8% gameplay / ≤6% scientific)\n\
              окна {window}×{window} блоков: медиана перепада {median:.2} (быстрая цель ≥8), <4 блоков {flat:.2}%, окон={windows}\n\
-             вода в руслах r≥0.5: {water:.2}% из {river} точек (R1: поверхность ниже y=63)\n\
+             вода в руслах r≥0.5: {water:.2}% из {river} точек (R1: поверхность ниже y=63); сухой берег в полосе русла {dry_bank:.2}% суши\n\
              T115–T116 от всех точек: вода {surface_water:.2}%, болото {swamp:.2}%, сухая котловина {dry:.2}%, эстуарий {estuary:.2}%, отложено R2 {deferred:.2}%, галерейный лес {gallery:.2}%\n",
             base.seed,
             base.mode.as_str(),
@@ -803,6 +822,7 @@ impl HeightStats {
             windows = self.relief_windows,
             water = self.river_water_pct(),
             river = self.river_samples,
+            dry_bank = self.dry_bank_pct(),
             surface_water = self.pct(self.water_samples, self.samples),
             swamp = self.pct(self.swamp_samples, self.samples),
             dry = self.pct(self.dry_samples, self.samples),

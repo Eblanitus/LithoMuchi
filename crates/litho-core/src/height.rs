@@ -76,6 +76,25 @@ pub fn sample(
     warm: f64,
     params: &Params,
 ) -> HeightSample {
+    sample_micro(c, e, pv, e_km, cold, warm, 0.0, 0.0, params)
+}
+
+/// Д-057: то же с мелким рельефом. `noise` — единичный шум бугров, `gate` —
+/// его вес 0…1 (в долине реки 0, чтобы дно оставалось на уровне русла).
+/// Размах в блоках берётся по полосе E. Ниже `micro_low_y` бугры только
+/// поднимают поверхность, поэтому низменность не затапливается.
+#[allow(clippy::too_many_arguments)]
+pub fn sample_micro(
+    c: f64,
+    e: f64,
+    pv: f64,
+    e_km: f64,
+    cold: f64,
+    warm: f64,
+    noise: f64,
+    gate: f64,
+    params: &Params,
+) -> HeightSample {
     debug_assert!(validate(params).is_ok());
     let h = &params.height;
     let pv = clamp(pv, h.pv_knots[0], h.pv_knots[h.pv_knots.len() - 1]);
@@ -83,14 +102,29 @@ pub fn sample(
     for (k, row) in h.land_y.iter().enumerate() {
         rows[k] = piecewise(&h.pv_knots, row, pv);
     }
-    let land_y = by_erosion(e, &rows, &h.e_knots);
+    let mut land_y = by_erosion(e, &rows, &h.e_knots);
+    let gate = clamp01(gate);
+    if gate > 0.0 && noise.is_finite() {
+        let amp = by_erosion(e, &h.micro_amp_blocks, &h.e_knots);
+        // Гладкая «только вверх»: (√(n²+1)+n)/2 ≥ 0 и → max(n, 0) при |n|≫1.
+        let up = 0.5 * ((noise * noise + 1.0).sqrt() + noise);
+        let high = smoothstep(h.micro_low_y, h.micro_high_y, land_y);
+        land_y += gate * amp * lerp(up, noise, high);
+    }
     let ocean_y = piecewise(&h.ocean_c, &h.ocean_y, c);
     let threshold = params.climate.ocean_c_threshold;
     let coast = smoothstep(threshold - h.coast_width_c, threshold + h.coast_width_c, c);
     let mut y = ocean_y + (land_y - ocean_y) * coast;
     // Научный режим: реальная макровысота поверх своей таблицы. Gameplay
     // остаётся на блочной таблице; e_gain по умолчанию 0.
-    y += h.e_gain_blocks_per_km * e_km;
+    // Д-057: ниже `e_gain_base_km` суша остаётся на таблице (низменности не
+    // всплывают), выше прибавляется только превышение. Океан (e_km<0) — как был.
+    let excess_km = if e_km > h.e_gain_base_km {
+        e_km - h.e_gain_base_km
+    } else {
+        e_km.min(0.0)
+    };
+    y += h.e_gain_blocks_per_km * excess_km;
     let y = clamp(y, h.min_y, h.max_y);
     // Шкала ванили: factor ~0,6…6,3 (равнины ~5–6, горы ~1), jaggedness 0…1
     // (0 вне холодных пиков). На первый тест пак их не переопределяет —
@@ -128,7 +162,9 @@ pub fn with_water(
     let mut water_y = SEA_LEVEL;
     let mut bed_y = land_y;
     if let Some(hit) = hydrology.channels.nearest {
-        let cut = clamp01(hydrology.channels.core.max(hit.core_strength));
+        // Д-057: вода и вырез — по узкому берегу русла, а не по широкому
+        // переходу C/E/W. Долину вокруг даёт PV→−1 и таблица высот.
+        let cut = clamp01(hydrology.channels.bank);
         if cut > 0.0 {
             let mirror = hit.mirror_y.round().min(land_y - 1.0);
             if mirror >= h.min_y {
@@ -193,6 +229,14 @@ pub fn validate(params: &Params) -> Result<(), &'static str> {
     if !h.coast_width_c.is_finite()
         || h.coast_width_c <= 0.0
         || !h.e_gain_blocks_per_km.is_finite()
+        || !h.e_gain_base_km.is_finite()
+        || h.e_gain_base_km < 0.0
+        || h.micro_amp_blocks.iter().any(|v| !v.is_finite() || *v < 0.0)
+        || !h.micro_lambda_blocks.is_finite()
+        || h.micro_lambda_blocks <= 0.0
+        || !h.micro_low_y.is_finite()
+        || !h.micro_high_y.is_finite()
+        || h.micro_high_y <= h.micro_low_y
         || !h.cold_jagged_gain.is_finite()
         || !(0.0..=1.0).contains(&h.cold_jagged_gain)
         || !h.warm_jagged_drop.is_finite()
@@ -235,7 +279,13 @@ mod tests {
         let valley = sample(0.4, -0.3, -1.0, 0.5, 0.0, 0.0, &p);
         let peak = sample(0.4, -0.3, 1.0, 0.5, 0.0, 0.0, &p);
         assert!(valley.surface_y < peak.surface_y - 20.0);
-        assert!(valley.surface_y < 60.0, "каньон плато {:?}", valley);
+        // Д-057: дно долины плато стоит у уровня русла (вариант B), а не
+        // уходит каньоном под море.
+        assert!(
+            (SEA_LEVEL..70.0).contains(&valley.surface_y),
+            "долина плато {:?}",
+            valley
+        );
     }
 
     #[test]
@@ -355,6 +405,7 @@ mod tests {
         let p = params(Mode::Gameplay);
         let mut hydro = HydrologySample::default();
         hydro.channels.core = 1.0;
+        hydro.channels.bank = 1.0;
         hydro.channels.nearest = Some(channel_hit(80.0, 2.0));
         let cut = with_water(base_at(100.0), &hydro, &p);
         assert_eq!(cut.water_y, 80.0);

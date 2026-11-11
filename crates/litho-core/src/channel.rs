@@ -150,6 +150,9 @@ pub struct ChannelHit {
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct ChannelQuery {
     pub core: f64,
+    /// Д-057: узкий берег самого русла (вырез высоты и вода). `core` с
+    /// широким переходом остаётся для C/E/W и биомов.
+    pub bank: f64,
     pub valley: f64,
     pub delta: f64,
     /// T116: максимум силы коридора большой реки, без климатического веса.
@@ -164,6 +167,7 @@ impl ChannelQuery {
     /// Ничьи по расстоянию разрешаются id плиты, затем номерами русла/отрезка.
     pub fn merge(&mut self, other: Self) {
         self.core = self.core.max(other.core);
+        self.bank = self.bank.max(other.bank);
         self.valley = self.valley.max(other.valley);
         self.delta = self.delta.max(other.delta);
         self.gallery = self.gallery.max(other.gallery);
@@ -196,7 +200,7 @@ pub fn max_query_radius_l(params: &Params) -> f64 {
     core_l * reach_factor
         + params.drainage.step_l * SQRT_2
         + c.delta_length_max_l
-        + params.hydrology.field_fade_l
+        + params.hydrology.channel_fade_l
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -208,6 +212,7 @@ pub struct ChannelNetwork {
     max_valley_l: f64,
     bank_fraction: f64,
     field_fade_l: f64,
+    bank_min_l: f64,
     gallery_q_min_mm_l2: f64,
     gallery_width_factor: f64,
 }
@@ -349,7 +354,7 @@ impl ChannelNetwork {
         let (reaches, segments) = append_deltas(reaches, segments, seed, plate_id, params);
         let mut baskets = HashMap::<Cell, Vec<usize>>::new();
         let mut max_valley_l = 0.0_f64;
-        let field_fade_l = params.hydrology.field_fade_l;
+        let field_fade_l = params.hydrology.channel_fade_l;
         for (k, segment) in segments.iter().enumerate() {
             let end_influence = |p: ChannelPoint| {
                 p.valley_l
@@ -382,7 +387,8 @@ impl ChannelNetwork {
             baskets,
             max_valley_l,
             bank_fraction: params.hydrology.bank_fraction,
-            field_fade_l: params.hydrology.field_fade_l,
+            field_fade_l: params.hydrology.channel_fade_l,
+            bank_min_l: params.hydrology.bank_min_blocks / params.block.l_blocks,
             gallery_q_min_mm_l2: params.hydrology.gallery_q_min_mm_l2,
             gallery_width_factor: params.hydrology.gallery_width_factor,
         };
@@ -487,7 +493,10 @@ impl ChannelNetwork {
             }
             let core_strength = 1.0 - smoothstep(at.core_l, at.core_l + fade, distance_l);
             let valley_strength = 1.0 - smoothstep(0.0, influence_l, distance_l);
+            let bank_l = (self.bank_fraction * at.core_l).max(self.bank_min_l);
+            let bank_strength = 1.0 - smoothstep(at.core_l, at.core_l + bank_l, distance_l);
             out.core = out.core.max(core_strength);
+            out.bank = out.bank.max(bank_strength);
             out.valley = out.valley.max(valley_strength);
             let large = smoothstep(
                 0.5 * self.gallery_q_min_mm_l2,
@@ -898,10 +907,21 @@ fn meander(input: &[ChannelPoint], seed: u64, plate_id: u64, reach: usize) -> Ve
         .normalized();
         let envelope =
             smoothstep(0.0, end_ramp, distance) * smoothstep(total, total - end_ramp, distance);
-        let noise = noise2(seed, phase, offset);
+        // Д-057: меандр — синусоида по фазе вдоль русла, а шум только сбивает
+        // фазу и меняет размах. Чистый градиентный шум давал извилистость
+        // 1,03: его типичный размах втрое меньше амплитуды.
+        let wobble = 0.35 * noise2(seed, 0.5 * phase, offset);
+        let gain = clamp(
+            0.8 + 0.6 * noise2(seed, 0.37 * phase, offset + 17.0),
+            0.4,
+            1.2,
+        );
+        let cycle = phase + wobble;
+        let angle = (cycle - cycle.floor() - 0.5) * 2.0 * std::f64::consts::PI;
+        let wave = -crate::math::rotate_unit(Vec2::new(1.0, 0.0), angle).z;
         let shift = tangent
             .perp()
-            .scale(input[k].meander_amplitude_l * noise * envelope);
+            .scale(input[k].meander_amplitude_l * wave * gain * envelope);
         let mut moved = input[k];
         moved.point = input[k].point.add(shift);
         if k == 0 {
@@ -925,7 +945,11 @@ mod tests {
     use crate::version::GenVersion;
 
     fn params() -> Params {
-        Params::defaults(GenVersion::V1Dev, Mode::Gameplay)
+        // Механика русел проверяется на пороге Q первого набора: подбор
+        // густоты сети (Д-057) не должен менять геометрию этих тестов.
+        let mut p = Params::defaults(GenVersion::V1Dev, Mode::Gameplay);
+        p.channels.q_min_mm_l2 = 25.0;
+        p
     }
 
     fn node(i: i64, height: f64, down: Option<usize>) -> DrainageNode {
@@ -1123,9 +1147,13 @@ mod tests {
         assert!(edge.gallery < core.gallery && edge.gallery > 0.0);
         assert_eq!(
             large
+                // Запас на размах меандра: русло выше устья качается поперёк
+                // оси до 2·meander·1.2 ядра.
                 .query(at.add(Vec2::new(
                     0.0,
-                    segment.b.core_l * p.hydrology.gallery_width_factor * 1.1
+                    segment.b.core_l
+                        * (p.hydrology.gallery_width_factor * 1.1
+                            + 2.4 * p.channels.meander_plain.max(p.channels.meander_mountain))
                 )))
                 .gallery,
             0.0

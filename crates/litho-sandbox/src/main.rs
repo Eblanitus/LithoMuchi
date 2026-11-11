@@ -852,9 +852,24 @@ fn cmd_bench(args: &[String]) -> Result<(), String> {
     // К4 / шаг 6: отдельный замер на чанк и на колонку для v1-dev. Повторы
     // показывают и холодный проход, и попадание в кэш колонки T160.
     let chunk_columns = CHUNK_SIDE * CHUNK_SIDE;
-    let mut chunk_pass = || {
+    // Д-057: сети рек соседних плит строятся один раз на плиту (сотни мс) и
+    // меряются отдельно (`drainage`, cold). Здесь нужна цена колонок, поэтому
+    // углы и центр области трогаем заранее, в точках вне сетки чанка: иначе
+    // одна постройка сети, случайно попавшая в чанк, утраивает «мс/чанк».
+    let chunk_span = ((CHUNK_SIDE - 1) * 4) as f64;
+    for (fx, fz) in [(0.0, 0.0), (1.0, 0.0), (0.0, 1.0), (1.0, 1.0), (0.5, 0.5)] {
+        sink += generator.field(
+            Field::Continents,
+            fx * chunk_span + 0.5,
+            64.0,
+            fz * chunk_span + 0.5,
+        );
+    }
+    // Д-057: холодный проход — ровно один. Раньше время трёх повторов (один
+    // холодный и два из кэша) делилось на три, и «cold» выходил втрое меньше.
+    let mut chunk_pass = |repeats: usize| {
         let start = Instant::now();
-        for _ in 0..CHUNK_REPEATS {
+        for _ in 0..repeats {
             for iz in 0..CHUNK_SIDE {
                 for ix in 0..CHUNK_SIDE {
                     let x = (ix * 4) as f64;
@@ -865,10 +880,10 @@ fn cmd_bench(args: &[String]) -> Result<(), String> {
                 }
             }
         }
-        start.elapsed().as_secs_f64() / CHUNK_REPEATS as f64 * 1e3
+        start.elapsed().as_secs_f64() / repeats as f64 * 1e3
     };
-    let chunk_cold = chunk_pass();
-    let chunk_warm = chunk_pass();
+    let chunk_cold = chunk_pass(1);
+    let chunk_warm = chunk_pass(CHUNK_REPEATS);
     let per_column_ms = chunk_cold / chunk_columns as f64;
     let target_status = if chunk_cold <= chunk_target_ms {
         "в цели"
@@ -1193,11 +1208,129 @@ fn acceptance_modes(args: &[String], default: Mode) -> Vec<Mode> {
     Mode::ALL.to_vec()
 }
 
+/// T123: сырые ингредиенты рельефа по сетке в TSV — для подбора гипсометрии
+/// вне генератора (доли полос E, высоты, вклад гидрологии). Только v1/v1-dev.
+fn cmd_dump(args: &[String]) -> Result<(), String> {
+    let opts = options_from(args)?;
+    if !opts.version.is_water_relief_dev() {
+        return Err("dump: нужен --version v1-dev".into());
+    }
+    let span_l = match value(args, "--span-l") {
+        Some(text) => text.parse::<f64>().map_err(|e| format!("--span-l: {e}"))?,
+        None => 200.0,
+    };
+    let size = match value(args, "--size") {
+        Some(text) => text.parse::<usize>().map_err(|e| format!("--size: {e}"))?,
+        None => 32,
+    };
+    let g = generator(&opts)?;
+    let p = g.params().clone();
+    let step = span_l * opts.mode.l_blocks() / size as f64;
+    let lambda_e = p.block.lambda_e_blocks;
+    println!(
+        "seed\tmode\tx\tz\tc\te\tw\tpv\ty\triver\tkind\twater\tfloodplain\tswamp\tdry\testuary\tdeferred\te_km\tmountain\tplateau\tiota\ta\tfoothill\tpaleo\tcraton\tescarp\tvolcanic\thills\tbasin\tbasin_km\trift_floor\trift_shoulder\tn_e\tw0\tw1\tw2\tw3\tw4\tw5\tw6\tw7\tt_bio\tratio\twater_y\tbed_y\twater_strength\tch_dist\tch_core\tch_depth\tch_mirror\tch_q\tch_end\tbank"
+    );
+    for j in 0..size {
+        for i in 0..size {
+            let x = opts.center_x + (i as f64 - size as f64 * 0.5) * step;
+            let z = opts.center_z + (j as f64 - size as f64 * 0.5) * step;
+            let Some(world) = g.world_sample_fast(x, z) else {
+                continue;
+            };
+            let v = world.vanilla;
+            if v.c < p.climate.ocean_c_threshold {
+                continue;
+            }
+            let relief = g
+                .try_relief_sample(x, z)
+                .map_err(|e| e.to_string())?
+                .ok_or("нет образца рельефа")?;
+            let weights = g.morpho_weights(x, z).ok_or("нет морфозон")?;
+            let n_e = litho_core::noise::fbm2_unit(
+                litho_core::seed::subseed(g.seed(), litho_core::seed::SALT_RELIEF_E),
+                x / lambda_e,
+                z / lambda_e,
+                1.0,
+                3,
+                0.5,
+            );
+            let h = world.hydrology;
+            let s = world.climate.surface;
+            let mut row = format!(
+                "{}\t{}\t{x:.1}\t{z:.1}\t{:.4}\t{:.4}\t{:.4}\t{:.4}\t{:.2}\t{:.3}\t{}\t{:.3}\t{:.3}\t{:.3}\t{:.3}\t{:.3}\t{:.3}\t{:.4}\t{:.4}\t{:.4}\t{:.4}",
+                opts.seed,
+                opts.mode.as_str(),
+                v.c,
+                v.e,
+                v.w,
+                world.pv,
+                world.height.surface_y,
+                world.river,
+                h.kind.as_str(),
+                h.water,
+                h.floodplain,
+                h.swamp,
+                h.dry_basin,
+                h.estuary,
+                h.r2_deferred,
+                s.e_km,
+                s.mountain,
+                s.plateau,
+                s.iota_l,
+            );
+            for value in [
+                relief.a,
+                relief.foothill,
+                relief.paleosuture,
+                relief.craton,
+                relief.escarpment,
+                relief.volcanic,
+                relief.hills,
+                relief.basin,
+                relief.basin_depth_km,
+                relief.rift_floor,
+                relief.rift_shoulder,
+                n_e,
+            ] {
+                row.push_str(&format!("\t{value:.4}"));
+            }
+            for value in weights.values {
+                row.push_str(&format!("\t{value:.3}"));
+            }
+            row.push_str(&format!(
+                "\t{:.2}\t{:.3}",
+                world.climate.temperature.t_bio, world.climate.precip.ratio
+            ));
+            let l = opts.mode.l_blocks();
+            row.push_str(&format!(
+                "\t{:.2}\t{:.2}\t{:.3}",
+                world.height.water_y, world.height.bed_y, world.height.water_strength
+            ));
+            match h.channels.nearest {
+                Some(hit) => row.push_str(&format!(
+                    "\t{:.1}\t{:.1}\t{:.2}\t{:.1}\t{:.1}\t{}",
+                    hit.distance_l * l,
+                    hit.core_l * l,
+                    hit.depth_blocks,
+                    hit.mirror_y,
+                    hit.discharge_mm_l2,
+                    hit.end.as_str()
+                )),
+                None => row.push_str("\t\t\t\t\t\t"),
+            }
+            row.push_str(&format!("\t{:.3}", h.channels.bank));
+            println!("{row}");
+        }
+    }
+    Ok(())
+}
+
 fn usage() -> &'static str {
     "Litospherity sandbox (этап Э1, песочница целиком)\n\n\
      Команды:\n\
        render       карты PNG в папку --out\n\
        probe        все поля в точке --at x,z\n\
+       dump         T123: ингредиенты рельефа по сетке в TSV (--span-l, --size; v1-dev)\n\
        layers       список слоёв\n\
        stats        метрики 12.4; с --game-data/--synthetic-height — T100\n\
        stats-all    16 сидов × 2 режима; принимает те же флаги высоты\n\
@@ -1236,6 +1369,7 @@ fn main() -> Result<(), String> {
     match command.as_str() {
         "render" => cmd_render(&args[1..]),
         "probe" => cmd_probe(&args[1..]),
+        "dump" => cmd_dump(&args[1..]),
         "stats" => cmd_stats(&args[1..]),
         "stats-all" => cmd_stats_all(&args[1..]),
         "acceptance" => cmd_acceptance(&args[1..]),

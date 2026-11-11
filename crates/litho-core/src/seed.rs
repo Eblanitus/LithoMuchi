@@ -94,6 +94,8 @@ pub const SALT_RELIEF_BASIN: &str = "relief.basin";
 // T122: шум E/PV поверх зон; знак W остаётся на соли T102.
 pub const SALT_RELIEF_E: &str = "relief.erosion";
 pub const SALT_RELIEF_PV: &str = "relief.peaks_valleys";
+/// Д-057: мелкий рельеф собственной высоты (бугры длиной ~100 блоков).
+pub const SALT_HEIGHT_MICRO: &str = "height.micro";
 // T130: гладкий поворот линии тока влаги; соли v0 не меняются.
 pub const SALT_MOISTURE_BEND: &str = "climate.moisture_bend";
 // T132: перевалы вдоль хребтов; соль v0 не меняется.

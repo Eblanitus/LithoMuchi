@@ -183,6 +183,7 @@ impl RiverNet {
             &neighbors,
             p.fill_epsilon_km,
             p.depression_min_depth_km,
+            p.lake_area_max_fraction,
         );
         let points: Vec<_> = nodes.iter().map(|node| node.point).collect();
         let grid = ClimateGrid::build(&points, p.climate_step_l, climate)?;
@@ -327,6 +328,10 @@ fn validate_params(params: &Params) -> Result<(), RiverNetError> {
         Some("fill_epsilon_km должен быть положительным")
     } else if !p.depression_min_depth_km.is_finite() || p.depression_min_depth_km < 0.0 {
         Some("depression_min_depth_km должен быть неотрицательным")
+    } else if !p.lake_area_max_fraction.is_finite()
+        || !(0.0..=1.0).contains(&p.lake_area_max_fraction)
+    {
+        Some("lake_area_max_fraction должен лежать в [0, 1]")
     } else if !p.outlet_min_weight.is_finite() || !(0.0..=1.0).contains(&p.outlet_min_weight) {
         Some("outlet_min_weight должен лежать в [0, 1]")
     } else if !(1..=8).contains(&p.anchor_search_radius_cells) {
@@ -492,6 +497,7 @@ fn route_nodes(
     neighbors: &[Vec<usize>],
     epsilon_km: f64,
     min_depth_km: f64,
+    lake_area_max_fraction: f64,
 ) -> Vec<Depression> {
     let mut visited = vec![false; nodes.len()];
     let mut heap = BinaryHeap::new();
@@ -532,7 +538,70 @@ fn route_nodes(
         .map(|(k, node)| visited[k] && node.filled_km - node.route_km > min_depth_km)
         .collect();
     add_components(nodes, neighbors, &flooded, false, &mut depressions);
+    breach_over_budget(nodes, &mut depressions, lake_area_max_fraction);
     depressions
+}
+
+/// К5 / Д-057: прорезка вместо заливки. Заполненные впадины плиты берутся от
+/// самой глубокой, пока их узлы укладываются в долю `max_fraction` узлов суши
+/// плиты. Остальные перестают быть впадинами: priority-flood уже дал им путь
+/// к порогу, по нему идёт русло, а `filled_km` остаётся высотой прорези.
+/// Замкнутые впадины без выхода прорезать некуда, они сохраняются.
+fn breach_over_budget(
+    nodes: &mut [DrainageNode],
+    depressions: &mut Vec<Depression>,
+    max_fraction: f64,
+) {
+    if max_fraction >= 1.0 || depressions.is_empty() {
+        return;
+    }
+    let land = nodes
+        .iter()
+        .filter(|node| node.in_plate && !node.outlet.is_outlet())
+        .count();
+    let budget = (max_fraction.max(0.0) * land as f64).floor() as usize;
+    let mut order: Vec<usize> = (0..depressions.len())
+        .filter(|&d| {
+            matches!(depressions[d].kind, DepressionKind::Filled { .. })
+                && depressions[d].plate_node_count > 0
+        })
+        .collect();
+    order.sort_by(|&a, &b| {
+        depressions[b]
+            .max_depth_km
+            .total_cmp(&depressions[a].max_depth_km)
+            .then_with(|| a.cmp(&b))
+    });
+    let mut keep = vec![true; depressions.len()];
+    let mut used = 0_usize;
+    for d in order {
+        let size = depressions[d].plate_node_count;
+        if used + size <= budget {
+            used += size;
+        } else {
+            keep[d] = false;
+        }
+    }
+    if keep.iter().all(|k| *k) {
+        return;
+    }
+    let mut remap = vec![None; depressions.len()];
+    let mut next = 0_usize;
+    for (d, kept) in keep.iter().enumerate() {
+        if *kept {
+            remap[d] = Some(next);
+            next += 1;
+        }
+    }
+    for node in nodes.iter_mut() {
+        node.depression = node.depression.and_then(|d| remap[d]);
+    }
+    let mut d = 0_usize;
+    depressions.retain(|_| {
+        let kept = keep[d];
+        d += 1;
+        kept
+    });
 }
 
 fn add_components(
@@ -723,7 +792,7 @@ mod tests {
             node(1, 0, 2.0, DrainageOutlet::None),
         ];
         let neighbors = prepare(&mut nodes);
-        let depressions = route_nodes(&mut nodes, &neighbors, 1e-4, 0.002);
+        let depressions = route_nodes(&mut nodes, &neighbors, 1e-4, 0.002, 1.0);
         let params = crate::Params::defaults(GenVersion::V1Dev, crate::Mode::Gameplay);
         let points: Vec<_> = nodes.iter().map(|node| node.point).collect();
         let grid = ClimateGrid::build(&points, params.drainage.climate_step_l, |_| {
@@ -749,6 +818,59 @@ mod tests {
     }
 
     #[test]
+    fn over_budget_pits_are_breached_deepest_first() {
+        // Д-057: две ямы на 7×7; бюджет в один узел оставляет глубокую,
+        // мелкая прорезается и остаётся проточной.
+        let build = |fraction: f64| {
+            let mut nodes = Vec::new();
+            for i in 0..7 {
+                for j in 0..7 {
+                    let height = if i == 0 && j == 3 {
+                        0.0
+                    } else if i == 2 && j == 2 {
+                        0.2
+                    } else if i == 4 && j == 4 {
+                        0.6
+                    } else {
+                        1.0
+                    };
+                    let outlet = if i == 0 && j == 3 {
+                        DrainageOutlet::Sea
+                    } else {
+                        DrainageOutlet::None
+                    };
+                    nodes.push(node(i, j, height, outlet));
+                }
+            }
+            let neighbors = prepare(&mut nodes);
+            let depressions = route_nodes(&mut nodes, &neighbors, 1e-4, 0.002, fraction);
+            (nodes, depressions)
+        };
+        let deep = 2 * 7 + 2;
+        let shallow = 4 * 7 + 4;
+        let (nodes, depressions) = build(1.0);
+        assert_eq!(depressions.len(), 2);
+        assert!(nodes[deep].depression.is_some() && nodes[shallow].depression.is_some());
+
+        let (nodes, depressions) = build(0.03);
+        assert_eq!(depressions.len(), 1);
+        assert_eq!(nodes[deep].depression, Some(0));
+        assert_eq!(depressions[0].bottom_node, deep);
+        assert_eq!(nodes[shallow].depression, None);
+        assert!(nodes[shallow].downstream.is_some());
+        assert!(nodes[shallow].filled_km > nodes[shallow].route_km);
+
+        let (nodes, depressions) = build(0.0);
+        assert!(depressions.is_empty());
+        assert!(nodes.iter().all(|node| node.depression.is_none()));
+        assert!(
+            nodes
+                .iter()
+                .all(|node| node.outlet.is_outlet() || node.downstream.is_some())
+        );
+    }
+
+    #[test]
     fn priority_flood_fills_pit_and_routes_to_sea() {
         let mut nodes = Vec::new();
         for i in 0..5 {
@@ -767,7 +889,7 @@ mod tests {
             }
         }
         let neighbors = prepare(&mut nodes);
-        let depressions = route_nodes(&mut nodes, &neighbors, 1e-4, 0.002);
+        let depressions = route_nodes(&mut nodes, &neighbors, 1e-4, 0.002, 1.0);
         let pit = 2 * 5 + 2;
         assert!(nodes[pit].filled_km > 1.0);
         assert!(nodes[pit].downstream.is_some());
@@ -794,7 +916,7 @@ mod tests {
             node(1, 1, 2.0, DrainageOutlet::None),
         ];
         let neighbors = prepare(&mut nodes);
-        let depressions = route_nodes(&mut nodes, &neighbors, 1e-4, 0.002);
+        let depressions = route_nodes(&mut nodes, &neighbors, 1e-4, 0.002, 1.0);
         assert!(nodes.iter().all(|node| node.downstream.is_none()));
         assert!(nodes.iter().all(|node| node.outlet == DrainageOutlet::None));
         assert_eq!(depressions.len(), 1);

@@ -617,14 +617,37 @@ impl Generator {
         let river = local_river.max(water.river);
         // I2-lite: долины режут русла/низкие озёра, а не каждая смена знака W.
         let pv = crate::math::lerp(pv_relief, -1.0, crate::math::clamp01(river));
+        // Д-057: в долине реки прибавка макровысоты (научный режим) гаснет,
+        // иначе русло на плато остаётся выше моря и в игре сухое.
+        let e_km = climate.surface.e_km;
+        let e_valley_km = crate::math::lerp(
+            e_km,
+            e_km.min(self.params.height.e_gain_base_km),
+            crate::math::clamp01(river),
+        );
+        let hp = &self.params.height;
+        let micro = if hp.micro_amp_blocks.iter().any(|amp| *amp > 0.0) {
+            crate::noise::fbm2_unit(
+                crate::seed::subseed(self.seed, crate::seed::SALT_HEIGHT_MICRO),
+                x / hp.micro_lambda_blocks,
+                z / hp.micro_lambda_blocks,
+                1.0,
+                2,
+                0.5,
+            )
+        } else {
+            0.0
+        };
         let height = crate::height::with_water(
-            crate::height::sample(
+            crate::height::sample_micro(
                 vanilla.c,
                 vanilla.e,
                 pv,
-                climate.surface.e_km,
+                e_valley_km,
                 morpho.values[6],
                 morpho.values[7],
+                micro,
+                1.0 - crate::math::clamp01(river),
                 &self.params,
             ),
             &water,
@@ -1010,6 +1033,123 @@ mod tests {
         }
     }
 
+    /// Д-057: опорные точки тестов берутся из построенной сети. Середины
+    /// отрезков обычных русел рядом с `near`: (d², x, z, nx, nz, ядро в блоках,
+    /// расход). `n` — единичная нормаль к отрезку.
+    #[allow(clippy::type_complexity)]
+    fn river_candidates(
+        g: &Generator,
+        near: (f64, f64),
+        extra_l: f64,
+    ) -> Vec<(f64, f64, f64, f64, f64, f64, f64)> {
+        let mut out = Vec::new();
+        let point = g.macro_point(near.0, near.1);
+        let radius = crate::channel::max_query_radius_l(g.params()) + extra_l;
+        let shift = g.spawn_shift();
+        let l = g.params().block.l_blocks;
+        for plate in crate::plates::plates_near(point, radius, g.seed(), g.params()) {
+            let Ok(net) = g.drainage_network(&plate) else {
+                continue;
+            };
+            let channels = net.channels();
+            for segment in channels.segments() {
+                if channels.reaches()[segment.reach].kind != crate::channel::ReachKind::Channel {
+                    continue;
+                }
+                let a = segment.a.point;
+                let b = segment.b.point;
+                let x = (0.5 * (a.x + b.x) - shift.x) * l;
+                let z = (0.5 * (a.z + b.z) - shift.z) * l;
+                let n = b.sub(a).normalized().perp();
+                let dx = x - near.0;
+                let dz = z - near.1;
+                out.push((
+                    dx * dx + dz * dz,
+                    x,
+                    z,
+                    n.x,
+                    n.z,
+                    0.5 * (segment.a.core_l + segment.b.core_l) * l,
+                    0.5 * (segment.a.discharge_mm_l2 + segment.b.discharge_mm_l2),
+                ));
+            }
+        }
+        out.sort_by(|a, b| a.0.total_cmp(&b.0));
+        out
+    }
+
+    fn find_river_core(g: &Generator, near: (f64, f64)) -> (f64, f64) {
+        for (_, x, z, ..) in river_candidates(g, near, 4.0).into_iter().take(4096) {
+            let Some(s) = g.sample(x, z) else {
+                continue;
+            };
+            if s.world.hydrology.channels.core > 0.9
+                && s.world.river > 0.9
+                && s.cell.biome.ends_with("river")
+                && s.vanilla.w.abs() < 0.01
+            {
+                return (x, z);
+            }
+        }
+        panic!("не найдена точка русла рядом с {near:?}");
+    }
+
+    fn find_gallery_forest(g: &Generator, near: (f64, f64)) -> (f64, f64) {
+        let q_min = g.params().hydrology.gallery_q_min_mm_l2;
+        for (_, x, z, nx, nz, core, q) in river_candidates(g, near, 8.0) {
+            if q < q_min {
+                continue;
+            }
+            for k in [2.5_f64, -2.5, 3.5, -3.5, 4.5, -4.5] {
+                let px = x + nx * core * k;
+                let pz = z + nz * core * k;
+                let Some(s) = g.sample(px, pz) else {
+                    continue;
+                };
+                let h = s.world.hydrology;
+                if h.gallery >= 0.5 && h.gallery > s.world.river && s.cell.biome == "forest" {
+                    return (px, pz);
+                }
+            }
+        }
+        panic!("не найден галерейный лес рядом с {near:?}");
+    }
+
+    fn find_deferred_lake(g: &Generator, near: (f64, f64)) -> (f64, f64) {
+        let point = g.macro_point(near.0, near.1);
+        let shift = g.spawn_shift();
+        let l = g.params().block.l_blocks;
+        let r1 = g.params().hydrology.r1_max_level_km;
+        let mut centers = Vec::new();
+        for plate in crate::plates::plates_near(point, 12.0, g.seed(), g.params()) {
+            let Ok(net) = g.drainage_network(&plate) else {
+                continue;
+            };
+            for lake in net.lakes().lakes() {
+                if lake.kind.has_water() && lake.level_km.is_some_and(|level| level > r1) {
+                    let x = (lake.center.x - shift.x) * l;
+                    let z = (lake.center.z - shift.z) * l;
+                    let dx = x - near.0;
+                    let dz = z - near.1;
+                    centers.push((dx * dx + dz * dz, x, z));
+                }
+            }
+        }
+        centers.sort_by(|a, b| a.0.total_cmp(&b.0));
+        for (_, x, z) in centers {
+            let Ok(h) = g.hydrology_at(x, z) else {
+                continue;
+            };
+            if h.kind == crate::hydrology::SurfaceKind::DeferredWater
+                && h.water == 0.0
+                && h.r2_deferred == 1.0
+            {
+                return (x, z);
+            }
+        }
+        panic!("не найдено высокое озеро рядом с {near:?}");
+    }
+
     /// T115: точку дельты ищём по построенной сети, а не по фиксированным
     /// координатам. Подбор E/PV, впадин и меандров сдвигает русла, но тест
     /// должен проверять связку «сеть → игровые поля», а не запомненный пиксель.
@@ -1044,10 +1184,12 @@ mod tests {
     }
 
     fn delta_swamp_sample(g: &Generator, x: f64, z: f64) -> bool {
-        let Ok((channels, lakes)) = g.drainage_surface_query(x, z) else {
+        // Д-057: болото дельты даёт сам веер; мелкие впадины под ним теперь
+        // прорезаются, поэтому отдельное болото-озеро не требуется.
+        let Ok((channels, _lakes)) = g.drainage_surface_query(x, z) else {
             return false;
         };
-        if channels.delta <= 0.9 || lakes.swamp <= 0.9 {
+        if channels.delta <= 0.9 {
             return false;
         }
         let Some(sample) = g.sample(x, z) else {
@@ -1094,9 +1236,9 @@ mod tests {
         let delta_near = (-54524.133387731, 24107.233303404);
         let delta_point = find_delta_swamp(&g, delta_near);
         let points = [
-            (-35098.064436977, 8022.221972733),
+            find_deferred_lake(&g, (-35098.064436977, 8022.221972733)),
             delta_point,
-            (-1536.535252886, -2374.660469732), // T136/T160: веер 3 сдвинул Q/русло
+            find_river_core(&g, (-1536.535252886, -2374.660469732)),
         ];
         let cold = Generator::new(42, Mode::Gameplay, GenVersion::V1Dev).unwrap();
         for (x, z) in points {
@@ -1133,9 +1275,9 @@ mod tests {
 
     #[test]
     fn t116_gallery_forest_reaches_a_real_dry_corridor() {
-        // T133: коридор найден заново после двухмасштабного дрожания (сид 42).
-        let (x, z) = (-1850.723375787, -12623.990320330);
+        // Д-057: коридор ищется по сети рядом с прежней опорной точкой.
         let g = Generator::new(42, Mode::Gameplay, GenVersion::V1Dev).unwrap();
+        let (x, z) = find_gallery_forest(&g, (-1850.723375787, -12623.990320330));
         let fast = g.sample(x, z).unwrap();
         let reference = g.sample_reference(x, z).unwrap();
         assert!(fast.world.hydrology.gallery >= 0.5);
@@ -1306,11 +1448,40 @@ mod t144_tests {
 mod t141_tests {
     use super::*;
 
+    fn nearest_river_core(g: &Generator, near: (f64, f64)) -> (f64, f64) {
+        let point = g.macro_point(near.0, near.1);
+        let radius = crate::channel::max_query_radius_l(g.params()) + 4.0;
+        let shift = g.spawn_shift();
+        let l = g.params().block.l_blocks;
+        let mut out = Vec::new();
+        for plate in crate::plates::plates_near(point, radius, g.seed(), g.params()) {
+            let Ok(net) = g.drainage_network(&plate) else {
+                continue;
+            };
+            for segment in net.channels().segments() {
+                let x = (0.5 * (segment.a.point.x + segment.b.point.x) - shift.x) * l;
+                let z = (0.5 * (segment.a.point.z + segment.b.point.z) - shift.z) * l;
+                let dx = x - near.0;
+                let dz = z - near.1;
+                out.push((dx * dx + dz * dz, x, z));
+            }
+        }
+        out.sort_by(|a, b| a.0.total_cmp(&b.0));
+        for (_, x, z) in out.into_iter().take(4096) {
+            if g.sample(x, z)
+                .is_some_and(|s| s.world.river > 0.9 && s.world.pv < -0.8)
+            {
+                return (x, z);
+            }
+        }
+        panic!("не найдена точка русла рядом с {near:?}");
+    }
+
     #[test]
     fn pv_field_is_exposed_and_rivers_cut_their_own_valley() {
         let g = Generator::new(42, Mode::Gameplay, GenVersion::V1Dev).unwrap();
-        // T136-точка межплитового русла: сила реки близка к 1.
-        let (x, z) = (-1536.535252886, -2374.660469732);
+        // Д-057: точка русла ищется по сети рядом с прежней опорной точкой.
+        let (x, z) = nearest_river_core(&g, (-1536.535252886, -2374.660469732));
         let s = g.sample(x, z).unwrap();
         assert!(s.world.river > 0.9);
         assert!(s.world.pv.is_finite() && (-1.0..=1.0).contains(&s.world.pv));
