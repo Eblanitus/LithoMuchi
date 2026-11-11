@@ -8,12 +8,20 @@ on:
   pull_request:
   workflow_dispatch:
 
+env:
+  HORIZON_REV: 66f3981f522b24c250b21523a70080965b940424
+  HORIZON_MIXINS_REV: 5a64af938ec86b00d53d16a408aabc0038fb3e57
+  MCMETA_REV: 5f312935898c8f75f64d185b9874b129d0c67287
+  LIBM_TAG: libm-v0.2.16
+
 jobs:
   linux:
     name: Linux · fmt, clippy, tests
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: "К1 — единые закрепления Horizon / mixins / 26.3"
+        run: python3 tools/check_horizon_pins.py
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
@@ -41,6 +49,14 @@ jobs:
           cat /tmp/v0-hashes.txt
           grep -Fxq 'scientific = 5cdbe1d36ef8d16a' /tmp/v0-hashes.txt
           grep -Fxq 'gameplay = b48e8037c4e85977' /tmp/v0-hashes.txt
+      - name: "К4 / шаг 6 — скорость v1-dev на колонку и на чанк"
+        run: |
+          target=$(python3 -c 'import json; print(json.load(open("tools/bench-targets.json"))["v1_dev_chunk_ms"])')
+          enforce=()
+          if [ "$(python3 -c 'import json; print(json.load(open("tools/bench-targets.json"))["enforce_in_ci"])')" = "True" ]; then
+            enforce=(--enforce-chunk-target)
+          fi
+          cargo run -p litho-sandbox --release -- bench --seed 42 --mode gameplay --version v1-dev --chunk-target-ms "$target" "${enforce[@]}"
       - name: "Э3.5 — v1-dev smoke (синтетика НЕ является приёмкой)"
         run: |
           set -o pipefail
@@ -58,6 +74,13 @@ jobs:
             done
           done
           { echo "T100 synthetic sweep v1-dev local 16 L (НЕ приёмка, широкий скан после T160)"; cargo run -q -p litho-sandbox --release -- stats-all --version v1-dev --synthetic-height --span-l 16 --size 16 --relief-size 8 --boundary-size 8; } | python3 tools/ci_annotations.py report
+      - name: "T151 — вердикт границ 10.1 (объём малый, это НЕ приёмка)"
+        run: |
+          set -o pipefail
+          # Полный объём 10.1 (16 сидов × 2 режима ≥200×200 L) в CI не считается.
+          # Здесь проверяется сам путь вердикта и печатается NO-VOLUME.
+          cargo run -q -p litho-sandbox --release -- acceptance --version v1-dev --seed 42 --mode gameplay --span-l 32 --size 32 --relief-size 8 --boundary-size 64 --boundary-step 32 | python3 tools/ci_annotations.py report
+          cargo run -q -p litho-sandbox --release -- acceptance --version v1-dev --seeds 42,-42 --span-l 32 --size 32 --relief-size 8 --boundary-size 64 --boundary-step 32 --json | python3 tools/ci_annotations.py report
       - name: "Э3.5 — seams v1-dev gameplay (порог 0.02 не ослаблен)"
         run: |
           set -o pipefail
@@ -128,18 +151,163 @@ jobs:
           cargo test --workspace --target x86_64-pc-windows-gnu --exclude litho-tests --no-fail-fast 2>&1 | python tools/ci_annotations.py test
           cargo test -p litho-tests --target x86_64-pc-windows-gnu --release --no-fail-fast 2>&1 | python tools/ci_annotations.py test
 
-  hnmod:
-    name: Мод · упаковка litospherity.hnmod
+  horizon-core-contract:
+    name: Horizon · реальный density core (ручная инъекция)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Упаковать бандл (пути с прямыми слешами, как требует лаунчер)
+      - uses: actions/checkout@v4
+        with:
+          repository: horizon-rust/horizon
+          ref: ${{ env.HORIZON_REV }}
+          path: .external/horizon
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: rust-lang/compiler-builtins
+          ref: ${{ env.LIBM_TAG }}
+          path: .external/compiler-builtins
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+      - name: "К1 — единые закрепления"
+        run: python3 tools/check_horizon_pins.py
+      - name: Собрать и проверить реальные типы Horizon (не launcher)
+        run: tools/horizon-core-check/run.sh .external/horizon .external/compiler-builtins/libm
+
+  horizon-mixins-contract:
+    name: Horizon · настоящие mixins и граф 26.3
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: horizon-rust/horizon
+          ref: ${{ env.HORIZON_REV }}
+          path: .external/horizon
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: horizon-rust/horizon-mixins
+          ref: ${{ env.HORIZON_MIXINS_REV }}
+          path: .external/horizon-mixins
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: misode/mcmeta
+          ref: ${{ env.MCMETA_REV }}
+          path: .external/mcmeta
+          sparse-checkout: data/minecraft/worldgen/density_function/overworld
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+      - name: "К1 — единые закрепления"
+        run: python3 tools/check_horizon_pins.py
+      - name: Получить закреплённые зависимости и собрать transformer
         run: |
-          cd mod/litospherity
-          python3 -c "import json; json.load(open('horizon-native.json'))"
-          zip -r -X ../../litospherity.hnmod horizon-native.json mixins
-          unzip -l ../../litospherity.hnmod
+          cargo fetch --locked --manifest-path .external/horizon/Cargo.toml
+          cargo fetch --locked --manifest-path .external/horizon-mixins/Cargo.toml
+          cargo build --locked --manifest-path .external/horizon-mixins/Cargo.toml -p horizon-mixins-cli
+      - name: Собрать настоящий hnmod и все паки
+        run: |
+          cargo run -q -p xtask -- bundle --out out/bundle
+          cargo run -q -p xtask -- bundle-check --out out/bundle
+          python3 tools/package_mod.py --bundle out/bundle --out out/release
+          rm -rf out/native-check
+          python3 -m zipfile -e out/release/litospherity.hnmod out/native-check
+      - name: Материализовать документационную символьную ссылку Horizon
+        # Pinned Horizon has CLAUDE.md -> AGENTS.md; mixins rejects symlinks.
+        run: |
+          python3 - <<'PYTHON'
+          from pathlib import Path
+          root = Path('.external/horizon').resolve()
+          link = root / 'CLAUDE.md'
+          if link.is_symlink():
+              if link.resolve() != root / 'AGENTS.md':
+                  raise SystemExit('Unexpected CLAUDE.md symlink target')
+              content = link.read_bytes()
+              link.unlink()
+              link.write_bytes(content)
+          PYTHON
+      - name: Применить настоящий hnmod к закреплённым исходникам
+        run: |
+          if ! .external/horizon-mixins/target/debug/horizon-mixins apply \
+            --workspace .external/horizon --mods out/native-check/mixins \
+            --out /tmp/litho-horizon-staged-ci > /tmp/litho-mixin-apply.log 2>&1; then
+            cat /tmp/litho-mixin-apply.log
+            exit 1
+          fi
+          cat /tmp/litho-mixin-apply.log
+      - name: Проверить настоящий внедрённый density graph
+        run: |
+          mkdir -p /tmp/litho-horizon-staged-ci/crates/horizon-core/tests
+          cp tools/horizon-core-check/real_density.rs /tmp/litho-horizon-staged-ci/crates/horizon-core/tests/litho_real.rs
+          if ! cargo test --locked --offline --manifest-path /tmp/litho-horizon-staged-ci/Cargo.toml \
+            -p horizon-core --test litho_real > /tmp/litho-mixin-test.log 2>&1; then
+            cat /tmp/litho-mixin-test.log
+            exit 1
+          fi
+          cat /tmp/litho-mixin-test.log
+      - name: "К2 — настоящие данные 26.3: depth = 0.375 + offset"
+        run: |
+          mkdir -p /tmp/litho-horizon-staged-ci/crates/horizon-world/tests
+          cp tools/horizon-core-check/vanilla_26_3.rs /tmp/litho-horizon-staged-ci/crates/horizon-world/tests/litho_vanilla_26_3.rs
+          export LITHO_PACKS="$GITHUB_WORKSPACE/out/bundle/packs"
+          export LITHO_26_3_DATA="$GITHUB_WORKSPACE/.external/mcmeta"
+          if ! cargo test --locked --offline --manifest-path /tmp/litho-horizon-staged-ci/Cargo.toml \
+            -p horizon-world --test litho_vanilla_26_3 > /tmp/litho-world-test.log 2>&1; then
+            cat /tmp/litho-world-test.log
+            exit 1
+          fi
+          cat /tmp/litho-world-test.log
+
+  hnmod:
+    name: Мод · настоящий litospherity.hnmod
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: "К1 — единые закрепления"
+        run: python3 tools/check_horizon_pins.py
+      - name: Собрать бандл и проверить состав паков
+        run: |
+          cargo run -q -p xtask -- bundle --out out/bundle
+          cargo run -q -p xtask -- bundle-check --out out/bundle
+      - name: Упаковать клиентские хуки, ядро и все паки (v0 + v1-dev + smoke)
+        run: python3 tools/package_mod.py --bundle out/bundle --out out/release
+      - uses: actions/checkout@v4
+        with:
+          repository: horizon-rust/horizon
+          ref: ${{ env.HORIZON_REV }}
+          path: out/horizon-source
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: horizon-rust/horizon-mixins
+          ref: ${{ env.HORIZON_MIXINS_REV }}
+          path: out/horizon-mixins
+          persist-credentials: false
+      - name: Материализовать документационную символьную ссылку Horizon
+        run: |
+          python3 - <<'PYTHON'
+          from pathlib import Path
+          root = Path('out/horizon-source').resolve()
+          link = root / 'CLAUDE.md'
+          if link.is_symlink():
+              if link.resolve() != root / 'AGENTS.md':
+                  raise SystemExit('Unexpected CLAUDE.md symlink target')
+              content = link.read_bytes()
+              link.unlink()
+              link.write_bytes(content)
+          PYTHON
+      - name: Проверить настоящий план mixins
+        run: |
+          rm -rf out/native-check
+          python3 -m zipfile -e out/release/litospherity.hnmod out/native-check
+          cargo run --locked --manifest-path out/horizon-mixins/Cargo.toml -p horizon-mixins-cli -- plan --workspace out/horizon-source --mods out/native-check/mixins --out out/native-plan.json
       - uses: actions/upload-artifact@v4
         with:
           name: litospherity-hnmod
-          path: litospherity.hnmod
+          path: |
+            out/release/litospherity.hnmod
+            out/release/*.zip
+            out/native-plan.json

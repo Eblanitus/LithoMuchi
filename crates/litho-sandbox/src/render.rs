@@ -137,7 +137,7 @@ pub fn metadata_with_height(
                 crate::json::quote(if model.is_owned() {
                     "litho-core owned I2 surface; no vanilla splines"
                 } else {
-                    "63.52 + 128*offset; no factor/jaggedness/3D noise"
+                    "128*(1+offset); no factor/jaggedness/3D noise"
                 })
             );
             text = text.replace("}\n", &format!(",\n{extra}}}\n"));

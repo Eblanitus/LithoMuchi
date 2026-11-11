@@ -130,7 +130,7 @@ pub struct BoundaryMetrics {
     pub min_strip_blocks: Option<f64>,
 }
 impl BoundaryMetrics {
-    fn empty(size: usize, step: f64, l_blocks: f64) -> Self {
+    pub(crate) fn empty(size: usize, step: f64, l_blocks: f64) -> Self {
         Self {
             size,
             step,
@@ -458,6 +458,32 @@ fn pct(count: usize, total: usize) -> f64 {
 }
 
 impl HeightStats {
+    /// T151: пустой носитель для тестов вердикта 10.1 без полного скана.
+    /// Все счётчики нулевые, сетка границ — заданного размера.
+    #[cfg(test)]
+    pub fn empty_for_tests(size: usize, step: usize) -> Self {
+        Self {
+            seed: 0,
+            mode: Mode::Gameplay,
+            samples: 0,
+            land: 0,
+            river_samples: 0,
+            river_water: 0,
+            water_samples: 0,
+            swamp_samples: 0,
+            dry_samples: 0,
+            estuary_samples: 0,
+            deferred_samples: 0,
+            gallery_samples: 0,
+            hyps: [0; 5],
+            erosion: [0; 7],
+            valley: 0,
+            relief_windows: 0,
+            relief_median: None,
+            flat_windows: 0,
+            boundary: BoundaryMetrics::empty(size, step as f64, 250.0),
+        }
+    }
     pub fn collect(
         base: &RenderOptions,
         opts: &StatsOptions,
@@ -754,7 +780,7 @@ impl HeightStats {
             height_note = if model.is_owned() {
                 "T144: собственная высота ядра (offset/factor/jaggedness); ванильные сплайны не используются"
             } else {
-                "WARNING: приближение 63.52 + 128·offset; factor/jaggedness/3D-шум не учтены"
+                "WARNING: приближение 128*(1+offset); factor/jaggedness/3D-шум не учтены"
             },
             span = opts.span_l,
             step = opts.span_l * base.mode.l_blocks() / opts.size as f64,
@@ -839,7 +865,7 @@ impl HeightStats {
             crate::json::quote(if model.is_owned() {
                 "litho-core owned I2 surface; no vanilla splines"
             } else {
-                "63.52 + 128*offset; no factor/jaggedness/3D noise"
+                "128*(1+offset); no factor/jaggedness/3D noise"
             }),
             opts.span_l,
             opts.size,

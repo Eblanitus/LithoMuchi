@@ -1,5 +1,14 @@
 # План Этапа 2: создание Horizon мода Litospherity
 
+> **УСТАРЕЛО / исторический план.** Описывает нереализованную интеграцию через
+> `native_fill`. Рабочая линия — density-graph noise hook, `tools/package_mod.py`
+> и `docs/PLAN-STATUS-2026-11-11.md`. Не использовать как ТЗ.
+
+<!-- ИСТОРИЧЕСКИЙ / PLAN-STATUS-2026-11-11 -->
+
+---
+
+
 **Статус:** структура мода создана (файлы в `mod/litospherity/`)  
 **Образец:** `distant_horizons.hnmod` (распакован в ветке `arena/3e69ffe1-lithomuchi`)  
 **Версия Horizon:** `66f3981` (✅ подтверждено пользователем)  
