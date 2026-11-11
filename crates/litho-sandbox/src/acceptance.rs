@@ -220,10 +220,7 @@ impl Summary {
         self.runs.push(run);
     }
     pub fn passed(&self) -> usize {
-        self.runs
-            .iter()
-            .filter(|r| r.verdict().passed())
-            .count()
+        self.runs.iter().filter(|r| r.verdict().passed()).count()
     }
     pub fn failed(&self) -> usize {
         self.runs
