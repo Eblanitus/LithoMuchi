@@ -1,5 +1,11 @@
 # Параметры генератора v1-dev
 
+> **Актуально на 2026-11-11:** head `308ad28`, код шага 5 `4897c34`,
+> зелёный CI `43022933163`. Таблица и хеши сверены с `Params::defaults` и
+> `xtask params-hash --version v1-dev`; `v0` не менялась. Снимок перед вливом
+> PR #11 в `main`; после влива код в `main` идентичен. Карта документов —
+> [docs/README.md](README.md), отчёт — [PLAN-STATUS-2026-11-11.md](PLAN-STATUS-2026-11-11.md).
+
 Сгенерировано `cargo run -p xtask -- params-doc --version v1-dev > docs/PARAMS-V1-DEV.md`.
 Источник правды — `Params::defaults` в `crates/litho-core/src/params.rs`.
 
