@@ -1,0 +1,9 @@
+{
+  "game": "26.3",
+  "horizon": "66f3981f522b24c250b21523a70080965b940424",
+  "horizon_mixins": "5a64af938ec86b00d53d16a408aabc0038fb3e57",
+  "mcmeta": "5f312935898c8f75f64d185b9874b129d0c67287",
+  "libm_tag": "libm-v0.2.16",
+  "libm_version": "0.2.16",
+  "note": "Единственные рабочие закрепления. 5a64af9 — потомок e8cd0aa и 0d6b103, включает оба исправления transformer. Проверяется tools/check_horizon_pins.py."
+}

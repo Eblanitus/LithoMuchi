@@ -2,6 +2,8 @@
 // Модуль поддержки [[module]]: НЕЛЬЗЯ писать //! и #![...], внешние mod-файлы
 // и include! (план 5.4). Файл НЕ КОМПИЛИРУЕТСЯ в workspace разработки:
 // пути crate::noise::* принадлежат horizon-core и сверяются при первой сборке.
+// Сигнатура add_to_volume и порядок обхода Z/X/Y сверены с Horizon 66f3981
+// (К1: старая выдуманная сигнатура с DensityVolume&mut не компилируется).
 use std::sync::{Arc, Mutex, Weak};
 
 use litho_core::{Field, GenVersion, Generator, Mode};
@@ -15,6 +17,8 @@ pub struct NoiseSpec {
 
 /// Строгий разбор `litospherity:v0/scientific/continents` или `v1-dev/...`.
 /// Неизвестная версия, режим или поле -> None (мир не падает, см. 10.2).
+/// Поля полной I2 (pv/offset/factor/jaggedness) — только v1-dev: v0 пак
+/// их не переопределяет, и клей не должен их выдавать для v0.
 pub fn parse_noise_name(name: &str) -> Option<NoiseSpec> {
     let rest = name.strip_prefix("litospherity:")?;
     let mut parts = rest.split('/');
@@ -22,6 +26,17 @@ pub fn parse_noise_name(name: &str) -> Option<NoiseSpec> {
     let mode = Mode::parse(parts.next()?)?;
     let field = Field::parse(parts.next()?)?;
     if parts.next().is_some() {
+        return None;
+    }
+    if version == GenVersion::V1 {
+        return None;
+    }
+    if version == GenVersion::V0
+        && matches!(
+            field,
+            Field::Offset | Field::Pv | Field::Factor | Field::Jaggedness
+        )
+    {
         return None;
     }
     Some(NoiseSpec {
@@ -50,6 +65,15 @@ pub fn noise_for_name(seed: i64, name: &str) -> Option<Arc<dyn crate::noise::Noi
     parse_noise_name(name).and_then(|spec| noise_for(seed, spec))
 }
 
+/// Диагностика для тестов на настоящем Horizon: посчитать одно поле ядром,
+/// минуя реестр шумов. Позволяет сверить `overworld/offset` в графе 26.3
+/// с эталонным генератором без добавления зависимостей в horizon-world.
+pub fn field_for(seed: i64, name: &str, x: f64, z: f64) -> Option<f32> {
+    let spec = parse_noise_name(name)?;
+    let generator = Generator::new(seed, spec.mode, spec.version).ok()?;
+    Some(generator.field_column(spec.field, x, z) as f32)
+}
+
 type Key = (i64, u8, u8);
 static REGISTRY: Mutex<Vec<(Key, Weak<Generator>)>> = Mutex::new(Vec::new());
 
@@ -66,69 +90,75 @@ pub fn noise_for(seed: i64, spec: NoiseSpec) -> Option<Arc<dyn crate::noise::Noi
     registry.retain(|(_, weak)| weak.strong_count() > 0);
     for (existing, weak) in registry.iter() {
         if *existing == k {
-            if let Some(gen) = weak.upgrade() {
+            if let Some(generator) = weak.upgrade() {
                 return Some(Arc::new(LithoNoise {
-                    gen,
+                    generator,
                     field: spec.field,
                 }));
             }
         }
     }
-    let gen = Arc::new(Generator::new(seed, spec.mode, spec.version).ok()?);
-    registry.push((k, Arc::downgrade(&gen)));
+    let generator = Arc::new(Generator::new(seed, spec.mode, spec.version).ok()?);
+    registry.push((k, Arc::downgrade(&generator)));
     Some(Arc::new(LithoNoise {
-        gen,
+        generator,
         field: spec.field,
     }))
 }
 
 #[derive(Debug)]
 pub struct LithoNoise {
-    gen: Arc<Generator>,
+    generator: Arc<Generator>,
     field: Field,
 }
 
 impl crate::noise::Noise for LithoNoise {
     fn range(&self) -> Result<[f32; 2], crate::noise::NanRange> {
-        // T144: offset = (y - 63.52)/128 может выходить за [-1, 1] при
-        // y до 319; JSON base_amplitude=4 уже задаёт графу широкий диапазон.
-        // Остальные поля остаются в [-1, 1]. Сверить с Horizon при T72/T140.
+        // T144: offset = y/128 − 1 при y в [−64, 319] даёт [−1,5, 1,49];
+        // JSON base_amplitude=4 уже задаёт графу широкий диапазон.
+        // factor в шкале ванили ~0,6…6,3; jaggedness 0…1.
         match self.field {
-            Field::Offset => Ok([-4.0, 4.0]),
+            Field::Offset => Ok([-2.0, 2.0]),
+            Field::Factor => Ok([0.5, 6.5]),
+            Field::Jaggedness => Ok([0.0, 1.0]),
             _ => Ok([-1.0, 1.0]),
         }
     }
 
     fn get2(&self, x: f64, z: f64) -> f32 {
-        self.gen.field_column(self.field, x, z) as f32
+        self.generator.field_column(self.field, x, z) as f32
     }
 
     fn get3(&self, x: f64, _y: f64, z: f64) -> f32 {
         // Наши поля от y не зависят (кроме лавы, T77).
-        self.gen.field_column(self.field, x, z) as f32
+        self.generator.field_column(self.field, x, z) as f32
     }
 
-    // T74: переопределён — одна величина на колонку (x, z), прибавленная ко
-    // всем y с учётом amplitude. Порядок обхода (z, x, y) и типы DensityVolume
-    // / DensityError сверяются при T72 при первой сборке под Horizon.
+    // Horizon 66f3981: Z/X/Y layout, scaled coordinates, additive writes.
+    // Validate before writing so short buffers remain untouched.
     fn add_to_volume(
         &self,
-        volume: &mut crate::noise::DensityVolume,
-        x_min: i32,
-        x_max: i32,
-        z_min: i32,
-        z_max: i32,
-        y_min: i32,
-        y_max: i32,
-        amplitude: f64,
+        buffer: &mut [f32],
+        volume: crate::noise::DensityVolume,
+        xz_scale: f64,
+        _y_scale: f64,
+        amplitude: f32,
     ) -> Result<(), crate::noise::DensityError> {
-        let amp = amplitude as f32;
-        for z in z_min..=z_max {
-            for x in x_min..=x_max {
-                let value = self.gen.field_column(self.field, x as f64, z as f64) as f32 * amp;
-                for y in y_min..=y_max {
-                    let cur = volume.get(x, y, z)?;
-                    volume.set(x, y, z, cur + value)?;
+        if buffer.len() < volume.size() {
+            return Err(crate::noise::DensityError::BufferTooShort);
+        }
+        let [sx, sy, sz] = volume.sizes();
+        let [min_x, _, min_z] = volume.minimum();
+        let [step_x, _, step_z] = volume.steps();
+        let mut index = 0;
+        for z in 0..sz {
+            let z = f64::from(min_z.wrapping_add((z as i32).wrapping_mul(step_z))) * xz_scale;
+            for x in 0..sx {
+                let x = f64::from(min_x.wrapping_add((x as i32).wrapping_mul(step_x))) * xz_scale;
+                let value = amplitude * self.get2(x, z);
+                for _ in 0..sy {
+                    buffer[index] += value;
+                    index += 1;
                 }
             }
         }

@@ -1,5 +1,11 @@
 # Параметры генератора v1-dev
 
+> **Актуально на 2026-11-11:** актуализация документации `14c02ed`, код шага 5 `4897c34`,
+> зелёный CI `43022933163`. Таблица и хеши сверены с `Params::defaults` и
+> `xtask params-hash --version v1-dev`; `v0` не менялась. Снимок перед вливом
+> PR #11 в `main`; после влива код в `main` идентичен. Карта документов —
+> [docs/README.md](README.md), отчёт — [PLAN-STATUS-2026-11-11.md](PLAN-STATUS-2026-11-11.md).
+
 Сгенерировано `cargo run -p xtask -- params-doc --version v1-dev > docs/PARAMS-V1-DEV.md`.
 Источник правды — `Params::defaults` в `crates/litho-core/src/params.rs`.
 
@@ -50,8 +56,8 @@
 | `channels.delta_q_min_mm_l2` | `500.0` | `500.0` |
 | `channels.delta_slope_max` | `0.005` | `0.005` |
 | `channels.depth0_blocks` | `2.0` | `1.5` |
-| `channels.meander_mountain` | `0.3` | `0.3` |
-| `channels.meander_plain` | `1.5` | `1.5` |
+| `channels.meander_mountain` | `0.5` | `0.5` |
+| `channels.meander_plain` | `2.2` | `2.2` |
 | `channels.mirror_cascade_step_blocks` | `32.0` | `16.0` |
 | `channels.mirror_step_blocks` | `128.0` | `64.0` |
 | `channels.plain_slope_max` | `0.02` | `0.02` |
@@ -87,7 +93,7 @@
 | `climate.e_base` | `0.15` | `0.15` |
 | `climate.e_mnt` | `-0.75` | `-0.75` |
 | `climate.e_mnt_noise` | `0.25` | `0.25` |
-| `climate.e_noise` | `0.2` | `0.2` |
+| `climate.e_noise` | `0.28` | `0.28` |
 | `climate.e_plateau` | `-0.3` | `-0.3` |
 | `climate.h4_base` | `0.45` | `0.45` |
 | `climate.h4_gain` | `0.4` | `0.4` |
@@ -123,7 +129,7 @@
 | `climate.w_mnt_base` | `0.3` | `0.3` |
 | `climate.w_mnt_noise` | `0.4` | `0.4` |
 | `climate.w_plain_base` | `0.3` | `0.3` |
-| `climate.w_plain_noise` | `0.1` | `0.1` |
+| `climate.w_plain_noise` | `0.16` | `0.16` |
 | `climate.w_plateau` | `0.33` | `0.33` |
 | `climate.w_sat_base` | `0.5` | `0.5` |
 | `climate.w_sat_max` | `2.1` | `2.1` |
@@ -188,7 +194,7 @@
 | `crust.w_col_l` | `0.6` | `0.6` |
 | `drainage.anchor_search_radius_cells` | `2` | `2` |
 | `drainage.climate_step_l` | `1.0` | `1.0` |
-| `drainage.depression_min_depth_km` | `0.002` | `0.002` |
+| `drainage.depression_min_depth_km` | `0.015` | `0.015` |
 | `drainage.et_factor` | `1.0` | `1.0` |
 | `drainage.fill_epsilon_km` | `0.0001` | `0.0001` |
 | `drainage.jitter_fraction` | `0.35` | `0.35` |
@@ -313,7 +319,7 @@
 | `relief.basin_lambda_l` | `6.0` | `6.0` |
 | `relief.basin_noise_hi` | `1.5` | `1.5` |
 | `relief.basin_noise_lo` | `0.5` | `0.5` |
-| `relief.basin_strength` | `0.15` | `0.15` |
+| `relief.basin_strength` | `0.08` | `0.08` |
 | `relief.continental_chi_hi` | `0.8` | `0.8` |
 | `relief.continental_chi_lo` | `0.5` | `0.5` |
 | `relief.craton_a_max` | `0.2` | `0.2` |
@@ -396,4 +402,4 @@
 | `wind.knot7.phi_deg` | `90` | `90` |
 | `wind.knot7.s` | `0.3` | `0.3` |
 
-params_hash: scientific = 0434763b9972834f, gameplay = ae595c5d41aaa656
+params_hash: scientific = 0f50636d0a87fec3, gameplay = 92a54ee5a40149c2

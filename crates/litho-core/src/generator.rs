@@ -7,6 +7,7 @@
 
 use std::cell::RefCell;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::cache::{CACHE_CAPACITY, ShardedCache};
 use crate::classify::{ClassSample, classify};
@@ -37,6 +38,36 @@ const COARSE_N: usize = 4;
 /// колонке. Ёмкость инфраструктурная, в хеш мира не входит; вытеснение меняет
 /// только скорость, не ответ.
 const COLUMN_CACHE_CAPACITY: usize = 4096;
+/// К2/К7: `field()` раньше молча подменял ошибку и нечисловое значение нулём.
+/// litho-core не имеет зависимостей (план 5.4), поэтому пишем в stderr без
+/// внешнего `log`-крейта; первые ошибки видны в логе игры/CI, далее только
+/// счётчик, чтобы ошибка в каждой колонке не заваливала лог.
+const FIELD_LOG_LIMIT: u64 = 16;
+static FIELD_ERRORS: AtomicU64 = AtomicU64::new(0);
+
+/// Сколько раз `field()` подменил ошибку/нечисловое значение нулём.
+/// Диагностика для игры и тестов; не входит в хеш параметров.
+pub fn field_error_log_count() -> u64 {
+    FIELD_ERRORS.load(Ordering::Relaxed)
+}
+
+fn log_field_error(message: impl FnOnce() -> String) {
+    log_field_error_with(&FIELD_ERRORS, message);
+}
+
+fn log_field_error_with(counter: &AtomicU64, message: impl FnOnce() -> String) {
+    let number = counter.fetch_add(1, Ordering::Relaxed) + 1;
+    if number <= FIELD_LOG_LIMIT {
+        eprintln!(
+            "litho-core: {}; field() возвращает 0.0 (ошибка {number})",
+            message()
+        );
+    } else if number == FIELD_LOG_LIMIT + 1 {
+        eprintln!(
+            "litho-core: дальше сообщения field() подавляются; всего ошибок см. field_error_log_count()"
+        );
+    }
+}
 
 type CoarseTiles = ShardedCache<(i64, i64), Arc<Nodes<COARSE_N>>>;
 type LastCoarse = Option<(u64, u64, i64, i64, Arc<Nodes<COARSE_N>>)>;
@@ -839,19 +870,32 @@ impl Generator {
 
     /// T160: кэш точной колонки. Ключ — биты координат, без квантования;
     /// попадание/промах не меняет ответ. Ошибки/None не кэшируются.
-    fn cached_full(&self, x: f64, z: f64) -> Option<Arc<FullSample>> {
+    /// К7: ошибку сети стока не проглатываем — `field()` пишет её в лог.
+    fn cached_full(&self, x: f64, z: f64) -> Result<Option<Arc<FullSample>>, RiverNetError> {
         let key = (x.to_bits() as i64, z.to_bits() as i64);
         if let Some(hit) = self.column.get(key) {
-            return Some(hit);
+            return Ok(Some(hit));
         }
-        let full = self.sample(x, z)?;
-        Some(self.column.get_or_insert(key, || Arc::new(full)))
+        let Some(full) = self.try_sample(x, z)? else {
+            return Ok(None);
+        };
+        Ok(Some(self.column.get_or_insert(key, || Arc::new(full))))
     }
 
     /// Одно ванильное поле в блочных координатах: то, что зовёт мод (9.4).
+    /// Ошибка/нечисловое значение больше не тихие: первые FIELD_LOG_LIMIT
+    /// случаев попадают в stderr, все случаи считаются field_error_log_count().
     pub fn field(&self, field: Field, x: f64, _y: f64, z: f64) -> f64 {
-        let Some(full) = self.cached_full(x, z) else {
-            return 0.0;
+        let full = match self.cached_full(x, z) {
+            Ok(Some(full)) => full,
+            Ok(None) => {
+                log_field_error(|| format!("поле {:?} в ({x}, {z}): сэмпл отсутствует", field));
+                return 0.0;
+            }
+            Err(error) => {
+                log_field_error(|| format!("поле {:?} в ({x}, {z}): {error}", field));
+                return 0.0;
+            }
         };
         let value = match field {
             Field::Continents => full.vanilla.c,
@@ -873,7 +917,14 @@ impl Generator {
             Field::Factor => full.world.height.factor,
             Field::Jaggedness => full.world.height.jaggedness,
         };
-        if value.is_finite() { value } else { 0.0 }
+        if value.is_finite() {
+            value
+        } else {
+            log_field_error(|| {
+                format!("поле {:?} в ({x}, {z}): нечисловое значение {value}", field)
+            });
+            0.0
+        }
     }
 
     /// Значение на колонку `(x, z)` для `add_to_volume` (10.3).
@@ -959,13 +1010,93 @@ mod tests {
         }
     }
 
+    /// T115: точку дельты ищём по построенной сети, а не по фиксированным
+    /// координатам. Подбор E/PV, впадин и меандров сдвигает русла, но тест
+    /// должен проверять связку «сеть → игровые поля», а не запомненный пиксель.
+    fn delta_swamp_candidates(g: &Generator, near: (f64, f64)) -> Vec<(f64, f64, f64)> {
+        let mut out = Vec::new();
+        let point = g.macro_point(near.0, near.1);
+        let radius = crate::channel::max_query_radius_l(g.params()) + 4.0;
+        let shift = g.spawn_shift();
+        let l = g.params().block.l_blocks;
+        for plate in crate::plates::plates_near(point, radius, g.seed(), g.params()) {
+            let Ok(net) = g.drainage_network(&plate) else {
+                continue;
+            };
+            let channels = net.channels();
+            for segment in channels.segments() {
+                if channels.reaches()[segment.reach].kind != crate::channel::ReachKind::Delta {
+                    continue;
+                }
+                for t in [0.1_f64, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9] {
+                    let mx = segment.a.point.x + t * (segment.b.point.x - segment.a.point.x);
+                    let mz = segment.a.point.z + t * (segment.b.point.z - segment.a.point.z);
+                    let x = (mx - shift.x) * l;
+                    let z = (mz - shift.z) * l;
+                    let dx = x - near.0;
+                    let dz = z - near.1;
+                    out.push((dx * dx + dz * dz, x, z));
+                }
+            }
+        }
+        out.sort_by(|a, b| a.0.total_cmp(&b.0));
+        out
+    }
+
+    fn delta_swamp_sample(g: &Generator, x: f64, z: f64) -> bool {
+        let Ok((channels, lakes)) = g.drainage_surface_query(x, z) else {
+            return false;
+        };
+        if channels.delta <= 0.9 || lakes.swamp <= 0.9 {
+            return false;
+        }
+        let Some(sample) = g.sample(x, z) else {
+            return false;
+        };
+        sample.world.hydrology.channels.delta > 0.9
+            && sample.world.hydrology.swamp > 0.9
+            && sample.cell.biome.ends_with("swamp")
+            && sample.vanilla.e > 0.55
+    }
+
+    fn find_delta_swamp(g: &Generator, near: (f64, f64)) -> (f64, f64) {
+        let candidates = delta_swamp_candidates(g, near);
+        let offsets = [-50.0_f64, 0.0, 50.0];
+        for (_, x, z) in candidates.into_iter().take(256) {
+            for dx in offsets {
+                for dz in offsets {
+                    let px = x + dx;
+                    let pz = z + dz;
+                    if delta_swamp_sample(g, px, pz) {
+                        return (px, pz);
+                    }
+                }
+            }
+        }
+        // Резервный скан: если дельта ушла на соседнюю плиту, сегменты другой
+        // сети всё равно видны через общий запрос drainage_surface_query.
+        for ix in -32..=32 {
+            for iz in -32..=32 {
+                let px = near.0 + ix as f64 * 125.0;
+                let pz = near.1 + iz as f64 * 125.0;
+                if delta_swamp_sample(g, px, pz) {
+                    return (px, pz);
+                }
+            }
+        }
+        panic!("не найдена точка дельты с болотом рядом с {near:?}");
+    }
+
     #[test]
     fn t115_network_lake_delta_and_cross_plate_reach_the_game_fields() {
         let g = Generator::new(42, Mode::Gameplay, GenVersion::V1Dev).unwrap();
+        // Прежняя опорная точка дельты: ищем актуальную точку поблизости по сети.
+        let delta_near = (-54524.133387731, 24107.233303404);
+        let delta_point = find_delta_swamp(&g, delta_near);
         let points = [
             (-35098.064436977, 8022.221972733),
-            (-54524.133387731, 24107.233303404), // T136/T160: веер 3 сдвинул дельту
-            (-1536.535252886, -2374.660469732),  // T136/T160: веер 3 сдвинул Q/русло
+            delta_point,
+            (-1536.535252886, -2374.660469732), // T136/T160: веер 3 сдвинул Q/русло
         ];
         let cold = Generator::new(42, Mode::Gameplay, GenVersion::V1Dev).unwrap();
         for (x, z) in points {
@@ -1200,5 +1331,23 @@ mod t141_tests {
             s.world.pv.to_bits(),
             crate::vanilla::peaks_valleys(s.vanilla.w).to_bits()
         );
+    }
+}
+
+#[cfg(test)]
+mod field_log_tests {
+    use super::{FIELD_LOG_LIMIT, field_error_log_count, log_field_error_with};
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    #[test]
+    fn field_error_log_counts_all_errors_but_prints_a_limited_prefix() {
+        // Локальный счётчик: параллельные тесты не влияют на проверку.
+        let counter = AtomicU64::new(0);
+        for number in 0..FIELD_LOG_LIMIT + 5 {
+            log_field_error_with(&counter, || format!("тестовая ошибка {number}"));
+        }
+        assert_eq!(counter.load(Ordering::Relaxed), FIELD_LOG_LIMIT + 5);
+        // Публичный счётчик доступен игре/CI и монотонно растёт.
+        let _ = field_error_log_count();
     }
 }

@@ -1441,14 +1441,17 @@ impl Params {
                 ],
                 ocean_c: [-0.98, -0.70, -0.52, -0.45, -0.40, -0.30, -0.19],
                 ocean_y: [35.0, 42.0, 48.0, 52.0, 55.0, 59.0, 63.0],
-                factor: [0.85, 0.75, 0.60, 0.50, 0.25, 0.55, 0.20],
-                jaggedness: [0.90, 0.70, 0.30, 0.40, 0.10, 0.60, 0.05],
+                // К2: шкала ванили. factor ~0,6…6,3: горы ~1, равнины ~5–6.
+                // jaggedness 0 вне холодных пиков. На первый тест пак их
+                // не переопределяет (шаг 2); таблица для будущего возврата.
+                factor: [1.0, 1.5, 3.0, 4.5, 5.5, 3.5, 5.0],
+                jaggedness: [0.8, 0.5, 0.0, 0.0, 0.0, 0.2, 0.0],
                 coast_width_c: 0.06,
                 e_gain_blocks_per_km: match mode {
                     Mode::Gameplay => 0.0,
                     Mode::Scientific => 24.0,
                 },
-                cold_jagged_gain: 0.20,
+                cold_jagged_gain: 0.70,
                 warm_jagged_drop: 0.10,
                 min_y: -64.0,
                 max_y: 319.0,
@@ -1632,10 +1635,19 @@ impl Params {
             let c = &mut p.climate;
             c.c_coast_e_km = 0.20;
             c.e_base = 0.15;
-            c.e_noise = 0.20;
+            // Шаг 5 / T123: стартовые 0.20 держали E4 ≈ 73–80 %. Увеличиваем
+            // разброс E и PV, чтобы доли E2/E3 выросли, не трогая v0.
+            c.e_noise = 0.28;
             c.w_plain_base = 0.30;
-            c.w_plain_noise = 0.10;
+            c.w_plain_noise = 0.16;
             c.w_sign_epsilon = 1e-3;
+            // K5: отсечь мелкие «лужи» и ослабить плоское дно котловин.
+            p.drainage.depression_min_depth_km = 0.015;
+            p.relief.basin_strength = 0.08;
+            // T113/T110: равнинные русла были почти прямыми (1,01–1,02).
+            // Тесты T113/T115 ищут отрезки и дельты по сети, а не по точкам.
+            p.channels.meander_plain = 2.2;
+            p.channels.meander_mountain = 0.5;
         }
         p.config_key = p.params_hash();
         p
@@ -2164,7 +2176,7 @@ mod tests {
             assert_ne!(old.params_hash(), dev.params_hash());
             assert_eq!(dev.climate.c_coast_e_km, 0.20);
             assert_eq!(dev.climate.e_base, 0.15);
-            assert_eq!(dev.climate.e_noise, 0.20);
+            assert_eq!(dev.climate.e_noise, 0.28);
             assert_eq!(dev.climate.w_plain_base, 0.30);
             assert_eq!(dev.block.lambda_e_blocks, 2.0 * old.block.lambda_e_blocks);
             assert!(dev.block.w_sign_half_width_blocks > 0.0);

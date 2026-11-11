@@ -1,5 +1,6 @@
 //! Песочница Litospherity: карты, метрики, атлас и пробы (план 12.2).
 
+mod acceptance;
 mod height;
 mod height_stats;
 mod json;
@@ -242,6 +243,11 @@ const SEAM_LIMIT: f64 = 0.02;
 /// Допуск 2 % на шум разделяемого раннера; абсолютный бюджет 14.4 (150 мкс)
 /// пока не выполнен и честно печатается отдельно (Д-019, пункт 5 в работе).
 const BENCH_MAX_FAST_OVER_REF: f64 = 1.10;
+/// К4 / шаг 6: замер на чанк 16×16 колонок. Цель по умолчанию — один кадр
+/// 60 FPS; она предварительная и не согласована автором (tools/bench-targets.json).
+const DEFAULT_CHUNK_TARGET_MS: f64 = 16.0;
+const CHUNK_SIDE: usize = 16;
+const CHUNK_REPEATS: usize = 3;
 
 /// Разложение полей в худшей точке: видно, какой именно физический вклад
 /// сделал скачок. Печатается всегда, в том числе когда `seams` пусто.
@@ -767,6 +773,16 @@ fn cmd_drainage(args: &[String]) -> Result<(), String> {
 
 fn cmd_bench(args: &[String]) -> Result<(), String> {
     let opts = options_from(args)?;
+    let chunk_target_ms = match value(args, "--chunk-target-ms") {
+        Some(text) => text
+            .parse::<f64>()
+            .map_err(|e| format!("--chunk-target-ms: {e}"))?,
+        None => DEFAULT_CHUNK_TARGET_MS,
+    };
+    if !chunk_target_ms.is_finite() || chunk_target_ms <= 0.0 {
+        return Err("--chunk-target-ms должен быть конечным и > 0".into());
+    }
+    let enforce_chunk_target = args.iter().any(|arg| arg == "--enforce-chunk-target");
     let generator = generator(&opts)?;
     let n = 1000;
     let mut sink = 0.0_f64;
@@ -833,6 +849,56 @@ fn cmd_bench(args: &[String]) -> Result<(), String> {
         "bench T160: колонка 5 полей — cold {column_cold:.1} мкс/поле, warm {column_warm:.1} мкс/поле, кэш {ratio:.2}× (sink={sink:.3})",
         ratio = column_cold / column_warm.max(1e-9)
     );
+    // К4 / шаг 6: отдельный замер на чанк и на колонку для v1-dev. Повторы
+    // показывают и холодный проход, и попадание в кэш колонки T160.
+    let chunk_columns = CHUNK_SIDE * CHUNK_SIDE;
+    let mut chunk_pass = || {
+        let start = Instant::now();
+        for _ in 0..CHUNK_REPEATS {
+            for iz in 0..CHUNK_SIDE {
+                for ix in 0..CHUNK_SIDE {
+                    let x = (ix * 4) as f64;
+                    let z = (iz * 4) as f64;
+                    for field in column_fields {
+                        sink += generator.field(field, x, 64.0, z);
+                    }
+                }
+            }
+        }
+        start.elapsed().as_secs_f64() / CHUNK_REPEATS as f64 * 1e3
+    };
+    let chunk_cold = chunk_pass();
+    let chunk_warm = chunk_pass();
+    let per_column_ms = chunk_cold / chunk_columns as f64;
+    let target_status = if chunk_cold <= chunk_target_ms {
+        "в цели"
+    } else {
+        "ВЫШЕ цели"
+    };
+    println!(
+        "bench K4 ({version}): чанк {side}×{side}×{fields} — cold {cold:.2} мс/чанк, \
+         warm {warm:.2} мс/чанк, {column:.3} мс/колонка, цель {target:.2} мс/чанк — \
+         {status} ({gate}; sink={sink:.3})",
+        version = opts.version.as_str(),
+        side = CHUNK_SIDE,
+        fields = column_fields.len(),
+        cold = chunk_cold,
+        warm = chunk_warm,
+        column = per_column_ms,
+        target = chunk_target_ms,
+        status = target_status,
+        gate = if enforce_chunk_target {
+            "гейт включён"
+        } else {
+            "диагностика, гейт выключен"
+        },
+        sink = sink
+    );
+    if enforce_chunk_target && chunk_cold > chunk_target_ms {
+        return Err(format!(
+            "bench: cold чанк {chunk_cold:.2} мс > цели {chunk_target_ms:.2} мс"
+        ));
+    }
     if fast > reference * BENCH_MAX_FAST_OVER_REF {
         return Err(format!(
             "bench: регрессия — быстрый путь {fast:.1} мкс против эталона {reference:.1} мкс \
@@ -1057,6 +1123,76 @@ fn cmd_sweep(args: &[String]) -> Result<(), String> {
     Ok(())
 }
 
+/// T151 / 10.1: вердикт автоматических критериев границ биома.
+///
+/// Полный объём — 16 сидов × 2 режима при сетке границ ≥200×200 L; такой скан
+/// на одном прогоне слишком дорог, поэтому команда принимает подмножество:
+/// `--mode` ограничивает режим, `--seed` — один сид, `--seeds 0,42,7` — список.
+/// Итоговый вердикт `NO-VOLUME` означает «числа в порядке, но объём не тот»:
+/// неполный скан не доказывает выполнение 10.1.
+fn cmd_acceptance(args: &[String]) -> Result<(), String> {
+    let base = options_from(args)?;
+    let Some(model) = height_model_for(args, &base)? else {
+        return Err("acceptance требует предпросмотр высоты: --game-data ПУТЬ, \
+             --synthetic-height или --version v1-dev"
+            .into());
+    };
+    let opts = height_stats::StatsOptions::parse(args, &base)?;
+    let seeds = acceptance_seeds(args, &base)?;
+    let modes = acceptance_modes(args, base.mode);
+    let json_output = args.iter().any(|arg| arg == "--json");
+    let mut summary = acceptance::Summary::default();
+    for seed in seeds {
+        for mode in modes.iter().copied() {
+            let mut run = base.clone();
+            run.seed = seed;
+            run.mode = mode;
+            let stats = height_stats::HeightStats::collect(&run, &opts, &model)?;
+            summary.push(acceptance::RunVerdict::from_stats(&stats));
+        }
+    }
+    if json_output {
+        print!("{}", summary.json());
+    } else {
+        print!("{}", summary.text());
+    }
+    Ok(())
+}
+
+/// Сиды для `acceptance`: `--seed` (один), `--seeds 0,42,-7` (список) или весь
+/// набор 16 сидов из `SWEEP_SEEDS`.
+fn acceptance_seeds(args: &[String], opts: &RenderOptions) -> Result<Vec<i64>, String> {
+    if let Some(text) = value(args, "--seeds") {
+        let mut seeds = Vec::new();
+        for part in text.split(',') {
+            let part = part.trim();
+            if part.is_empty() {
+                continue;
+            }
+            seeds.push(
+                part.parse::<i64>()
+                    .map_err(|e| format!("--seeds '{part}': {e}"))?,
+            );
+        }
+        if seeds.is_empty() {
+            return Err("--seeds: пустой список".into());
+        }
+        return Ok(seeds);
+    }
+    if value(args, "--seed").is_some() {
+        return Ok(vec![opts.seed]);
+    }
+    Ok(SWEEP_SEEDS.to_vec())
+}
+
+/// Режимы для `acceptance`: явный `--mode` ограничивает один режим, иначе оба.
+fn acceptance_modes(args: &[String], default: Mode) -> Vec<Mode> {
+    if value(args, "--mode").is_some() {
+        return vec![default];
+    }
+    Mode::ALL.to_vec()
+}
+
 fn usage() -> &'static str {
     "Litospherity sandbox (этап Э1, песочница целиком)\n\n\
      Команды:\n\
@@ -1065,9 +1201,12 @@ fn usage() -> &'static str {
        layers       список слоёв\n\
        stats        метрики 12.4; с --game-data/--synthetic-height — T100\n\
        stats-all    16 сидов × 2 режима; принимает те же флаги высоты\n\
+       acceptance   T151/10.1: вердикт границ PASS/FAIL/NO-VOLUME\n\
+                    --seeds 0,42,-7 | --seed N | --mode | --json\n\
        seams        скачки C/E/W между соседними блоками\n\
        drainage     T110–T116: сток, русла, озёра, дельты и поверхность R1 в --at x,z (v1-dev)\n\
-       bench        время эталонного и быстрого пути\n\
+       bench        время эталонного/быстрого пути, колонки и чанка v1-dev\n\
+                    --chunk-target-ms N | --enforce-chunk-target\n\
        profile      разбивка времени по слоям\n\
        hash         хеши параметров для замка v0\n\
        checkpoints  10 точек вокруг точки появления\n\
@@ -1099,6 +1238,7 @@ fn main() -> Result<(), String> {
         "probe" => cmd_probe(&args[1..]),
         "stats" => cmd_stats(&args[1..]),
         "stats-all" => cmd_stats_all(&args[1..]),
+        "acceptance" => cmd_acceptance(&args[1..]),
         "seams" => cmd_seams(&args[1..]),
         "drainage" => cmd_drainage(&args[1..]),
         "bench" => cmd_bench(&args[1..]),

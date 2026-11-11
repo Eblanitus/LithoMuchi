@@ -418,9 +418,116 @@ mod water_relief_dev {
 
 #[cfg(test)]
 mod drainage_dev {
+    use litho_core::channel::{ChannelQuery, ReachKind, max_query_radius_l};
     use litho_core::drainage::RiverNetError;
+    use litho_core::plates::plates_near;
     use litho_core::{GenVersion, Generator, Mode};
     use std::sync::Arc;
+
+    /// T115: дельту ищем через общий запрос, а не по запомненной точке:
+    /// подбор E/PV, впадин и меандров сдвигает русла и их стоки.
+    fn delta_arm_point(generator: &Generator, near: (f64, f64)) -> (f64, f64) {
+        let point = generator.macro_point(near.0, near.1);
+        let radius = max_query_radius_l(generator.params());
+        let shift = generator.spawn_shift();
+        let l = generator.params().block.l_blocks;
+        let mut candidates = Vec::new();
+        for plate in plates_near(point, radius, generator.seed(), generator.params()) {
+            let Ok(net) = generator.drainage_network(&plate) else {
+                continue;
+            };
+            let channels = net.channels();
+            for segment in channels.segments() {
+                if channels.reaches()[segment.reach].kind != ReachKind::Delta {
+                    continue;
+                }
+                for t in [0.1_f64, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9] {
+                    let mx = segment.a.point.x + t * (segment.b.point.x - segment.a.point.x);
+                    let mz = segment.a.point.z + t * (segment.b.point.z - segment.a.point.z);
+                    let x = (mx - shift.x) * l;
+                    let z = (mz - shift.z) * l;
+                    let dx = x - near.0;
+                    let dz = z - near.1;
+                    candidates.push((dx * dx + dz * dz, x, z));
+                }
+            }
+        }
+        candidates.sort_by(|a, b| a.0.total_cmp(&b.0));
+        let offsets = [-50.0_f64, 0.0, 50.0];
+        for (_, x, z) in candidates.into_iter().take(512) {
+            for dx in offsets {
+                for dz in offsets {
+                    let px = x + dx;
+                    let pz = z + dz;
+                    let Ok((channel, _)) = generator.drainage_surface_query(px, pz) else {
+                        continue;
+                    };
+                    if channel.delta > 0.9 && channel.networks_considered > 1 {
+                        return (px, pz);
+                    }
+                }
+            }
+        }
+        for ix in -48..=48 {
+            for iz in -48..=48 {
+                let px = near.0 + ix as f64 * 125.0;
+                let pz = near.1 + iz as f64 * 125.0;
+                let Ok((channel, _)) = generator.drainage_surface_query(px, pz) else {
+                    continue;
+                };
+                if channel.delta > 0.9 && channel.networks_considered > 1 {
+                    return (px, pz);
+                }
+            }
+        }
+        panic!("не найдена дельта с общим запросом рядом с {near:?}");
+    }
+
+    /// T113: ищем середину отрезка соседней плиты, попадающую внутрь ближайшей
+    /// плиты. Координаты не фиксируем: геометрия русел зависит от параметров.
+    fn cross_plate_point(generator: &Generator, near: (f64, f64)) -> (f64, f64) {
+        let point = generator.macro_point(near.0, near.1);
+        let radius = max_query_radius_l(generator.params());
+        let shift = generator.spawn_shift();
+        let l = generator.params().block.l_blocks;
+        let mut candidates = Vec::new();
+        for plate in plates_near(point, radius, generator.seed(), generator.params()) {
+            let Ok(net) = generator.drainage_network(&plate) else {
+                continue;
+            };
+            for segment in net.channels().segments() {
+                for t in [0.25_f64, 0.5, 0.75] {
+                    let mx = segment.a.point.x + t * (segment.b.point.x - segment.a.point.x);
+                    let mz = segment.a.point.z + t * (segment.b.point.z - segment.a.point.z);
+                    let x = (mx - shift.x) * l;
+                    let z = (mz - shift.z) * l;
+                    let dx = x - near.0;
+                    let dz = z - near.1;
+                    candidates.push((dx * dx + dz * dz, x, z, plate.id));
+                }
+            }
+        }
+        candidates.sort_by(|a, b| a.0.total_cmp(&b.0));
+        for (_, x, z, segment_plate) in candidates.into_iter().take(2048) {
+            let Some(owner) = generator.plate_sample(x, z) else {
+                continue;
+            };
+            if owner.a.id == segment_plate {
+                continue;
+            }
+            let Ok(query) = generator.drainage_channel_query(x, z) else {
+                continue;
+            };
+            let Some(hit) = query.nearest else {
+                continue;
+            };
+            if hit.plate_id != owner.a.id && hit.distance_l < 1e-6 && query.networks_considered > 1
+            {
+                return (x, z);
+            }
+        }
+        panic!("не найдена межплитовая точка русла рядом с {near:?}");
+    }
 
     #[test]
     fn real_plate_network_is_deterministic_cached_and_mode_independent() {
@@ -470,14 +577,9 @@ mod drainage_dev {
 
     #[test]
     fn channel_query_crosses_the_nearest_plate_boundary_in_fixed_order() {
-        use litho_core::channel::max_query_radius_l;
-        use litho_core::plates::plates_near;
-
         let generator = Generator::new(42, Mode::Gameplay, GenVersion::V1Dev).unwrap();
-        // T136/T160: после веера 3 середина отрезка перенайдена (сид 42).
-        // Середина отрезка соседней плиты попадает внутрь ближайшей
-        // плиты. До T113 запрос ближайшей плиты терял это русло.
-        let (x, z) = (-1536.535252886, -2374.660469732);
+        // Прежняя опорная точка; актуальную середину отрезка ищем по сети.
+        let (x, z) = cross_plate_point(&generator, (-1536.535252886, -2374.660469732));
         let owner = generator.plate_sample(x, z).unwrap().a;
         let query = generator.drainage_channel_query(x, z).unwrap();
         let hit = query.nearest.expect("русло соседней плиты найдено");
@@ -488,8 +590,8 @@ mod drainage_dev {
         let point = generator.macro_point(x, z);
         let radius = max_query_radius_l(generator.params());
         let neighbors = plates_near(point, radius, generator.seed(), generator.params());
-        let mut forward = litho_core::channel::ChannelQuery::default();
-        let mut reverse = litho_core::channel::ChannelQuery::default();
+        let mut forward = ChannelQuery::default();
+        let mut reverse = ChannelQuery::default();
         let mut hits = Vec::new();
         for plate in &neighbors {
             let net = generator.drainage_network(plate).unwrap();
@@ -523,7 +625,8 @@ mod drainage_dev {
         );
         assert!(lake.networks_considered > 1);
 
-        let (delta_x, delta_z) = (-54524.133387731, 24107.233303404);
+        // Прежняя опорная точка дельты; актуальную ищем общим запросом.
+        let (delta_x, delta_z) = delta_arm_point(&generator, (-54524.133387731, 24107.233303404));
         let (channel, _) = generator.drainage_surface_query(delta_x, delta_z).unwrap();
         assert!(channel.delta > 0.9);
         assert!(channel.networks_considered > 1);

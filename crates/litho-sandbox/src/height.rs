@@ -1,7 +1,10 @@
 //! T100/T144: предпросмотр высоты.
 //!
 //! Для v0 и явных --game-data/--synthetic-height это НЕ генератор чанков:
-//! y = 63.52 + 128·offset по локальным сплайнам, без factor/jaggedness/3D-шума.
+//! y = 128·(1 + offset) по локальным сплайнам, без factor/jaggedness/3D-шума.
+//! В игре глубина на высоте y равна (1 − y/128) + offset, поэтому
+//! поверхность лежит на y = 128·(1 + offset). Старая формула
+//! 63,52 + 128·offset занижала высоту на 64,48 блока (К2, шаг 2).
 //! Для v1-dev без явного источника используется собственная высота ядра
 //! (HeightSource::Owned): сплайны Mojang больше не нужны. Файлы Mojang
 //! читаются с диска пользователя, не копируются в репозиторий и не входят в
@@ -14,7 +17,7 @@ use litho_core::vanilla::peaks_valleys;
 
 use crate::json::{self, Json};
 
-pub const SURFACE_BASE: f64 = 63.52;
+pub const SURFACE_BASE: f64 = 128.0;
 pub const OFFSET_SCALE: f64 = 128.0;
 pub const SEA_LEVEL: f64 = 63.0;
 

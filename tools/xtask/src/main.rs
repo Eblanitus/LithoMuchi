@@ -14,11 +14,14 @@ const GEN_VERSION: GenVersion = GenVersion::V0;
 const PACK_VERSIONS: [GenVersion; 2] = [GenVersion::V0, GenVersion::V1Dev];
 /// Версия самого мода в `[mod] version` манифеста.
 const MOD_VERSION: &str = "0.1.0";
-/// Ревизия Horizon из раздела 5 плана; сверить на Windows (T70).
-const HORIZON_REV: &str = "f319701e8c9ab657ff562250b3ba07b2d654e3bc";
+/// Ревизия Horizon: единственное закрепление (К1, шаг 1). Подтверждена
+/// автором и проверена на настоящих исходниках в CI (horizon-core-check).
+const HORIZON_REV: &str = "66f3981f522b24c250b21523a70080965b940424";
 /// Пять полей, которые подменяем в MVP (точка №2 плана 10.1).
 /// v1-dev дополнительно переопределяет `overworld/ridges_folded` полем `pv`
-/// (T141/I2-lite) и `offset/factor/jaggedness` своей высотой (T144/полная I2);
+/// (T141/I2-lite) и `offset` своей высотой (T144/полная I2). `factor` и
+/// `jaggedness` на первый тест НЕ переопределяются (шаг 2): ваниль посчитает
+/// их сама из наших C/E/PV. Свою таблицу в шкале ванили вернуть позже.
 /// v0 остаётся ровно с пятью полями.
 const FIELDS: [&str; 5] = [
     "continents",
@@ -27,6 +30,10 @@ const FIELDS: [&str; 5] = [
     "temperature",
     "vegetation",
 ];
+/// v1-dev заменяет PV (`ridges_folded`) и offset; factor/jaggedness считает
+/// сама ваниль на первом тесте в игре (К2, шаг 2 плана готовности).
+const I2_FIELDS: [&str; 2] = ["offset", "pv"];
+const VANILLA_COMPUTED_FIELDS: [&str; 2] = ["factor", "jaggedness"];
 
 fn repo_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
@@ -142,7 +149,8 @@ fn write_file(path: &Path, text: &str) -> Result<(), String> {
 }
 
 /// Один датапак: метаданные, переопределения density_function и фиктивные
-/// шумы. v0/smoke — пять полей; v1-dev добавляет pv/offset/factor/jaggedness.
+/// шумы. v0/smoke — пять полей; v1-dev добавляет pv/offset. factor и
+/// jaggedness на тест №2 не трогаем (К2/шаг 2), их считает ваниль.
 fn make_pack(
     dir: &Path,
     version: GenVersion,
@@ -167,14 +175,18 @@ fn make_pack(
     )?;
     let mut fields: Vec<&str> = FIELDS.to_vec();
     if version.is_water_relief_dev() {
+        // Пак заменяет `overworld/offset` ЦЕЛИКОМ: в ванильном графе внутри
+        // уже сидит −0,50375, поэтому наш шум должен быть y/128 − 1.
         fields.push("pv");
         fields.push("offset");
-        fields.push("factor");
-        fields.push("jaggedness");
+        // factor/jaggedness не переопределяем: ваниль берёт их из сплайнов
+        // по нашим C/E/PV. Таблица в шкале ванили остаётся в ядре до шага 5.
     }
     for field in fields {
         // В ванили PV — именованная функция `ridges_folded`, на неё по имени
         // ссылаются offset/factor/jaggedness. Сам шум называется `pv`.
+        // Пак заменяет ridges_folded и offset; factor/jaggedness остаются
+        // ванильными и берут уже нашу PV через общий граф.
         let df_name = if field == "pv" {
             "ridges_folded"
         } else {
@@ -199,8 +211,36 @@ fn make_pack(
     Ok(())
 }
 
+/// Удаляет ТОЛЬКО паки, которыми владеет xtask: после смены состава полей
+/// старые `factor.json`/`jaggedness.json` не должны попасть в `.hnmod`.
+fn reset_dir(path: &Path) -> Result<(), String> {
+    if path.exists() {
+        fs::remove_dir_all(path)
+            .map_err(|e| format!("не могу очистить {}: {e}", path.display()))?;
+    }
+    fs::create_dir_all(path).map_err(|e| format!("не могу создать {}: {e}", path.display()))
+}
+
+fn owned_packs(out: &Path) -> Vec<PathBuf> {
+    let mut names = Vec::new();
+    for version in PACK_VERSIONS {
+        for mode in Mode::ALL {
+            names.push(out.join(format!(
+                "litospherity_{}_{}",
+                version.as_str(),
+                mode.as_str()
+            )));
+        }
+    }
+    names.push(out.join("litospherity_smoke"));
+    names
+}
+
 fn cmd_pack(out: &Path) -> Result<(), String> {
     fs::create_dir_all(out).map_err(|e| format!("не могу создать {}: {e}", out.display()))?;
+    for pack in owned_packs(out) {
+        reset_dir(&pack)?;
+    }
     for version in PACK_VERSIONS {
         for mode in Mode::ALL {
             let name = format!("litospherity_{}_{}", version.as_str(), mode.as_str());
@@ -253,6 +293,11 @@ fn copy_dir(src: &Path, dst: &Path) -> Result<usize, String> {
 
 fn cmd_bundle(out: &Path) -> Result<(), String> {
     fs::create_dir_all(out).map_err(|e| format!("не могу создать {}: {e}", out.display()))?;
+    // Чистим только свои подпапки: в бандл не должны попасть удалённые из
+    // ядра файлы или паки прошлого состава полей.
+    reset_dir(&out.join("glue"))?;
+    reset_dir(&out.join("crates/litho-core"))?;
+    reset_dir(&out.join("packs"))?;
     let manifest = read_template("horizon-mixin.toml.in")?;
     write_file(
         &out.join("horizon-mixin.toml"),
@@ -278,10 +323,11 @@ fn cmd_bundle(out: &Path) -> Result<(), String> {
     cmd_pack(&out.join("packs"))?;
     write_file(
         &out.join("README.txt"),
-        "Бандл собран xtask, НЕ проверен лаунчером Horizon (T70/T72).\n\
+        "Бандл собран xtask; план проверен horizon-mixins в CI, но НЕ собран лаунчером.\n\
          Команда на Windows: horizon-launcher native-build <эта папка> --instance <имя> --trust-native-code\n\
-         Сначала включите пак litospherity_smoke: мир должен быть всюду сушей.\n\
-         Подробности: docs/HORIZON.md в репозитории.\n",
+         Smoke: включите только litospherity_smoke, мир должен быть всюду сушей.\n\
+         Тест №2: включите только litospherity_v1-dev_gameplay, запишите сид и номер сборки.\n\
+         Актуальное состояние: docs/PLAN-STATUS-2026-11-11.md в репозитории.\n",
     )?;
     println!("бандл: {} (исходников ядра: {n})", out.display());
     Ok(())
@@ -356,39 +402,53 @@ fn cmd_bundle_check(out: &Path) -> Result<(), String> {
                     return Err(format!("в паке {} нет {field}", pack.display()));
                 }
             }
-            let pv_df =
-                pack.join("data/minecraft/worldgen/density_function/overworld/ridges_folded.json");
-            let pv_noise = pack.join(format!(
-                "data/litospherity/worldgen/noise/{}/{}/pv.json",
-                version.as_str(),
-                mode.as_str()
-            ));
+            let df_path = |df_name: &str| {
+                pack.join(format!(
+                    "data/minecraft/worldgen/density_function/overworld/{df_name}.json"
+                ))
+            };
+            let noise_path = |field: &str| {
+                pack.join(format!(
+                    "data/litospherity/worldgen/noise/{}/{}/{field}.json",
+                    version.as_str(),
+                    mode.as_str()
+                ))
+            };
             if version.is_water_relief_dev() {
-                if !pv_df.is_file() || !pv_noise.is_file() {
-                    return Err(format!("в паке {} нет I2-lite PV", pack.display()));
+                for field in I2_FIELDS {
+                    let df_name = if field == "pv" {
+                        "ridges_folded"
+                    } else {
+                        field
+                    };
+                    if !df_path(df_name).is_file() || !noise_path(field).is_file() {
+                        return Err(format!("в паке {} нет I2-поля {field}", pack.display()));
+                    }
                 }
-                for field in ["offset", "factor", "jaggedness"] {
-                    let df = pack.join(format!(
-                        "data/minecraft/worldgen/density_function/overworld/{field}.json"
-                    ));
-                    let noise = pack.join(format!(
-                        "data/litospherity/worldgen/noise/{}/{}/{field}.json",
-                        version.as_str(),
-                        mode.as_str()
-                    ));
-                    if !df.is_file() || !noise.is_file() {
-                        return Err(format!("в паке {} нет полной I2 {field}", pack.display()));
+                for field in VANILLA_COMPUTED_FIELDS {
+                    if df_path(field).exists() || noise_path(field).exists() {
+                        return Err(format!(
+                            "пак {} не должен переопределять {field} до теста №2",
+                            pack.display()
+                        ));
                     }
                 }
             } else {
-                if pv_df.exists() {
-                    return Err(format!("v0 пак {} не должен меняться", pack.display()));
+                for field in I2_FIELDS {
+                    let df_name = if field == "pv" {
+                        "ridges_folded"
+                    } else {
+                        field
+                    };
+                    if df_path(df_name).exists() || noise_path(field).exists() {
+                        return Err(format!(
+                            "v0 пак {} не должен менять {field}",
+                            pack.display()
+                        ));
+                    }
                 }
-                for field in ["offset", "factor", "jaggedness"] {
-                    let df = pack.join(format!(
-                        "data/minecraft/worldgen/density_function/overworld/{field}.json"
-                    ));
-                    if df.exists() {
+                for field in VANILLA_COMPUTED_FIELDS {
+                    if df_path(field).exists() || noise_path(field).exists() {
                         return Err(format!(
                             "v0 пак {} не должен менять {field}",
                             pack.display()

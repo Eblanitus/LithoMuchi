@@ -12,13 +12,18 @@ use crate::params::Params;
 
 /// Уровень моря в блоках. Вертикаль Minecraft: 1 блок ≈ 1 м.
 pub const SEA_LEVEL: f64 = 63.0;
-/// База ванильной формулы offset; сохранена для совместимости предпросмотра.
-pub const SURFACE_BASE: f64 = 63.52;
+/// База формулы offset игры: поверхность y = 128·(1 + offset), то есть
+/// offset = y/128 − 1. В ванили внутри offset сидит константа −0,50375,
+/// дающая уровень 63,52; пак заменяет offset целиком, поэтому константа
+/// должна быть в нашей формуле, а не в паке (К2, шаг 2 плана).
+pub const SURFACE_BASE: f64 = 128.0;
 pub const OFFSET_SCALE: f64 = 128.0;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct HeightSample {
-    /// Плотность `overworld/offset`: (surface_y - SURFACE_BASE) / OFFSET_SCALE.
+    /// Плотность `overworld/offset`: surface_y/128 − 1. В игре глубина
+    /// на высоте y равна (1 − y/128) + offset, поэтому поверхность
+    /// получается ровно на surface_y.
     pub offset: f64,
     pub factor: f64,
     pub jaggedness: f64,
@@ -87,7 +92,10 @@ pub fn sample(
     // остаётся на блочной таблице; e_gain по умолчанию 0.
     y += h.e_gain_blocks_per_km * e_km;
     let y = clamp(y, h.min_y, h.max_y);
-    let factor = clamp(by_erosion(e, &h.factor, &h.e_knots), 0.0, 1.0);
+    // Шкала ванили: factor ~0,6…6,3 (равнины ~5–6, горы ~1), jaggedness 0…1
+    // (0 вне холодных пиков). На первый тест пак их не переопределяет —
+    // ваниль посчитает сама из C/E/PV; таблица здесь для будущего возврата.
+    let factor = clamp(by_erosion(e, &h.factor, &h.e_knots), 0.5, 6.5);
     let jaggedness = clamp(
         by_erosion(e, &h.jaggedness, &h.e_knots) + h.cold_jagged_gain * cold
             - h.warm_jagged_drop * warm,
@@ -175,7 +183,7 @@ pub fn validate(params: &Params) -> Result<(), &'static str> {
         || h.ocean_y.iter().any(|v| !v.is_finite())
         || h.factor
             .iter()
-            .any(|v| !v.is_finite() || !(0.0..=1.0).contains(v))
+            .any(|v| !v.is_finite() || !(0.5..=6.5).contains(v))
         || h.jaggedness
             .iter()
             .any(|v| !v.is_finite() || !(0.0..=1.0).contains(v))
@@ -261,12 +269,44 @@ mod tests {
             );
             assert!(s.surface_y.is_finite());
             assert!((p.height.min_y..=p.height.max_y).contains(&s.surface_y));
-            assert!((0.0..=1.0).contains(&s.factor));
+            assert!((0.5..=6.5).contains(&s.factor));
             assert!((0.0..=1.0).contains(&s.jaggedness));
             assert_eq!(
                 s.offset.to_bits(),
                 ((s.surface_y - SURFACE_BASE) / OFFSET_SCALE).to_bits()
             );
+        }
+    }
+
+    #[test]
+    fn offset_matches_game_depth_formula() {
+        // К2: в игре глубина на высоте y равна (1 − y/128) + offset.
+        // На y=80 градиент равен 0,375, поэтому глубина = 0,375 + offset,
+        // а поверхность (глубина 0) лежит ровно на surface_y.
+        let p = params(Mode::Gameplay);
+        for k in 0..200 {
+            let t = k as f64 / 199.0;
+            let s = sample(
+                -1.0 + 2.0 * t,
+                -1.0 + 2.0 * t,
+                -1.0 + 2.0 * t,
+                -4.0 + 8.0 * t,
+                t,
+                1.0 - t,
+                &p,
+            );
+            let depth_at_80 = (1.0 - 80.0 / OFFSET_SCALE) + s.offset;
+            assert!((depth_at_80 - (0.375 + s.offset)).abs() < 1e-12);
+            let surface_from_offset = OFFSET_SCALE * (1.0 + s.offset);
+            assert!(
+                (surface_from_offset - s.surface_y).abs() < 1e-9,
+                "поверхность {surface_from_offset} != {s:?}"
+            );
+        }
+        // Явные точки из разбора К2: дно океана, берег, равнина, горы.
+        for y in [35.0, 63.0, 70.0, 150.0] {
+            let offset = y / OFFSET_SCALE - 1.0;
+            assert!((OFFSET_SCALE * (1.0 + offset) - y).abs() < 1e-12);
         }
     }
 

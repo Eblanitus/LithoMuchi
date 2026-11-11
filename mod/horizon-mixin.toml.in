@@ -1,5 +1,6 @@
 # Шаблон бандла нативного мода Horizon (план 10.2, T72).
-# НЕ ПРОВЕРЕН сборкой лаунчера: это эскиз по docs/horizon-mixins, готовится xtask bundle.
+# План проверяется настоящим horizon-mixins в CI на закреплённых исходниках;
+# сборка лаунчером и запуск игры остаются за автором (шаг 3 плана готовности).
 # Плейсхолдеры подставляет `cargo run -p xtask -- bundle`.
 [mod]
 id = "litospherity"
@@ -20,6 +21,8 @@ id = "glue"
 file = "crates/horizon-core/src/lib.rs"
 name = "litospherity_glue"
 source = "glue/litospherity_glue.rs"
+# horizon-world test on real 26.3 resources calls field_for() through this API.
+visibility = "pub"
 
 [[injection]]
 id = "noise"

@@ -1,10 +1,15 @@
 # Шаблоны нативного мода Horizon (Э2, T70–T72)
 
-**Статус: подготовлено, но НЕ проверено сборкой.** В этой среде нет Windows,
-`horizon-launcher` и копии Java Edition 26.3, поэтому ни один пункт 5.7 плана
-не подтверждён запуском. Всё, что здесь лежит, — эскизы по разделам 5, 10
-`docs/PLAN.md` и документации `horizon-mixins`; закрывает Э2 только успешная
-сборка лаунчером на Windows. Подробности и чек-лист проверки — `docs/HORIZON.md`.
+**Состояние на 2026-11-11:** шаблоны больше не эскизы. `xtask` подставляет
+пины, `tools/package_mod.py` собирает настоящий `.hnmod` со всеми паками, а CI
+применяет его к закреплённым исходникам Horizon через реальный
+`horizon-mixins plan` и проверяет density graph 26.3 (`depth(80) = 0.375 +
+offset`). Тест №2 в игре подтвердил К2; полная приёмка v1, T142/T143 и релиз
+ещё не сделаны. Актуальный отчёт — `docs/PLAN-STATUS-2026-11-11.md`, карта
+документов — `docs/README.md`, исторический чек-лист разведки — `docs/HORIZON.md`.
+
+Пины: `tools/horizon-revisions.json` — Horizon `66f3981`, mixins `5a64af9`,
+данные 26.3 `5f312935`, libm `0.2.16`. Сверка копий — `tools/check_horizon_pins.py`.
 
 Файлы с суффиксом `.in` — шаблоны с плейсхолдерами `@VERSION@`, `@MODE@`,
 `@NOISE@`, `@HORIZON_REV@`, `@LABEL@`. Их подставляет `xtask`, руками не править.
@@ -20,36 +25,43 @@ packs/density_function.json.in  переопределение minecraft:overwor
 packs/noise.json.in          фиктивное определение шума; диапазон с запасом
 ```
 
-## Что собирает `xtask`
+## Что собирает `xtask` и упаковщик
 
 ```bash
 cargo run -q -p xtask -- pack --out out/packs
 cargo run -q -p xtask -- bundle --out out/bundle
 cargo run -q -p xtask -- bundle-check --out out/bundle
+python3 tools/package_mod.py          # .hnmod + ZIP всех паков + native-plan.json
 ```
 
-- `pack` генерирует **три** пака: `litospherity_v0_scientific`,
-  `litospherity_v0_gameplay` и `litospherity_smoke`. В каждом — `pack.mcmeta`,
-  пять переопределений `overworld/{continents,erosion,ridges,temperature,
-  vegetation}` и пять фиктивных определений наших шумов (план 10.4).
-  Файлы Mojang не копируются: JSON написаны нами и содержат только ссылки.
+- `pack` генерирует паки `v0`, `v1-dev` и `smoke`. В паках v0/v1-dev —
+  `pack.mcmeta`, переопределения полей `overworld/*` и фиктивные определения
+  наших шумов (план 10.4). Файлы Mojang не копируются: JSON написаны нами и
+  содержат только ссылки.
+- `v1-dev` до теста №2 переопределял `pv` → `ridges_folded` и `offset`;
+  `factor`/`jaggedness` считает ваниль. Экспериментальные паки `v1-dev-i2`
+  из `arena/cc2bb388` в рабочий `.hnmod` **не входят**.
 - `smoke` — тестовый пак из DoD Э2: все пять полей ссылаются на
   `litospherity:smoke/<поле>`, клей возвращает константу, `continents = 0.8`.
-  Если мир создаётся всюду сушей — точка №1 точно работает.
 - `bundle` складывает готовый `horizon-mixin.toml`, копию `crates/litho-core`,
   два glue-файла без `.in` и все паки в одну папку. Архивы `.zip` и сам
-  `.hnmod` собираются на Windows (T75) — zip без внешних крейтов здесь не
-  делается намеренно, чтобы не выдать непроверенный артефакт за готовый.
+  `.hnmod` собираются `tools/package_mod.py` в CI; артефакт шага 5 —
+  `litospherity-hnmod` id `13857022266` (run `43025888764`), 421527 байт.
 - `bundle-check` — жёсткая проверка без `|| true`: все файлы на месте, ни одного
   неподставленного `@…@`, JSON начинается и заканчивается фигурной скобкой,
-  манифест содержит `dependent = "horizon-core"`. Выполняется в CI.
+  манифест содержит `dependent = "horizon-core"`, v0 не содержит новых
+  переопределений, v1-dev не содержит factor/jaggedness/I2. Выполняется в CI.
 
-## Ограничения, которые проверяет T72
+## Ограничения, которые проверяет T72 и реальный CI
 
-- cancellable HEAD с привязками `self`, `graph`, `id` и типомhelperа;
+- cancellable HEAD с привязками `self`, `graph`, `id` и типом helper'а;
 - видимость `crate::litospherity_glue` из `seeded.rs`;
 - точные пути `crate::noise::NanRange`, `DensityVolume`, `DensityError`;
-- `add_to_volume` по колонкам (в шаблоне оставлен комментарием, не заглушкой,
-  которая молча даст неверный рельеф);
+- `add_to_volume` по колонкам: Z/X/Y additive, диапазоны Offset `[-2,2]`,
+  Factor `[0.5,6.5]`, Jaggedness `[0,1]`;
 - диапазон фиктивного определения шума: граф берёт его из JSON, а не из
-  `range()` экземпляра (5.3), `base_amplitude = 4` выбран с запасом под [−1, 1].
+  `range()` экземпляра (5.3), `base_amplitude = 4` выбран с запасом под [−1, 1];
+- хуки написаны под Rust 2024: `gen` зарезервирован, в клее его нет;
+- Windows-лаунчер в песочнице по-прежнему не запускается, но реальные типы
+  Horizon, настоящий план mixins и граф 26.3 проверяются отдельными job'ами CI,
+  а игру подтвердил автор в тесте №2.
