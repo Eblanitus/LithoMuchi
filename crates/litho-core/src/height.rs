@@ -231,7 +231,9 @@ pub fn validate(params: &Params) -> Result<(), &'static str> {
         || !h.e_gain_blocks_per_km.is_finite()
         || !h.e_gain_base_km.is_finite()
         || h.e_gain_base_km < 0.0
-        || h.micro_amp_blocks.iter().any(|v| !v.is_finite() || *v < 0.0)
+        || h.micro_amp_blocks
+            .iter()
+            .any(|v| !v.is_finite() || *v < 0.0)
         || !h.micro_lambda_blocks.is_finite()
         || h.micro_lambda_blocks <= 0.0
         || !h.micro_low_y.is_finite()

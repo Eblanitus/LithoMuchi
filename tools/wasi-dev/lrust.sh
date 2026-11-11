@@ -13,6 +13,7 @@
 #   tools/wasi-dev/lrust.sh test [core|sandbox|tests|xtask] [фильтр…]
 #   tools/wasi-dev/lrust.sh sandbox <аргументы litho-sandbox>
 #   tools/wasi-dev/lrust.sh xtask <аргументы xtask>
+#   tools/wasi-dev/lrust.sh fmt [--write]         # как cargo fmt --check
 set -euo pipefail
 
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -129,6 +130,14 @@ case "$cmd" in
     fi
     rustc --version
     ;;
+  fmt)
+    # rustfmt в wasm; пакет ставится один раз в $TC/fmt.
+    if [ ! -e "$TC/fmt/node_modules/@scalar/rust-fmt" ]; then
+      mkdir -p "$TC/fmt"
+      (cd "$TC/fmt" && npm init -y >/dev/null && npm i --ignore-scripts --silent @scalar/rust-fmt@0.5.0)
+    fi
+    "${NODE[@]}" "$HERE/fmt.mjs" "$TC/fmt" "$@" "$ROOT/crates" "$XT"
+    ;;
   rustc) rustc "$@" ;;
   build) build_sandbox; build_xtask ;;
   test)
@@ -144,5 +153,5 @@ case "$cmd" in
     ;;
   sandbox) build_sandbox; run "$OUT/litho-sandbox.wasm" "$@" ;;
   xtask) build_xtask; run "$OUT/xtask.wasm" "$@" ;;
-  *) sed -n '2,16p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//' ;;
+  *) sed -n '2,17p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//' ;;
 esac
