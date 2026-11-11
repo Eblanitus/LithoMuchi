@@ -50,8 +50,8 @@
 | `channels.delta_q_min_mm_l2` | `500.0` | `500.0` |
 | `channels.delta_slope_max` | `0.005` | `0.005` |
 | `channels.depth0_blocks` | `2.0` | `1.5` |
-| `channels.meander_mountain` | `0.3` | `0.3` |
-| `channels.meander_plain` | `1.5` | `1.5` |
+| `channels.meander_mountain` | `0.5` | `0.5` |
+| `channels.meander_plain` | `2.2` | `2.2` |
 | `channels.mirror_cascade_step_blocks` | `32.0` | `16.0` |
 | `channels.mirror_step_blocks` | `128.0` | `64.0` |
 | `channels.plain_slope_max` | `0.02` | `0.02` |
