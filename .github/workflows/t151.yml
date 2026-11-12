@@ -1,0 +1,164 @@
+name: T151 · замер сидов
+
+# Шаг 7 плана готовности (T151): `stats --json` на 16 сидах × 2 режима против
+# целей 10.1. Запуск: изменить tools/t151/request.json и отправить коммит, либо
+# вручную (workflow_dispatch). Каждый прогон идёт отдельным заданием на
+# нативной сборке; сводка и все числа записываются в docs/t151/<имя>/ той же
+# ветки, чтобы результат не зависел от артефактов и сырых логов.
+on:
+  push:
+    branches: ["**"]
+    paths:
+      - "tools/t151/request.json"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: t151-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  plan:
+    name: Сборка и список прогонов
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.plan.outputs.matrix }}
+      name: ${{ steps.plan.outputs.name }}
+      version: ${{ steps.plan.outputs.version }}
+      args: ${{ steps.plan.outputs.args }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Список прогонов из tools/t151/request.json
+        id: plan
+        run: |
+          python3 - <<'PY' >> "$GITHUB_OUTPUT"
+          import json, re
+          r = json.load(open("tools/t151/request.json"))
+          assert re.fullmatch(r"[A-Za-z0-9._-]+", r["name"]), "name: только латиница, цифры, . _ -"
+          assert re.fullmatch(r"[A-Za-z0-9 .,_=-]*", r["args"]), "args: недопустимые символы"
+          assert r["version"] in ("v0", "v1-dev")
+          include = [{"mode": m, "seed": str(int(s))} for m in r["modes"] for s in r["seeds"]]
+          assert 0 < len(include) <= 256
+          print("matrix=" + json.dumps({"include": include}))
+          print("name=" + r["name"])
+          print("version=" + r["version"])
+          print("args=" + r["args"])
+          PY
+      - name: Сборка песочницы (release)
+        run: cargo build --release -p litho-sandbox
+      - uses: actions/upload-artifact@v4
+        with:
+          name: t151-bin
+          path: target/release/litho-sandbox
+          retention-days: 3
+
+  run:
+    name: ${{ matrix.mode }} ${{ matrix.seed }}
+    needs: plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 330
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.plan.outputs.matrix) }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: t151-bin
+      - name: stats --json
+        env:
+          MODE: ${{ matrix.mode }}
+          SEED: ${{ matrix.seed }}
+          VERSION: ${{ needs.plan.outputs.version }}
+          ARGS: ${{ needs.plan.outputs.args }}
+        run: |
+          chmod +x litho-sandbox
+          mkdir -p out
+          stem="out/${MODE}_${SEED}"
+          start=$SECONDS
+          set +e
+          # shellcheck disable=SC2086
+          ./litho-sandbox stats --seed "$SEED" --mode "$MODE" --version "$VERSION" $ARGS --json > "$stem.json" 2> "$stem.err"
+          code=$?
+          set -e
+          echo "$code" > "$stem.exit"
+          echo "$((SECONDS - start))" > "$stem.time"
+          grep -v 'сеть рек №' "$stem.err" | tail -n 20 || true
+          if [ "$code" -ne 0 ]; then
+            rm -f "$stem.json"
+            echo "::error::stats $MODE $SEED: код $code"
+          fi
+          # Падение одного сида не должно прятать остальные: о нём сообщает
+          # сводка (раздел «Упавшие прогоны») и задание «Сводка».
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: t151-run-${{ matrix.mode }}-${{ matrix.seed }}
+          path: out/
+          retention-days: 14
+
+  report:
+    name: Сводка
+    needs: [plan, run]
+    if: ${{ always() && needs.plan.result == 'success' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: t151-run-*
+          path: runs
+          merge-multiple: true
+      - name: Сводка против целей 10.1
+        env:
+          NAME: ${{ needs.plan.outputs.name }}
+        run: |
+          python3 tools/t151/report.py runs --out "result/$NAME" \
+            --request tools/t151/request.json --sha "$GITHUB_SHA" | tee -a "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: t151-${{ needs.plan.outputs.name }}
+          path: result/
+          retention-days: 90
+      - name: Результат в ветку (docs/t151/<имя>/, без повторного CI)
+        if: ${{ github.ref_type == 'branch' }}
+        env:
+          NAME: ${{ needs.plan.outputs.name }}
+          BRANCH: ${{ github.ref_name }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          for attempt in 1 2 3 4 5; do
+            git fetch origin "+refs/heads/$BRANCH:refs/remotes/origin/$BRANCH"
+            git checkout -q -B t151-result "origin/$BRANCH"
+            rm -rf "docs/t151/$NAME"
+            mkdir -p docs/t151
+            cp -r "result/$NAME" "docs/t151/$NAME"
+            git add "docs/t151/$NAME"
+            if git diff --cached --quiet; then
+              echo "Результат не изменился."
+              exit 0
+            fi
+            git commit -q -m "T151: замер «$NAME» для ${GITHUB_SHA::7} [skip ci]"
+            if git push origin "HEAD:$BRANCH"; then
+              exit 0
+            fi
+            sleep $((attempt * 5))
+          done
+          echo "::error::не удалось записать результат в ветку $BRANCH"
+          exit 1
+      - name: Упавшие прогоны делают замер красным
+        run: |
+          python3 - <<'PY'
+          import json, os, sys
+          name = os.environ["NAME"]
+          r = json.load(open(f"result/{name}/results.json"))
+          want = len(r["request"]["modes"]) * len(r["request"]["seeds"])
+          got = len(r["runs"])
+          print(f"готово {got} из {want}, упало {len(r['failures'])}")
+          sys.exit(0 if got == want else 1)
+          PY
+        env:
+          NAME: ${{ needs.plan.outputs.name }}
