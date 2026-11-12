@@ -38,6 +38,11 @@ TARGETS = {
     "ветер, градусы": ((None, 5), (None, 5)),
     "прямые границы, %": ((None, 1), (None, 1)),
     "тонкие полоски, %": ((None, 0.05), (None, 0.05)),
+    # 10.1 «Реки и озёра» и «климат влияет на форму» — считаются начиная с
+    # фиксации 2026-11-12; в старых прогонах ключа `plan` нет, строки пропустятся.
+    "климат влияет на форму": ((True, True), (True, True)),
+    "вода озёр на суше, %": ((None, None), (None, None)),
+    "озёр на 100 L² суши": ((1.0, None), (1.0, None)),
 }
 MODES = ("gameplay", "scientific")
 CAUSE_NAMES = {
@@ -75,16 +80,41 @@ def metrics(j):
         "ветер, градусы": b["wind_max_deg"],
         "прямые границы, %": b["straight_pct"],
         "тонкие полоски, %": b["thin_pct"],
+        **_plan_metrics(j),
+    }
+
+
+def _plan_metrics(j):
+    """10.1: «климат влияет на форму» и вода озёр из нового ключа `plan`.
+
+    В прогонах до 2026-11-12 ключа нет — тогда строки не выводятся вовсе,
+    чтобы старые сводки оставались читаемыми.
+    """
+    plan = j.get("plan")
+    if not isinstance(plan, dict):
+        return {}
+    shape = plan.get("climate_shape") or {}
+    rivers = plan.get("rivers_lakes") or {}
+    return {
+        "климат влияет на форму": shape.get("pass"),
+        "вода озёр на суше, %": rivers.get("lake_pct"),
+        "озёр на 100 L² суши": rivers.get("lakes_per_100_l2"),
     }
 
 
 def goal(lo, hi):
+    if lo is True and hi is True:
+        return "в цели"
     if lo is not None and hi is not None:
         return f"{lo}–{hi}"
+    if lo is None and hi is None:
+        return "справка"
     return f"≤ {hi}" if lo is None else f"≥ {lo}"
 
 
 def in_goal(x, lo, hi):
+    if lo is True and hi is True:
+        return x is True
     return x is not None and (lo is None or x >= lo) and (hi is None or x <= hi)
 
 
@@ -139,9 +169,13 @@ def mode_table(rows, mi, keys):
             continue  # метрики нет в этих прогонах (старый формат)
         bad = [(s, v) for s, v in values if not in_goal(v, lo, hi)]
         bad_text = ", ".join(
-            f"{s} ({'нет' if v is None else format(v, '.2f')})" for s, v in bad
+            f"{s} ({'нет' if v is None else ('да' if v is True else 'нет' if v is False else format(v, '.2f'))})"
+            for s, v in bad
         )
-        if known:
+        if known and isinstance(known[0], bool):
+            good = sum(1 for v in known if v)
+            stats = f"да {good}/{len(known)} | — | —"
+        elif known:
             stats = f"{min(known):.2f} | {statistics.median(known):.2f} | {max(known):.2f}"
         else:
             stats = "— | — | —"
@@ -169,7 +203,9 @@ def compare_table(runs, variants, mi, mode, keys):
             values = [metrics(r)[key] for r in runs if r["_variant"] == name and r["mode"] == mode]
             known = [v for v in values if v is not None]
             ok = sum(1 for v in values if in_goal(v, lo, hi))
-            if known:
+            if known and isinstance(known[0], bool):
+                cells.append(f"да {sum(1 for v in known if v)}/{len(values)}")
+            elif known:
                 cells.append(
                     f"{min(known):.2f} / {statistics.median(known):.2f} / {max(known):.2f}, {ok}/{len(values)}"
                 )
