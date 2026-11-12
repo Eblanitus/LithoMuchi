@@ -131,11 +131,28 @@ pub struct RiverNet {
     plate_id: u64,
     /// Шаг решётки нужен компактному запросу глубины впадины T120.
     step_l: f64,
+    /// Рамка клеток узлов (min, max): точка вне рамки с запасом в две клетки
+    /// не видит ни одного узла, и запрос глубины впадины отвечает нулём сразу.
+    cell_bounds: Option<(Cell, Cell)>,
     nodes: Vec<DrainageNode>,
     depressions: Vec<Depression>,
     runoff: Runoff,
     channels: ChannelNetwork,
     lakes: LakeNetwork,
+}
+
+/// Рамка клеток набора узлов; `None` для пустого набора.
+fn cell_bounds(nodes: &[DrainageNode]) -> Option<(Cell, Cell)> {
+    let first = nodes.first()?.cell;
+    let mut lo = first;
+    let mut hi = first;
+    for node in nodes {
+        lo.0 = lo.0.min(node.cell.0);
+        lo.1 = lo.1.min(node.cell.1);
+        hi.0 = hi.0.max(node.cell.0);
+        hi.1 = hi.1.max(node.cell.1);
+    }
+    Some((lo, hi))
 }
 
 impl RiverNet {
@@ -183,6 +200,7 @@ impl RiverNet {
             &neighbors,
             p.fill_epsilon_km,
             p.depression_min_depth_km,
+            p.lake_area_max_fraction,
         );
         let points: Vec<_> = nodes.iter().map(|node| node.point).collect();
         let grid = ClimateGrid::build(&points, p.climate_step_l, climate)?;
@@ -192,6 +210,7 @@ impl RiverNet {
         let net = Self {
             plate_id: plate.id,
             step_l: p.step_l,
+            cell_bounds: cell_bounds(&nodes),
             nodes,
             depressions,
             runoff,
@@ -220,6 +239,20 @@ impl RiverNet {
         let h = self.step_l;
         let i = (point.x / h).floor() as i64;
         let j = (point.z / h).floor() as i64;
+        // Окно запроса — клетки i±2, j±2. Если оно не пересекает рамку узлов,
+        // ни один двоичный поиск ниже не найдёт узел и ответ равен нулю.
+        match self.cell_bounds {
+            Some((lo, hi)) => {
+                if i.saturating_add(2) < lo.0
+                    || i.saturating_sub(2) > hi.0
+                    || j.saturating_add(2) < lo.1
+                    || j.saturating_sub(2) > hi.1
+                {
+                    return 0.0;
+                }
+            }
+            None => return 0.0,
+        }
         let cutoff = 2.0 * h;
         let mut sum = 0.0;
         let mut weight = 0.0;
@@ -327,6 +360,10 @@ fn validate_params(params: &Params) -> Result<(), RiverNetError> {
         Some("fill_epsilon_km должен быть положительным")
     } else if !p.depression_min_depth_km.is_finite() || p.depression_min_depth_km < 0.0 {
         Some("depression_min_depth_km должен быть неотрицательным")
+    } else if !p.lake_area_max_fraction.is_finite()
+        || !(0.0..=1.0).contains(&p.lake_area_max_fraction)
+    {
+        Some("lake_area_max_fraction должен лежать в [0, 1]")
     } else if !p.outlet_min_weight.is_finite() || !(0.0..=1.0).contains(&p.outlet_min_weight) {
         Some("outlet_min_weight должен лежать в [0, 1]")
     } else if !(1..=8).contains(&p.anchor_search_radius_cells) {
@@ -397,6 +434,59 @@ fn find_anchor(plate: &Plate, seed: u64, params: &Params) -> Result<Cell, RiverN
         }
         radius = radius.saturating_mul(4).min(max_radius);
     }
+}
+
+/// Д-061: id плит, которым принадлежит хотя бы один узел решётки стока в
+/// окне клеток `[lo, hi]` (включительно), по возрастанию. Признак владения
+/// тот же, что в `collect_cells`: ближайшая плита в точке узла. Сеть плиты
+/// состоит из её узлов и кольца в один узел, поэтому плита без узлов в окне,
+/// расширенном на одну клетку, не имеет в самом окне ни одного узла сети.
+/// Список зависит только от сида, параметров и окна.
+#[cfg(test)]
+pub(crate) fn owners_in_window(lo: Cell, hi: Cell, seed: u64, params: &Params) -> Vec<u64> {
+    let mut out: Vec<u64> = Vec::new();
+    let mut last = None;
+    for j in lo.1..=hi.1 {
+        for i in lo.0..=hi.0 {
+            let point = jittered_point((i, j), seed, params);
+            let Some(sample) = plate_query(point, seed, params) else {
+                continue;
+            };
+            let id = sample.a.id;
+            if last != Some(id) {
+                last = Some(id);
+                if !out.contains(&id) {
+                    out.push(id);
+                }
+            }
+        }
+    }
+    out.sort_unstable();
+    out
+}
+
+/// T79: владельцы узлов решётки стока в блоке `side × side` клеток с углом
+/// `(bx·side, bz·side)`, построчно. Признак владения тот же, что в
+/// `owners_in_window`. Блок — чистая функция сида, параметров и своего номера.
+pub(crate) fn owner_block(
+    bx: i64,
+    bz: i64,
+    side: i64,
+    seed: u64,
+    params: &Params,
+) -> Vec<Option<u64>> {
+    let mut out = Vec::with_capacity((side * side) as usize);
+    for j in 0..side {
+        for i in 0..side {
+            let cell = (
+                bx.saturating_mul(side).saturating_add(i),
+                bz.saturating_mul(side).saturating_add(j),
+            );
+            let point = jittered_point(cell, seed, params);
+            out.push(plate_query(point, seed, params).map(|sample| sample.a.id));
+        }
+    }
+    out
 }
 
 /// BFS только по узлам своей плиты; чужие соседи образуют кольцо в один узел.
@@ -492,6 +582,7 @@ fn route_nodes(
     neighbors: &[Vec<usize>],
     epsilon_km: f64,
     min_depth_km: f64,
+    lake_area_max_fraction: f64,
 ) -> Vec<Depression> {
     let mut visited = vec![false; nodes.len()];
     let mut heap = BinaryHeap::new();
@@ -532,7 +623,70 @@ fn route_nodes(
         .map(|(k, node)| visited[k] && node.filled_km - node.route_km > min_depth_km)
         .collect();
     add_components(nodes, neighbors, &flooded, false, &mut depressions);
+    breach_over_budget(nodes, &mut depressions, lake_area_max_fraction);
     depressions
+}
+
+/// К5 / Д-057: прорезка вместо заливки. Заполненные впадины плиты берутся от
+/// самой глубокой, пока их узлы укладываются в долю `max_fraction` узлов суши
+/// плиты. Остальные перестают быть впадинами: priority-flood уже дал им путь
+/// к порогу, по нему идёт русло, а `filled_km` остаётся высотой прорези.
+/// Замкнутые впадины без выхода прорезать некуда, они сохраняются.
+fn breach_over_budget(
+    nodes: &mut [DrainageNode],
+    depressions: &mut Vec<Depression>,
+    max_fraction: f64,
+) {
+    if max_fraction >= 1.0 || depressions.is_empty() {
+        return;
+    }
+    let land = nodes
+        .iter()
+        .filter(|node| node.in_plate && !node.outlet.is_outlet())
+        .count();
+    let budget = (max_fraction.max(0.0) * land as f64).floor() as usize;
+    let mut order: Vec<usize> = (0..depressions.len())
+        .filter(|&d| {
+            matches!(depressions[d].kind, DepressionKind::Filled { .. })
+                && depressions[d].plate_node_count > 0
+        })
+        .collect();
+    order.sort_by(|&a, &b| {
+        depressions[b]
+            .max_depth_km
+            .total_cmp(&depressions[a].max_depth_km)
+            .then_with(|| a.cmp(&b))
+    });
+    let mut keep = vec![true; depressions.len()];
+    let mut used = 0_usize;
+    for d in order {
+        let size = depressions[d].plate_node_count;
+        if used + size <= budget {
+            used += size;
+        } else {
+            keep[d] = false;
+        }
+    }
+    if keep.iter().all(|k| *k) {
+        return;
+    }
+    let mut remap = vec![None; depressions.len()];
+    let mut next = 0_usize;
+    for (d, kept) in keep.iter().enumerate() {
+        if *kept {
+            remap[d] = Some(next);
+            next += 1;
+        }
+    }
+    for node in nodes.iter_mut() {
+        node.depression = node.depression.and_then(|d| remap[d]);
+    }
+    let mut d = 0_usize;
+    depressions.retain(|_| {
+        let kept = keep[d];
+        d += 1;
+        kept
+    });
 }
 
 fn add_components(
@@ -723,7 +877,7 @@ mod tests {
             node(1, 0, 2.0, DrainageOutlet::None),
         ];
         let neighbors = prepare(&mut nodes);
-        let depressions = route_nodes(&mut nodes, &neighbors, 1e-4, 0.002);
+        let depressions = route_nodes(&mut nodes, &neighbors, 1e-4, 0.002, 1.0);
         let params = crate::Params::defaults(GenVersion::V1Dev, crate::Mode::Gameplay);
         let points: Vec<_> = nodes.iter().map(|node| node.point).collect();
         let grid = ClimateGrid::build(&points, params.drainage.climate_step_l, |_| {
@@ -740,12 +894,66 @@ mod tests {
         RiverNet {
             plate_id: 7,
             step_l: params.drainage.step_l,
+            cell_bounds: super::cell_bounds(&nodes),
             nodes,
             depressions,
             runoff,
             channels,
             lakes,
         }
+    }
+
+    #[test]
+    fn over_budget_pits_are_breached_deepest_first() {
+        // Д-057: две ямы на 7×7; бюджет в один узел оставляет глубокую,
+        // мелкая прорезается и остаётся проточной.
+        let build = |fraction: f64| {
+            let mut nodes = Vec::new();
+            for i in 0..7 {
+                for j in 0..7 {
+                    let height = if i == 0 && j == 3 {
+                        0.0
+                    } else if i == 2 && j == 2 {
+                        0.2
+                    } else if i == 4 && j == 4 {
+                        0.6
+                    } else {
+                        1.0
+                    };
+                    let outlet = if i == 0 && j == 3 {
+                        DrainageOutlet::Sea
+                    } else {
+                        DrainageOutlet::None
+                    };
+                    nodes.push(node(i, j, height, outlet));
+                }
+            }
+            let neighbors = prepare(&mut nodes);
+            let depressions = route_nodes(&mut nodes, &neighbors, 1e-4, 0.002, fraction);
+            (nodes, depressions)
+        };
+        let deep = 2 * 7 + 2;
+        let shallow = 4 * 7 + 4;
+        let (nodes, depressions) = build(1.0);
+        assert_eq!(depressions.len(), 2);
+        assert!(nodes[deep].depression.is_some() && nodes[shallow].depression.is_some());
+
+        let (nodes, depressions) = build(0.03);
+        assert_eq!(depressions.len(), 1);
+        assert_eq!(nodes[deep].depression, Some(0));
+        assert_eq!(depressions[0].bottom_node, deep);
+        assert_eq!(nodes[shallow].depression, None);
+        assert!(nodes[shallow].downstream.is_some());
+        assert!(nodes[shallow].filled_km > nodes[shallow].route_km);
+
+        let (nodes, depressions) = build(0.0);
+        assert!(depressions.is_empty());
+        assert!(nodes.iter().all(|node| node.depression.is_none()));
+        assert!(
+            nodes
+                .iter()
+                .all(|node| node.outlet.is_outlet() || node.downstream.is_some())
+        );
     }
 
     #[test]
@@ -767,7 +975,7 @@ mod tests {
             }
         }
         let neighbors = prepare(&mut nodes);
-        let depressions = route_nodes(&mut nodes, &neighbors, 1e-4, 0.002);
+        let depressions = route_nodes(&mut nodes, &neighbors, 1e-4, 0.002, 1.0);
         let pit = 2 * 5 + 2;
         assert!(nodes[pit].filled_km > 1.0);
         assert!(nodes[pit].downstream.is_some());
@@ -794,7 +1002,7 @@ mod tests {
             node(1, 1, 2.0, DrainageOutlet::None),
         ];
         let neighbors = prepare(&mut nodes);
-        let depressions = route_nodes(&mut nodes, &neighbors, 1e-4, 0.002);
+        let depressions = route_nodes(&mut nodes, &neighbors, 1e-4, 0.002, 1.0);
         assert!(nodes.iter().all(|node| node.downstream.is_none()));
         assert!(nodes.iter().all(|node| node.outlet == DrainageOutlet::None));
         assert_eq!(depressions.len(), 1);
@@ -813,6 +1021,34 @@ mod tests {
         assert_eq!(net.depression_depth_km(Vec2::new(10.0, 10.0)), 0.0);
         let shifted = net.depression_depth_km(point.add(Vec2::new(1e-6, 0.0)));
         assert!((depth - shifted).abs() < 1e-5);
+    }
+
+    #[test]
+    fn depression_depth_bounds_shortcut_does_not_change_the_answer() {
+        let mut net = tiny_net();
+        net.step_l = 1.0;
+        net.nodes[1].filled_km = net.nodes[1].route_km + 0.5;
+        assert_eq!(net.cell_bounds, Some(((0, 0), (1, 0))));
+        // Та же сеть с рамкой «весь мир»: ранний выход не срабатывает никогда.
+        let mut plain = net.clone();
+        plain.cell_bounds = Some(((i64::MIN, i64::MIN), (i64::MAX, i64::MAX)));
+        let mut positive = 0;
+        let mut outside = 0;
+        for a in -40..=40 {
+            for b in -40..=40 {
+                let point = Vec2::new(a as f64 * 0.173, b as f64 * 0.173);
+                let fast = net.depression_depth_km(point);
+                assert_eq!(fast.to_bits(), plain.depression_depth_km(point).to_bits());
+                positive += usize::from(fast > 0.0);
+                outside += usize::from(point.x < -2.0 || point.x > 4.0);
+            }
+        }
+        assert!(positive > 100 && outside > 1000);
+        let mut empty = net.clone();
+        empty.nodes.clear();
+        empty.cell_bounds = super::cell_bounds(&empty.nodes);
+        assert_eq!(empty.cell_bounds, None);
+        assert_eq!(empty.depression_depth_km(Vec2::new(1.0, 0.0)), 0.0);
     }
 
     #[test]

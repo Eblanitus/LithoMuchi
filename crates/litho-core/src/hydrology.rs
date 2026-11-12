@@ -63,7 +63,13 @@ pub struct HydrologySample {
 
 pub fn validate(params: &Params) -> Result<(), RiverNetError> {
     let h = &params.hydrology;
-    let values = [h.bank_fraction, h.field_fade_l, h.estuary_elevation_km];
+    let values = [
+        h.bank_fraction,
+        h.field_fade_l,
+        h.channel_fade_l,
+        h.bank_min_blocks,
+        h.estuary_elevation_km,
+    ];
     if values.iter().any(|v| !v.is_finite() || *v <= 0.0)
         || ![
             h.floodplain_e,
@@ -469,9 +475,10 @@ mod tests {
         assert!(flat.floodplain > 0.7 && mountain.floodplain == 0.0);
         let v = apply_fields(base(), 0.0, &flat, &p);
         assert_eq!(v.w, 0.0);
-        assert!(v.e > p.hydrology.floodplain_e - 0.1);
+        // Пойма тянет E к floodplain_e не слабее своей силы (>0.7).
+        assert!(v.e > crate::math::lerp(base().e, p.hydrology.floodplain_e, 0.7));
         let mut bank = hit;
-        let fade = (bank.core_l * p.hydrology.bank_fraction).max(p.hydrology.field_fade_l);
+        let fade = (bank.core_l * p.hydrology.bank_fraction).max(p.hydrology.channel_fade_l);
         bank.distance_l = bank.core_l + fade;
         assert_eq!(
             1.0 - smoothstep(bank.core_l, bank.core_l + fade, bank.distance_l),

@@ -7,6 +7,7 @@ mod json;
 mod palette;
 mod png;
 mod render;
+mod tune;
 
 use std::path::Path;
 use std::time::Instant;
@@ -117,7 +118,7 @@ fn options_from(args: &[String]) -> Result<RenderOptions, String> {
 }
 
 fn generator(opts: &RenderOptions) -> Result<Generator, String> {
-    Generator::new(opts.seed, opts.mode, opts.version).map_err(|error| error.to_string())
+    tune::generator(opts.seed, opts.mode, opts.version)
 }
 
 fn height_source(args: &[String]) -> Result<Option<HeightSource>, String> {
@@ -305,6 +306,128 @@ fn seam_components(generator: &Generator, x: f64, z: f64, label: &str) {
 /// Полный скан карты, а не 100 точек юнит-теста: 64×64 узла с шагом 16
 /// блоков, соседи по обеим осям для всех трёх полей. Возвращает ошибку при
 /// любом превышении порога — это и есть обязательный гейт из Д-022.
+/// Диагностика Д-059: `--ray-lattice ШАГ_L` подменяет шаг решётки луча
+/// влаги быстрого пути (0 — луч из каждой колонки, как в эталоне).
+fn with_ray_lattice(generator: Generator, args: &[String]) -> Result<Generator, String> {
+    let Some(text) = value(args, "--ray-lattice") else {
+        return Ok(generator);
+    };
+    let step = text
+        .parse::<f64>()
+        .map_err(|e| format!("--ray-lattice: {e}"))?;
+    if !(0.0..=1.0).contains(&step) {
+        return Err("--ray-lattice: шаг должен лежать в 0…1 L".to_string());
+    }
+    Ok(generator.with_ray_lattice(step))
+}
+
+/// Д-059: сверка быстрого пути с эталоном на сетке точек. Быстрый путь
+/// v1-dev берёт луч влаги с решётки; здесь видно, сколько это стоит в μ,
+/// осадках, полях T/H, высоте и классе зоны. `--min-zone-share X` делает
+/// команду гейтом.
+fn cmd_paths(args: &[String]) -> Result<(), String> {
+    let opts = options_from(args)?;
+    let generator = with_ray_lattice(generator(&opts)?, args)?;
+    let n = match value(args, "--n") {
+        Some(text) => text.parse::<usize>().map_err(|e| format!("--n: {e}"))?,
+        None => 48,
+    };
+    let span_l = match value(args, "--span-l") {
+        Some(text) => text.parse::<f64>().map_err(|e| format!("--span-l: {e}"))?,
+        None => 40.0,
+    };
+    let min_share = value(args, "--min-zone-share")
+        .map(|text| {
+            text.parse::<f64>()
+                .map_err(|e| format!("--min-zone-share: {e}"))
+        })
+        .transpose()?;
+    if n == 0 || !span_l.is_finite() || span_l <= 0.0 {
+        return Err("--n должен быть > 0, --span-l строго > 0".to_string());
+    }
+    let step = span_l * opts.mode.l_blocks() / n as f64;
+    let names = ["μ", "P, мм", "T", "H", "C", "E", "W", "высота, блоков"];
+    let mut errors: Vec<Vec<f64>> = vec![Vec::with_capacity(n * n); names.len()];
+    let mut worst = [(0.0_f64, 0.0_f64, 0.0_f64); 8];
+    let (mut total, mut same, mut land, mut land_same) = (0_usize, 0_usize, 0_usize, 0_usize);
+    for j in 0..n {
+        for i in 0..n {
+            // Полблока сдвига: точки не попадают в узлы решётки луча.
+            let x = (opts.center_x + (i as f64 - n as f64 * 0.5) * step).floor() + 0.5;
+            let z = (opts.center_z + (j as f64 - n as f64 * 0.5) * step).floor() + 0.5;
+            let (Some(reference), Some(fast)) = (
+                generator
+                    .try_sample_reference(x, z)
+                    .map_err(|e| e.to_string())?,
+                generator.try_sample(x, z).map_err(|e| e.to_string())?,
+            ) else {
+                continue;
+            };
+            total += 1;
+            let zone_same = reference.zone == fast.zone;
+            same += usize::from(zone_same);
+            if !reference.world.is_ocean {
+                land += 1;
+                land_same += usize::from(zone_same);
+            }
+            let deltas = [
+                reference.climate.precip.mu - fast.climate.precip.mu,
+                reference.climate.precip.p_mm - fast.climate.precip.p_mm,
+                reference.vanilla.t - fast.vanilla.t,
+                reference.vanilla.h - fast.vanilla.h,
+                reference.vanilla.c - fast.vanilla.c,
+                reference.vanilla.e - fast.vanilla.e,
+                reference.vanilla.w - fast.vanilla.w,
+                reference.world.height.surface_y - fast.world.height.surface_y,
+            ];
+            for (k, delta) in deltas.iter().enumerate() {
+                let delta = delta.abs();
+                errors[k].push(delta);
+                if delta > worst[k].0 {
+                    worst[k] = (delta, x, z);
+                }
+            }
+        }
+    }
+    if total == 0 {
+        return Err("paths: в окне нет ни одной точки с плитой".to_string());
+    }
+    let share = same as f64 / total as f64;
+    let land_share = if land == 0 {
+        1.0
+    } else {
+        land_same as f64 / land as f64
+    };
+    println!(
+        "paths ({version}, {mode}, сид {seed}): {total} точек, окно {span_l} L, шаг {step:.0} блоков",
+        version = opts.version.as_str(),
+        mode = opts.mode.as_str(),
+        seed = opts.seed,
+    );
+    println!(
+        "paths: зона совпала в {share:.4} точек; на суше {land_share:.4} ({land_same}/{land})"
+    );
+    let nodes = generator.ray_nodes();
+    println!(
+        "paths: узлов луча влаги {nodes} — {per:.4} на колонку (эталон: 1 луч на колонку)",
+        per = nodes as f64 / total as f64
+    );
+    for (k, name) in names.iter().enumerate() {
+        let list = &mut errors[k];
+        list.sort_by(f64::total_cmp);
+        let mean = list.iter().sum::<f64>() / list.len() as f64;
+        let p95 = list[(list.len() - 1) * 95 / 100];
+        let (max, x, z) = worst[k];
+        println!("paths: |Δ {name}| среднее {mean:.5}, p95 {p95:.5}, max {max:.5} в ({x}, {z})");
+    }
+    match min_share {
+        Some(min) if share < min => Err(format!(
+            "paths: совпадение зон {share:.4} ниже требуемого {min}"
+        )),
+        _ => Ok(()),
+    }
+}
+
 fn cmd_seams(args: &[String]) -> Result<(), String> {
     let opts = options_from(args)?;
     let generator = generator(&opts)?;
@@ -771,6 +894,138 @@ fn cmd_drainage(args: &[String]) -> Result<(), String> {
     Ok(())
 }
 
+/// T79: цена редких колонок дальнего рельефа (LOD). Horizon просит тайлы
+/// 16 × 16 колонок с шагом 4…128 блоков и для каждой колонки зовёт
+/// `field_column`. Здесь тот же рисунок запросов: квадрат соседних тайлов у
+/// центра, все холодные (решётки луча сброшены, сети рек прогреты).
+fn cmd_lod(args: &[String]) -> Result<(), String> {
+    let opts = options_from(args)?;
+    let tiles = match value(args, "--tiles") {
+        Some(text) => text.parse::<usize>().map_err(|e| format!("--tiles: {e}"))?,
+        None => 3,
+    };
+    let strides: Vec<i64> = match value(args, "--strides") {
+        Some(text) => text
+            .split(',')
+            .map(|part| {
+                part.trim()
+                    .parse::<i64>()
+                    .map_err(|e| format!("--strides: {e}"))
+            })
+            .collect::<Result<_, _>>()?,
+        None => vec![4, 8, 16, 32, 64, 128],
+    };
+    if tiles == 0 || strides.is_empty() || strides.iter().any(|s| *s <= 0) {
+        return Err("--tiles должен быть > 0, шаги --strides — целые > 0".to_string());
+    }
+    let json = args.iter().any(|arg| arg == "--json");
+    let fields = [
+        Field::Continents,
+        Field::Erosion,
+        Field::Ridges,
+        Field::Temperature,
+        Field::Vegetation,
+    ];
+    const SIDE: i64 = 16;
+    // Точек прогрева сетей рек на сторону тайла.
+    const WARM: i64 = 9;
+    let mut generator = with_ray_lattice(generator(&opts)?, args)?;
+    let mut sink = 0.0_f64;
+    let mut rows = Vec::new();
+    for &stride in &strides {
+        // Тайлы стоят на сетке своего шага вплотную друг к другу квадратом
+        // `tiles × tiles`, как их просит Horizon: соседние тайлы делят узлы
+        // решёток, но не колонки.
+        let span = stride * SIDE;
+        let (cx, cz) = (
+            (opts.center_x / span as f64).floor() as i64 * span,
+            (opts.center_z / span as f64).floor() as i64 * span,
+        );
+        let origins: Vec<(i64, i64)> = (0..tiles * tiles)
+            .map(|k| {
+                let (i, j) = ((k % tiles) as i64, (k / tiles) as i64);
+                (cx + i * span, cz + j * span)
+            })
+            .collect();
+        // Сети рек строятся один раз на плиту и меряются отдельно
+        // (`drainage`): прогреваем их в точках вне сетки колонок.
+        for &(ox, oz) in &origins {
+            for wz in 0..WARM {
+                for wx in 0..WARM {
+                    let fx = wx as f64 / (WARM - 1) as f64;
+                    let fz = wz as f64 / (WARM - 1) as f64;
+                    sink += generator.field_column(
+                        Field::Continents,
+                        ox as f64 + fx * (span - stride) as f64 + 0.5,
+                        oz as f64 + fz * (span - stride) as f64 + 0.5,
+                    );
+                }
+            }
+        }
+        let lattice_l = generator.params().boundaries.ray_lattice_l;
+        generator = generator.with_ray_lattice(lattice_l);
+        let mut per_tile = Vec::with_capacity(origins.len());
+        for &(ox, oz) in &origins {
+            let start = Instant::now();
+            for iz in 0..SIDE {
+                for ix in 0..SIDE {
+                    let x = (ox + ix * stride) as f64;
+                    let z = (oz + iz * stride) as f64;
+                    for field in fields {
+                        sink += generator.field_column(field, x, z);
+                    }
+                }
+            }
+            per_tile.push(start.elapsed().as_secs_f64() * 1e3 / (SIDE * SIDE) as f64);
+        }
+        per_tile.sort_by(f64::total_cmp);
+        let median = per_tile[per_tile.len() / 2];
+        let worst = per_tile[per_tile.len() - 1];
+        let columns = (origins.len() as i64 * SIDE * SIDE) as f64;
+        let mean = per_tile.iter().sum::<f64>() / per_tile.len() as f64;
+        let rays = generator.ray_nodes() as f64 / columns;
+        let nodes = generator.ray_field_nodes() as f64 / columns;
+        rows.push((stride, mean, median, worst, rays, nodes));
+    }
+    if json {
+        let body = rows
+            .iter()
+            .map(|(stride, mean, median, worst, rays, nodes)| {
+                format!(
+                    "{{\"stride\":{stride},\"ms_per_column_mean\":{mean:.5},\"ms_per_column\":{median:.5},\"ms_per_column_worst\":{worst:.5},\"rays_per_column\":{rays:.4},\"field_nodes_per_column\":{nodes:.3}}}"
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(",");
+        println!(
+            "{{\"seed\":{seed},\"mode\":\"{mode}\",\"version\":\"{version}\",\"tiles\":{tiles},\"ray_lattice_l\":{lattice:?},\"ray_field_l\":{field:?},\"strides\":[{body}]}}",
+            seed = opts.seed,
+            mode = opts.mode.as_str(),
+            version = opts.version.as_str(),
+            lattice = generator.params().boundaries.ray_lattice_l,
+            field = generator.params().boundaries.ray_field_l,
+        );
+        return Ok(());
+    }
+    println!(
+        "lod ({version}, {mode}, сид {seed}): квадрат {tiles} × {tiles} холодных тайлов по 16 × 16 колонок на шаг, решётка луча {lattice} L, решётка высот {field} L (sink={sink:.3})",
+        version = opts.version.as_str(),
+        mode = opts.mode.as_str(),
+        seed = opts.seed,
+        lattice = generator.params().boundaries.ray_lattice_l,
+        field = generator.params().boundaries.ray_field_l,
+    );
+    println!(
+        "  шаг, блоков | мс/колонку: среднее | медиана тайлов | худший тайл | лучей/колонку | узлов высот/колонку"
+    );
+    for (stride, mean, median, worst, rays, nodes) in rows {
+        println!(
+            "  {stride:>11} | {mean:>19.4} | {median:>14.4} | {worst:>11.4} | {rays:>13.3} | {nodes:>19.2}"
+        );
+    }
+    Ok(())
+}
+
 fn cmd_bench(args: &[String]) -> Result<(), String> {
     let opts = options_from(args)?;
     let chunk_target_ms = match value(args, "--chunk-target-ms") {
@@ -783,7 +1038,7 @@ fn cmd_bench(args: &[String]) -> Result<(), String> {
         return Err("--chunk-target-ms должен быть конечным и > 0".into());
     }
     let enforce_chunk_target = args.iter().any(|arg| arg == "--enforce-chunk-target");
-    let generator = generator(&opts)?;
+    let generator = with_ray_lattice(generator(&opts)?, args)?;
     let n = 1000;
     let mut sink = 0.0_f64;
     let mut refs = [0.0_f64; 3];
@@ -852,24 +1107,52 @@ fn cmd_bench(args: &[String]) -> Result<(), String> {
     // К4 / шаг 6: отдельный замер на чанк и на колонку для v1-dev. Повторы
     // показывают и холодный проход, и попадание в кэш колонки T160.
     let chunk_columns = CHUNK_SIDE * CHUNK_SIDE;
-    let mut chunk_pass = || {
+    // Д-057: сети рек соседних плит строятся один раз на плиту (сотни мс) и
+    // меряются отдельно (`drainage`, cold). Здесь нужна цена колонок, поэтому
+    // углы и центр области трогаем заранее, в точках вне сетки чанка: иначе
+    // одна постройка сети, случайно попавшая в чанк, утраивает «мс/чанк».
+    let chunk_span = ((CHUNK_SIDE - 1) * 4) as f64;
+    let (chunk_x, chunk_z) = (opts.center_x.floor(), opts.center_z.floor());
+    for (fx, fz) in [(0.0, 0.0), (1.0, 0.0), (0.0, 1.0), (1.0, 1.0), (0.5, 0.5)] {
+        sink += generator.field(
+            Field::Continents,
+            chunk_x + fx * chunk_span + 0.5,
+            64.0,
+            chunk_z + fz * chunk_span + 0.5,
+        );
+    }
+    // Д-059: прогрев и замеры выше уже посчитали узлы решётки луча влаги
+    // вокруг чанка. Сбрасываем решётку и кэш колонок (сети рек остаются):
+    // холодный чанк обязан заплатить за свои лучи сам.
+    let lattice_l = generator.params().boundaries.ray_lattice_l;
+    let generator = generator.with_ray_lattice(lattice_l);
+    // Д-057: холодный проход — ровно один. Раньше время трёх повторов (один
+    // холодный и два из кэша) делилось на три, и «cold» выходил втрое меньше.
+    let mut chunk_pass = |repeats: usize| {
         let start = Instant::now();
-        for _ in 0..CHUNK_REPEATS {
+        for _ in 0..repeats {
             for iz in 0..CHUNK_SIDE {
                 for ix in 0..CHUNK_SIDE {
-                    let x = (ix * 4) as f64;
-                    let z = (iz * 4) as f64;
+                    let x = chunk_x + (ix * 4) as f64;
+                    let z = chunk_z + (iz * 4) as f64;
                     for field in column_fields {
                         sink += generator.field(field, x, 64.0, z);
                     }
                 }
             }
         }
-        start.elapsed().as_secs_f64() / CHUNK_REPEATS as f64 * 1e3
+        start.elapsed().as_secs_f64() / repeats as f64 * 1e3
     };
-    let chunk_cold = chunk_pass();
-    let chunk_warm = chunk_pass();
+    let chunk_cold = chunk_pass(1);
+    let chunk_warm = chunk_pass(CHUNK_REPEATS);
     let per_column_ms = chunk_cold / chunk_columns as f64;
+    if generator.params().version.is_water_relief_dev() {
+        println!(
+            "bench K4: лучей влаги на холодный чанк — {rays} на {chunk_columns} колонок \
+             (эталон: луч на колонку); шаг решётки {lattice_l} L",
+            rays = generator.ray_nodes(),
+        );
+    }
     let target_status = if chunk_cold <= chunk_target_ms {
         "в цели"
     } else {
@@ -1193,20 +1476,142 @@ fn acceptance_modes(args: &[String], default: Mode) -> Vec<Mode> {
     Mode::ALL.to_vec()
 }
 
+/// T123: сырые ингредиенты рельефа по сетке в TSV — для подбора гипсометрии
+/// вне генератора (доли полос E, высоты, вклад гидрологии). Только v1/v1-dev.
+fn cmd_dump(args: &[String]) -> Result<(), String> {
+    let opts = options_from(args)?;
+    if !opts.version.is_water_relief_dev() {
+        return Err("dump: нужен --version v1-dev".into());
+    }
+    let span_l = match value(args, "--span-l") {
+        Some(text) => text.parse::<f64>().map_err(|e| format!("--span-l: {e}"))?,
+        None => 200.0,
+    };
+    let size = match value(args, "--size") {
+        Some(text) => text.parse::<usize>().map_err(|e| format!("--size: {e}"))?,
+        None => 32,
+    };
+    let g = generator(&opts)?;
+    let p = g.params().clone();
+    let step = span_l * opts.mode.l_blocks() / size as f64;
+    let lambda_e = p.block.lambda_e_blocks;
+    println!(
+        "seed\tmode\tx\tz\tc\te\tw\tpv\ty\triver\tkind\twater\tfloodplain\tswamp\tdry\testuary\tdeferred\te_km\tmountain\tplateau\tiota\ta\tfoothill\tpaleo\tcraton\tescarp\tvolcanic\thills\tbasin\tbasin_km\trift_floor\trift_shoulder\tn_e\tw0\tw1\tw2\tw3\tw4\tw5\tw6\tw7\tt_bio\tratio\twater_y\tbed_y\twater_strength\tch_dist\tch_core\tch_depth\tch_mirror\tch_q\tch_end\tbank"
+    );
+    for j in 0..size {
+        for i in 0..size {
+            let x = opts.center_x + (i as f64 - size as f64 * 0.5) * step;
+            let z = opts.center_z + (j as f64 - size as f64 * 0.5) * step;
+            let Some(world) = g.world_sample_fast(x, z) else {
+                continue;
+            };
+            let v = world.vanilla;
+            if v.c < p.climate.ocean_c_threshold {
+                continue;
+            }
+            let relief = g
+                .try_relief_sample(x, z)
+                .map_err(|e| e.to_string())?
+                .ok_or("нет образца рельефа")?;
+            let weights = g.morpho_weights(x, z).ok_or("нет морфозон")?;
+            let n_e = litho_core::noise::fbm2_unit(
+                litho_core::seed::subseed(g.seed(), litho_core::seed::SALT_RELIEF_E),
+                x / lambda_e,
+                z / lambda_e,
+                1.0,
+                3,
+                0.5,
+            );
+            let h = world.hydrology;
+            let s = world.climate.surface;
+            let mut row = format!(
+                "{}\t{}\t{x:.1}\t{z:.1}\t{:.4}\t{:.4}\t{:.4}\t{:.4}\t{:.2}\t{:.3}\t{}\t{:.3}\t{:.3}\t{:.3}\t{:.3}\t{:.3}\t{:.3}\t{:.4}\t{:.4}\t{:.4}\t{:.4}",
+                opts.seed,
+                opts.mode.as_str(),
+                v.c,
+                v.e,
+                v.w,
+                world.pv,
+                world.height.surface_y,
+                world.river,
+                h.kind.as_str(),
+                h.water,
+                h.floodplain,
+                h.swamp,
+                h.dry_basin,
+                h.estuary,
+                h.r2_deferred,
+                s.e_km,
+                s.mountain,
+                s.plateau,
+                s.iota_l,
+            );
+            for value in [
+                relief.a,
+                relief.foothill,
+                relief.paleosuture,
+                relief.craton,
+                relief.escarpment,
+                relief.volcanic,
+                relief.hills,
+                relief.basin,
+                relief.basin_depth_km,
+                relief.rift_floor,
+                relief.rift_shoulder,
+                n_e,
+            ] {
+                row.push_str(&format!("\t{value:.4}"));
+            }
+            for value in weights.values {
+                row.push_str(&format!("\t{value:.3}"));
+            }
+            row.push_str(&format!(
+                "\t{:.2}\t{:.3}",
+                world.climate.temperature.t_bio, world.climate.precip.ratio
+            ));
+            let l = opts.mode.l_blocks();
+            row.push_str(&format!(
+                "\t{:.2}\t{:.2}\t{:.3}",
+                world.height.water_y, world.height.bed_y, world.height.water_strength
+            ));
+            match h.channels.nearest {
+                Some(hit) => row.push_str(&format!(
+                    "\t{:.1}\t{:.1}\t{:.2}\t{:.1}\t{:.1}\t{}",
+                    hit.distance_l * l,
+                    hit.core_l * l,
+                    hit.depth_blocks,
+                    hit.mirror_y,
+                    hit.discharge_mm_l2,
+                    hit.end.as_str()
+                )),
+                None => row.push_str("\t\t\t\t\t\t"),
+            }
+            row.push_str(&format!("\t{:.3}", h.channels.bank));
+            println!("{row}");
+        }
+    }
+    Ok(())
+}
+
 fn usage() -> &'static str {
     "Litospherity sandbox (этап Э1, песочница целиком)\n\n\
      Команды:\n\
        render       карты PNG в папку --out\n\
        probe        все поля в точке --at x,z\n\
+       dump         T123: ингредиенты рельефа по сетке в TSV (--span-l, --size; v1-dev)\n\
        layers       список слоёв\n\
        stats        метрики 12.4; с --game-data/--synthetic-height — T100\n\
        stats-all    16 сидов × 2 режима; принимает те же флаги высоты\n\
        acceptance   T151/10.1: вердикт границ PASS/FAIL/NO-VOLUME\n\
                     --seeds 0,42,-7 | --seed N | --mode | --json\n\
        seams        скачки C/E/W между соседними блоками\n\
+       paths        Д-059: быстрый путь против эталона (μ, P, T/H, высота, зона)\n\
+                    --n 48 --span-l 40 --min-zone-share 0.97 --ray-lattice ШАГ_L\n\
        drainage     T110–T116: сток, русла, озёра, дельты и поверхность R1 в --at x,z (v1-dev)\n\
        bench        время эталонного/быстрого пути, колонки и чанка v1-dev\n\
                     --chunk-target-ms N | --enforce-chunk-target\n\
+       lod          T79: цена холодных тайлов дальнего рельефа 16 × 16 колонок\n\
+                    --strides 4,8,16,32,64,128 --tiles 3 --json\n\
        profile      разбивка времени по слоям\n\
        hash         хеши параметров для замка v0\n\
        checkpoints  10 точек вокруг точки появления\n\
@@ -1233,15 +1638,22 @@ fn main() -> Result<(), String> {
         print!("{text}", text = usage());
         return Ok(());
     };
+    tune::init(&args)?;
+    if command == "acceptance" && !tune::label().is_empty() {
+        return Err("acceptance считает только Params::defaults; --set здесь запрещён".into());
+    }
     match command.as_str() {
         "render" => cmd_render(&args[1..]),
         "probe" => cmd_probe(&args[1..]),
+        "dump" => cmd_dump(&args[1..]),
         "stats" => cmd_stats(&args[1..]),
         "stats-all" => cmd_stats_all(&args[1..]),
         "acceptance" => cmd_acceptance(&args[1..]),
         "seams" => cmd_seams(&args[1..]),
+        "paths" => cmd_paths(&args[1..]),
         "drainage" => cmd_drainage(&args[1..]),
         "bench" => cmd_bench(&args[1..]),
+        "lod" => cmd_lod(&args[1..]),
         "profile" => cmd_profile(),
         "hash" => cmd_hash(),
         "checkpoints" => cmd_checkpoints(&args[1..]),

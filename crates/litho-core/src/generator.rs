@@ -38,7 +38,26 @@ const COARSE_N: usize = 4;
 /// колонке. Ёмкость инфраструктурная, в хеш мира не входит; вытеснение меняет
 /// только скорость, не ответ.
 const COLUMN_CACHE_CAPACITY: usize = 4096;
+/// Д-059: кэш лучей влаги в узлах решётки быстрого пути. Узел — два десятка
+/// чисел; при шаге 32 блока ёмкости хватает на область 4096×4096 блоков.
+/// В хеш мира не входит: вытеснение меняет только скорость, не ответ.
+const RAY_CACHE_CAPACITY: usize = 16384;
 /// К2/К7: `field()` раньше молча подменял ошибку и нечисловое значение нулём.
+/// Д-061: сторона тайла списка «плиты с узлами рядом», в клетках решётки
+/// стока. Инфраструктура: на ответ не влияет.
+const NET_TILE_CELLS: i64 = 2;
+/// Д-061: запас окна поверх радиуса запроса, в клетках: одна клетка на
+/// кольцо сети и две сверху.
+const NET_OWNER_MARGIN_CELLS: i64 = 3;
+const NET_OWNER_CACHE_CAPACITY: usize = 8192;
+/// T79: сторона блока «владелец узла решётки стока», в клетках. Окно списка
+/// плит (Д-061) читает владельцев из блоков, а не считает каждый раз заново:
+/// редкая колонка дальнего рельефа попадает в свой тайл списка, и без блоков
+/// каждая платила за 28 × 28 запросов плиты. Инфраструктура: на ответ не
+/// влияет.
+const NET_OWNER_BLOCK_CELLS: i64 = 16;
+const NET_OWNER_BLOCK_CACHE_CAPACITY: usize = 2048;
+
 /// litho-core не имеет зависимостей (план 5.4), поэтому пишем в stderr без
 /// внешнего `log`-крейта; первые ошибки видны в логе игры/CI, далее только
 /// счётчик, чтобы ошибка в каждой колонке не заваливала лог.
@@ -49,6 +68,43 @@ static FIELD_ERRORS: AtomicU64 = AtomicU64::new(0);
 /// Диагностика для игры и тестов; не входит в хеш параметров.
 pub fn field_error_log_count() -> u64 {
     FIELD_ERRORS.load(Ordering::Relaxed)
+}
+
+/// Постройка сети стока — самое долгое одиночное действие ядра (сотни мс).
+/// Первые сети и затем каждая шестнадцатая попадают в stderr: по логу игры
+/// видно, чем занято создание мира. На ответ не влияет.
+const NET_LOG_FIRST: u64 = 12;
+/// Дальше в лог идёт каждая сеть с номером, кратным 2^NET_LOG_EVERY_LOG2.
+const NET_LOG_EVERY_LOG2: u32 = 4;
+static NET_BUILDS: AtomicU64 = AtomicU64::new(0);
+
+/// Сколько сетей стока построено в процессе (все миры). Диагностика.
+pub fn net_build_count() -> u64 {
+    NET_BUILDS.load(Ordering::Relaxed)
+}
+
+fn log_net_build(
+    plate_id: u64,
+    built: &Result<RiverNet, RiverNetError>,
+    elapsed: std::time::Duration,
+) {
+    let number = NET_BUILDS.fetch_add(1, Ordering::Relaxed) + 1;
+    let periodic = number.trailing_zeros() >= NET_LOG_EVERY_LOG2;
+    if number > NET_LOG_FIRST && !periodic && built.is_ok() {
+        return;
+    }
+    let ms = elapsed.as_secs_f64() * 1e3;
+    match built {
+        Ok(net) => eprintln!(
+            "litho-core: сеть рек №{number}, плита {plate_id}: {} узлов за {ms:.0} мс",
+            net.nodes().len()
+        ),
+        Err(error) => {
+            eprintln!(
+                "litho-core: сеть рек №{number}, плита {plate_id}: ошибка {error} за {ms:.0} мс"
+            )
+        }
+    }
 }
 
 fn log_field_error(message: impl FnOnce() -> String) {
@@ -71,8 +127,21 @@ fn log_field_error_with(counter: &AtomicU64, message: impl FnOnce() -> String) {
 
 type CoarseTiles = ShardedCache<(i64, i64), Arc<Nodes<COARSE_N>>>;
 type LastCoarse = Option<(u64, u64, i64, i64, Arc<Nodes<COARSE_N>>)>;
+/// Д-061: тайл → плиты, чьи сети рек могут иметь узел рядом с запросом.
+type NetOwners = ShardedCache<(i64, i64), Arc<Vec<u64>>>;
+/// T79: блок решётки стока → владелец каждого узла блока.
+type NetOwnerBlocks = ShardedCache<(i64, i64), Arc<Vec<Option<u64>>>>;
+
+/// T79: недавние тайлы решётки высот на поток, прямое отображение.
+const RAY_TILE_SLOTS: usize = 8;
+type RayTileSlot = Option<(u64, i64, i64, Arc<crate::ray_field::RayFieldTile>)>;
+/// Номер генератора для потоковой памяти тайлов: два мира в одном процессе
+/// не должны читать тайлы друг друга (Р14).
+static RAY_FIELD_IDS: AtomicU64 = AtomicU64::new(1);
 
 thread_local! {
+    static RAY_TILES: RefCell<[RayTileSlot; RAY_TILE_SLOTS]> =
+        const { RefCell::new([const { None }; RAY_TILE_SLOTS]) };
     /// «Последний тайл» на поток: соседние запросы не трогают замки (6.6).
     /// Ключ включает сид и масштаб, чтобы миры в одном процессе не путались (Р14).
     static LAST_COARSE: RefCell<LastCoarse> = const { RefCell::new(None) };
@@ -134,9 +203,23 @@ pub struct Generator {
     /// узлы привязаны к мировым блокам, эталон считает ту же решётку.
     morpho: Arc<crate::cache::ShardedCache<(i64, i64), MorphoWeights>>,
     drainage: Arc<RiverNetCache>,
+    /// Д-061: по тайлу — плиты, чьи сети могут иметь узел в радиусе запроса.
+    net_owners: Arc<NetOwners>,
+    /// T79: владельцы узлов решётки стока блоками, из них собирается список.
+    net_owner_blocks: Arc<NetOwnerBlocks>,
     coarse: Arc<CoarseTiles>,
     /// T160: точная колонка `(x,z)` для повторных запросов полей.
     column: Arc<crate::cache::ShardedCache<(i64, i64), Arc<FullSample>>>,
+    /// Д-059: лучи влаги в узлах решётки быстрого пути (только v1-dev).
+    rays: Arc<crate::cache::ShardedCache<(i64, i64), Option<crate::climate::RayNode>>>,
+    /// Д-059: счётчик посчитанных узлов, только для диагностики.
+    ray_traces: Arc<std::sync::atomic::AtomicU64>,
+    /// T79: высота, ветер и широта для луча влаги в узлах решётки.
+    ray_field: Arc<ShardedCache<(i64, i64), Arc<crate::ray_field::RayFieldTile>>>,
+    /// T79: ключ потоковой памяти тайлов этого генератора.
+    ray_field_id: u64,
+    /// T79: сколько узлов решётки высот посчитано, только для диагностики.
+    ray_field_nodes: Arc<std::sync::atomic::AtomicU64>,
     spawn_shift: Vec2,
 }
 
@@ -144,12 +227,25 @@ impl Generator {
     /// Создаётся один раз на мир. Пока дёшево; после T54 здесь появится поиск
     /// сдвига точки появления `p*` (около 256 эталонных расчётов).
     pub fn new(seed: i64, mode: Mode, version: GenVersion) -> Result<Self, GenError> {
+        if version == GenVersion::V1 {
+            return Err(GenError::UnsupportedVersion(version));
+        }
+        Self::with_params(seed, Params::defaults(version, mode))
+    }
+
+    /// T151: генератор с изменёнными параметрами — только для подбора в
+    /// песочнице (`--set`). Мод и приёмка идут через [`Generator::new`]:
+    /// мир с другими параметрами — другой мир с другим `params_hash`.
+    #[doc(hidden)]
+    pub fn with_params(seed: i64, mut params: Params) -> Result<Self, GenError> {
+        let version = params.version;
         match version {
             GenVersion::V0 | GenVersion::V1Dev => {}
             GenVersion::V1 => return Err(GenError::UnsupportedVersion(version)),
         }
+        // Ключ кэшей плит обязан соответствовать фактическим параметрам.
+        params.config_key = params.params_hash();
         let world_seed = from_world_seed(seed);
-        let params = Params::defaults(version, mode);
         if version.is_water_relief_dev() {
             debug_assert!(
                 params.boundaries.validate().is_ok(),
@@ -173,11 +269,24 @@ impl Generator {
                 shards,
                 crate::drainage::NET_CACHE_CAPACITY,
             )),
+            net_owners: Arc::new(crate::cache::ShardedCache::new(
+                shards,
+                NET_OWNER_CACHE_CAPACITY,
+            )),
+            net_owner_blocks: Arc::new(ShardedCache::new(shards, NET_OWNER_BLOCK_CACHE_CAPACITY)),
             coarse: Arc::new(ShardedCache::new(shards, CACHE_CAPACITY)),
             column: Arc::new(crate::cache::ShardedCache::new(
                 shards,
                 COLUMN_CACHE_CAPACITY,
             )),
+            rays: Arc::new(crate::cache::ShardedCache::new(shards, RAY_CACHE_CAPACITY)),
+            ray_traces: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            ray_field: Arc::new(ShardedCache::new(
+                shards,
+                crate::ray_field::TILE_CACHE_CAPACITY,
+            )),
+            ray_field_id: RAY_FIELD_IDS.fetch_add(1, Ordering::Relaxed),
+            ray_field_nodes: Arc::new(std::sync::atomic::AtomicU64::new(0)),
             spawn_shift: shift,
         })
     }
@@ -290,8 +399,12 @@ impl Generator {
         let radius = 2.0 * step;
         let warp_bound = self.params.plates.warp_amplitude_l.abs() * crate::math::SQRT_2;
         let reach = radius + 4.0 * step + 2.0 * warp_bound;
+        let owners = self.net_owners(point);
         let mut depth: f64 = 0.0;
         for plate in plates_near(point, radius, self.seed, &self.params) {
+            if owners.binary_search(&plate.id).is_err() {
+                continue;
+            }
             if plate.id != nearest.a.id {
                 let delta = plate.seed_pos.sub(nearest.a.seed_pos);
                 let separation = delta.len();
@@ -308,6 +421,77 @@ impl Generator {
             depth = depth.max(net.depression_depth_km(point));
         }
         Ok(depth)
+    }
+
+    /// Д-061: плиты, чьи сети стока могут иметь узел в радиусе общего запроса
+    /// русел от любой точки тайла, по возрастанию id.
+    ///
+    /// Вклад сети в точку (русло, озеро, глубина впадины) идёт только от её
+    /// узлов не дальше `max_query_radius_l`. Узел сети — узел плиты или сосед
+    /// такого узла (кольцо). Значит, плита без своих узлов в окне «тайл +
+    /// радиус + кольцо + запас» в ответ не входит. Прежний фильтр по границе
+    /// Вороного брал запас на искажение домена 2·4√2 L и пропускал почти всех
+    /// соседей: первая колонка мира строила 13 сетей.
+    ///
+    /// Список — чистая функция сида, параметров и тайла; кэш на ответ не влияет.
+    fn net_owners(&self, point: Vec2) -> Arc<Vec<u64>> {
+        let h = self.params.drainage.step_l;
+        let side = h * NET_TILE_CELLS as f64;
+        let tile = (
+            (point.x / side).floor() as i64,
+            (point.z / side).floor() as i64,
+        );
+        self.net_owners.get_or_insert(tile, || {
+            let reach = ((crate::channel::max_query_radius_l(&self.params) / h).ceil() as i64)
+                .saturating_add(NET_OWNER_MARGIN_CELLS);
+            let first = |t: i64| t.saturating_mul(NET_TILE_CELLS).saturating_sub(reach);
+            let last = |t: i64| {
+                t.saturating_mul(NET_TILE_CELLS)
+                    .saturating_add(NET_TILE_CELLS - 1)
+                    .saturating_add(reach)
+            };
+            Arc::new(
+                self.owners_in_window((first(tile.0), first(tile.1)), (last(tile.0), last(tile.1))),
+            )
+        })
+    }
+
+    /// T79: то же, что `drainage::owners_in_window`, но владельцы узлов
+    /// читаются из блоков `NET_OWNER_BLOCK_CELLS`, посчитанных один раз.
+    /// Ответ совпадает с прямым расчётом (тест ниже).
+    fn owners_in_window(&self, lo: (i64, i64), hi: (i64, i64)) -> Vec<u64> {
+        const B: i64 = NET_OWNER_BLOCK_CELLS;
+        let mut out: Vec<u64> = Vec::new();
+        let mut last = None;
+        for bz in lo.1.div_euclid(B)..=hi.1.div_euclid(B) {
+            for bx in lo.0.div_euclid(B)..=hi.0.div_euclid(B) {
+                let block = self.net_owner_blocks.get_or_insert((bx, bz), || {
+                    Arc::new(crate::drainage::owner_block(
+                        bx,
+                        bz,
+                        B,
+                        self.seed,
+                        &self.params,
+                    ))
+                });
+                let (x0, z0) = (bx.saturating_mul(B), bz.saturating_mul(B));
+                for j in lo.1.max(z0)..=hi.1.min(z0.saturating_add(B - 1)) {
+                    for i in lo.0.max(x0)..=hi.0.min(x0.saturating_add(B - 1)) {
+                        let Some(id) = block[((j - z0) * B + (i - x0)) as usize] else {
+                            continue;
+                        };
+                        if last != Some(id) {
+                            last = Some(id);
+                            if !out.contains(&id) {
+                                out.push(id);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        out.sort_unstable();
+        out
     }
 
     /// Диагностика искажения домена (слой `jacobian`).
@@ -371,7 +555,8 @@ impl Generator {
                 &self.rivers,
             )
         };
-        let fields = self.surface_fields(&climate, class, is_ocean, x, z, local.max(traced))?;
+        let fields =
+            self.surface_fields(&climate, class, is_ocean, x, z, local.max(traced), None)?;
         Ok(Some(WorldSample {
             climate,
             class: fields.class,
@@ -417,42 +602,50 @@ impl Generator {
             return Err(RiverNetError::UnsupportedVersion(self.params.version));
         }
         self.drainage.get_or_build(plate.id, || {
-            RiverNet::build(
-                plate,
-                self.seed,
-                &self.params,
-                &|point| {
-                    let surface = self.surface_at(point);
-                    let outlet = if surface.e_km < 0.0 {
-                        DrainageOutlet::Sea
-                    } else if surface.sigma_l.abs() < self.params.drainage.step_l {
-                        let k = surface.boundary_weights;
-                        let min = self.params.drainage.outlet_min_weight;
-                        if k[4] > min {
-                            DrainageOutlet::Rift
-                        } else if k[6] > min {
-                            DrainageOutlet::Transform
-                        } else {
-                            DrainageOutlet::None
-                        }
+            let started = std::time::Instant::now();
+            let built = self.build_drainage_network(plate);
+            log_net_build(plate.id, &built, started.elapsed());
+            built
+        })
+    }
+
+    fn build_drainage_network(&self, plate: &Plate) -> Result<RiverNet, RiverNetError> {
+        RiverNet::build(
+            plate,
+            self.seed,
+            &self.params,
+            &|point| {
+                let surface = self.surface_at(point);
+                let outlet = if surface.e_km < 0.0 {
+                    DrainageOutlet::Sea
+                } else if surface.sigma_l.abs() < self.params.drainage.step_l {
+                    let k = surface.boundary_weights;
+                    let min = self.params.drainage.outlet_min_weight;
+                    if k[4] > min {
+                        DrainageOutlet::Rift
+                    } else if k[6] > min {
+                        DrainageOutlet::Transform
                     } else {
                         DrainageOutlet::None
-                    };
-                    DrainageInput {
-                        route_km: surface.e_km,
-                        outlet,
                     }
-                },
-                &|point| {
-                    crate::climate::sample(point, self.seed, &self.params, &|q| self.surface_at(q))
-                        .map(|sample| crate::runoff::RunoffClimate {
-                            p_mm: sample.precip.p_mm,
-                            pet_mm: sample.precip.pet_mm,
-                            t_min_c: sample.temperature.t_min,
-                        })
-                },
-            )
-        })
+                } else {
+                    DrainageOutlet::None
+                };
+                DrainageInput {
+                    route_km: surface.e_km,
+                    outlet,
+                }
+            },
+            &|point| {
+                crate::climate::sample(point, self.seed, &self.params, &|q| self.surface_at(q)).map(
+                    |sample| crate::runoff::RunoffClimate {
+                        p_mm: sample.precip.p_mm,
+                        pet_mm: sample.precip.pet_mm,
+                        t_min_c: sample.temperature.t_min,
+                    },
+                )
+            },
+        )
     }
 
     /// Общий запрос русел T113 в блочной точке. Обходим консервативное окно
@@ -502,7 +695,13 @@ impl Generator {
         let nearest = crate::plates::plate_query(point, self.seed, &self.params);
         let warp_bound = self.params.plates.warp_amplitude_l.abs() * crate::math::SQRT_2;
         let reach = radius + 4.0 * self.params.drainage.step_l + 2.0 * warp_bound;
+        // Д-061: сеть, у которой рядом нет ни одного узла, в ответ не входит;
+        // строить её ради этой точки не нужно.
+        let owners = self.net_owners(point);
         for plate in plates_near(point, radius, self.seed, &self.params) {
+            if owners.binary_search(&plate.id).is_err() {
+                continue;
+            }
             if let Some(n) = &nearest {
                 if plate.id != n.a.id {
                     let delta = plate.seed_pos.sub(n.a.seed_pos);
@@ -566,6 +765,7 @@ impl Generator {
         Ok(geometry)
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn surface_fields(
         &self,
         climate: &ClimateSample,
@@ -574,6 +774,7 @@ impl Generator {
         x: f64,
         z: f64,
         local_river: f64,
+        known: Option<(&PlateSample, &CrustSample)>,
     ) -> Result<SurfaceFields, RiverNetError> {
         if !self.params.version.is_water_relief_dev() {
             let vanilla =
@@ -594,9 +795,17 @@ impl Generator {
         // T122: потенциал A и морфоклиматические зоны переводятся в C/E/W до
         // гидрологии T115/T116, чтобы русла/болота/дельты сохранили приоритет.
         let point = self.macro_point(x, z);
-        let plate = plate_query(point, self.seed, &self.params)
-            .ok_or(RiverNetError::InvalidInput { cell: (0, 0) })?;
-        let crust = crust_from_sample(point, &plate, self.seed, &self.params);
+        // Быстрый путь уже посчитал плиту и кору этой же точки тем же вызовом;
+        // эталон передаёт `None` и считает их здесь.
+        let (plate, crust) = match known {
+            Some((plate, crust)) => (*plate, *crust),
+            None => {
+                let plate = plate_query(point, self.seed, &self.params)
+                    .ok_or(RiverNetError::InvalidInput { cell: (0, 0) })?;
+                let crust = crust_from_sample(point, &plate, self.seed, &self.params);
+                (plate, crust)
+            }
+        };
         let depth = self.relief_basin_depth(point, &plate)?;
         let relief_sample = relief::sample(&plate, &crust, depth, self.seed, &self.params);
         let morpho = self
@@ -617,14 +826,37 @@ impl Generator {
         let river = local_river.max(water.river);
         // I2-lite: долины режут русла/низкие озёра, а не каждая смена знака W.
         let pv = crate::math::lerp(pv_relief, -1.0, crate::math::clamp01(river));
+        // Д-057: в долине реки прибавка макровысоты (научный режим) гаснет,
+        // иначе русло на плато остаётся выше моря и в игре сухое.
+        let e_km = climate.surface.e_km;
+        let e_valley_km = crate::math::lerp(
+            e_km,
+            e_km.min(self.params.height.e_gain_base_km),
+            crate::math::clamp01(river),
+        );
+        let hp = &self.params.height;
+        let micro = if hp.micro_amp_blocks.iter().any(|amp| *amp > 0.0) {
+            crate::noise::fbm2_unit(
+                crate::seed::subseed(self.seed, crate::seed::SALT_HEIGHT_MICRO),
+                x / hp.micro_lambda_blocks,
+                z / hp.micro_lambda_blocks,
+                1.0,
+                2,
+                0.5,
+            )
+        } else {
+            0.0
+        };
         let height = crate::height::with_water(
-            crate::height::sample(
+            crate::height::sample_micro(
                 vanilla.c,
                 vanilla.e,
                 pv,
-                climate.surface.e_km,
+                e_valley_km,
                 morpho.values[6],
                 morpho.values[7],
+                micro,
+                1.0 - crate::math::clamp01(river),
                 &self.params,
             ),
             &water,
@@ -801,14 +1033,27 @@ impl Generator {
         // роняла совпадение зон до 0,953. Берём ветер точно, как в эталоне:
         // это дешевле, чем ослаблять инвариант 14.2.
         let wind_fn = |q: Vec2| crate::climate::wind_at(q, self.seed, &self.params);
-        let ray = crate::climate::trace_ray(
-            point,
-            &self.params,
-            &|q| self.surface_at(q),
-            dir,
-            &wind_fn,
-            self.seed,
-        );
+        let exact_ray = || {
+            crate::climate::trace_ray(
+                point,
+                &self.params,
+                &|q| self.surface_at(q),
+                dir,
+                &wind_fn,
+                self.seed,
+            )
+        };
+        // Д-059: в v1-dev луч берётся с решётки; эталон считает его из точки.
+        let ray = if self.params.version.is_water_relief_dev()
+            && self.params.boundaries.ray_lattice_l > 0.0
+            && self.params.precip.ray_steps > 0
+        {
+            self.lattice_ray(point, x, z)
+                .map(|node| node.resolve(surface.e_km, pole.phi_deg, &self.params))
+                .unwrap_or_else(exact_ray)
+        } else {
+            exact_ray()
+        };
         let c = &self.params.climate;
         let c_iso = crate::math::smoothstep(0.0, c.c_iso_end_l, surface.iota_l);
         let cont = crate::math::lerp(
@@ -847,7 +1092,15 @@ impl Generator {
         let is_ocean = c_value < self.params.climate.ocean_c_threshold;
         let class = classify(&climate, is_ocean, x, z, self.seed, &self.params);
         let local = local_r(x, z, &surface, self.seed, &self.params);
-        let fields = self.surface_fields(&climate, class, is_ocean, x, z, local)?;
+        let fields = self.surface_fields(
+            &climate,
+            class,
+            is_ocean,
+            x,
+            z,
+            local,
+            Some((&plates, &crust)),
+        )?;
         let world = WorldSample {
             climate,
             class: fields.class,
@@ -871,6 +1124,217 @@ impl Generator {
     /// T160: кэш точной колонки. Ключ — биты координат, без квантования;
     /// попадание/промах не меняет ответ. Ошибки/None не кэшируются.
     /// К7: ошибку сети стока не проглатываем — `field()` пишет её в лог.
+    /// Диагностика Д-059: тот же мир с другой решёткой луча влаги быстрого
+    /// пути. Эталонный путь и хеш параметров не меняются; для игры решётка
+    /// берётся только из `Params::defaults`.
+    pub fn with_ray_lattice(mut self, step_l: f64) -> Self {
+        self.params.boundaries.ray_lattice_l = step_l;
+        self.rays = Arc::new(crate::cache::ShardedCache::new(
+            self.params.lattice.cache_shards.max(1),
+            RAY_CACHE_CAPACITY,
+        ));
+        self.column = Arc::new(crate::cache::ShardedCache::new(
+            self.params.lattice.cache_shards.max(1),
+            COLUMN_CACHE_CAPACITY,
+        ));
+        self.ray_traces = Arc::new(std::sync::atomic::AtomicU64::new(0));
+        // T79: вместе с лучами сбрасывается и решётка высот; новый номер
+        // отвязывает генератор от потоковой памяти тайлов.
+        self.ray_field = Arc::new(ShardedCache::new(
+            self.params.lattice.cache_shards.max(1),
+            crate::ray_field::TILE_CACHE_CAPACITY,
+        ));
+        self.ray_field_id = RAY_FIELD_IDS.fetch_add(1, Ordering::Relaxed);
+        self.ray_field_nodes = Arc::new(std::sync::atomic::AtomicU64::new(0));
+        self
+    }
+
+    /// T79: сколько узлов решётки высот луча посчитано с создания генератора.
+    pub fn ray_field_nodes(&self) -> u64 {
+        self.ray_field_nodes.load(Ordering::Relaxed)
+    }
+
+    /// T79: решётка луча влаги привязана к блокам и читает высоты с решётки.
+    fn ray_field_on(&self) -> bool {
+        self.params.version.is_water_relief_dev() && self.params.boundaries.ray_field_l > 0.0
+    }
+
+    /// T79: узел решётки высот `(ix, iz)` в шагах `ray_field_l`.
+    fn ray_field_node(&self, ix: i64, iz: i64) -> crate::ray_field::RayFieldValue {
+        let ((tx, tz), local) = crate::ray_field::locate(ix, iz);
+        let slot = (tx.wrapping_mul(3).wrapping_add(tz)).rem_euclid(RAY_TILE_SLOTS as i64) as usize;
+        let id = self.ray_field_id;
+        // Обычный случай: тайл в памяти потока и узел готов — без замков и
+        // без счётчика ссылок.
+        let recent = RAY_TILES.with(|tiles| match &tiles.borrow()[slot] {
+            Some((owner, x, z, tile)) if *owner == id && *x == tx && *z == tz => {
+                tile.get(local).ok_or_else(|| Some(tile.clone()))
+            }
+            _ => Err(None),
+        });
+        let tile = match recent {
+            Ok(value) => return value,
+            Err(Some(tile)) => tile,
+            Err(None) => {
+                let tile = self
+                    .ray_field
+                    .get_or_insert((tx, tz), crate::ray_field::RayFieldTile::empty);
+                RAY_TILES.with(|tiles| {
+                    tiles.borrow_mut()[slot] = Some((id, tx, tz, tile.clone()));
+                });
+                tile
+            }
+        };
+        tile.node(local, || {
+            self.ray_field_nodes.fetch_add(1, Ordering::Relaxed);
+            let step = self.params.boundaries.ray_field_l;
+            let q = Vec2::new(ix as f64 * step, iz as f64 * step);
+            let (wind, phi_deg) = crate::climate::wind_at(q, self.seed, &self.params);
+            crate::ray_field::RayFieldValue {
+                e_km: self.surface_at(q).e_km,
+                wind_x: wind.x,
+                wind_z: wind.z,
+                phi_deg,
+            }
+        })
+    }
+
+    /// T79: высота в macro-точке луча — сплайн по решётке.
+    fn ray_field_height(&self, point: Vec2) -> f64 {
+        let step = self.params.boundaries.ray_field_l;
+        crate::ray_field::height(point.x / step, point.z / step, |ix, iz| {
+            self.ray_field_node(ix, iz)
+        })
+    }
+
+    /// T79: ветер и широта в macro-точке луча — билинейно по решётке.
+    fn ray_field_wind(&self, point: Vec2) -> (Vec2, f64) {
+        let step = self.params.boundaries.ray_field_l;
+        let v = crate::ray_field::bilinear(point.x / step, point.z / step, |ix, iz| {
+            self.ray_field_node(ix, iz)
+        });
+        (Vec2::new(v.wind_x, v.wind_z), v.phi_deg)
+    }
+
+    /// Диагностика Д-059: сколько узлов решётки луча посчитано с создания
+    /// генератора (каждый узел — один веер лучей, как одна колонка эталона).
+    pub fn ray_nodes(&self) -> u64 {
+        self.ray_traces.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Д-059: наветренная часть луча влаги в узле решётки (`step` — её шаг
+    /// в L). Узел считает свой ветер и свой веер так же, как точка в
+    /// `try_sample`; `None` — у узла нет полюсов (тогда колонка считает луч
+    /// сама).
+    fn ray_node(&self, ix: i64, iz: i64, step: f64) -> Option<crate::climate::RayNode> {
+        if let Some(hit) = self.rays.get((ix, iz)) {
+            return hit;
+        }
+        self.ray_traces
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let fast = self.ray_field_on();
+        let q = if fast {
+            // T79: узел стоит на блочной сетке (32 блока gameplay, 128
+            // scientific): редкие колонки дальнего рельефа попадают в узлы.
+            let blocks = step * self.params.block.l_blocks;
+            self.macro_point(ix as f64 * blocks, iz as f64 * blocks)
+        } else {
+            Vec2::new(ix as f64 * step, iz as f64 * step)
+        };
+        let value = crate::climate::pole_sample(q, self.seed, &self.params).map(|pole| {
+            let wind = crate::climate::wind(pole.phi_deg, pole.north, pole.east, &self.params);
+            let dir = if wind.len() > 1e-9 {
+                wind.normalized()
+            } else {
+                crate::climate::fallback_dir(&self.params)
+            };
+            if fast {
+                // Высота и ветер вдоль луча — с решётки; свой ветер узла и
+                // последний шаг колонки остаются точными. Д-025 запрещал
+                // брать ветер с грубой решётки (шаг 5 L); на шаге 0.125 L
+                // замена точного ветра решёточным зону не меняет (сид 42,
+                // gameplay: 0.9783 и так, и так). Совпадение зон определяет
+                // высота, поэтому она читается сплайном (Д-064).
+                let field = |p: Vec2| SurfaceSample {
+                    e_km: self.ray_field_height(p),
+                    ..SurfaceSample::default()
+                };
+                let wind_fn = |p: Vec2| self.ray_field_wind(p);
+                return crate::climate::trace_ray_node(
+                    q,
+                    &self.params,
+                    &field,
+                    dir,
+                    &wind_fn,
+                    self.seed,
+                );
+            }
+            let wind_fn = |p: Vec2| crate::climate::wind_at(p, self.seed, &self.params);
+            crate::climate::trace_ray_node(
+                q,
+                &self.params,
+                &|p| self.surface_at(p),
+                dir,
+                &wind_fn,
+                self.seed,
+            )
+        });
+        self.rays.get_or_insert((ix, iz), || value)
+    }
+
+    /// Д-059: наветренная часть луча влаги для быстрого пути — билинейная
+    /// смесь четырёх узлов решётки. Узел зависит только от своих координат,
+    /// поэтому ответ не зависит от порядка запросов и от вытеснения из кэша.
+    fn lattice_ray(&self, point: Vec2, x: f64, z: f64) -> Option<crate::climate::RayNode> {
+        let step = self.params.boundaries.ray_lattice_l;
+        if self.ray_field_on() {
+            // T79: решётка в блоках. Узел с нулевым весом не считается:
+            // колонка, стоящая в узле, платит за один луч, а не за четыре.
+            // `lerp(a, b, 0) == a`, поэтому подстановка ответа не меняет.
+            let blocks = step * self.params.block.l_blocks;
+            let (gx, gz) = (x / blocks, z / blocks);
+            let (ix, iz) = (gx.floor() as i64, gz.floor() as i64);
+            let (fx, fz) = (gx - ix as f64, gz - iz as f64);
+            let n00 = self.ray_node(ix, iz, step)?;
+            let n10 = if fx > 0.0 {
+                self.ray_node(ix + 1, iz, step)?
+            } else {
+                n00
+            };
+            let (n01, n11) = if fz > 0.0 {
+                let n01 = self.ray_node(ix, iz + 1, step)?;
+                let n11 = if fx > 0.0 {
+                    self.ray_node(ix + 1, iz + 1, step)?
+                } else {
+                    n01
+                };
+                (n01, n11)
+            } else {
+                (n00, n10)
+            };
+            return Some(crate::climate::RayNode::bilinear(
+                &[n00, n10, n01, n11],
+                fx,
+                fz,
+            ));
+        }
+        let gx = point.x / step;
+        let gz = point.z / step;
+        let ix = gx.floor() as i64;
+        let iz = gz.floor() as i64;
+        let nodes = [
+            self.ray_node(ix, iz, step)?,
+            self.ray_node(ix + 1, iz, step)?,
+            self.ray_node(ix, iz + 1, step)?,
+            self.ray_node(ix + 1, iz + 1, step)?,
+        ];
+        Some(crate::climate::RayNode::bilinear(
+            &nodes,
+            gx - ix as f64,
+            gz - iz as f64,
+        ))
+    }
+
     fn cached_full(&self, x: f64, z: f64) -> Result<Option<Arc<FullSample>>, RiverNetError> {
         let key = (x.to_bits() as i64, z.to_bits() as i64);
         if let Some(hit) = self.column.get(key) {
@@ -963,6 +1427,32 @@ mod tests {
     use crate::mode::Mode;
     use crate::version::GenVersion;
 
+    /// T79: список плит из блоков совпадает с прямым расчётом Д-061, в том
+    /// числе для окон через границы блоков и в отрицательных координатах.
+    #[test]
+    fn owner_blocks_match_direct_window() {
+        let generator = Generator::new(42, Mode::Gameplay, GenVersion::V1Dev).unwrap();
+        let windows = [
+            ((0, 0), (27, 27)),
+            ((-13, -13), (14, 14)),
+            ((-40, 5), (-13, 32)),
+            ((1470, 90), (1497, 117)),
+            ((15, 15), (16, 16)),
+            ((-17, -1), (-16, 0)),
+            ((300, -700), (420, -650)),
+        ];
+        for (lo, hi) in windows {
+            let direct =
+                crate::drainage::owners_in_window(lo, hi, generator.seed, &generator.params);
+            assert_eq!(
+                generator.owners_in_window(lo, hi),
+                direct,
+                "окно {lo:?}…{hi:?}"
+            );
+            assert!(!direct.is_empty());
+        }
+    }
+
     #[test]
     fn v1_is_not_implemented_yet() {
         assert_eq!(
@@ -1010,6 +1500,123 @@ mod tests {
         }
     }
 
+    /// Д-057: опорные точки тестов берутся из построенной сети. Середины
+    /// отрезков обычных русел рядом с `near`: (d², x, z, nx, nz, ядро в блоках,
+    /// расход). `n` — единичная нормаль к отрезку.
+    #[allow(clippy::type_complexity)]
+    fn river_candidates(
+        g: &Generator,
+        near: (f64, f64),
+        extra_l: f64,
+    ) -> Vec<(f64, f64, f64, f64, f64, f64, f64)> {
+        let mut out = Vec::new();
+        let point = g.macro_point(near.0, near.1);
+        let radius = crate::channel::max_query_radius_l(g.params()) + extra_l;
+        let shift = g.spawn_shift();
+        let l = g.params().block.l_blocks;
+        for plate in crate::plates::plates_near(point, radius, g.seed(), g.params()) {
+            let Ok(net) = g.drainage_network(&plate) else {
+                continue;
+            };
+            let channels = net.channels();
+            for segment in channels.segments() {
+                if channels.reaches()[segment.reach].kind != crate::channel::ReachKind::Channel {
+                    continue;
+                }
+                let a = segment.a.point;
+                let b = segment.b.point;
+                let x = (0.5 * (a.x + b.x) - shift.x) * l;
+                let z = (0.5 * (a.z + b.z) - shift.z) * l;
+                let n = b.sub(a).normalized().perp();
+                let dx = x - near.0;
+                let dz = z - near.1;
+                out.push((
+                    dx * dx + dz * dz,
+                    x,
+                    z,
+                    n.x,
+                    n.z,
+                    0.5 * (segment.a.core_l + segment.b.core_l) * l,
+                    0.5 * (segment.a.discharge_mm_l2 + segment.b.discharge_mm_l2),
+                ));
+            }
+        }
+        out.sort_by(|a, b| a.0.total_cmp(&b.0));
+        out
+    }
+
+    fn find_river_core(g: &Generator, near: (f64, f64)) -> (f64, f64) {
+        for (_, x, z, ..) in river_candidates(g, near, 4.0).into_iter().take(4096) {
+            let Some(s) = g.sample(x, z) else {
+                continue;
+            };
+            if s.world.hydrology.channels.core > 0.9
+                && s.world.river > 0.9
+                && s.cell.biome.ends_with("river")
+                && s.vanilla.w.abs() < 0.01
+            {
+                return (x, z);
+            }
+        }
+        panic!("не найдена точка русла рядом с {near:?}");
+    }
+
+    fn find_gallery_forest(g: &Generator, near: (f64, f64)) -> (f64, f64) {
+        let q_min = g.params().hydrology.gallery_q_min_mm_l2;
+        for (_, x, z, nx, nz, core, q) in river_candidates(g, near, 8.0) {
+            if q < q_min {
+                continue;
+            }
+            for k in [2.5_f64, -2.5, 3.5, -3.5, 4.5, -4.5] {
+                let px = x + nx * core * k;
+                let pz = z + nz * core * k;
+                let Some(s) = g.sample(px, pz) else {
+                    continue;
+                };
+                let h = s.world.hydrology;
+                if h.gallery >= 0.5 && h.gallery > s.world.river && s.cell.biome == "forest" {
+                    return (px, pz);
+                }
+            }
+        }
+        panic!("не найден галерейный лес рядом с {near:?}");
+    }
+
+    fn find_deferred_lake(g: &Generator, near: (f64, f64)) -> (f64, f64) {
+        let point = g.macro_point(near.0, near.1);
+        let shift = g.spawn_shift();
+        let l = g.params().block.l_blocks;
+        let r1 = g.params().hydrology.r1_max_level_km;
+        let mut centers = Vec::new();
+        for plate in crate::plates::plates_near(point, 12.0, g.seed(), g.params()) {
+            let Ok(net) = g.drainage_network(&plate) else {
+                continue;
+            };
+            for lake in net.lakes().lakes() {
+                if lake.kind.has_water() && lake.level_km.is_some_and(|level| level > r1) {
+                    let x = (lake.center.x - shift.x) * l;
+                    let z = (lake.center.z - shift.z) * l;
+                    let dx = x - near.0;
+                    let dz = z - near.1;
+                    centers.push((dx * dx + dz * dz, x, z));
+                }
+            }
+        }
+        centers.sort_by(|a, b| a.0.total_cmp(&b.0));
+        for (_, x, z) in centers {
+            let Ok(h) = g.hydrology_at(x, z) else {
+                continue;
+            };
+            if h.kind == crate::hydrology::SurfaceKind::DeferredWater
+                && h.water == 0.0
+                && h.r2_deferred == 1.0
+            {
+                return (x, z);
+            }
+        }
+        panic!("не найдено высокое озеро рядом с {near:?}");
+    }
+
     /// T115: точку дельты ищём по построенной сети, а не по фиксированным
     /// координатам. Подбор E/PV, впадин и меандров сдвигает русла, но тест
     /// должен проверять связку «сеть → игровые поля», а не запомненный пиксель.
@@ -1044,10 +1651,12 @@ mod tests {
     }
 
     fn delta_swamp_sample(g: &Generator, x: f64, z: f64) -> bool {
-        let Ok((channels, lakes)) = g.drainage_surface_query(x, z) else {
+        // Д-057: болото дельты даёт сам веер; мелкие впадины под ним теперь
+        // прорезаются, поэтому отдельное болото-озеро не требуется.
+        let Ok((channels, _lakes)) = g.drainage_surface_query(x, z) else {
             return false;
         };
-        if channels.delta <= 0.9 || lakes.swamp <= 0.9 {
+        if channels.delta <= 0.9 {
             return false;
         }
         let Some(sample) = g.sample(x, z) else {
@@ -1094,9 +1703,9 @@ mod tests {
         let delta_near = (-54524.133387731, 24107.233303404);
         let delta_point = find_delta_swamp(&g, delta_near);
         let points = [
-            (-35098.064436977, 8022.221972733),
+            find_deferred_lake(&g, (-35098.064436977, 8022.221972733)),
             delta_point,
-            (-1536.535252886, -2374.660469732), // T136/T160: веер 3 сдвинул Q/русло
+            find_river_core(&g, (-1536.535252886, -2374.660469732)),
         ];
         let cold = Generator::new(42, Mode::Gameplay, GenVersion::V1Dev).unwrap();
         for (x, z) in points {
@@ -1133,18 +1742,29 @@ mod tests {
 
     #[test]
     fn t116_gallery_forest_reaches_a_real_dry_corridor() {
-        // T133: коридор найден заново после двухмасштабного дрожания (сид 42).
-        let (x, z) = (-1850.723375787, -12623.990320330);
+        // Д-057: коридор ищется по сети рядом с прежней опорной точкой.
         let g = Generator::new(42, Mode::Gameplay, GenVersion::V1Dev).unwrap();
+        let (x, z) = find_gallery_forest(&g, (-1850.723375787, -12623.990320330));
         let fast = g.sample(x, z).unwrap();
         let reference = g.sample_reference(x, z).unwrap();
         assert!(fast.world.hydrology.gallery >= 0.5);
         assert!(fast.world.hydrology.gallery > fast.world.river);
         assert_eq!(fast.cell.biome, "forest");
         assert!(fast.vanilla.h > 0.0);
-        assert_eq!(fast.vanilla.h.to_bits(), reference.vanilla.h.to_bits());
+        // Д-059: быстрый путь берёт наветренную часть луча влаги с решётки,
+        // поэтому H у него близко к эталону, но не побитово. Побитовое
+        // равенство двух путей проверяется с выключенной решёткой.
+        assert!((fast.vanilla.h - reference.vanilla.h).abs() < 0.02);
         assert_eq!(fast.vanilla.t.to_bits(), reference.vanilla.t.to_bits());
         assert_eq!(fast.cell, reference.cell);
+        let exact = Generator::new(42, Mode::Gameplay, GenVersion::V1Dev)
+            .unwrap()
+            .with_ray_lattice(0.0)
+            .sample(x, z)
+            .unwrap();
+        assert_eq!(exact.vanilla.h.to_bits(), reference.vanilla.h.to_bits());
+        assert_eq!(exact.vanilla.t.to_bits(), reference.vanilla.t.to_bits());
+        assert_eq!(exact.cell, reference.cell);
     }
 
     #[test]
@@ -1306,11 +1926,40 @@ mod t144_tests {
 mod t141_tests {
     use super::*;
 
+    fn nearest_river_core(g: &Generator, near: (f64, f64)) -> (f64, f64) {
+        let point = g.macro_point(near.0, near.1);
+        let radius = crate::channel::max_query_radius_l(g.params()) + 4.0;
+        let shift = g.spawn_shift();
+        let l = g.params().block.l_blocks;
+        let mut out = Vec::new();
+        for plate in crate::plates::plates_near(point, radius, g.seed(), g.params()) {
+            let Ok(net) = g.drainage_network(&plate) else {
+                continue;
+            };
+            for segment in net.channels().segments() {
+                let x = (0.5 * (segment.a.point.x + segment.b.point.x) - shift.x) * l;
+                let z = (0.5 * (segment.a.point.z + segment.b.point.z) - shift.z) * l;
+                let dx = x - near.0;
+                let dz = z - near.1;
+                out.push((dx * dx + dz * dz, x, z));
+            }
+        }
+        out.sort_by(|a, b| a.0.total_cmp(&b.0));
+        for (_, x, z) in out.into_iter().take(4096) {
+            if g.sample(x, z)
+                .is_some_and(|s| s.world.river > 0.9 && s.world.pv < -0.8)
+            {
+                return (x, z);
+            }
+        }
+        panic!("не найдена точка русла рядом с {near:?}");
+    }
+
     #[test]
     fn pv_field_is_exposed_and_rivers_cut_their_own_valley() {
         let g = Generator::new(42, Mode::Gameplay, GenVersion::V1Dev).unwrap();
-        // T136-точка межплитового русла: сила реки близка к 1.
-        let (x, z) = (-1536.535252886, -2374.660469732);
+        // Д-057: точка русла ищется по сети рядом с прежней опорной точкой.
+        let (x, z) = nearest_river_core(&g, (-1536.535252886, -2374.660469732));
         let s = g.sample(x, z).unwrap();
         assert!(s.world.river > 0.9);
         assert!(s.world.pv.is_finite() && (-1.0..=1.0).contains(&s.world.pv));
@@ -1349,5 +1998,312 @@ mod field_log_tests {
         assert_eq!(counter.load(Ordering::Relaxed), FIELD_LOG_LIMIT + 5);
         // Публичный счётчик доступен игре/CI и монотонно растёт.
         let _ = field_error_log_count();
+    }
+}
+
+/// Д-059: решётка луча влаги быстрого пути.
+#[cfg(test)]
+mod ray_lattice_tests {
+    use super::Generator;
+    use crate::math::Vec2;
+    use crate::mode::Mode;
+    use crate::version::GenVersion;
+
+    fn points(n: usize) -> Vec<(f64, f64)> {
+        (0..n)
+            .map(|k| {
+                (
+                    k as f64 * 173.0 - 4100.5,
+                    (k * k % 97) as f64 * 83.0 - 3900.5,
+                )
+            })
+            .collect()
+    }
+
+    /// Узел без последнего шага плюс `resolve` в его же точке дают луч
+    /// эталона — и на суше, и на море.
+    #[test]
+    fn node_reproduces_the_reference_ray_at_its_own_point() {
+        for mode in Mode::ALL {
+            let g = Generator::new(42, mode, GenVersion::V1Dev).unwrap();
+            let (mut land, mut sea) = (0, 0);
+            for (x, z) in points(60) {
+                let point = g.macro_point(x, z);
+                let pole = crate::climate::pole_sample(point, g.seed, &g.params).unwrap();
+                let wind = crate::climate::wind(pole.phi_deg, pole.north, pole.east, &g.params);
+                let dir = wind.normalized();
+                let wind_fn = |p: Vec2| crate::climate::wind_at(p, g.seed, &g.params);
+                let field = |p: Vec2| g.surface_at(p);
+                let exact =
+                    crate::climate::trace_ray(point, &g.params, &field, dir, &wind_fn, g.seed);
+                let node =
+                    crate::climate::trace_ray_node(point, &g.params, &field, dir, &wind_fn, g.seed);
+                let e_km = g.surface_at(point).e_km;
+                if e_km < 0.0 {
+                    sea += 1;
+                } else {
+                    land += 1;
+                }
+                let got = node.resolve(e_km, pole.phi_deg, &g.params);
+                assert!((got.mu - exact.mu).abs() < 1e-12, "μ в ({x}, {z})");
+                assert!(
+                    (got.cont_ray - exact.cont_ray).abs() < 1e-12,
+                    "континентальность в ({x}, {z})"
+                );
+                assert!(
+                    (got.slope - exact.slope).abs() < 1e-12,
+                    "уклон в ({x}, {z})"
+                );
+            }
+            assert!(land > 5 && sea > 5, "суша {land}, море {sea}");
+        }
+    }
+
+    /// Ответ быстрого пути не зависит от порядка запросов: какие узлы
+    /// считать, решают только значения узлов.
+    #[test]
+    fn fast_path_does_not_depend_on_query_order() {
+        let pts = points(40);
+        let forward = Generator::new(42, Mode::Gameplay, GenVersion::V1Dev).unwrap();
+        let backward = Generator::new(42, Mode::Gameplay, GenVersion::V1Dev).unwrap();
+        let a: Vec<_> = pts
+            .iter()
+            .map(|(x, z)| forward.sample(*x, *z).unwrap())
+            .collect();
+        let mut b: Vec<_> = pts
+            .iter()
+            .rev()
+            .map(|(x, z)| backward.sample(*x, *z).unwrap())
+            .collect();
+        b.reverse();
+        assert!(forward.ray_nodes() > 0);
+        for (a, b) in a.iter().zip(&b) {
+            assert_eq!(a.climate.precip.mu.to_bits(), b.climate.precip.mu.to_bits());
+            assert_eq!(
+                a.climate.precip.p_mm.to_bits(),
+                b.climate.precip.p_mm.to_bits()
+            );
+            assert_eq!(a.vanilla.t.to_bits(), b.vanilla.t.to_bits());
+            assert_eq!(a.vanilla.h.to_bits(), b.vanilla.h.to_bits());
+            assert_eq!(a.zone, b.zone);
+        }
+    }
+
+    /// v0 заморожен: решётка в нём выключена и ни один узел не считается.
+    #[test]
+    fn frozen_v0_never_uses_the_lattice() {
+        let g = Generator::new(42, Mode::Gameplay, GenVersion::V0).unwrap();
+        assert_eq!(g.params.boundaries.ray_lattice_l, 0.0);
+        assert_eq!(g.params.boundaries.ray_field_l, 0.0);
+        for (x, z) in points(8) {
+            let fast = g.sample(x, z).unwrap();
+            let reference = g.sample_reference(x, z).unwrap();
+            assert_eq!(
+                fast.climate.precip.mu.to_bits(),
+                reference.climate.precip.mu.to_bits()
+            );
+        }
+        assert_eq!(g.ray_nodes(), 0);
+        assert_eq!(g.ray_field_nodes(), 0);
+    }
+
+    /// T79: решётка луча стоит на блочной сетке (32 блока в gameplay).
+    /// Колонка в узле платит за один луч, на ребре — за два, внутри клетки —
+    /// за четыре: редкие колонки дальнего рельефа попадают в узлы.
+    #[test]
+    fn column_on_a_lattice_node_traces_one_ray() {
+        let fresh = || Generator::new(42, Mode::Gameplay, GenVersion::V1Dev).unwrap();
+        let blocks = fresh().params.boundaries.ray_lattice_l * Mode::Gameplay.l_blocks();
+        assert_eq!(blocks, 32.0);
+        for (x, z, rays) in [
+            (640.0, -1280.0, 1),
+            (640.0, -1279.0, 2),
+            (641.0, -1280.0, 2),
+            (641.0, -1279.0, 4),
+        ] {
+            let g = fresh();
+            g.sample(x, z).unwrap();
+            assert_eq!(g.ray_nodes(), rays, "колонка ({x}, {z})");
+            assert!(g.ray_field_nodes() > 0);
+        }
+    }
+
+    /// T79: узел решётки высот хранит точную высоту, ветер и широту своей
+    /// точки и считается один раз.
+    #[test]
+    fn ray_field_node_holds_exact_height_and_wind() {
+        for mode in Mode::ALL {
+            let g = Generator::new(42, mode, GenVersion::V1Dev).unwrap();
+            let step = g.params.boundaries.ray_field_l;
+            assert!(step > 0.0);
+            let nodes = [(0, 0), (17, -5), (-33, 40), (-1, -1), (16, 16)];
+            for (ix, iz) in nodes {
+                let q = Vec2::new(ix as f64 * step, iz as f64 * step);
+                let node = g.ray_field_node(ix, iz);
+                let (wind, phi_deg) = crate::climate::wind_at(q, g.seed, &g.params);
+                assert_eq!(node.e_km.to_bits(), g.surface_at(q).e_km.to_bits());
+                assert_eq!(node.wind_x.to_bits(), wind.x.to_bits());
+                assert_eq!(node.wind_z.to_bits(), wind.z.to_bits());
+                assert_eq!(node.phi_deg.to_bits(), phi_deg.to_bits());
+                assert_eq!(g.ray_field_node(ix, iz), node);
+            }
+            assert_eq!(g.ray_field_nodes(), nodes.len() as u64);
+            // Сплайн в узле отдаёт высоту узла (и читает его соседей).
+            for (ix, iz) in nodes {
+                let q = Vec2::new(ix as f64 * step, iz as f64 * step);
+                let node = g.ray_field_node(ix, iz);
+                assert_eq!(g.ray_field_height(q).to_bits(), node.e_km.to_bits());
+            }
+            assert!(g.ray_field_nodes() > nodes.len() as u64);
+        }
+    }
+
+    /// T79: два мира в одном потоке не читают тайлы друг друга, а сброс
+    /// решётки отвязывает генератор от потоковой памяти тайлов (Р14).
+    #[test]
+    fn ray_field_tiles_are_not_shared_between_worlds() {
+        let a = Generator::new(42, Mode::Gameplay, GenVersion::V1Dev).unwrap();
+        let b = Generator::new(43, Mode::Gameplay, GenVersion::V1Dev).unwrap();
+        let va = a.ray_field_node(3, 3);
+        let vb = b.ray_field_node(3, 3);
+        assert_ne!(va, vb);
+        assert_eq!(a.ray_field_node(3, 3), va);
+        assert_eq!(b.ray_field_node(3, 3), vb);
+        let lattice = a.params.boundaries.ray_lattice_l;
+        let reset = a.clone().with_ray_lattice(lattice);
+        assert_eq!(reset.ray_field_nodes(), 0);
+        assert_eq!(reset.ray_field_node(3, 3), va);
+        assert_eq!(reset.ray_field_nodes(), 1);
+        assert_eq!(a.ray_field_nodes(), 1);
+    }
+
+    /// Выключенная решётка возвращает быстрый путь v1-dev к лучу из колонки.
+    #[test]
+    fn disabled_lattice_matches_the_reference_bit_for_bit() {
+        let g = Generator::new(42, Mode::Gameplay, GenVersion::V1Dev)
+            .unwrap()
+            .with_ray_lattice(0.0);
+        for (x, z) in points(8) {
+            let fast = g.sample(x, z).unwrap();
+            let reference = g.sample_reference(x, z).unwrap();
+            assert_eq!(
+                fast.climate.precip.p_mm.to_bits(),
+                reference.climate.precip.p_mm.to_bits()
+            );
+        }
+        assert_eq!(g.ray_nodes(), 0);
+    }
+
+    /// Решётка близка к эталону. На 2304 точках (`litho-sandbox paths`) зона
+    /// совпадает в 0.973 точек; здесь выборка в 160 точек, поэтому порог
+    /// 0.95 — он ловит поломку, а не меряет качество. Расхождения лежат на
+    /// ступеньках μ эталона (луч с шагом 0.25 L пересекает берег).
+    #[test]
+    fn lattice_stays_close_to_the_reference() {
+        for mode in Mode::ALL {
+            let g = Generator::new(42, mode, GenVersion::V1Dev).unwrap();
+            let pts = points(160);
+            let mut same = 0_usize;
+            let mut errors = Vec::with_capacity(pts.len());
+            for (x, z) in &pts {
+                let reference = g.sample_reference(*x, *z).unwrap();
+                let fast = g.sample(*x, *z).unwrap();
+                same += usize::from(reference.zone == fast.zone);
+                errors.push((reference.climate.precip.mu - fast.climate.precip.mu).abs());
+                // C/E/W от луча не зависят и остаются побитовыми.
+                assert_eq!(reference.vanilla.c.to_bits(), fast.vanilla.c.to_bits());
+                assert_eq!(reference.vanilla.e.to_bits(), fast.vanilla.e.to_bits());
+                assert_eq!(reference.vanilla.w.to_bits(), fast.vanilla.w.to_bits());
+            }
+            errors.sort_by(f64::total_cmp);
+            let share = same as f64 / pts.len() as f64;
+            assert!(share >= 0.95, "{mode:?}: зона совпала в {share}");
+            // На 2304 точках среднее |Δμ| 0.005, p95 0.025.
+            assert!(
+                errors[errors.len() / 2] < 0.01,
+                "{mode:?}: медиана |Δμ| {}",
+                errors[errors.len() / 2]
+            );
+        }
+    }
+}
+
+#[cfg(test)]
+mod net_owner_tests {
+    use super::Generator;
+    use crate::mode::Mode;
+    use crate::plates::plates_near;
+    use crate::version::GenVersion;
+
+    /// Д-061: сеть плиты, не попавшей в список `net_owners`, в точке молчит:
+    /// нет русла, долины, озера и глубины впадины. Значит, пропуск такой сети
+    /// не меняет ответ, а только избавляет от её постройки.
+    #[test]
+    fn skipped_river_nets_are_silent_at_the_point() {
+        let g = Generator::new(42, Mode::Gameplay, GenVersion::V1Dev).unwrap();
+        let radius = crate::channel::max_query_radius_l(g.params());
+        let mut skipped = 0_usize;
+        let mut kept = 0_usize;
+        for i in -4..=4 {
+            for j in -4..=4 {
+                let (x, z) = (f64::from(i) * 71.5 + 3.5, f64::from(j) * 67.5 - 9.5);
+                let point = g.macro_point(x, z);
+                let owners = g.net_owners(point);
+                assert!(owners.windows(2).all(|pair| pair[0] < pair[1]));
+                for plate in plates_near(point, radius, g.seed(), g.params()) {
+                    if owners.binary_search(&plate.id).is_ok() {
+                        kept += 1;
+                        continue;
+                    }
+                    skipped += 1;
+                    let net = g.drainage_network(&plate).unwrap();
+                    let channel = net.channels().query(point);
+                    assert!(
+                        channel.nearest.is_none()
+                            && channel.core == 0.0
+                            && channel.bank == 0.0
+                            && channel.valley == 0.0
+                            && channel.delta == 0.0
+                            && channel.gallery == 0.0,
+                        "русло пропущенной плиты {} в ({x}, {z}): {channel:?}",
+                        plate.id
+                    );
+                    let lake = net.lakes().query(point);
+                    assert!(
+                        lake.nearest.is_none()
+                            && lake.water == 0.0
+                            && lake.shore == 0.0
+                            && lake.basin == 0.0
+                            && lake.sea_depth_km == 0.0,
+                        "озеро пропущенной плиты {} в ({x}, {z}): {lake:?}",
+                        plate.id
+                    );
+                    assert_eq!(net.depression_depth_km(point), 0.0);
+                }
+            }
+        }
+        // Отбор действительно работает: у точки остаётся 1–3 сети из 13.
+        assert!(kept >= 81, "оставлено {kept}");
+        assert!(skipped > 5 * kept, "пропущено {skipped}, оставлено {kept}");
+    }
+
+    /// Список зависит только от тайла: порядок запросов и вытеснение из
+    /// кэша его не меняют.
+    #[test]
+    fn owner_list_does_not_depend_on_query_order() {
+        let forward = Generator::new(7, Mode::Scientific, GenVersion::V1Dev).unwrap();
+        let backward = Generator::new(7, Mode::Scientific, GenVersion::V1Dev).unwrap();
+        let points: Vec<_> = (0..40)
+            .map(|k| forward.macro_point(f64::from(k) * 913.0 - 15000.0, f64::from(k * k) * 37.0))
+            .collect();
+        let a: Vec<_> = points.iter().map(|p| forward.net_owners(*p)).collect();
+        let mut b: Vec<_> = points
+            .iter()
+            .rev()
+            .map(|p| backward.net_owners(*p))
+            .collect();
+        b.reverse();
+        assert_eq!(a, b);
+        assert!(a.iter().all(|owners| !owners.is_empty()));
     }
 }

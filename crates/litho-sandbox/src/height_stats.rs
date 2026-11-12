@@ -2,7 +2,7 @@
 //! не подмена существующих метрик 12.4 команды `stats` без новых флагов.
 
 use litho_core::vanilla::peaks_valleys;
-use litho_core::{Generator, Mode, SurfaceKind};
+use litho_core::{Mode, SurfaceKind};
 
 use crate::height::{HeightInput, HeightModel, SEA_LEVEL};
 use crate::render::RenderOptions;
@@ -16,6 +16,9 @@ pub struct StatsOptions {
     pub span_l: f64,
     pub relief_size: usize,
     pub relief_step: f64,
+    /// T151: мелкие сетки (окна 128 и границы) повторяются в `patches²`
+    /// пятнах, разложенных по всей области `span_l`. 1 — одно пятно в центре.
+    pub patches: usize,
     pub fast: bool,
     /// T134: отдельная мелкая сетка границ. Шаг обязан делить 32 блока,
     /// иначе скачок «в пределах 32 блоков» не измеряется точно.
@@ -49,6 +52,10 @@ impl StatsOptions {
         if !span_l.is_finite() || span_l <= 0.0 || !relief_step.is_finite() || relief_step <= 0.0 {
             return Err("--span-l и --relief-step должны быть конечными и > 0".into());
         }
+        let patches = number("--patches", 1.0)?;
+        if !patches.is_finite() || patches < 1.0 || patches.fract() != 0.0 || patches > 32.0 {
+            return Err("--patches: целое 1…32".into());
+        }
         let boundary_size = number("--boundary-size", 64.0)?;
         let boundary_step = number("--boundary-step", 32.0)?;
         if !boundary_size.is_finite()
@@ -73,6 +80,7 @@ impl StatsOptions {
             span_l,
             relief_size: relief_size as usize,
             relief_step,
+            patches: patches as usize,
             fast,
             boundary_size: boundary_size as usize,
             boundary_step,
@@ -97,6 +105,10 @@ pub struct HeightStats {
     pub hyps: [usize; 5],
     pub erosion: [usize; 7],
     pub valley: usize,
+    /// Д-057: суша в полосе `river ≥ 0.5` вне выреза русла — плоский сухой
+    /// берег с речным W≈0. В срез «долина» не входит (как и до Д-057, когда
+    /// вся полоса считалась руслом), но печатается отдельно.
+    pub dry_bank: usize,
     pub relief_windows: usize,
     pub relief_median: Option<f64>,
     pub flat_windows: usize,
@@ -122,6 +134,12 @@ pub struct BoundaryMetrics {
     pub climate_humidity_pairs: usize,
     pub climate_humidity_jump_pairs: usize,
     pub climate_humidity_jump_land: usize,
+    /// T151: пары со скачком влажности по причине (см. [`JUMP_CAUSES`]).
+    pub jump_cause_pairs: [usize; JUMP_CAUSES.len()],
+    /// T151: скачок по полю H, которое уходит в игру (вся суша): класс —
+    /// ванильная полоса влажности числа `vanilla.h`, а не метка биома.
+    pub field_humidity_jump_land: usize,
+    pub field_humidity_jump_pairs: usize,
     pub wind_max_deg: f64,
     pub wind_pairs: usize,
     pub boundary_edges: usize,
@@ -129,7 +147,81 @@ pub struct BoundaryMetrics {
     pub thin_land: usize,
     pub min_strip_blocks: Option<f64>,
 }
+/// T151: чем гидрология переопределила биом в узле. Порядок — приоритет при
+/// наложении; `climate` — обычная климатическая суша T137.
+pub const JUMP_CAUSES: [&str; 7] = [
+    "climate",
+    "river",
+    "gallery",
+    "swamp",
+    "dry_basin",
+    "estuary",
+    "other",
+];
+
+/// Границы ванильных полос влажности 26.3 (`OverworldBiomeBuilder`).
+const VANILLA_H_EDGES: [f64; 4] = [-0.35, -0.1, 0.1, 0.3];
+
+/// Номер ванильной полосы влажности 0…4 для числа H, уходящего в игру.
+pub fn vanilla_humidity_band(h: f64) -> u8 {
+    VANILLA_H_EDGES.partition_point(|edge| h >= *edge) as u8
+}
+
 impl BoundaryMetrics {
+    pub fn field_humidity_jump_pct(&self) -> f64 {
+        pct(self.field_humidity_jump_land, self.land)
+    }
+    /// Скачок ≥2 полос между узлами в 32 блоках по полю H на всей суше.
+    /// Вызывается после `analyze_grid` (знаменатель — её `land`).
+    fn count_field_jumps(&mut self, band: &[u8], land: &[bool]) {
+        let n = self.size;
+        let offset = (32.0 / self.step).round() as usize;
+        let mut jump = vec![false; n * n];
+        for j in 0..n {
+            for i in 0..n {
+                let k = j * n + i;
+                if !land[k] {
+                    continue;
+                }
+                for (di, dj) in [(offset, 0_usize), (0, offset)] {
+                    if i + di >= n || j + dj >= n {
+                        continue;
+                    }
+                    let q = (j + dj) * n + i + di;
+                    if land[q] && band[k].abs_diff(band[q]) >= 2 {
+                        self.field_humidity_jump_pairs += 1;
+                        jump[k] = true;
+                        jump[q] = true;
+                    }
+                }
+            }
+        }
+        self.field_humidity_jump_land += jump.iter().filter(|&&v| v).count();
+    }
+    /// Раскладывает пары со скачком влажности (те же, что в `analyze_grid`)
+    /// по причине: старшая из двух гидрологических меток пары.
+    fn count_jump_causes(&mut self, class: &[u8], land: &[bool], feature: &[u8]) {
+        let n = self.size;
+        let offset = (32.0 / self.step).round() as usize;
+        for j in 0..n {
+            for i in 0..n {
+                let k = j * n + i;
+                if !land[k] {
+                    continue;
+                }
+                for (di, dj) in [(offset, 0_usize), (0, offset)] {
+                    if i + di >= n || j + dj >= n {
+                        continue;
+                    }
+                    let q = (j + dj) * n + i + di;
+                    if land[q] && (class[k] % 5).abs_diff(class[q] % 5) >= 2 {
+                        self.jump_cause_pairs[feature[k].max(feature[q]) as usize] += 1;
+                    }
+                }
+            }
+        }
+    }
+
     pub(crate) fn empty(size: usize, step: f64, l_blocks: f64) -> Self {
         Self {
             size,
@@ -144,6 +236,9 @@ impl BoundaryMetrics {
             climate_humidity_pairs: 0,
             climate_humidity_jump_pairs: 0,
             climate_humidity_jump_land: 0,
+            jump_cause_pairs: [0; JUMP_CAUSES.len()],
+            field_humidity_jump_land: 0,
+            field_humidity_jump_pairs: 0,
             wind_max_deg: 0.0,
             wind_pairs: 0,
             boundary_edges: 0,
@@ -221,14 +316,15 @@ impl BoundaryMetrics {
                 }
             }
         }
-        self.humidity_jump_land = jump.iter().filter(|&&v| v).count();
-        self.climate_humidity_jump_land = climate_jump.iter().filter(|&&v| v).count();
+        // `+=`: при `--patches` сетка разбирается по пятну за вызов.
+        self.humidity_jump_land += jump.iter().filter(|&&v| v).count();
+        self.climate_humidity_jump_land += climate_jump.iter().filter(|&&v| v).count();
         // T134: границы любых направлений, включая диагональную лестницу.
         // Знаменатель — длина сеточных рёбер; числитель — рёбра на длинной
         // хорде одного класса с отклонением середин <16 блоков.
         let (edges, straight) = straight_boundary_edges(class, land, n, self.step);
-        self.boundary_edges = edges;
-        self.straight_edges = straight;
+        self.boundary_edges += edges;
+        self.straight_edges += straight;
         // Узкие полоски: прогон одного класса между другими сухопутными
         // классами уже 32 блоков хотя бы по одной оси.
         let mut thin = vec![false; n * n];
@@ -284,7 +380,7 @@ impl BoundaryMetrics {
                 start = end;
             }
         }
-        self.thin_land = thin.iter().filter(|&&v| v).count();
+        self.thin_land += thin.iter().filter(|&&v| v).count();
     }
 }
 
@@ -478,6 +574,7 @@ impl HeightStats {
             hyps: [0; 5],
             erosion: [0; 7],
             valley: 0,
+            dry_bank: 0,
             relief_windows: 0,
             relief_median: None,
             flat_windows: 0,
@@ -489,8 +586,7 @@ impl HeightStats {
         opts: &StatsOptions,
         model: &HeightModel,
     ) -> Result<Self, String> {
-        let generator =
-            Generator::new(base.seed, base.mode, base.version).map_err(|e| e.to_string())?;
+        let generator = crate::tune::generator(base.seed, base.mode, base.version)?;
         let step = opts.span_l * base.mode.l_blocks() / opts.size as f64;
         let mut out = Self {
             seed: base.seed,
@@ -508,6 +604,7 @@ impl HeightStats {
             hyps: [0; 5],
             erosion: [0; 7],
             valley: 0,
+            dry_bank: 0,
             relief_windows: 0,
             relief_median: None,
             flat_windows: 0,
@@ -542,7 +639,14 @@ impl HeightStats {
                 };
                 let y = model.surface_y(input)?;
                 let c_land = v.c >= land_threshold;
-                let river = world.river >= 0.5;
+                // Д-057: в v1-dev «точка русла» — узкий вырез самого русла
+                // (`channels.bank`), где и должна стоять вода. Широкое поле
+                // `river` сглаживает C/E/W вокруг и водой быть не обязано.
+                let river = if base.version.is_water_relief_dev() {
+                    world.hydrology.channels.bank >= 0.5
+                } else {
+                    world.river >= 0.5
+                };
                 if c_land && river {
                     out.river_samples += 1;
                     if y < SEA_LEVEL {
@@ -569,63 +673,85 @@ impl HeightStats {
                 } else {
                     peaks_valleys(v.w)
                 };
-                if pv < -0.85 {
+                if base.version.is_water_relief_dev() && world.river >= 0.5 {
+                    out.dry_bank += 1;
+                } else if pv < -0.85 {
                     out.valley += 1;
                 }
             }
         }
         // Окна 128×128 при шаге 32 считаются отдельной мелкой сеткой: грубая
         // сетка 200 L не должна изображать мелкие холмы средним значением.
-        let n = opts.relief_size;
-        let mut heights = vec![0.0; n * n];
-        let mut land = vec![false; n * n];
-        for j in 0..n {
-            for i in 0..n {
-                let x = base.center_x + (i as f64 - n as f64 * 0.5) * opts.relief_step;
-                let z = base.center_z + (j as f64 - n as f64 * 0.5) * opts.relief_step;
-                let world = if opts.fast {
-                    generator.world_sample_fast(x, z)
+        // T151: центры пятен. Одно пятно — центр области, как раньше; иначе
+        // равномерная сетка `patches²` центров по всей области `span_l`.
+        let span_blocks = opts.span_l * base.mode.l_blocks();
+        let mut centers = Vec::with_capacity(opts.patches * opts.patches);
+        for pj in 0..opts.patches {
+            for pi in 0..opts.patches {
+                if opts.patches == 1 {
+                    centers.push((base.center_x, base.center_z));
                 } else {
-                    generator.world_sample(x, z)
+                    let at =
+                        |p: usize| ((p as f64 + 0.5) / opts.patches as f64 - 0.5) * span_blocks;
+                    centers.push((
+                        (base.center_x + at(pi)).floor(),
+                        (base.center_z + at(pj)).floor(),
+                    ));
                 }
-                .ok_or_else(|| format!("нет образца рельефа в ({x}, {z})"))?;
-                let v = world.vanilla;
-                let input = HeightInput::from_fields(v.c, v.e, v.w);
-                let input = if base.pv {
-                    input.with_pv(world.pv)
-                } else {
-                    input
-                };
-                let input = if model.is_owned() {
-                    input.with_owned_y(world.height.surface_y)
-                } else {
-                    input
-                };
-                heights[j * n + i] = model.surface_y(input)?;
-                land[j * n + i] = v.c >= land_threshold && world.river < 0.5;
             }
         }
+        let n = opts.relief_size;
         let mut ranges = Vec::new();
-        for j in (0..n).step_by(4) {
-            for i in (0..n).step_by(4) {
-                let indices = (0..4).flat_map(|dz| (0..4).map(move |dx| (j + dz) * n + i + dx));
-                let mut min = f64::INFINITY;
-                let mut max = f64::NEG_INFINITY;
-                let mut all_land = true;
-                for k in indices {
-                    all_land &= land[k];
-                    min = min.min(heights[k]);
-                    max = max.max(heights[k]);
+        for &(center_x, center_z) in &centers {
+            let mut heights = vec![0.0; n * n];
+            let mut land = vec![false; n * n];
+            for j in 0..n {
+                for i in 0..n {
+                    let x = center_x + (i as f64 - n as f64 * 0.5) * opts.relief_step;
+                    let z = center_z + (j as f64 - n as f64 * 0.5) * opts.relief_step;
+                    let world = if opts.fast {
+                        generator.world_sample_fast(x, z)
+                    } else {
+                        generator.world_sample(x, z)
+                    }
+                    .ok_or_else(|| format!("нет образца рельефа в ({x}, {z})"))?;
+                    let v = world.vanilla;
+                    let input = HeightInput::from_fields(v.c, v.e, v.w);
+                    let input = if base.pv {
+                        input.with_pv(world.pv)
+                    } else {
+                        input
+                    };
+                    let input = if model.is_owned() {
+                        input.with_owned_y(world.height.surface_y)
+                    } else {
+                        input
+                    };
+                    heights[j * n + i] = model.surface_y(input)?;
+                    land[j * n + i] = v.c >= land_threshold && world.river < 0.5;
                 }
-                if !all_land {
-                    continue;
+            }
+            for j in (0..n).step_by(4) {
+                for i in (0..n).step_by(4) {
+                    let indices = (0..4).flat_map(|dz| (0..4).map(move |dx| (j + dz) * n + i + dx));
+                    let mut min = f64::INFINITY;
+                    let mut max = f64::NEG_INFINITY;
+                    let mut all_land = true;
+                    for k in indices {
+                        all_land &= land[k];
+                        min = min.min(heights[k]);
+                        max = max.max(heights[k]);
+                    }
+                    if !all_land {
+                        continue;
+                    }
+                    let range = max - min;
+                    out.relief_windows += 1;
+                    if range < 4.0 {
+                        out.flat_windows += 1;
+                    }
+                    ranges.push(range);
                 }
-                let range = max - min;
-                out.relief_windows += 1;
-                if range < 4.0 {
-                    out.flat_windows += 1;
-                }
-                ranges.push(range);
             }
         }
         ranges.sort_by(f64::total_cmp);
@@ -642,69 +768,92 @@ impl HeightStats {
         let bn = opts.boundary_size;
         let bstep = opts.boundary_step;
         let boff = (32.0 / bstep).round() as usize;
-        let mut bclass = vec![u8::MAX; bn * bn];
-        let mut bland = vec![false; bn * bn];
-        let mut bclimate = vec![false; bn * bn];
-        let mut bjump = vec![false; bn * bn];
-        let mut wind_rows: Vec<Vec<(f64, f64)>> = vec![vec![(0.0, 0.0); bn]; boff + 1];
-        for j in 0..bn {
-            let row = j % (boff + 1);
-            for i in 0..bn {
-                let x = base.center_x + (i as f64 - bn as f64 * 0.5) * bstep;
-                let z = base.center_z + (j as f64 - bn as f64 * 0.5) * bstep;
-                let world = if opts.fast {
-                    generator.world_sample_fast(x, z)
-                } else {
-                    generator.world_sample(x, z)
-                }
-                .ok_or_else(|| format!("нет образца границы в ({x}, {z})"))?;
-                let v = world.vanilla;
-                let h = world.hydrology;
-                let is_land = v.c >= land_threshold
-                    && world.river < 0.5
-                    && h.water < 0.5
-                    && h.r2_deferred < 0.5;
-                let k = j * bn + i;
-                bland[k] = is_land;
-                // T137: исходная суша T134 остаётся в отчёте; отдельно считаем
-                // климатическую сушу без русел/болот/галерей/котловин/эстуариев.
-                bclimate[k] = is_land
-                    && h.kind == SurfaceKind::Land
-                    && h.gallery == 0.0
-                    && h.swamp == 0.0
-                    && h.dry_basin == 0.0
-                    && h.estuary == 0.0;
-                bclass[k] = world.class.cell.t * 5 + world.class.cell.h;
-                let w = world.climate.wind;
-                let wl = w.len();
-                let dir = if wl > 1e-12 {
-                    (w.x / wl, w.z / wl)
-                } else {
-                    (0.0, 0.0)
-                };
-                wind_rows[row][i] = dir;
-                if i >= boff {
-                    let prev = wind_rows[row][i - boff];
-                    if prev != (0.0, 0.0) && dir != (0.0, 0.0) {
-                        let dot = (prev.0 * dir.0 + prev.1 * dir.1).clamp(-1.0, 1.0);
-                        let deg = dot.acos() * 180.0 / std::f64::consts::PI;
-                        out.boundary.wind_max_deg = out.boundary.wind_max_deg.max(deg);
-                        out.boundary.wind_pairs += 1;
+        out.boundary.samples = bn * bn * centers.len();
+        for &(center_x, center_z) in &centers {
+            let mut bclass = vec![u8::MAX; bn * bn];
+            let mut bland = vec![false; bn * bn];
+            let mut bclimate = vec![false; bn * bn];
+            let mut bfeature = vec![0_u8; bn * bn];
+            let mut bfield = vec![0_u8; bn * bn];
+            let mut bjump = vec![false; bn * bn];
+            let mut wind_rows: Vec<Vec<(f64, f64)>> = vec![vec![(0.0, 0.0); bn]; boff + 1];
+            for j in 0..bn {
+                let row = j % (boff + 1);
+                for i in 0..bn {
+                    let x = center_x + (i as f64 - bn as f64 * 0.5) * bstep;
+                    let z = center_z + (j as f64 - bn as f64 * 0.5) * bstep;
+                    let world = if opts.fast {
+                        generator.world_sample_fast(x, z)
+                    } else {
+                        generator.world_sample(x, z)
                     }
-                }
-                if j >= boff {
-                    let prev = wind_rows[(j - boff) % (boff + 1)][i];
-                    if prev != (0.0, 0.0) && dir != (0.0, 0.0) {
-                        let dot = (prev.0 * dir.0 + prev.1 * dir.1).clamp(-1.0, 1.0);
-                        let deg = dot.acos() * 180.0 / std::f64::consts::PI;
-                        out.boundary.wind_max_deg = out.boundary.wind_max_deg.max(deg);
-                        out.boundary.wind_pairs += 1;
+                    .ok_or_else(|| format!("нет образца границы в ({x}, {z})"))?;
+                    let v = world.vanilla;
+                    let h = world.hydrology;
+                    let is_land = v.c >= land_threshold
+                        && world.river < 0.5
+                        && h.water < 0.5
+                        && h.r2_deferred < 0.5;
+                    let k = j * bn + i;
+                    bland[k] = is_land;
+                    // T137: исходная суша T134 остаётся в отчёте; отдельно считаем
+                    // климатическую сушу без русел/болот/галерей/котловин/эстуариев.
+                    bclimate[k] = is_land
+                        && h.kind == SurfaceKind::Land
+                        && h.gallery == 0.0
+                        && h.swamp == 0.0
+                        && h.dry_basin == 0.0
+                        && h.estuary == 0.0;
+                    bfield[k] = vanilla_humidity_band(v.h);
+                    bfeature[k] = if !is_land || bclimate[k] {
+                        0
+                    } else if h.estuary != 0.0 {
+                        5
+                    } else if h.dry_basin != 0.0 {
+                        4
+                    } else if h.swamp != 0.0 {
+                        3
+                    } else if h.gallery != 0.0 {
+                        2
+                    } else if h.kind == SurfaceKind::River {
+                        1
+                    } else {
+                        6
+                    };
+                    bclass[k] = world.class.cell.t * 5 + world.class.cell.h;
+                    let w = world.climate.wind;
+                    let wl = w.len();
+                    let dir = if wl > 1e-12 {
+                        (w.x / wl, w.z / wl)
+                    } else {
+                        (0.0, 0.0)
+                    };
+                    wind_rows[row][i] = dir;
+                    if i >= boff {
+                        let prev = wind_rows[row][i - boff];
+                        if prev != (0.0, 0.0) && dir != (0.0, 0.0) {
+                            let dot = (prev.0 * dir.0 + prev.1 * dir.1).clamp(-1.0, 1.0);
+                            let deg = dot.acos() * 180.0 / std::f64::consts::PI;
+                            out.boundary.wind_max_deg = out.boundary.wind_max_deg.max(deg);
+                            out.boundary.wind_pairs += 1;
+                        }
+                    }
+                    if j >= boff {
+                        let prev = wind_rows[(j - boff) % (boff + 1)][i];
+                        if prev != (0.0, 0.0) && dir != (0.0, 0.0) {
+                            let dot = (prev.0 * dir.0 + prev.1 * dir.1).clamp(-1.0, 1.0);
+                            let deg = dot.acos() * 180.0 / std::f64::consts::PI;
+                            out.boundary.wind_max_deg = out.boundary.wind_max_deg.max(deg);
+                            out.boundary.wind_pairs += 1;
+                        }
                     }
                 }
             }
+            out.boundary
+                .analyze_grid(&bclass, &bland, &bclimate, &mut bjump);
+            out.boundary.count_jump_causes(&bclass, &bland, &bfeature);
+            out.boundary.count_field_jumps(&bfield, &bland);
         }
-        out.boundary
-            .analyze_grid(&bclass, &bland, &bclimate, &mut bjump);
         Ok(out)
     }
     fn pct(&self, count: usize, total: usize) -> f64 {
@@ -730,7 +879,11 @@ impl HeightStats {
         self.pct(self.erosion[5] + self.erosion[6], self.land)
     }
     pub fn valley_pct(&self) -> f64 {
-        self.pct(self.valley, self.land)
+        self.pct(self.valley, self.land - self.dry_bank)
+    }
+
+    pub fn dry_bank_pct(&self) -> f64 {
+        self.pct(self.dry_bank, self.land)
     }
     pub fn flat_pct(&self) -> f64 {
         self.pct(self.flat_windows, self.relief_windows)
@@ -770,7 +923,7 @@ impl HeightStats {
              E4 {e4:.2}% (быстрая цель ≤60%); E2+E3 {e23:.2}%; E0+E1 {e01:.2}%; E5+E6 {e56:.2}%\n\
              долина PV<-0.85 {valley:.2}% (v1 ≤8% gameplay / ≤6% scientific)\n\
              окна {window}×{window} блоков: медиана перепада {median:.2} (быстрая цель ≥8), <4 блоков {flat:.2}%, окон={windows}\n\
-             вода в руслах r≥0.5: {water:.2}% из {river} точек (R1: поверхность ниже y=63)\n\
+             вода в руслах r≥0.5: {water:.2}% из {river} точек (R1: поверхность ниже y=63); сухой берег в полосе русла {dry_bank:.2}% суши\n\
              T115–T116 от всех точек: вода {surface_water:.2}%, болото {swamp:.2}%, сухая котловина {dry:.2}%, эстуарий {estuary:.2}%, отложено R2 {deferred:.2}%, галерейный лес {gallery:.2}%\n",
             base.seed,
             base.mode.as_str(),
@@ -803,6 +956,7 @@ impl HeightStats {
             windows = self.relief_windows,
             water = self.river_water_pct(),
             river = self.river_samples,
+            dry_bank = self.dry_bank_pct(),
             surface_water = self.pct(self.water_samples, self.samples),
             swamp = self.pct(self.swamp_samples, self.samples),
             dry = self.pct(self.dry_samples, self.samples),
@@ -852,8 +1006,14 @@ impl HeightStats {
         out
     }
     pub fn json(&self, base: &RenderOptions, opts: &StatsOptions, model: &HeightModel) -> String {
+        let causes = JUMP_CAUSES
+            .iter()
+            .zip(self.boundary.jump_cause_pairs)
+            .map(|(name, count)| format!("\"{name}\": {count}"))
+            .collect::<Vec<_>>()
+            .join(", ");
         format!(
-            "{{\n  \"seed\": {}, \"mode\": {}, \"version\": {}, \"path\": {},\n  \"height_source\": {}, \"height_data_hash\": \"{:016x}\", \"synthetic\": {}, \"pv_field\": {},\n  \"approximation\": {},\n  \"span_l\": {}, \"size\": {}, \"samples\": {}, \"land_samples\": {},\n  \"flooded_land_pct\": {}, \"hyps_pct\": {:?}, \"erosion_pct\": {:?},\n  \"valley_pct\": {}, \"relief_step\": {}, \"relief_windows\": {}, \"relief_median\": {}, \"flat_windows_pct\": {},\n  \"river_samples\": {}, \"river_water_pct\": {}, \"gallery_samples\": {}, \"gallery_pct\": {},\n  \"boundary\": {{\"size\": {}, \"step\": {}, \"span_l\": {}, \"land\": {}, \"humidity_jump_pct\": {}, \"humidity_jump_pair_pct\": {}, \"humidity_jump_pairs\": {}, \"humidity_pairs\": {}, \"climate_land\": {}, \"climate_humidity_jump_pct\": {}, \"climate_humidity_pair_pct\": {}, \"climate_humidity_jump_pairs\": {}, \"climate_humidity_pairs\": {}, \"wind_max_deg\": {}, \"wind_pairs\": {}, \"straight_pct\": {}, \"straight_edges\": {}, \"boundary_edges\": {}, \"straight_model\": \"grid-edge-chord-512-deviation-16\", \"thin_pct\": {}, \"min_strip_blocks\": {}, \"acceptance_volume\": {}}}\n}}\n",
+            "{{\n  \"seed\": {}, \"mode\": {}, \"version\": {}, \"path\": {},\n  \"height_source\": {}, \"height_data_hash\": \"{:016x}\", \"synthetic\": {}, \"pv_field\": {},\n  \"approximation\": {},\n  \"span_l\": {}, \"size\": {}, \"samples\": {}, \"land_samples\": {},\n  \"flooded_land_pct\": {}, \"hyps_pct\": {:?}, \"erosion_pct\": {:?},\n  \"valley_pct\": {}, \"set\": {}, \"params_hash\": \"{:016x}\", \"patches\": {}, \"relief_step\": {}, \"relief_windows\": {}, \"relief_median\": {}, \"flat_windows_pct\": {},\n  \"river_samples\": {}, \"river_water_pct\": {}, \"gallery_samples\": {}, \"gallery_pct\": {},\n  \"boundary\": {{\"size\": {}, \"step\": {}, \"span_l\": {}, \"land\": {}, \"humidity_jump_pct\": {}, \"humidity_jump_pair_pct\": {}, \"humidity_jump_pairs\": {}, \"humidity_pairs\": {}, \"climate_land\": {}, \"climate_humidity_jump_pct\": {}, \"climate_humidity_pair_pct\": {}, \"climate_humidity_jump_pairs\": {}, \"climate_humidity_pairs\": {}, \"humidity_jump_cause_pairs\": {{{}}}, \"field_humidity_jump_pct\": {}, \"field_humidity_jump_pairs\": {}, \"wind_max_deg\": {}, \"wind_pairs\": {}, \"straight_pct\": {}, \"straight_edges\": {}, \"boundary_edges\": {}, \"straight_model\": \"grid-edge-chord-512-deviation-16\", \"thin_pct\": {}, \"min_strip_blocks\": {}, \"acceptance_volume\": {}}}\n}}\n",
             self.seed,
             crate::json::quote(self.mode.as_str()),
             crate::json::quote(base.version.as_str()),
@@ -875,6 +1035,11 @@ impl HeightStats {
             self.hyps.map(|n| self.pct(n, self.land)),
             self.erosion.map(|n| self.pct(n, self.land)),
             self.valley_pct(),
+            crate::json::quote(&crate::tune::label()),
+            crate::tune::params(self.mode, base.version)
+                .map(|p| p.params_hash())
+                .unwrap_or(0),
+            opts.patches,
             opts.relief_step,
             self.relief_windows,
             self.relief_median
@@ -897,6 +1062,9 @@ impl HeightStats {
             self.boundary.climate_humidity_pair_pct(),
             self.boundary.climate_humidity_jump_pairs,
             self.boundary.climate_humidity_pairs,
+            causes,
+            self.boundary.field_humidity_jump_pct(),
+            self.boundary.field_humidity_jump_pairs,
             self.boundary.wind_max_deg,
             self.boundary.wind_pairs,
             self.boundary.straight_pct(),
@@ -936,6 +1104,7 @@ mod tests {
             span_l: 8.0,
             relief_size: 8,
             relief_step: 32.0,
+            patches: 1,
             fast: true,
             boundary_size: 8,
             boundary_step: 32.0,
@@ -974,6 +1143,7 @@ mod tests {
             span_l: 8.0,
             relief_size: 8,
             relief_step: 32.0,
+            patches: 1,
             fast: true,
             boundary_size: 8,
             boundary_step: 32.0,
@@ -1029,6 +1199,32 @@ mod boundary_tests {
         assert!(m.thin_pct() > 0.0);
         assert_eq!(m.min_strip_blocks, Some(16.0));
         assert!(!m.acceptance_volume());
+    }
+
+    #[test]
+    fn vanilla_humidity_bands_match_26_3_edges_and_core_centers() {
+        let p = litho_core::Params::defaults(litho_core::GenVersion::V1Dev, Mode::Gameplay);
+        for (band, center) in p.climate.h_centers.iter().enumerate() {
+            assert_eq!(vanilla_humidity_band(*center) as usize, band);
+        }
+        assert_eq!(vanilla_humidity_band(-0.35), 1);
+        assert_eq!(vanilla_humidity_band(0.2999), 3);
+        assert_eq!(vanilla_humidity_band(1.0), 4);
+    }
+
+    #[test]
+    fn field_jump_ignores_biome_labels_and_counts_real_h_steps() {
+        let mut m = BoundaryMetrics::empty(3, 32.0, 250.0);
+        let land = vec![true; 9];
+        m.land = 9;
+        // Средний столбец: поле H на две полосы суше соседей.
+        let band = [3, 1, 3, 3, 1, 3, 3, 1, 3];
+        m.count_field_jumps(&band, &land);
+        assert_eq!(m.field_humidity_jump_pairs, 6);
+        assert_eq!(m.field_humidity_jump_land, 9);
+        let mut flat = BoundaryMetrics::empty(3, 32.0, 250.0);
+        flat.count_field_jumps(&[2; 9], &land);
+        assert_eq!(flat.field_humidity_jump_pairs, 0);
     }
 
     #[test]

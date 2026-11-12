@@ -331,6 +331,10 @@ pub struct DrainageParams {
     pub jitter_fraction: f64,
     pub fill_epsilon_km: f64,
     pub depression_min_depth_km: f64,
+    /// К5 / Д-057: предел доли узлов суши плиты под заполненными впадинами.
+    /// Впадины сверх предела прорезаются: русло идёт сквозь них по пути
+    /// priority-flood, озеро/котловина не создаётся. 1.0 — без предела.
+    pub lake_area_max_fraction: f64,
     pub outlet_min_weight: f64,
     pub anchor_search_radius_cells: i64,
     /// T111: шаг решётки P/PET в L; в узлы — билинейно.
@@ -385,6 +389,11 @@ pub struct HydrologyParams {
     /// 0.48 L = 120 блоков gameplay при SEAM_LIMIT=0.02; macro-масштаб
     /// един, поэтому научный режим не меняет геометрию сетей.
     pub field_fade_l: f64,
+    /// Д-057: то же для русла, отдельно от берега озера. Реке не нужен
+    /// переход C до океанского сплайна, поэтому он уже.
+    pub channel_fade_l: f64,
+    /// Д-057: минимальная ширина берега русла для выреза высоты, блоки.
+    pub bank_min_blocks: f64,
     pub floodplain_e: f64,
     pub swamp_e: f64,
     pub dry_basin_e: f64,
@@ -921,6 +930,14 @@ pub struct BoundaryParams {
     pub ray_fan_rays: usize,
     pub ray_fan_half_angle_deg: f64,
     pub ray_fan_sigma_deg: f64,
+    /// Д-059 / шаг 6: шаг решётки, в узлах которой быстрый путь считает
+    /// наветренную часть луча влаги, L. Между узлами — билинейная
+    /// интерполяция, последний шаг луча колонка делает сама по своей высоте.
+    /// 0 — луч из каждой колонки, как в эталоне.
+    pub ray_lattice_l: f64,
+    /// T79 / Д-017: шаг решётки высоты и ветра, с которой читает луч влаги
+    /// быстрого пути, L. 0 — точная кора и точный ветер в каждой точке луча.
+    pub ray_field_l: f64,
     /// T131: шаг центральных разностей скалярной φ, L (план Б3: 0.25–0.5).
     pub wind_fd_step_l: f64,
     /// T131: плавный уход к запасному направлению при малом |∇φ| и у полюса.
@@ -981,6 +998,13 @@ impl BoundaryParams {
         {
             return Err("σ весов веера влаги должна лежать в (0, 20]°");
         }
+        if !self.ray_lattice_l.is_finite() || !(0.0..=1.0).contains(&self.ray_lattice_l) {
+            return Err("шаг решётки луча влаги должен лежать в 0…1 L");
+        }
+        if !self.ray_field_l.is_finite() || !(0.0..=1.0).contains(&self.ray_field_l) {
+            return Err("шаг решётки высот луча влаги должен лежать в 0…1 L");
+        }
+
         if !self.wind_fd_step_l.is_finite() || !(0.25..=0.5).contains(&self.wind_fd_step_l) {
             return Err("шаг конечных разностей ветра должен лежать в 0.25…0.5 L");
         }
@@ -1055,6 +1079,16 @@ pub struct HeightParams {
     pub coast_width_c: f64,
     /// Научный режим: реальная `e_km` поверх таблицы; gameplay по умолчанию 0.
     pub e_gain_blocks_per_km: f64,
+    /// Д-057: макровысота, с которой начинается прибавка `e_gain`, км.
+    pub e_gain_base_km: f64,
+    /// Д-057: размах мелкого рельефа (σ, блоки) по полосам E0…E6.
+    pub micro_amp_blocks: [f64; 7],
+    /// Д-057: длина волны мелкого рельефа, блоки.
+    pub micro_lambda_blocks: f64,
+    /// Д-057: ниже `micro_low_y` бугры только вверх; выше `micro_high_y` —
+    /// симметричные.
+    pub micro_low_y: f64,
+    pub micro_high_y: f64,
     pub cold_jagged_gain: f64,
     pub warm_jagged_drop: f64,
     pub min_y: f64,
@@ -1290,6 +1324,7 @@ impl Params {
                 fill_epsilon_km: 1e-4,
                 // Стартовый отсев «луж» глубже 2 м; подбор оставлен T151.
                 depression_min_depth_km: 0.002,
+                lake_area_max_fraction: 1.0,
                 outlet_min_weight: 0.5,
                 anchor_search_radius_cells: 2,
                 climate_step_l: 1.0,
@@ -1339,6 +1374,8 @@ impl Params {
             hydrology: HydrologyParams {
                 bank_fraction: 0.5,
                 field_fade_l: 0.48,
+                channel_fade_l: 0.48,
+                bank_min_blocks: 4.0,
                 floodplain_e: 0.3,
                 swamp_e: 0.65,
                 dry_basin_e: 0.3,
@@ -1451,6 +1488,11 @@ impl Params {
                     Mode::Gameplay => 0.0,
                     Mode::Scientific => 24.0,
                 },
+                e_gain_base_km: 0.0,
+                micro_amp_blocks: [0.0; 7],
+                micro_lambda_blocks: 96.0,
+                micro_low_y: 66.0,
+                micro_high_y: 74.0,
                 cold_jagged_gain: 0.70,
                 warm_jagged_drop: 0.10,
                 min_y: -64.0,
@@ -1476,6 +1518,8 @@ impl Params {
                 ray_fan_rays: 3,
                 ray_fan_half_angle_deg: 20.0,
                 ray_fan_sigma_deg: 20.0,
+                ray_lattice_l: 0.0,
+                ray_field_l: 0.0,
                 wind_fd_step_l: 0.5,
                 wind_grad_floor_deg_per_l: 20.0,
                 wind_pole_fade_l: 16.0,
@@ -1643,11 +1687,94 @@ impl Params {
             c.w_sign_epsilon = 1e-3;
             // K5: отсечь мелкие «лужи» и ослабить плоское дно котловин.
             p.drainage.depression_min_depth_km = 0.015;
+            // К5 / Д-057: впадины сверх 3 % узлов суши плиты прорезаются
+            // руслом, а не заливаются. С полосой берега это ≤5–8 % суши.
+            p.drainage.lake_area_max_fraction = 0.03;
+            // Д-059: луч влаги — около 85 % цены колонки. Быстрый путь считает его
+            // наветренную часть в узлах решётки 0.128 L (32 блока gameplay,
+            // 128 scientific) — вдвое мельче шага самого луча (0.25 L).
+            p.boundaries.ray_lattice_l = 0.128;
+            // T79 / Д-064: высоту и ветер луч читает с решётки 0.125 L — вдвое
+            // мельче шага луча. Шаг 0.25 L роняет совпадение зон с эталоном
+            // ниже 0.97 (0.965 / 0.967), 0.125 L держит 0.974 / 0.973.
+            p.boundaries.ray_field_l = 0.125;
             p.relief.basin_strength = 0.08;
             // T113/T110: равнинные русла были почти прямыми (1,01–1,02).
             // Тесты T113/T115 ищут отрезки и дельты по сети, а не по точкам.
             p.channels.meander_plain = 2.2;
             p.channels.meander_mountain = 0.5;
+            // Д-057: русла. Переход C/E/W у русла 56 блоков в обоих режимах
+            // (порог шва 0.02 на блок держит |W| до 2/3), вода — только в
+            // узком берегу. Порог Q выше: сеть реже, ширина растёт к устью.
+            p.hydrology.channel_fade_l = 56.0 / mode.l_blocks();
+            p.hydrology.bank_min_blocks = 4.0;
+            p.channels.q_min_mm_l2 = 100.0;
+            // Д-057 / T123: гипсометрия. Подбор по выгрузке `dump` шести
+            // сканов 200 L (сиды 42, 7, 123 и сид первого теста автора).
+            // Холмы начинаются при меньшем A, шум E в полтора раза шире,
+            // поймы и котловины уходят в E5, а не остаются в E4.
+            let gameplay = mode == Mode::Gameplay;
+            // T151 (шаг 7): подбор по 16 сидам, `docs/t151/tune1`, `tune2`.
+            // Gameplay (вариант g4): наименьший запас до края цели вырос с
+            // 0.45 до 0.72 п.п. Scientific (s5): E3+E2 было выше цели на
+            // трёх сидах из 16, стало в цели на всех.
+            p.relief.a_lo = if gameplay { 0.06 } else { 0.15 };
+            p.relief.a_hi = if gameplay { 0.54 } else { 0.72 };
+            p.morpho.e_hill = if gameplay {
+                [0.04, -0.11, -0.21, -0.36, -0.38, -0.18, -0.75, -0.70]
+            } else {
+                [0.04, -0.11, -0.21, -0.44, -0.46, -0.18, -0.75, -0.70]
+            };
+            p.morpho.sigma_e = [0.12, 0.15, 0.18, 0.15, 0.12, 0.18, 0.15, 0.15];
+            p.climate.m_e_hi = if gameplay { 1.0 } else { 0.7 };
+            p.hydrology.floodplain_e = if gameplay { 0.44 } else { 0.50 };
+            p.hydrology.dry_basin_e = 0.5;
+            // Дно долины (PV=−1) у E2…E5 на 63.5: русло режется ниже моря и
+            // вода в игре есть (вариант B). E5 теперь низина, а не «разбитый
+            // рельеф»; E0/E1 ниже прежнего, чтобы ≥130 не превышало 10 %.
+            p.height.land_y = [
+                [90.0, 120.0, 150.0, 185.0, 230.0],
+                [80.0, 95.0, 112.0, 128.0, 150.0],
+                if gameplay {
+                    [63.5, 78.0, 95.0, 110.0, 124.0]
+                } else {
+                    [63.5, 78.0, 100.0, 115.0, 129.0]
+                },
+                if gameplay {
+                    [63.5, 71.0, 81.0, 90.0, 108.0]
+                } else {
+                    [63.5, 71.0, 81.0, 100.0, 114.0]
+                },
+                // Научная равнина ниже и ровнее: бугры Д-057 поднимают её
+                // только вверх, иначе полоса 70–90 забирает половину суши.
+                if gameplay {
+                    [63.5, 66.0, 69.0, 74.0, 80.0]
+                } else {
+                    [63.5, 64.0, 65.0, 67.0, 71.0]
+                },
+                [63.5, 64.5, 66.0, 68.0, 71.0],
+                [62.0, 62.5, 63.0, 63.5, 64.0],
+            ];
+            // Научный режим: кратонный уровень (до 0.8 км) стоит на таблице,
+            // прибавку получают только нагорья и горы.
+            p.height.e_gain_base_km = if gameplay { 0.0 } else { 0.8 };
+            // Д-057: мелкий рельеф. Шум PV шире и короче; в научном режиме
+            // он той же блочной длины и силы, что в gameplay (общий множитель
+            // σ 0.6 остаётся только для E): иначе окна 128 блоков плоские.
+            let pv_gain = if gameplay { 1.6 } else { 1.6 / 0.6 };
+            for sigma in p.morpho.sigma_pv.iter_mut() {
+                *sigma *= pv_gain;
+            }
+            p.morpho.lambda_pv_blocks = [250.0, 300.0, 400.0, 450.0, 500.0, 250.0, 450.0, 450.0];
+            p.morpho.scientific_lambda_factor = 1.0;
+            // Бугры ~100 блоков поверх таблицы: равнина перестаёт быть
+            // столом в окне 128 блоков. В научном режиме макроформы растянуты
+            // вчетверо, поэтому размах бугров там больше.
+            p.height.micro_amp_blocks = if gameplay {
+                [4.0, 4.0, 3.0, 2.5, 1.5, 1.0, 0.0]
+            } else {
+                [6.0, 6.0, 5.0, 4.5, 4.0, 2.0, 0.0]
+            };
         }
         p.config_key = p.params_hash();
         p
@@ -1909,6 +2036,7 @@ impl Params {
                 ("drainage.outlet_min_weight", d.outlet_min_weight),
                 ("drainage.climate_step_l", d.climate_step_l),
                 ("drainage.et_factor", d.et_factor),
+                ("drainage.lake_area_max_fraction", d.lake_area_max_fraction),
             ] {
                 writeln!(w, "{name}={value:?}").unwrap();
             }
@@ -1955,6 +2083,8 @@ impl Params {
             for (name, value) in [
                 ("hydrology.bank_fraction", hy.bank_fraction),
                 ("hydrology.field_fade_l", hy.field_fade_l),
+                ("hydrology.channel_fade_l", hy.channel_fade_l),
+                ("hydrology.bank_min_blocks", hy.bank_min_blocks),
                 ("hydrology.floodplain_e", hy.floodplain_e),
                 ("hydrology.swamp_e", hy.swamp_e),
                 ("hydrology.dry_basin_e", hy.dry_basin_e),
@@ -2075,9 +2205,14 @@ impl Params {
                 ("height.max_y", hg.max_y),
                 ("height.water_km_to_blocks", hg.water_km_to_blocks),
                 ("height.lake_depth_max_blocks", hg.lake_depth_max_blocks),
+                ("height.e_gain_base_km", hg.e_gain_base_km),
+                ("height.micro_lambda_blocks", hg.micro_lambda_blocks),
+                ("height.micro_low_y", hg.micro_low_y),
+                ("height.micro_high_y", hg.micro_high_y),
             ] {
                 writeln!(w, "{name}={value:?}").unwrap();
             }
+            writeln!(w, "height.micro_amp_blocks={:?}", hg.micro_amp_blocks).unwrap();
             let bd = &self.boundaries;
             for (name, value) in [
                 ("boundaries.ray_bend_sigma_deg", bd.ray_bend_sigma_deg),
@@ -2095,8 +2230,14 @@ impl Params {
                     bd.ray_fan_half_angle_deg,
                 ),
                 ("boundaries.ray_fan_sigma_deg", bd.ray_fan_sigma_deg),
+                ("boundaries.ray_lattice_l", bd.ray_lattice_l),
             ] {
                 writeln!(w, "{name}={value:?}").unwrap();
+            }
+            // Пока решётка высот выключена, строка не пишется: хеш v1-dev
+            // меняется только вместе с самим миром.
+            if bd.ray_field_l != 0.0 {
+                writeln!(w, "boundaries.ray_field_l={:?}", bd.ray_field_l).unwrap();
             }
             writeln!(w, "boundaries.wind_fd_step_l={:?}", bd.wind_fd_step_l).unwrap();
             writeln!(
