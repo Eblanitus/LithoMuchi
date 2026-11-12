@@ -381,7 +381,8 @@ impl Generator {
                 &self.rivers,
             )
         };
-        let fields = self.surface_fields(&climate, class, is_ocean, x, z, local.max(traced))?;
+        let fields =
+            self.surface_fields(&climate, class, is_ocean, x, z, local.max(traced), None)?;
         Ok(Some(WorldSample {
             climate,
             class: fields.class,
@@ -576,6 +577,7 @@ impl Generator {
         Ok(geometry)
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn surface_fields(
         &self,
         climate: &ClimateSample,
@@ -584,6 +586,7 @@ impl Generator {
         x: f64,
         z: f64,
         local_river: f64,
+        known: Option<(&PlateSample, &CrustSample)>,
     ) -> Result<SurfaceFields, RiverNetError> {
         if !self.params.version.is_water_relief_dev() {
             let vanilla =
@@ -604,9 +607,17 @@ impl Generator {
         // T122: потенциал A и морфоклиматические зоны переводятся в C/E/W до
         // гидрологии T115/T116, чтобы русла/болота/дельты сохранили приоритет.
         let point = self.macro_point(x, z);
-        let plate = plate_query(point, self.seed, &self.params)
-            .ok_or(RiverNetError::InvalidInput { cell: (0, 0) })?;
-        let crust = crust_from_sample(point, &plate, self.seed, &self.params);
+        // Быстрый путь уже посчитал плиту и кору этой же точки тем же вызовом;
+        // эталон передаёт `None` и считает их здесь.
+        let (plate, crust) = match known {
+            Some((plate, crust)) => (*plate, *crust),
+            None => {
+                let plate = plate_query(point, self.seed, &self.params)
+                    .ok_or(RiverNetError::InvalidInput { cell: (0, 0) })?;
+                let crust = crust_from_sample(point, &plate, self.seed, &self.params);
+                (plate, crust)
+            }
+        };
         let depth = self.relief_basin_depth(point, &plate)?;
         let relief_sample = relief::sample(&plate, &crust, depth, self.seed, &self.params);
         let morpho = self
@@ -893,7 +904,15 @@ impl Generator {
         let is_ocean = c_value < self.params.climate.ocean_c_threshold;
         let class = classify(&climate, is_ocean, x, z, self.seed, &self.params);
         let local = local_r(x, z, &surface, self.seed, &self.params);
-        let fields = self.surface_fields(&climate, class, is_ocean, x, z, local)?;
+        let fields = self.surface_fields(
+            &climate,
+            class,
+            is_ocean,
+            x,
+            z,
+            local,
+            Some((&plates, &crust)),
+        )?;
         let world = WorldSample {
             climate,
             class: fields.class,

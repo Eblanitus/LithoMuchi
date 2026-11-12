@@ -131,11 +131,28 @@ pub struct RiverNet {
     plate_id: u64,
     /// Шаг решётки нужен компактному запросу глубины впадины T120.
     step_l: f64,
+    /// Рамка клеток узлов (min, max): точка вне рамки с запасом в две клетки
+    /// не видит ни одного узла, и запрос глубины впадины отвечает нулём сразу.
+    cell_bounds: Option<(Cell, Cell)>,
     nodes: Vec<DrainageNode>,
     depressions: Vec<Depression>,
     runoff: Runoff,
     channels: ChannelNetwork,
     lakes: LakeNetwork,
+}
+
+/// Рамка клеток набора узлов; `None` для пустого набора.
+fn cell_bounds(nodes: &[DrainageNode]) -> Option<(Cell, Cell)> {
+    let first = nodes.first()?.cell;
+    let mut lo = first;
+    let mut hi = first;
+    for node in nodes {
+        lo.0 = lo.0.min(node.cell.0);
+        lo.1 = lo.1.min(node.cell.1);
+        hi.0 = hi.0.max(node.cell.0);
+        hi.1 = hi.1.max(node.cell.1);
+    }
+    Some((lo, hi))
 }
 
 impl RiverNet {
@@ -193,6 +210,7 @@ impl RiverNet {
         let net = Self {
             plate_id: plate.id,
             step_l: p.step_l,
+            cell_bounds: cell_bounds(&nodes),
             nodes,
             depressions,
             runoff,
@@ -221,6 +239,20 @@ impl RiverNet {
         let h = self.step_l;
         let i = (point.x / h).floor() as i64;
         let j = (point.z / h).floor() as i64;
+        // Окно запроса — клетки i±2, j±2. Если оно не пересекает рамку узлов,
+        // ни один двоичный поиск ниже не найдёт узел и ответ равен нулю.
+        match self.cell_bounds {
+            Some((lo, hi)) => {
+                if i.saturating_add(2) < lo.0
+                    || i.saturating_sub(2) > hi.0
+                    || j.saturating_add(2) < lo.1
+                    || j.saturating_sub(2) > hi.1
+                {
+                    return 0.0;
+                }
+            }
+            None => return 0.0,
+        }
         let cutoff = 2.0 * h;
         let mut sum = 0.0;
         let mut weight = 0.0;
@@ -809,6 +841,7 @@ mod tests {
         RiverNet {
             plate_id: 7,
             step_l: params.drainage.step_l,
+            cell_bounds: super::cell_bounds(&nodes),
             nodes,
             depressions,
             runoff,
@@ -935,6 +968,34 @@ mod tests {
         assert_eq!(net.depression_depth_km(Vec2::new(10.0, 10.0)), 0.0);
         let shifted = net.depression_depth_km(point.add(Vec2::new(1e-6, 0.0)));
         assert!((depth - shifted).abs() < 1e-5);
+    }
+
+    #[test]
+    fn depression_depth_bounds_shortcut_does_not_change_the_answer() {
+        let mut net = tiny_net();
+        net.step_l = 1.0;
+        net.nodes[1].filled_km = net.nodes[1].route_km + 0.5;
+        assert_eq!(net.cell_bounds, Some(((0, 0), (1, 0))));
+        // Та же сеть с рамкой «весь мир»: ранний выход не срабатывает никогда.
+        let mut plain = net.clone();
+        plain.cell_bounds = Some(((i64::MIN, i64::MIN), (i64::MAX, i64::MAX)));
+        let mut positive = 0;
+        let mut outside = 0;
+        for a in -40..=40 {
+            for b in -40..=40 {
+                let point = Vec2::new(a as f64 * 0.173, b as f64 * 0.173);
+                let fast = net.depression_depth_km(point);
+                assert_eq!(fast.to_bits(), plain.depression_depth_km(point).to_bits());
+                positive += usize::from(fast > 0.0);
+                outside += usize::from(point.x < -2.0 || point.x > 4.0);
+            }
+        }
+        assert!(positive > 100 && outside > 1000);
+        let mut empty = net.clone();
+        empty.nodes.clear();
+        empty.cell_bounds = super::cell_bounds(&empty.nodes);
+        assert_eq!(empty.cell_bounds, None);
+        assert_eq!(empty.depression_depth_km(Vec2::new(1.0, 0.0)), 0.0);
     }
 
     #[test]

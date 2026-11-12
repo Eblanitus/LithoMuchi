@@ -384,22 +384,67 @@ pub fn plates_near(point: Vec2, radius_l: f64, seed: u64, params: &Params) -> Ve
     let ci = (nearest.q.x / g).floor() as i64;
     let cj = (nearest.q.z / g).floor() as i64;
     let reach2 = reach_l * reach_l;
+    let window = near_window(seed, ci, cj, cells, params);
+    let mut out: Vec<Plate> = window
+        .iter()
+        .filter(|plate| nearest.q.dist2(plate.seed_pos) <= reach2)
+        .copied()
+        .collect();
+    out.sort_unstable_by_key(|plate| (plate.id, plate.cell_i, plate.cell_j, plate.index));
+    out.dedup_by_key(|plate| plate.id);
+    out
+}
+
+/// Все семена окна `(2·cells+1)²` клеток вокруг `(ci, cj)` в порядке обхода
+/// `plates_near`: строки `dj`, внутри строки `di`.
+fn window_seeds(seed: u64, ci: i64, cj: i64, cells: i64, params: &Params) -> Vec<Plate> {
     let mut out = Vec::new();
     for dj in -cells..=cells {
         for di in -cells..=cells {
             let (Some(i), Some(j)) = (ci.checked_add(di), cj.checked_add(dj)) else {
                 continue;
             };
-            for plate in seeds_in_cell(seed, i, j, params) {
-                if nearest.q.dist2(plate.seed_pos) <= reach2 {
-                    out.push(plate);
-                }
-            }
+            out.extend(seeds_in_cell(seed, i, j, params));
         }
     }
-    out.sort_unstable_by_key(|plate| (plate.id, plate.cell_i, plate.cell_j, plate.index));
-    out.dedup_by_key(|plate| plate.id);
     out
+}
+
+/// Число запомненных окон `plates_near` на поток. Колонка спрашивает плиты
+/// дважды с разными радиусами (рельеф и реки), окна у них могут различаться.
+const NEAR_WINDOW_SLOTS: usize = 4;
+
+type NearWindowKey = (u64, u64, i64, i64, i64);
+
+/// Следующий слот на замену и сами окна.
+type NearWindows = (usize, Vec<(NearWindowKey, Rc<Vec<Plate>>)>);
+
+thread_local! {
+    static NEAR_WINDOWS: std::cell::RefCell<NearWindows> =
+        const { std::cell::RefCell::new((0, Vec::new())) };
+}
+
+/// Окно семян для `plates_near` с памятью на поток. Список зависит только от
+/// сида, параметров и клетки, поэтому попадание в память не меняет ответ.
+/// Без неё каждая колонка `v1-dev` заново перебирала 49–81 клетку дважды.
+fn near_window(seed: u64, ci: i64, cj: i64, cells: i64, params: &Params) -> Rc<Vec<Plate>> {
+    let key: NearWindowKey = (seed, params.config_key, ci, cj, cells);
+    NEAR_WINDOWS.with(|cell| {
+        let mut state = cell.borrow_mut();
+        if let Some((_, plates)) = state.1.iter().find(|(k, _)| *k == key) {
+            return Rc::clone(plates);
+        }
+        let plates = Rc::new(window_seeds(seed, ci, cj, cells, params));
+        let entry = (key, Rc::clone(&plates));
+        if state.1.len() < NEAR_WINDOW_SLOTS {
+            state.1.push(entry);
+        } else {
+            let slot = state.0 % NEAR_WINDOW_SLOTS;
+            state.1[slot] = entry;
+            state.0 = slot + 1;
+        }
+        plates
+    })
 }
 
 /// Тип границы между A и B в точке `q` (7.3.5). `n_ab` — нормаль от A к B.
@@ -567,6 +612,70 @@ mod tests {
         }
         assert!(plates_near(Vec2::new(f64::NAN, 0.0), 1.0, 42, &p).is_empty());
         assert!(plates_near(Vec2::default(), -1.0, 42, &p).is_empty());
+    }
+
+    /// Прежнее тело `plates_near` без памяти окон: перебор клеток на каждый
+    /// запрос. Служит эталоном для проверки памяти.
+    fn plates_near_plain(point: Vec2, radius_l: f64, seed: u64, p: &Params) -> Vec<super::Plate> {
+        let g = p.plates.cell_g_l;
+        let base_radius = p.plates.query_radius_cells.max(2);
+        let Some(nearest) = plate_query_window(point, seed, p, base_radius) else {
+            return Vec::new();
+        };
+        let warp_bound = p.plates.warp_amplitude_l.abs() * crate::math::SQRT_2;
+        let d0 = nearest.q.sub(nearest.a.seed_pos).len();
+        let reach_l = d0 + 2.0 * (radius_l + 2.0 * warp_bound);
+        let cells = ((reach_l / g).ceil() as i64)
+            .saturating_add(1)
+            .max(base_radius);
+        let ci = (nearest.q.x / g).floor() as i64;
+        let cj = (nearest.q.z / g).floor() as i64;
+        let reach2 = reach_l * reach_l;
+        let mut out = Vec::new();
+        for dj in -cells..=cells {
+            for di in -cells..=cells {
+                for plate in seeds_in_cell(seed, ci + di, cj + dj, p) {
+                    if nearest.q.dist2(plate.seed_pos) <= reach2 {
+                        out.push(plate);
+                    }
+                }
+            }
+        }
+        out.sort_unstable_by_key(|plate| (plate.id, plate.cell_i, plate.cell_j, plate.index));
+        out.dedup_by_key(|plate| plate.id);
+        out
+    }
+
+    #[test]
+    fn plates_near_window_memory_does_not_change_the_answer() {
+        let all = [
+            Params::defaults(GenVersion::V0, Mode::Gameplay),
+            Params::defaults(GenVersion::V1Dev, Mode::Gameplay),
+            Params::defaults(GenVersion::V1Dev, Mode::Scientific),
+        ];
+        // Радиусы и сиды чередуются, точки прыгают между клетками: память
+        // на четыре окна успевает и попадать, и вытеснять записи.
+        let radii = [0.064, 0.5, 2.43, 12.0];
+        let mut checked = 0;
+        for round in 0..3 {
+            for k in 0..120_u64 {
+                let h = splitmix64(k.wrapping_mul(0x9e37_79b9).wrapping_add(round));
+                let point = Vec2::new((unit(h) - 0.5) * 160.0, (unit(splitmix64(h)) - 0.5) * 160.0);
+                let p = &all[(k % 3) as usize];
+                let seed = [42_u64, 7][(k % 2) as usize];
+                let radius = radii[((k + round) % 4) as usize];
+                // Соседняя точка той же клетки — попадание в память.
+                for shift in [0.0, 0.01] {
+                    let q = Vec2::new(point.x + shift, point.z);
+                    let fast = plates_near(q, radius, seed, p);
+                    let plain = plates_near_plain(q, radius, seed, p);
+                    assert_eq!(fast, plain, "точка {q:?} радиус {radius} сид {seed}");
+                    assert!(!fast.is_empty());
+                    checked += 1;
+                }
+            }
+        }
+        assert_eq!(checked, 720);
     }
 
     #[test]
