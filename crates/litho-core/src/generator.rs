@@ -43,6 +43,14 @@ const COLUMN_CACHE_CAPACITY: usize = 4096;
 /// В хеш мира не входит: вытеснение меняет только скорость, не ответ.
 const RAY_CACHE_CAPACITY: usize = 16384;
 /// К2/К7: `field()` раньше молча подменял ошибку и нечисловое значение нулём.
+/// Д-061: сторона тайла списка «плиты с узлами рядом», в клетках решётки
+/// стока. Инфраструктура: на ответ не влияет.
+const NET_TILE_CELLS: i64 = 2;
+/// Д-061: запас окна поверх радиуса запроса, в клетках: одна клетка на
+/// кольцо сети и две сверху.
+const NET_OWNER_MARGIN_CELLS: i64 = 3;
+const NET_OWNER_CACHE_CAPACITY: usize = 8192;
+
 /// litho-core не имеет зависимостей (план 5.4), поэтому пишем в stderr без
 /// внешнего `log`-крейта; первые ошибки видны в логе игры/CI, далее только
 /// счётчик, чтобы ошибка в каждой колонке не заваливала лог.
@@ -53,6 +61,43 @@ static FIELD_ERRORS: AtomicU64 = AtomicU64::new(0);
 /// Диагностика для игры и тестов; не входит в хеш параметров.
 pub fn field_error_log_count() -> u64 {
     FIELD_ERRORS.load(Ordering::Relaxed)
+}
+
+/// Постройка сети стока — самое долгое одиночное действие ядра (сотни мс).
+/// Первые сети и затем каждая шестнадцатая попадают в stderr: по логу игры
+/// видно, чем занято создание мира. На ответ не влияет.
+const NET_LOG_FIRST: u64 = 12;
+/// Дальше в лог идёт каждая сеть с номером, кратным 2^NET_LOG_EVERY_LOG2.
+const NET_LOG_EVERY_LOG2: u32 = 4;
+static NET_BUILDS: AtomicU64 = AtomicU64::new(0);
+
+/// Сколько сетей стока построено в процессе (все миры). Диагностика.
+pub fn net_build_count() -> u64 {
+    NET_BUILDS.load(Ordering::Relaxed)
+}
+
+fn log_net_build(
+    plate_id: u64,
+    built: &Result<RiverNet, RiverNetError>,
+    elapsed: std::time::Duration,
+) {
+    let number = NET_BUILDS.fetch_add(1, Ordering::Relaxed) + 1;
+    let periodic = number.trailing_zeros() >= NET_LOG_EVERY_LOG2;
+    if number > NET_LOG_FIRST && !periodic && built.is_ok() {
+        return;
+    }
+    let ms = elapsed.as_secs_f64() * 1e3;
+    match built {
+        Ok(net) => eprintln!(
+            "litho-core: сеть рек №{number}, плита {plate_id}: {} узлов за {ms:.0} мс",
+            net.nodes().len()
+        ),
+        Err(error) => {
+            eprintln!(
+                "litho-core: сеть рек №{number}, плита {plate_id}: ошибка {error} за {ms:.0} мс"
+            )
+        }
+    }
 }
 
 fn log_field_error(message: impl FnOnce() -> String) {
@@ -138,6 +183,8 @@ pub struct Generator {
     /// узлы привязаны к мировым блокам, эталон считает ту же решётку.
     morpho: Arc<crate::cache::ShardedCache<(i64, i64), MorphoWeights>>,
     drainage: Arc<RiverNetCache>,
+    /// Д-061: по тайлу — плиты, чьи сети могут иметь узел в радиусе запроса.
+    net_owners: Arc<crate::cache::ShardedCache<(i64, i64), Arc<Vec<u64>>>>,
     coarse: Arc<CoarseTiles>,
     /// T160: точная колонка `(x,z)` для повторных запросов полей.
     column: Arc<crate::cache::ShardedCache<(i64, i64), Arc<FullSample>>>,
@@ -180,6 +227,10 @@ impl Generator {
             drainage: Arc::new(RiverNetCache::new(
                 shards,
                 crate::drainage::NET_CACHE_CAPACITY,
+            )),
+            net_owners: Arc::new(crate::cache::ShardedCache::new(
+                shards,
+                NET_OWNER_CACHE_CAPACITY,
             )),
             coarse: Arc::new(ShardedCache::new(shards, CACHE_CAPACITY)),
             column: Arc::new(crate::cache::ShardedCache::new(
@@ -300,8 +351,12 @@ impl Generator {
         let radius = 2.0 * step;
         let warp_bound = self.params.plates.warp_amplitude_l.abs() * crate::math::SQRT_2;
         let reach = radius + 4.0 * step + 2.0 * warp_bound;
+        let owners = self.net_owners(point);
         let mut depth: f64 = 0.0;
         for plate in plates_near(point, radius, self.seed, &self.params) {
+            if owners.binary_search(&plate.id).is_err() {
+                continue;
+            }
             if plate.id != nearest.a.id {
                 let delta = plate.seed_pos.sub(nearest.a.seed_pos);
                 let separation = delta.len();
@@ -318,6 +373,42 @@ impl Generator {
             depth = depth.max(net.depression_depth_km(point));
         }
         Ok(depth)
+    }
+
+    /// Д-061: плиты, чьи сети стока могут иметь узел в радиусе общего запроса
+    /// русел от любой точки тайла, по возрастанию id.
+    ///
+    /// Вклад сети в точку (русло, озеро, глубина впадины) идёт только от её
+    /// узлов не дальше `max_query_radius_l`. Узел сети — узел плиты или сосед
+    /// такого узла (кольцо). Значит, плита без своих узлов в окне «тайл +
+    /// радиус + кольцо + запас» в ответ не входит. Прежний фильтр по границе
+    /// Вороного брал запас на искажение домена 2·4√2 L и пропускал почти всех
+    /// соседей: первая колонка мира строила 13 сетей.
+    ///
+    /// Список — чистая функция сида, параметров и тайла; кэш на ответ не влияет.
+    fn net_owners(&self, point: Vec2) -> Arc<Vec<u64>> {
+        let h = self.params.drainage.step_l;
+        let side = h * NET_TILE_CELLS as f64;
+        let tile = (
+            (point.x / side).floor() as i64,
+            (point.z / side).floor() as i64,
+        );
+        self.net_owners.get_or_insert(tile, || {
+            let reach = ((crate::channel::max_query_radius_l(&self.params) / h).ceil() as i64)
+                .saturating_add(NET_OWNER_MARGIN_CELLS);
+            let first = |t: i64| t.saturating_mul(NET_TILE_CELLS).saturating_sub(reach);
+            let last = |t: i64| {
+                t.saturating_mul(NET_TILE_CELLS)
+                    .saturating_add(NET_TILE_CELLS - 1)
+                    .saturating_add(reach)
+            };
+            Arc::new(crate::drainage::owners_in_window(
+                (first(tile.0), first(tile.1)),
+                (last(tile.0), last(tile.1)),
+                self.seed,
+                &self.params,
+            ))
+        })
     }
 
     /// Диагностика искажения домена (слой `jacobian`).
@@ -428,42 +519,50 @@ impl Generator {
             return Err(RiverNetError::UnsupportedVersion(self.params.version));
         }
         self.drainage.get_or_build(plate.id, || {
-            RiverNet::build(
-                plate,
-                self.seed,
-                &self.params,
-                &|point| {
-                    let surface = self.surface_at(point);
-                    let outlet = if surface.e_km < 0.0 {
-                        DrainageOutlet::Sea
-                    } else if surface.sigma_l.abs() < self.params.drainage.step_l {
-                        let k = surface.boundary_weights;
-                        let min = self.params.drainage.outlet_min_weight;
-                        if k[4] > min {
-                            DrainageOutlet::Rift
-                        } else if k[6] > min {
-                            DrainageOutlet::Transform
-                        } else {
-                            DrainageOutlet::None
-                        }
+            let started = std::time::Instant::now();
+            let built = self.build_drainage_network(plate);
+            log_net_build(plate.id, &built, started.elapsed());
+            built
+        })
+    }
+
+    fn build_drainage_network(&self, plate: &Plate) -> Result<RiverNet, RiverNetError> {
+        RiverNet::build(
+            plate,
+            self.seed,
+            &self.params,
+            &|point| {
+                let surface = self.surface_at(point);
+                let outlet = if surface.e_km < 0.0 {
+                    DrainageOutlet::Sea
+                } else if surface.sigma_l.abs() < self.params.drainage.step_l {
+                    let k = surface.boundary_weights;
+                    let min = self.params.drainage.outlet_min_weight;
+                    if k[4] > min {
+                        DrainageOutlet::Rift
+                    } else if k[6] > min {
+                        DrainageOutlet::Transform
                     } else {
                         DrainageOutlet::None
-                    };
-                    DrainageInput {
-                        route_km: surface.e_km,
-                        outlet,
                     }
-                },
-                &|point| {
-                    crate::climate::sample(point, self.seed, &self.params, &|q| self.surface_at(q))
-                        .map(|sample| crate::runoff::RunoffClimate {
-                            p_mm: sample.precip.p_mm,
-                            pet_mm: sample.precip.pet_mm,
-                            t_min_c: sample.temperature.t_min,
-                        })
-                },
-            )
-        })
+                } else {
+                    DrainageOutlet::None
+                };
+                DrainageInput {
+                    route_km: surface.e_km,
+                    outlet,
+                }
+            },
+            &|point| {
+                crate::climate::sample(point, self.seed, &self.params, &|q| self.surface_at(q)).map(
+                    |sample| crate::runoff::RunoffClimate {
+                        p_mm: sample.precip.p_mm,
+                        pet_mm: sample.precip.pet_mm,
+                        t_min_c: sample.temperature.t_min,
+                    },
+                )
+            },
+        )
     }
 
     /// Общий запрос русел T113 в блочной точке. Обходим консервативное окно
@@ -513,7 +612,13 @@ impl Generator {
         let nearest = crate::plates::plate_query(point, self.seed, &self.params);
         let warp_bound = self.params.plates.warp_amplitude_l.abs() * crate::math::SQRT_2;
         let reach = radius + 4.0 * self.params.drainage.step_l + 2.0 * warp_bound;
+        // Д-061: сеть, у которой рядом нет ни одного узла, в ответ не входит;
+        // строить её ради этой точки не нужно.
+        let owners = self.net_owners(point);
         for plate in plates_near(point, radius, self.seed, &self.params) {
+            if owners.binary_search(&plate.id).is_err() {
+                continue;
+            }
             if let Some(n) = &nearest {
                 if plate.id != n.a.id {
                     let delta = plate.seed_pos.sub(n.a.seed_pos);
@@ -1804,5 +1909,85 @@ mod ray_lattice_tests {
                 errors[errors.len() / 2]
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod net_owner_tests {
+    use super::Generator;
+    use crate::mode::Mode;
+    use crate::plates::plates_near;
+    use crate::version::GenVersion;
+
+    /// Д-061: сеть плиты, не попавшей в список `net_owners`, в точке молчит:
+    /// нет русла, долины, озера и глубины впадины. Значит, пропуск такой сети
+    /// не меняет ответ, а только избавляет от её постройки.
+    #[test]
+    fn skipped_river_nets_are_silent_at_the_point() {
+        let g = Generator::new(42, Mode::Gameplay, GenVersion::V1Dev).unwrap();
+        let radius = crate::channel::max_query_radius_l(g.params());
+        let mut skipped = 0_usize;
+        let mut kept = 0_usize;
+        for i in -4..=4 {
+            for j in -4..=4 {
+                let (x, z) = (f64::from(i) * 71.5 + 3.5, f64::from(j) * 67.5 - 9.5);
+                let point = g.macro_point(x, z);
+                let owners = g.net_owners(point);
+                assert!(owners.windows(2).all(|pair| pair[0] < pair[1]));
+                for plate in plates_near(point, radius, g.seed(), g.params()) {
+                    if owners.binary_search(&plate.id).is_ok() {
+                        kept += 1;
+                        continue;
+                    }
+                    skipped += 1;
+                    let net = g.drainage_network(&plate).unwrap();
+                    let channel = net.channels().query(point);
+                    assert!(
+                        channel.nearest.is_none()
+                            && channel.core == 0.0
+                            && channel.bank == 0.0
+                            && channel.valley == 0.0
+                            && channel.delta == 0.0
+                            && channel.gallery == 0.0,
+                        "русло пропущенной плиты {} в ({x}, {z}): {channel:?}",
+                        plate.id
+                    );
+                    let lake = net.lakes().query(point);
+                    assert!(
+                        lake.nearest.is_none()
+                            && lake.water == 0.0
+                            && lake.shore == 0.0
+                            && lake.basin == 0.0
+                            && lake.sea_depth_km == 0.0,
+                        "озеро пропущенной плиты {} в ({x}, {z}): {lake:?}",
+                        plate.id
+                    );
+                    assert_eq!(net.depression_depth_km(point), 0.0);
+                }
+            }
+        }
+        // Отбор действительно работает: у точки остаётся 1–3 сети из 13.
+        assert!(kept >= 81, "оставлено {kept}");
+        assert!(skipped > 5 * kept, "пропущено {skipped}, оставлено {kept}");
+    }
+
+    /// Список зависит только от тайла: порядок запросов и вытеснение из
+    /// кэша его не меняют.
+    #[test]
+    fn owner_list_does_not_depend_on_query_order() {
+        let forward = Generator::new(7, Mode::Scientific, GenVersion::V1Dev).unwrap();
+        let backward = Generator::new(7, Mode::Scientific, GenVersion::V1Dev).unwrap();
+        let points: Vec<_> = (0..40)
+            .map(|k| forward.macro_point(f64::from(k) * 913.0 - 15000.0, f64::from(k * k) * 37.0))
+            .collect();
+        let a: Vec<_> = points.iter().map(|p| forward.net_owners(*p)).collect();
+        let mut b: Vec<_> = points
+            .iter()
+            .rev()
+            .map(|p| backward.net_owners(*p))
+            .collect();
+        b.reverse();
+        assert_eq!(a, b);
+        assert!(a.iter().all(|owners| !owners.is_empty()));
     }
 }

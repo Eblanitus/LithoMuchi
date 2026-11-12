@@ -436,6 +436,34 @@ fn find_anchor(plate: &Plate, seed: u64, params: &Params) -> Result<Cell, RiverN
     }
 }
 
+/// Д-061: id плит, которым принадлежит хотя бы один узел решётки стока в
+/// окне клеток `[lo, hi]` (включительно), по возрастанию. Признак владения
+/// тот же, что в `collect_cells`: ближайшая плита в точке узла. Сеть плиты
+/// состоит из её узлов и кольца в один узел, поэтому плита без узлов в окне,
+/// расширенном на одну клетку, не имеет в самом окне ни одного узла сети.
+/// Список зависит только от сида, параметров и окна.
+pub(crate) fn owners_in_window(lo: Cell, hi: Cell, seed: u64, params: &Params) -> Vec<u64> {
+    let mut out: Vec<u64> = Vec::new();
+    let mut last = None;
+    for j in lo.1..=hi.1 {
+        for i in lo.0..=hi.0 {
+            let point = jittered_point((i, j), seed, params);
+            let Some(sample) = plate_query(point, seed, params) else {
+                continue;
+            };
+            let id = sample.a.id;
+            if last != Some(id) {
+                last = Some(id);
+                if !out.contains(&id) {
+                    out.push(id);
+                }
+            }
+        }
+    }
+    out.sort_unstable();
+    out
+}
+
 /// BFS только по узлам своей плиты; чужие соседи образуют кольцо в один узел.
 fn collect_cells(
     anchor: Cell,
