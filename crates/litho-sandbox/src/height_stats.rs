@@ -5,6 +5,7 @@ use litho_core::vanilla::peaks_valleys;
 use litho_core::{Mode, SurfaceKind};
 
 use crate::height::{HeightInput, HeightModel, SEA_LEVEL};
+use crate::plan_metrics::{self, ClimateShape, PlanAccumulator, RiverLake};
 use crate::render::RenderOptions;
 
 const E_EDGES: [f64; 6] = [-0.78, -0.375, -0.2225, 0.05, 0.45, 0.55];
@@ -113,6 +114,16 @@ pub struct HeightStats {
     pub relief_median: Option<f64>,
     pub flat_windows: usize,
     pub boundary: BoundaryMetrics,
+    /// 10.1 «климат влияет на форму» и строки «Реки и озёра».
+    /// `None` — версия не `v1-dev` или объём не посчитан.
+    pub plan: Option<PlanMetrics>,
+}
+
+/// 10.1: две группы строк, которых не было в замере `final1`.
+#[derive(Clone, Debug, PartialEq)]
+pub struct PlanMetrics {
+    pub shape: ClimateShape,
+    pub rivers: RiverLake,
 }
 /// T134 / 10.1: метрики границ на отдельной сетке с шагом ≤32 блока.
 /// Суша = C≥порога без рек/озёр. Скачок влажности и ветер считаются на парах
@@ -579,6 +590,7 @@ impl HeightStats {
             relief_median: None,
             flat_windows: 0,
             boundary: BoundaryMetrics::empty(size, step as f64, 250.0),
+            plan: None,
         }
     }
     pub fn collect(
@@ -613,8 +625,13 @@ impl HeightStats {
                 opts.boundary_step,
                 base.mode.l_blocks(),
             ),
+            plan: None,
         };
         let land_threshold = generator.params().climate.ocean_c_threshold;
+        // 10.1: «климат влияет на форму» и «Реки и озёра» считаются на тех же
+        // точках, что гипсометрия, без второго `world_sample` на точку.
+        let plan_dev = base.version.is_water_relief_dev();
+        let mut plan = PlanAccumulator::new();
         for j in 0..opts.size {
             for i in 0..opts.size {
                 let x = base.center_x + (i as f64 - opts.size as f64 * 0.5) * step;
@@ -654,6 +671,15 @@ impl HeightStats {
                     }
                 }
                 let h = world.hydrology;
+                if plan_dev {
+                    // Морфозона — та же, что задаёт форму рельефа (T122): не
+                    // метка биома, у которой у рек служебный класс (Д-066).
+                    let dominant = generator
+                        .morpho_weights(x, z)
+                        .map(|w| w.dominant())
+                        .unwrap_or(usize::MAX);
+                    plan.add(c_land, v.e, river, h.water > 0.5, dominant);
+                }
                 out.water_samples += usize::from(h.water > 0.5);
                 out.swamp_samples += usize::from(h.swamp > 0.5);
                 out.dry_samples += usize::from(h.dry_basin > 0.5);
@@ -854,6 +880,12 @@ impl HeightStats {
             out.boundary.count_jump_causes(&bclass, &bland, &bfeature);
             out.boundary.count_field_jumps(&bfield, &bland);
         }
+        // 10.1: у v0 нет ни морфозон, ни сети — строка остаётся `null`.
+        if plan_dev {
+            let area_l2 = opts.span_l * opts.span_l;
+            let (shape, rivers) = plan.finish(area_l2);
+            out.plan = Some(PlanMetrics { shape, rivers });
+        }
         Ok(out)
     }
     fn pct(&self, count: usize, total: usize) -> f64 {
@@ -1002,6 +1034,10 @@ impl HeightStats {
         if self.land == 0 || self.relief_windows == 0 {
             out.push_str("WARNING: нет суши/полных сухопутных окон; проценты и медиана не являются оценкой рельефа.\n");
         }
+        if let Some(plan) = &self.plan {
+            out.push('\n');
+            out.push_str(&plan_metrics::text(&plan.shape, &plan.rivers, None));
+        }
         out.push_str("T115–T116/T141: сеть/низкие озёра подключены к C/E/W и биомам (R1), собственный PV доступен через --pv. Высокие озёра и вода выше моря — T143/T145. Проценты воды здесь не заменяют проверку реальной высоты.\n");
         out
     }
@@ -1013,7 +1049,7 @@ impl HeightStats {
             .collect::<Vec<_>>()
             .join(", ");
         format!(
-            "{{\n  \"seed\": {}, \"mode\": {}, \"version\": {}, \"path\": {},\n  \"height_source\": {}, \"height_data_hash\": \"{:016x}\", \"synthetic\": {}, \"pv_field\": {},\n  \"approximation\": {},\n  \"span_l\": {}, \"size\": {}, \"samples\": {}, \"land_samples\": {},\n  \"flooded_land_pct\": {}, \"hyps_pct\": {:?}, \"erosion_pct\": {:?},\n  \"valley_pct\": {}, \"set\": {}, \"params_hash\": \"{:016x}\", \"patches\": {}, \"relief_step\": {}, \"relief_windows\": {}, \"relief_median\": {}, \"flat_windows_pct\": {},\n  \"river_samples\": {}, \"river_water_pct\": {}, \"gallery_samples\": {}, \"gallery_pct\": {},\n  \"boundary\": {{\"size\": {}, \"step\": {}, \"span_l\": {}, \"land\": {}, \"humidity_jump_pct\": {}, \"humidity_jump_pair_pct\": {}, \"humidity_jump_pairs\": {}, \"humidity_pairs\": {}, \"climate_land\": {}, \"climate_humidity_jump_pct\": {}, \"climate_humidity_pair_pct\": {}, \"climate_humidity_jump_pairs\": {}, \"climate_humidity_pairs\": {}, \"humidity_jump_cause_pairs\": {{{}}}, \"field_humidity_jump_pct\": {}, \"field_humidity_jump_pairs\": {}, \"wind_max_deg\": {}, \"wind_pairs\": {}, \"straight_pct\": {}, \"straight_edges\": {}, \"boundary_edges\": {}, \"straight_model\": \"grid-edge-chord-512-deviation-16\", \"thin_pct\": {}, \"min_strip_blocks\": {}, \"acceptance_volume\": {}}}\n}}\n",
+            "{{\n  \"seed\": {}, \"mode\": {}, \"version\": {}, \"path\": {},\n  \"height_source\": {}, \"height_data_hash\": \"{:016x}\", \"synthetic\": {}, \"pv_field\": {},\n  \"approximation\": {},\n  \"span_l\": {}, \"size\": {}, \"samples\": {}, \"land_samples\": {},\n  \"flooded_land_pct\": {}, \"hyps_pct\": {:?}, \"erosion_pct\": {:?},\n  \"valley_pct\": {}, \"set\": {}, \"params_hash\": \"{:016x}\", \"patches\": {}, \"relief_step\": {}, \"relief_windows\": {}, \"relief_median\": {}, \"flat_windows_pct\": {},\n  \"river_samples\": {}, \"river_water_pct\": {}, \"gallery_samples\": {}, \"gallery_pct\": {},\n  \"boundary\": {{\"size\": {}, \"step\": {}, \"span_l\": {}, \"land\": {}, \"humidity_jump_pct\": {}, \"humidity_jump_pair_pct\": {}, \"humidity_jump_pairs\": {}, \"humidity_pairs\": {}, \"climate_land\": {}, \"climate_humidity_jump_pct\": {}, \"climate_humidity_pair_pct\": {}, \"climate_humidity_jump_pairs\": {}, \"climate_humidity_pairs\": {}, \"humidity_jump_cause_pairs\": {{{}}}, \"field_humidity_jump_pct\": {}, \"field_humidity_jump_pairs\": {}, \"wind_max_deg\": {}, \"wind_pairs\": {}, \"straight_pct\": {}, \"straight_edges\": {}, \"boundary_edges\": {}, \"straight_model\": \"grid-edge-chord-512-deviation-16\", \"thin_pct\": {}, \"min_strip_blocks\": {}, \"acceptance_volume\": {}}},\n  \"plan\": {}\n}}\n",
             self.seed,
             crate::json::quote(self.mode.as_str()),
             crate::json::quote(base.version.as_str()),
@@ -1075,6 +1111,57 @@ impl HeightStats {
                 .min_strip_blocks
                 .map_or("null".to_string(), |v| v.to_string()),
             self.boundary.acceptance_volume(),
+            self.plan_json(),
+        )
+    }
+
+    /// 10.1: «климат влияет на форму» и «Реки и озёра» отдельным ключом.
+    /// `null`, если версия не `v1-dev`: у v0 этих сущностей нет.
+    pub fn plan_json(&self) -> String {
+        let Some(plan) = &self.plan else {
+            return "null".to_string();
+        };
+        let shape = &plan.shape;
+        let zones = shape
+            .zones
+            .iter()
+            .map(|z| {
+                format!(
+                    "{{\"name\": {}, \"land\": {}, \"erosion_pct\": {:?}, \"lake_pct\": {:.4}, \"river_pct\": {:.4}, \"distinct_bands\": {}, \"max_gap_pp\": {:.3}}}",
+                    crate::json::quote(z.name),
+                    z.land,
+                    z.erosion_pct,
+                    z.lake_pct,
+                    z.river_pct,
+                    z.distinct_bands,
+                    z.max_gap_pp
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
+        let notes = shape
+            .notes
+            .iter()
+            .map(|n| crate::json::quote(n))
+            .collect::<Vec<_>>()
+            .join(", ");
+        format!(
+            "{{\"climate_shape\": {{\"land\": {}, \"erosion_pct\": {:?}, \"lake_pct\": {:.4}, \"river_pct\": {:.4}, \"zones\": [{}], \"pass\": {}, \"notes\": [{}]}}, \"rivers_lakes\": {{\"land\": {}, \"lake_land\": {}, \"river_land\": {}, \"dry_land\": {}, \"lake_pct\": {:.4}, \"river_pct\": {:.4}, \"lakes_per_100_l2\": {:.4}, \"area_l2\": {:.3}}}}}",
+            shape.land,
+            shape.erosion_pct,
+            shape.lake_pct,
+            shape.river_pct,
+            zones,
+            shape.pass.map_or("null".to_string(), |p| p.to_string()),
+            notes,
+            plan.rivers.land,
+            plan.rivers.lake_land,
+            plan.rivers.river_land,
+            plan.rivers.dry_land,
+            plan.rivers.lake_pct(),
+            plan.rivers.river_pct(),
+            plan.rivers.lakes_per_100_l2(),
+            plan.rivers.area_l2
         )
     }
 }

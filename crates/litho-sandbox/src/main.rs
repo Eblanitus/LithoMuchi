@@ -5,6 +5,7 @@ mod height;
 mod height_stats;
 mod json;
 mod palette;
+mod plan_metrics;
 mod png;
 mod render;
 mod tune;
@@ -821,6 +822,63 @@ fn cmd_drainage(args: &[String]) -> Result<(), String> {
             plain_sinuosity[mid]
         }
     };
+    // 10.1: строки «Реки и озёра», которые считаются по сети, а не по сетке.
+    let river_report = plan_metrics::report_from_net(&net);
+    let plan_rows = {
+        let ends = river_report.ends_with_water + river_report.ends_unresolved;
+        let rows = [
+            (
+                "где кончается река",
+                format!(
+                    "{} из {} устьев с водой",
+                    river_report.ends_with_water, ends
+                ),
+                ends > 0 && river_report.ends_unresolved == 0,
+            ),
+            (
+                "извилистость равнин",
+                format!(
+                    "{:.3}",
+                    river_report.plain_sinuosity_median.unwrap_or(f64::NAN)
+                ),
+                river_report
+                    .plain_sinuosity_median
+                    .is_some_and(|v| (1.2..=2.0).contains(&v)),
+            ),
+            (
+                "ширина устья/истока",
+                format!(
+                    "вдвое шире у {}/{}, длиннее 5 L",
+                    river_report.wider_mouth, river_report.long_reaches
+                ),
+                river_report.long_reaches > 0
+                    && river_report.wider_mouth == river_report.long_reaches,
+            ),
+            (
+                "длинные реки, L",
+                format!("{:.2}", river_report.max_reach_l),
+                river_report.max_reach_l > 15.0,
+            ),
+            (
+                "озёра выше моря",
+                format!("{}", river_report.high_lakes),
+                river_report.high_lakes > 0,
+            ),
+        ];
+        rows.iter()
+            .map(|(name, value, ok)| {
+                format!(
+                    "10.1 {name}: {value} — {}",
+                    if *ok {
+                        "в цели"
+                    } else {
+                        "НЕ в цели"
+                    }
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n             ")
+    };
     let query_start = Instant::now();
     let (channel_query, lake_query) = generator
         .drainage_surface_query(x, z)
@@ -882,6 +940,7 @@ fn cmd_drainage(args: &[String]) -> Result<(), String> {
              дельты T114: вееров {delta_count}, рукавов {delta_arms}; озёра/котловины: поверхностей {lake_count} (озеро {lake_water}, внутр. море {lake_inland_sea}, болото {lake_swamp}, сухая {lake_dry}, замкнутый избыток {lake_closed}, морская связь {lake_sea_connected}), замёрзших {lake_frozen}, рифтовых {lake_rift}, высоких R2 {lake_high}, площадь воды {lake_water_area:.3} L², без уровня {lake_unresolved}\n\
              общий запрос T113/T114: сетей {query_networks}, радиус {query_radius:.3} L, ядро {query_core:.3}, долина {query_valley:.3}, дельта {query_delta:.3}; ближайшее русло плиты {query_plate}, расстояние {query_distance} L; озеро вода {lake_query_water:.3}, берег {lake_query_shore:.3}, котловина {lake_query_basin:.3}, тип {lake_query_kind}, уровень {lake_query_level} км; запрос {query_ms:.3} мс\n\
              T115 эффективно: тип {effective_kind}, река {effective_river:.3}, вода R1 {effective_water:.3}, отложено R2 {effective_deferred:.3}, галерейный лес {effective_gallery:.3}\n\
+             {plan_rows}\n\
              время: cold {cold_ms:.3} мс, warm {warm_ms:.3} мс (один раннер, не приёмка T160)",
             seed = opts.seed,
             mode = opts.mode.as_str(),
@@ -889,6 +948,7 @@ fn cmd_drainage(args: &[String]) -> Result<(), String> {
             plate = plate.id,
             total = nodes.len(),
             ring = nodes.len() - plate_nodes,
+            plan_rows = plan_rows,
         );
     }
     Ok(())
