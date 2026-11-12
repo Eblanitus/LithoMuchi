@@ -181,10 +181,10 @@ impl PlanAccumulator {
 
         let mut all_ok = true;
         let mut any_zone_verdict = false;
-        for zone in 0..MORPHO_ZONES {
+        for (zone, name) in ZONE_NAMES.iter().enumerate() {
             let total = self.zone_land[zone] + self.zone_lake[zone] + self.zone_river[zone];
             let mut z = ZoneShape {
-                name: ZONE_NAMES[zone],
+                name,
                 land: total,
                 ..ZoneShape::default()
             };
@@ -192,14 +192,13 @@ impl PlanAccumulator {
                 shape.zones.push(z);
                 continue;
             }
-            for band in 0..7 {
-                z.erosion_pct[band] =
-                    pct(self.zone_erosion[zone][band], self.zone_land[zone].max(1));
+            for (band, value) in z.erosion_pct.iter_mut().enumerate() {
+                *value = pct(self.zone_erosion[zone][band], self.zone_land[zone].max(1));
             }
             z.lake_pct = pct(self.zone_lake[zone], total);
             z.river_pct = pct(self.zone_river[zone], total);
-            for band in 0..7 {
-                let gap = (z.erosion_pct[band] - shape.erosion_pct[band]).abs();
+            for (here, all) in z.erosion_pct.iter().zip(shape.erosion_pct.iter()) {
+                let gap = (here - all).abs();
                 z.max_gap_pp = z.max_gap_pp.max(gap);
                 if gap >= CLIMATE_SHAPE_MIN_GAP_PP {
                     z.distinct_bands += 1;
