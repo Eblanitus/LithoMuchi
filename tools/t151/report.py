@@ -33,12 +33,22 @@ TARGETS = {
     "плоские окна, %": ((None, 15), (None, 25)),
     "вода в русле, %": ((95, None), (95, None)),
     "скачок влажности, климатическая суша, %": ((None, 2), (None, 2)),
-    "скачок влажности, вся суша, %": ((None, 2), (None, 2)),
+    "скачок влажности, поле H, вся суша, %": ((None, 2), (None, 2)),
+    "скачок влажности, метки биомов, вся суша, %": ((None, 2), (None, 2)),
     "ветер, градусы": ((None, 5), (None, 5)),
     "прямые границы, %": ((None, 1), (None, 1)),
     "тонкие полоски, %": ((None, 0.05), (None, 0.05)),
 }
 MODES = ("gameplay", "scientific")
+CAUSE_NAMES = {
+    "climate": "климатическая суша",
+    "river": "русло и его кромка",
+    "gallery": "галерейный лес",
+    "swamp": "болото",
+    "dry_basin": "сухая котловина",
+    "estuary": "эстуарий",
+    "other": "прочее",
+}
 
 
 def metrics(j):
@@ -58,7 +68,10 @@ def metrics(j):
         "плоские окна, %": j["flat_windows_pct"],
         "вода в русле, %": j["river_water_pct"],
         "скачок влажности, климатическая суша, %": b["climate_humidity_jump_pct"],
-        "скачок влажности, вся суша, %": b["humidity_jump_pct"],
+        # Поле H — число, которое уходит в игру. Метка биома у русла, болота
+        # и котловины несёт служебный класс влажности, а не климатический.
+        "скачок влажности, поле H, вся суша, %": b.get("field_humidity_jump_pct"),
+        "скачок влажности, метки биомов, вся суша, %": b["humidity_jump_pct"],
         "ветер, градусы": b["wind_max_deg"],
         "прямые границы, %": b["straight_pct"],
         "тонкие полоски, %": b["thin_pct"],
@@ -122,6 +135,8 @@ def mode_table(rows, mi, keys):
         lo, hi = TARGETS[key][mi]
         values = [(seed, m[key]) for seed, m, _ in rows]
         known = [v for _, v in values if v is not None]
+        if not known:
+            continue  # метрики нет в этих прогонах (старый формат)
         bad = [(s, v) for s, v in values if not in_goal(v, lo, hi)]
         bad_text = ", ".join(
             f"{s} ({'нет' if v is None else format(v, '.2f')})" for s, v in bad
@@ -147,6 +162,8 @@ def compare_table(runs, variants, mi, mode, keys):
     out.append("|---|---|" + "---|" * len(names))
     for key in keys:
         lo, hi = TARGETS[key][mi]
+        if all(metrics(r)[key] is None for r in runs if r["mode"] == mode):
+            continue
         cells = []
         for name in names:
             values = [metrics(r)[key] for r in runs if r["_variant"] == name and r["mode"] == mode]
@@ -221,6 +238,19 @@ def summary(runs, failures, request, sha):
             land = [r["boundary"]["land"] for _, _, r in rows]
             samples = [r["land_samples"] for _, _, r in rows]
             times = [r["_seconds"] for _, _, r in rows if r.get("_seconds") is not None]
+            causes = {}
+            for _, _, r in rows:
+                for cause, count in r["boundary"].get("humidity_jump_cause_pairs", {}).items():
+                    causes[cause] = causes.get(cause, 0) + count
+            total = sum(causes.values())
+            if total:
+                parts = ", ".join(
+                    f"{CAUSE_NAMES.get(c, c)} {100 * n / total:.1f} %"
+                    for c, n in sorted(causes.items(), key=lambda kv: -kv[1])
+                    if n
+                )
+                out.append(f"Скачки по меткам биомов, {total} пар по всем сидам: {parts}.")
+                out.append("")
             out.append(
                 f"Объём: точек суши в основной сетке {min(samples)}…{max(samples)}, "
                 f"окон рельефа на сид {min(windows)}…{max(windows)}, "

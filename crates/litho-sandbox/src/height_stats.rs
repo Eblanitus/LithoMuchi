@@ -134,6 +134,12 @@ pub struct BoundaryMetrics {
     pub climate_humidity_pairs: usize,
     pub climate_humidity_jump_pairs: usize,
     pub climate_humidity_jump_land: usize,
+    /// T151: пары со скачком влажности по причине (см. [`JUMP_CAUSES`]).
+    pub jump_cause_pairs: [usize; JUMP_CAUSES.len()],
+    /// T151: скачок по полю H, которое уходит в игру (вся суша): класс —
+    /// ванильная полоса влажности числа `vanilla.h`, а не метка биома.
+    pub field_humidity_jump_land: usize,
+    pub field_humidity_jump_pairs: usize,
     pub wind_max_deg: f64,
     pub wind_pairs: usize,
     pub boundary_edges: usize,
@@ -141,7 +147,81 @@ pub struct BoundaryMetrics {
     pub thin_land: usize,
     pub min_strip_blocks: Option<f64>,
 }
+/// T151: чем гидрология переопределила биом в узле. Порядок — приоритет при
+/// наложении; `climate` — обычная климатическая суша T137.
+pub const JUMP_CAUSES: [&str; 7] = [
+    "climate",
+    "river",
+    "gallery",
+    "swamp",
+    "dry_basin",
+    "estuary",
+    "other",
+];
+
+/// Границы ванильных полос влажности 26.3 (`OverworldBiomeBuilder`).
+const VANILLA_H_EDGES: [f64; 4] = [-0.35, -0.1, 0.1, 0.3];
+
+/// Номер ванильной полосы влажности 0…4 для числа H, уходящего в игру.
+pub fn vanilla_humidity_band(h: f64) -> u8 {
+    VANILLA_H_EDGES.partition_point(|edge| h >= *edge) as u8
+}
+
 impl BoundaryMetrics {
+    pub fn field_humidity_jump_pct(&self) -> f64 {
+        pct(self.field_humidity_jump_land, self.land)
+    }
+    /// Скачок ≥2 полос между узлами в 32 блоках по полю H на всей суше.
+    /// Вызывается после `analyze_grid` (знаменатель — её `land`).
+    fn count_field_jumps(&mut self, band: &[u8], land: &[bool]) {
+        let n = self.size;
+        let offset = (32.0 / self.step).round() as usize;
+        let mut jump = vec![false; n * n];
+        for j in 0..n {
+            for i in 0..n {
+                let k = j * n + i;
+                if !land[k] {
+                    continue;
+                }
+                for (di, dj) in [(offset, 0_usize), (0, offset)] {
+                    if i + di >= n || j + dj >= n {
+                        continue;
+                    }
+                    let q = (j + dj) * n + i + di;
+                    if land[q] && band[k].abs_diff(band[q]) >= 2 {
+                        self.field_humidity_jump_pairs += 1;
+                        jump[k] = true;
+                        jump[q] = true;
+                    }
+                }
+            }
+        }
+        self.field_humidity_jump_land += jump.iter().filter(|&&v| v).count();
+    }
+    /// Раскладывает пары со скачком влажности (те же, что в `analyze_grid`)
+    /// по причине: старшая из двух гидрологических меток пары.
+    fn count_jump_causes(&mut self, class: &[u8], land: &[bool], feature: &[u8]) {
+        let n = self.size;
+        let offset = (32.0 / self.step).round() as usize;
+        for j in 0..n {
+            for i in 0..n {
+                let k = j * n + i;
+                if !land[k] {
+                    continue;
+                }
+                for (di, dj) in [(offset, 0_usize), (0, offset)] {
+                    if i + di >= n || j + dj >= n {
+                        continue;
+                    }
+                    let q = (j + dj) * n + i + di;
+                    if land[q] && (class[k] % 5).abs_diff(class[q] % 5) >= 2 {
+                        self.jump_cause_pairs[feature[k].max(feature[q]) as usize] += 1;
+                    }
+                }
+            }
+        }
+    }
+
     pub(crate) fn empty(size: usize, step: f64, l_blocks: f64) -> Self {
         Self {
             size,
@@ -156,6 +236,9 @@ impl BoundaryMetrics {
             climate_humidity_pairs: 0,
             climate_humidity_jump_pairs: 0,
             climate_humidity_jump_land: 0,
+            jump_cause_pairs: [0; JUMP_CAUSES.len()],
+            field_humidity_jump_land: 0,
+            field_humidity_jump_pairs: 0,
             wind_max_deg: 0.0,
             wind_pairs: 0,
             boundary_edges: 0,
@@ -690,6 +773,8 @@ impl HeightStats {
             let mut bclass = vec![u8::MAX; bn * bn];
             let mut bland = vec![false; bn * bn];
             let mut bclimate = vec![false; bn * bn];
+            let mut bfeature = vec![0_u8; bn * bn];
+            let mut bfield = vec![0_u8; bn * bn];
             let mut bjump = vec![false; bn * bn];
             let mut wind_rows: Vec<Vec<(f64, f64)>> = vec![vec![(0.0, 0.0); bn]; boff + 1];
             for j in 0..bn {
@@ -719,6 +804,22 @@ impl HeightStats {
                         && h.swamp == 0.0
                         && h.dry_basin == 0.0
                         && h.estuary == 0.0;
+                    bfield[k] = vanilla_humidity_band(v.h);
+                    bfeature[k] = if !is_land || bclimate[k] {
+                        0
+                    } else if h.estuary != 0.0 {
+                        5
+                    } else if h.dry_basin != 0.0 {
+                        4
+                    } else if h.swamp != 0.0 {
+                        3
+                    } else if h.gallery != 0.0 {
+                        2
+                    } else if h.kind == SurfaceKind::River {
+                        1
+                    } else {
+                        6
+                    };
                     bclass[k] = world.class.cell.t * 5 + world.class.cell.h;
                     let w = world.climate.wind;
                     let wl = w.len();
@@ -750,6 +851,8 @@ impl HeightStats {
             }
             out.boundary
                 .analyze_grid(&bclass, &bland, &bclimate, &mut bjump);
+            out.boundary.count_jump_causes(&bclass, &bland, &bfeature);
+            out.boundary.count_field_jumps(&bfield, &bland);
         }
         Ok(out)
     }
@@ -904,7 +1007,7 @@ impl HeightStats {
     }
     pub fn json(&self, base: &RenderOptions, opts: &StatsOptions, model: &HeightModel) -> String {
         format!(
-            "{{\n  \"seed\": {}, \"mode\": {}, \"version\": {}, \"path\": {},\n  \"height_source\": {}, \"height_data_hash\": \"{:016x}\", \"synthetic\": {}, \"pv_field\": {},\n  \"approximation\": {},\n  \"span_l\": {}, \"size\": {}, \"samples\": {}, \"land_samples\": {},\n  \"flooded_land_pct\": {}, \"hyps_pct\": {:?}, \"erosion_pct\": {:?},\n  \"valley_pct\": {}, \"set\": {}, \"params_hash\": \"{:016x}\", \"patches\": {}, \"relief_step\": {}, \"relief_windows\": {}, \"relief_median\": {}, \"flat_windows_pct\": {},\n  \"river_samples\": {}, \"river_water_pct\": {}, \"gallery_samples\": {}, \"gallery_pct\": {},\n  \"boundary\": {{\"size\": {}, \"step\": {}, \"span_l\": {}, \"land\": {}, \"humidity_jump_pct\": {}, \"humidity_jump_pair_pct\": {}, \"humidity_jump_pairs\": {}, \"humidity_pairs\": {}, \"climate_land\": {}, \"climate_humidity_jump_pct\": {}, \"climate_humidity_pair_pct\": {}, \"climate_humidity_jump_pairs\": {}, \"climate_humidity_pairs\": {}, \"wind_max_deg\": {}, \"wind_pairs\": {}, \"straight_pct\": {}, \"straight_edges\": {}, \"boundary_edges\": {}, \"straight_model\": \"grid-edge-chord-512-deviation-16\", \"thin_pct\": {}, \"min_strip_blocks\": {}, \"acceptance_volume\": {}}}\n}}\n",
+            "{{\n  \"seed\": {}, \"mode\": {}, \"version\": {}, \"path\": {},\n  \"height_source\": {}, \"height_data_hash\": \"{:016x}\", \"synthetic\": {}, \"pv_field\": {},\n  \"approximation\": {},\n  \"span_l\": {}, \"size\": {}, \"samples\": {}, \"land_samples\": {},\n  \"flooded_land_pct\": {}, \"hyps_pct\": {:?}, \"erosion_pct\": {:?},\n  \"valley_pct\": {}, \"set\": {}, \"params_hash\": \"{:016x}\", \"patches\": {}, \"relief_step\": {}, \"relief_windows\": {}, \"relief_median\": {}, \"flat_windows_pct\": {},\n  \"river_samples\": {}, \"river_water_pct\": {}, \"gallery_samples\": {}, \"gallery_pct\": {},\n  \"boundary\": {{\"size\": {}, \"step\": {}, \"span_l\": {}, \"land\": {}, \"humidity_jump_pct\": {}, \"humidity_jump_pair_pct\": {}, \"humidity_jump_pairs\": {}, \"humidity_pairs\": {}, \"climate_land\": {}, \"climate_humidity_jump_pct\": {}, \"climate_humidity_pair_pct\": {}, \"climate_humidity_jump_pairs\": {}, \"climate_humidity_pairs\": {}, \"humidity_jump_cause_pairs\": {}, \"field_humidity_jump_pct\": {}, \"field_humidity_jump_pairs\": {}, \"wind_max_deg\": {}, \"wind_pairs\": {}, \"straight_pct\": {}, \"straight_edges\": {}, \"boundary_edges\": {}, \"straight_model\": \"grid-edge-chord-512-deviation-16\", \"thin_pct\": {}, \"min_strip_blocks\": {}, \"acceptance_volume\": {}}}\n}}\n",
             self.seed,
             crate::json::quote(self.mode.as_str()),
             crate::json::quote(base.version.as_str()),
@@ -953,6 +1056,17 @@ impl HeightStats {
             self.boundary.climate_humidity_pair_pct(),
             self.boundary.climate_humidity_jump_pairs,
             self.boundary.climate_humidity_pairs,
+            format!(
+                "{{{}}}",
+                JUMP_CAUSES
+                    .iter()
+                    .zip(self.boundary.jump_cause_pairs)
+                    .map(|(name, count)| format!("\"{name}\": {count}"))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
+            self.boundary.field_humidity_jump_pct(),
+            self.boundary.field_humidity_jump_pairs,
             self.boundary.wind_max_deg,
             self.boundary.wind_pairs,
             self.boundary.straight_pct(),
@@ -1087,6 +1201,32 @@ mod boundary_tests {
         assert!(m.thin_pct() > 0.0);
         assert_eq!(m.min_strip_blocks, Some(16.0));
         assert!(!m.acceptance_volume());
+    }
+
+    #[test]
+    fn vanilla_humidity_bands_match_26_3_edges_and_core_centers() {
+        let p = litho_core::Params::defaults(litho_core::GenVersion::V1Dev, Mode::Gameplay);
+        for (band, center) in p.climate.h_centers.iter().enumerate() {
+            assert_eq!(vanilla_humidity_band(*center) as usize, band);
+        }
+        assert_eq!(vanilla_humidity_band(-0.35), 1);
+        assert_eq!(vanilla_humidity_band(0.2999), 3);
+        assert_eq!(vanilla_humidity_band(1.0), 4);
+    }
+
+    #[test]
+    fn field_jump_ignores_biome_labels_and_counts_real_h_steps() {
+        let mut m = BoundaryMetrics::empty(3, 32.0, 250.0);
+        let land = vec![true; 9];
+        m.land = 9;
+        // Средний столбец: поле H на две полосы суше соседей.
+        let band = [3, 1, 3, 3, 1, 3, 3, 1, 3];
+        m.count_field_jumps(&band, &land);
+        assert_eq!(m.field_humidity_jump_pairs, 6);
+        assert_eq!(m.field_humidity_jump_land, 9);
+        let mut flat = BoundaryMetrics::empty(3, 32.0, 250.0);
+        flat.count_field_jumps(&[2; 9], &land);
+        assert_eq!(flat.field_humidity_jump_pairs, 0);
     }
 
     #[test]
