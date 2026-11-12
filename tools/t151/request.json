@@ -1,6 +1,6 @@
 {
-  "name": "tune1",
-  "note": "Подбор, круг 1: полосы эрозии и высот. Основная сетка 160×160 на 200 L; окна рельефа и границы на этом объёме не считаются.",
+  "name": "tune2",
+  "note": "Подбор, круг 2: запас по полосам эрозии и высот. Основная сетка 160×160 на 200 L; окна рельефа и границы на этом объёме не считаются.",
   "version": "v1-dev",
   "modes": [
     "gameplay",
@@ -40,67 +40,60 @@
   ],
   "variants": [
     {
-      "name": "g0",
+      "name": "g4",
       "modes": [
         "gameplay"
       ],
-      "set": ""
+      "set": "relief.a_lo=0.06,relief.a_hi=0.54,height.land_y[3][3]=90"
     },
     {
-      "name": "g1",
+      "name": "g5",
       "modes": [
         "gameplay"
       ],
-      "set": "relief.a_lo=0.05,relief.a_hi=0.53"
+      "set": "relief.a_lo=0.05,relief.a_hi=0.53,height.land_y[3][3]=89,height.land_y[3][4]=104"
     },
     {
-      "name": "g2",
+      "name": "g6",
       "modes": [
         "gameplay"
       ],
-      "set": "relief.a_lo=0.03,relief.a_hi=0.51"
+      "set": "height.land_y[3][3]=90"
     },
     {
-      "name": "g3",
+      "name": "g7",
       "modes": [
         "gameplay"
       ],
-      "set": "climate.m_e_hi=0.9"
+      "set": "relief.a_lo=0.05,relief.a_hi=0.53,height.land_y[2][2]=92,height.land_y[3][3]=90"
     },
     {
-      "name": "s0",
+      "name": "s5",
       "modes": [
         "scientific"
       ],
-      "set": ""
+      "set": "climate.m_e_hi=0.7,morpho.e_hill[3]=-0.44,morpho.e_hill[4]=-0.46"
     },
     {
-      "name": "s1",
+      "name": "s6",
       "modes": [
         "scientific"
       ],
-      "set": "climate.m_e_hi=0.8"
+      "set": "climate.m_e_hi=0.7,morpho.e_hill[3]=-0.44,morpho.e_hill[4]=-0.46,height.land_y[3][2]=86"
     },
     {
-      "name": "s2",
+      "name": "s7",
       "modes": [
         "scientific"
       ],
-      "set": "climate.m_e_hi=0.7"
+      "set": "climate.m_e_hi=0.8,morpho.e_hill[3]=-0.44,morpho.e_hill[4]=-0.46,height.land_y[3][2]=86"
     },
     {
-      "name": "s3",
+      "name": "s8",
       "modes": [
         "scientific"
       ],
-      "set": "climate.m_e_hi=0.8,relief.a_lo=0.13,relief.a_hi=0.70"
-    },
-    {
-      "name": "s4",
-      "modes": [
-        "scientific"
-      ],
-      "set": "climate.m_e_hi=0.8,morpho.e_hill[3]=-0.44,morpho.e_hill[4]=-0.46"
+      "set": "climate.m_e_hi=0.7,height.land_y[3][2]=86"
     }
   ]
 }
