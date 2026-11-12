@@ -120,6 +120,8 @@ fn log_field_error_with(counter: &AtomicU64, message: impl FnOnce() -> String) {
 
 type CoarseTiles = ShardedCache<(i64, i64), Arc<Nodes<COARSE_N>>>;
 type LastCoarse = Option<(u64, u64, i64, i64, Arc<Nodes<COARSE_N>>)>;
+/// Д-061: тайл → плиты, чьи сети рек могут иметь узел рядом с запросом.
+type NetOwners = ShardedCache<(i64, i64), Arc<Vec<u64>>>;
 
 thread_local! {
     /// «Последний тайл» на поток: соседние запросы не трогают замки (6.6).
@@ -184,7 +186,7 @@ pub struct Generator {
     morpho: Arc<crate::cache::ShardedCache<(i64, i64), MorphoWeights>>,
     drainage: Arc<RiverNetCache>,
     /// Д-061: по тайлу — плиты, чьи сети могут иметь узел в радиусе запроса.
-    net_owners: Arc<crate::cache::ShardedCache<(i64, i64), Arc<Vec<u64>>>>,
+    net_owners: Arc<NetOwners>,
     coarse: Arc<CoarseTiles>,
     /// T160: точная колонка `(x,z)` для повторных запросов полей.
     column: Arc<crate::cache::ShardedCache<(i64, i64), Arc<FullSample>>>,
