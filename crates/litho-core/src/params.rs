@@ -935,6 +935,9 @@ pub struct BoundaryParams {
     /// интерполяция, последний шаг луча колонка делает сама по своей высоте.
     /// 0 — луч из каждой колонки, как в эталоне.
     pub ray_lattice_l: f64,
+    /// T79 / Д-017: шаг решётки высоты и ветра, с которой читает луч влаги
+    /// быстрого пути, L. 0 — точная кора и точный ветер в каждой точке луча.
+    pub ray_field_l: f64,
     /// T131: шаг центральных разностей скалярной φ, L (план Б3: 0.25–0.5).
     pub wind_fd_step_l: f64,
     /// T131: плавный уход к запасному направлению при малом |∇φ| и у полюса.
@@ -997,6 +1000,9 @@ impl BoundaryParams {
         }
         if !self.ray_lattice_l.is_finite() || !(0.0..=1.0).contains(&self.ray_lattice_l) {
             return Err("шаг решётки луча влаги должен лежать в 0…1 L");
+        }
+        if !self.ray_field_l.is_finite() || !(0.0..=1.0).contains(&self.ray_field_l) {
+            return Err("шаг решётки высот луча влаги должен лежать в 0…1 L");
         }
 
         if !self.wind_fd_step_l.is_finite() || !(0.25..=0.5).contains(&self.wind_fd_step_l) {
@@ -1513,6 +1519,7 @@ impl Params {
                 ray_fan_half_angle_deg: 20.0,
                 ray_fan_sigma_deg: 20.0,
                 ray_lattice_l: 0.0,
+                ray_field_l: 0.0,
                 wind_fd_step_l: 0.5,
                 wind_grad_floor_deg_per_l: 20.0,
                 wind_pole_fade_l: 16.0,
@@ -1687,6 +1694,10 @@ impl Params {
             // наветренную часть в узлах решётки 0.128 L (32 блока gameplay,
             // 128 scientific) — вдвое мельче шага самого луча (0.25 L).
             p.boundaries.ray_lattice_l = 0.128;
+            // T79 / Д-064: высоту и ветер луч читает с решётки 0.125 L — вдвое
+            // мельче шага луча. Шаг 0.25 L роняет совпадение зон с эталоном
+            // ниже 0.97 (0.965 / 0.967), 0.125 L держит 0.974 / 0.973.
+            p.boundaries.ray_field_l = 0.125;
             p.relief.basin_strength = 0.08;
             // T113/T110: равнинные русла были почти прямыми (1,01–1,02).
             // Тесты T113/T115 ищут отрезки и дельты по сети, а не по точкам.
@@ -1703,11 +1714,19 @@ impl Params {
             // Холмы начинаются при меньшем A, шум E в полтора раза шире,
             // поймы и котловины уходят в E5, а не остаются в E4.
             let gameplay = mode == Mode::Gameplay;
-            p.relief.a_lo = if gameplay { 0.07 } else { 0.15 };
-            p.relief.a_hi = if gameplay { 0.55 } else { 0.72 };
-            p.morpho.e_hill = [0.04, -0.11, -0.21, -0.36, -0.38, -0.18, -0.75, -0.70];
+            // T151 (шаг 7): подбор по 16 сидам, `docs/t151/tune1`, `tune2`.
+            // Gameplay (вариант g4): наименьший запас до края цели вырос с
+            // 0.45 до 0.72 п.п. Scientific (s5): E3+E2 было выше цели на
+            // трёх сидах из 16, стало в цели на всех.
+            p.relief.a_lo = if gameplay { 0.06 } else { 0.15 };
+            p.relief.a_hi = if gameplay { 0.54 } else { 0.72 };
+            p.morpho.e_hill = if gameplay {
+                [0.04, -0.11, -0.21, -0.36, -0.38, -0.18, -0.75, -0.70]
+            } else {
+                [0.04, -0.11, -0.21, -0.44, -0.46, -0.18, -0.75, -0.70]
+            };
             p.morpho.sigma_e = [0.12, 0.15, 0.18, 0.15, 0.12, 0.18, 0.15, 0.15];
-            p.climate.m_e_hi = if gameplay { 1.0 } else { 0.9 };
+            p.climate.m_e_hi = if gameplay { 1.0 } else { 0.7 };
             p.hydrology.floodplain_e = if gameplay { 0.44 } else { 0.50 };
             p.hydrology.dry_basin_e = 0.5;
             // Дно долины (PV=−1) у E2…E5 на 63.5: русло режется ниже моря и
@@ -1722,7 +1741,7 @@ impl Params {
                     [63.5, 78.0, 100.0, 115.0, 129.0]
                 },
                 if gameplay {
-                    [63.5, 71.0, 81.0, 93.0, 108.0]
+                    [63.5, 71.0, 81.0, 90.0, 108.0]
                 } else {
                     [63.5, 71.0, 81.0, 100.0, 114.0]
                 },
@@ -2214,6 +2233,11 @@ impl Params {
                 ("boundaries.ray_lattice_l", bd.ray_lattice_l),
             ] {
                 writeln!(w, "{name}={value:?}").unwrap();
+            }
+            // Пока решётка высот выключена, строка не пишется: хеш v1-dev
+            // меняется только вместе с самим миром.
+            if bd.ray_field_l != 0.0 {
+                writeln!(w, "boundaries.ray_field_l={:?}", bd.ray_field_l).unwrap();
             }
             writeln!(w, "boundaries.wind_fd_step_l={:?}", bd.wind_fd_step_l).unwrap();
             writeln!(

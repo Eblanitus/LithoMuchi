@@ -50,6 +50,13 @@ const NET_TILE_CELLS: i64 = 2;
 /// кольцо сети и две сверху.
 const NET_OWNER_MARGIN_CELLS: i64 = 3;
 const NET_OWNER_CACHE_CAPACITY: usize = 8192;
+/// T79: сторона блока «владелец узла решётки стока», в клетках. Окно списка
+/// плит (Д-061) читает владельцев из блоков, а не считает каждый раз заново:
+/// редкая колонка дальнего рельефа попадает в свой тайл списка, и без блоков
+/// каждая платила за 28 × 28 запросов плиты. Инфраструктура: на ответ не
+/// влияет.
+const NET_OWNER_BLOCK_CELLS: i64 = 16;
+const NET_OWNER_BLOCK_CACHE_CAPACITY: usize = 2048;
 
 /// litho-core не имеет зависимостей (план 5.4), поэтому пишем в stderr без
 /// внешнего `log`-крейта; первые ошибки видны в логе игры/CI, далее только
@@ -122,8 +129,19 @@ type CoarseTiles = ShardedCache<(i64, i64), Arc<Nodes<COARSE_N>>>;
 type LastCoarse = Option<(u64, u64, i64, i64, Arc<Nodes<COARSE_N>>)>;
 /// Д-061: тайл → плиты, чьи сети рек могут иметь узел рядом с запросом.
 type NetOwners = ShardedCache<(i64, i64), Arc<Vec<u64>>>;
+/// T79: блок решётки стока → владелец каждого узла блока.
+type NetOwnerBlocks = ShardedCache<(i64, i64), Arc<Vec<Option<u64>>>>;
+
+/// T79: недавние тайлы решётки высот на поток, прямое отображение.
+const RAY_TILE_SLOTS: usize = 8;
+type RayTileSlot = Option<(u64, i64, i64, Arc<crate::ray_field::RayFieldTile>)>;
+/// Номер генератора для потоковой памяти тайлов: два мира в одном процессе
+/// не должны читать тайлы друг друга (Р14).
+static RAY_FIELD_IDS: AtomicU64 = AtomicU64::new(1);
 
 thread_local! {
+    static RAY_TILES: RefCell<[RayTileSlot; RAY_TILE_SLOTS]> =
+        const { RefCell::new([const { None }; RAY_TILE_SLOTS]) };
     /// «Последний тайл» на поток: соседние запросы не трогают замки (6.6).
     /// Ключ включает сид и масштаб, чтобы миры в одном процессе не путались (Р14).
     static LAST_COARSE: RefCell<LastCoarse> = const { RefCell::new(None) };
@@ -187,6 +205,8 @@ pub struct Generator {
     drainage: Arc<RiverNetCache>,
     /// Д-061: по тайлу — плиты, чьи сети могут иметь узел в радиусе запроса.
     net_owners: Arc<NetOwners>,
+    /// T79: владельцы узлов решётки стока блоками, из них собирается список.
+    net_owner_blocks: Arc<NetOwnerBlocks>,
     coarse: Arc<CoarseTiles>,
     /// T160: точная колонка `(x,z)` для повторных запросов полей.
     column: Arc<crate::cache::ShardedCache<(i64, i64), Arc<FullSample>>>,
@@ -194,6 +214,12 @@ pub struct Generator {
     rays: Arc<crate::cache::ShardedCache<(i64, i64), Option<crate::climate::RayNode>>>,
     /// Д-059: счётчик посчитанных узлов, только для диагностики.
     ray_traces: Arc<std::sync::atomic::AtomicU64>,
+    /// T79: высота, ветер и широта для луча влаги в узлах решётки.
+    ray_field: Arc<ShardedCache<(i64, i64), Arc<crate::ray_field::RayFieldTile>>>,
+    /// T79: ключ потоковой памяти тайлов этого генератора.
+    ray_field_id: u64,
+    /// T79: сколько узлов решётки высот посчитано, только для диагностики.
+    ray_field_nodes: Arc<std::sync::atomic::AtomicU64>,
     spawn_shift: Vec2,
 }
 
@@ -247,6 +273,7 @@ impl Generator {
                 shards,
                 NET_OWNER_CACHE_CAPACITY,
             )),
+            net_owner_blocks: Arc::new(ShardedCache::new(shards, NET_OWNER_BLOCK_CACHE_CAPACITY)),
             coarse: Arc::new(ShardedCache::new(shards, CACHE_CAPACITY)),
             column: Arc::new(crate::cache::ShardedCache::new(
                 shards,
@@ -254,6 +281,12 @@ impl Generator {
             )),
             rays: Arc::new(crate::cache::ShardedCache::new(shards, RAY_CACHE_CAPACITY)),
             ray_traces: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            ray_field: Arc::new(ShardedCache::new(
+                shards,
+                crate::ray_field::TILE_CACHE_CAPACITY,
+            )),
+            ray_field_id: RAY_FIELD_IDS.fetch_add(1, Ordering::Relaxed),
+            ray_field_nodes: Arc::new(std::sync::atomic::AtomicU64::new(0)),
             spawn_shift: shift,
         })
     }
@@ -417,13 +450,48 @@ impl Generator {
                     .saturating_add(NET_TILE_CELLS - 1)
                     .saturating_add(reach)
             };
-            Arc::new(crate::drainage::owners_in_window(
-                (first(tile.0), first(tile.1)),
-                (last(tile.0), last(tile.1)),
-                self.seed,
-                &self.params,
-            ))
+            Arc::new(
+                self.owners_in_window((first(tile.0), first(tile.1)), (last(tile.0), last(tile.1))),
+            )
         })
+    }
+
+    /// T79: то же, что `drainage::owners_in_window`, но владельцы узлов
+    /// читаются из блоков `NET_OWNER_BLOCK_CELLS`, посчитанных один раз.
+    /// Ответ совпадает с прямым расчётом (тест ниже).
+    fn owners_in_window(&self, lo: (i64, i64), hi: (i64, i64)) -> Vec<u64> {
+        const B: i64 = NET_OWNER_BLOCK_CELLS;
+        let mut out: Vec<u64> = Vec::new();
+        let mut last = None;
+        for bz in lo.1.div_euclid(B)..=hi.1.div_euclid(B) {
+            for bx in lo.0.div_euclid(B)..=hi.0.div_euclid(B) {
+                let block = self.net_owner_blocks.get_or_insert((bx, bz), || {
+                    Arc::new(crate::drainage::owner_block(
+                        bx,
+                        bz,
+                        B,
+                        self.seed,
+                        &self.params,
+                    ))
+                });
+                let (x0, z0) = (bx.saturating_mul(B), bz.saturating_mul(B));
+                for j in lo.1.max(z0)..=hi.1.min(z0.saturating_add(B - 1)) {
+                    for i in lo.0.max(x0)..=hi.0.min(x0.saturating_add(B - 1)) {
+                        let Some(id) = block[((j - z0) * B + (i - x0)) as usize] else {
+                            continue;
+                        };
+                        if last != Some(id) {
+                            last = Some(id);
+                            if !out.contains(&id) {
+                                out.push(id);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        out.sort_unstable();
+        out
     }
 
     /// Диагностика искажения домена (слой `jacobian`).
@@ -980,7 +1048,7 @@ impl Generator {
             && self.params.boundaries.ray_lattice_l > 0.0
             && self.params.precip.ray_steps > 0
         {
-            self.lattice_ray(point)
+            self.lattice_ray(point, x, z)
                 .map(|node| node.resolve(surface.e_km, pole.phi_deg, &self.params))
                 .unwrap_or_else(exact_ray)
         } else {
@@ -1070,7 +1138,82 @@ impl Generator {
             COLUMN_CACHE_CAPACITY,
         ));
         self.ray_traces = Arc::new(std::sync::atomic::AtomicU64::new(0));
+        // T79: вместе с лучами сбрасывается и решётка высот; новый номер
+        // отвязывает генератор от потоковой памяти тайлов.
+        self.ray_field = Arc::new(ShardedCache::new(
+            self.params.lattice.cache_shards.max(1),
+            crate::ray_field::TILE_CACHE_CAPACITY,
+        ));
+        self.ray_field_id = RAY_FIELD_IDS.fetch_add(1, Ordering::Relaxed);
+        self.ray_field_nodes = Arc::new(std::sync::atomic::AtomicU64::new(0));
         self
+    }
+
+    /// T79: сколько узлов решётки высот луча посчитано с создания генератора.
+    pub fn ray_field_nodes(&self) -> u64 {
+        self.ray_field_nodes.load(Ordering::Relaxed)
+    }
+
+    /// T79: решётка луча влаги привязана к блокам и читает высоты с решётки.
+    fn ray_field_on(&self) -> bool {
+        self.params.version.is_water_relief_dev() && self.params.boundaries.ray_field_l > 0.0
+    }
+
+    /// T79: узел решётки высот `(ix, iz)` в шагах `ray_field_l`.
+    fn ray_field_node(&self, ix: i64, iz: i64) -> crate::ray_field::RayFieldValue {
+        let ((tx, tz), local) = crate::ray_field::locate(ix, iz);
+        let slot = (tx.wrapping_mul(3).wrapping_add(tz)).rem_euclid(RAY_TILE_SLOTS as i64) as usize;
+        let id = self.ray_field_id;
+        // Обычный случай: тайл в памяти потока и узел готов — без замков и
+        // без счётчика ссылок.
+        let recent = RAY_TILES.with(|tiles| match &tiles.borrow()[slot] {
+            Some((owner, x, z, tile)) if *owner == id && *x == tx && *z == tz => {
+                tile.get(local).ok_or_else(|| Some(tile.clone()))
+            }
+            _ => Err(None),
+        });
+        let tile = match recent {
+            Ok(value) => return value,
+            Err(Some(tile)) => tile,
+            Err(None) => {
+                let tile = self
+                    .ray_field
+                    .get_or_insert((tx, tz), crate::ray_field::RayFieldTile::empty);
+                RAY_TILES.with(|tiles| {
+                    tiles.borrow_mut()[slot] = Some((id, tx, tz, tile.clone()));
+                });
+                tile
+            }
+        };
+        tile.node(local, || {
+            self.ray_field_nodes.fetch_add(1, Ordering::Relaxed);
+            let step = self.params.boundaries.ray_field_l;
+            let q = Vec2::new(ix as f64 * step, iz as f64 * step);
+            let (wind, phi_deg) = crate::climate::wind_at(q, self.seed, &self.params);
+            crate::ray_field::RayFieldValue {
+                e_km: self.surface_at(q).e_km,
+                wind_x: wind.x,
+                wind_z: wind.z,
+                phi_deg,
+            }
+        })
+    }
+
+    /// T79: высота в macro-точке луча — сплайн по решётке.
+    fn ray_field_height(&self, point: Vec2) -> f64 {
+        let step = self.params.boundaries.ray_field_l;
+        crate::ray_field::height(point.x / step, point.z / step, |ix, iz| {
+            self.ray_field_node(ix, iz)
+        })
+    }
+
+    /// T79: ветер и широта в macro-точке луча — билинейно по решётке.
+    fn ray_field_wind(&self, point: Vec2) -> (Vec2, f64) {
+        let step = self.params.boundaries.ray_field_l;
+        let v = crate::ray_field::bilinear(point.x / step, point.z / step, |ix, iz| {
+            self.ray_field_node(ix, iz)
+        });
+        (Vec2::new(v.wind_x, v.wind_z), v.phi_deg)
     }
 
     /// Диагностика Д-059: сколько узлов решётки луча посчитано с создания
@@ -1089,7 +1232,15 @@ impl Generator {
         }
         self.ray_traces
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        let q = Vec2::new(ix as f64 * step, iz as f64 * step);
+        let fast = self.ray_field_on();
+        let q = if fast {
+            // T79: узел стоит на блочной сетке (32 блока gameplay, 128
+            // scientific): редкие колонки дальнего рельефа попадают в узлы.
+            let blocks = step * self.params.block.l_blocks;
+            self.macro_point(ix as f64 * blocks, iz as f64 * blocks)
+        } else {
+            Vec2::new(ix as f64 * step, iz as f64 * step)
+        };
         let value = crate::climate::pole_sample(q, self.seed, &self.params).map(|pole| {
             let wind = crate::climate::wind(pole.phi_deg, pole.north, pole.east, &self.params);
             let dir = if wind.len() > 1e-9 {
@@ -1097,6 +1248,27 @@ impl Generator {
             } else {
                 crate::climate::fallback_dir(&self.params)
             };
+            if fast {
+                // Высота и ветер вдоль луча — с решётки; свой ветер узла и
+                // последний шаг колонки остаются точными. Д-025 запрещал
+                // брать ветер с грубой решётки (шаг 5 L); на шаге 0.125 L
+                // замена точного ветра решёточным зону не меняет (сид 42,
+                // gameplay: 0.9783 и так, и так). Совпадение зон определяет
+                // высота, поэтому она читается сплайном (Д-064).
+                let field = |p: Vec2| SurfaceSample {
+                    e_km: self.ray_field_height(p),
+                    ..SurfaceSample::default()
+                };
+                let wind_fn = |p: Vec2| self.ray_field_wind(p);
+                return crate::climate::trace_ray_node(
+                    q,
+                    &self.params,
+                    &field,
+                    dir,
+                    &wind_fn,
+                    self.seed,
+                );
+            }
             let wind_fn = |p: Vec2| crate::climate::wind_at(p, self.seed, &self.params);
             crate::climate::trace_ray_node(
                 q,
@@ -1113,8 +1285,39 @@ impl Generator {
     /// Д-059: наветренная часть луча влаги для быстрого пути — билинейная
     /// смесь четырёх узлов решётки. Узел зависит только от своих координат,
     /// поэтому ответ не зависит от порядка запросов и от вытеснения из кэша.
-    fn lattice_ray(&self, point: Vec2) -> Option<crate::climate::RayNode> {
+    fn lattice_ray(&self, point: Vec2, x: f64, z: f64) -> Option<crate::climate::RayNode> {
         let step = self.params.boundaries.ray_lattice_l;
+        if self.ray_field_on() {
+            // T79: решётка в блоках. Узел с нулевым весом не считается:
+            // колонка, стоящая в узле, платит за один луч, а не за четыре.
+            // `lerp(a, b, 0) == a`, поэтому подстановка ответа не меняет.
+            let blocks = step * self.params.block.l_blocks;
+            let (gx, gz) = (x / blocks, z / blocks);
+            let (ix, iz) = (gx.floor() as i64, gz.floor() as i64);
+            let (fx, fz) = (gx - ix as f64, gz - iz as f64);
+            let n00 = self.ray_node(ix, iz, step)?;
+            let n10 = if fx > 0.0 {
+                self.ray_node(ix + 1, iz, step)?
+            } else {
+                n00
+            };
+            let (n01, n11) = if fz > 0.0 {
+                let n01 = self.ray_node(ix, iz + 1, step)?;
+                let n11 = if fx > 0.0 {
+                    self.ray_node(ix + 1, iz + 1, step)?
+                } else {
+                    n01
+                };
+                (n01, n11)
+            } else {
+                (n00, n10)
+            };
+            return Some(crate::climate::RayNode::bilinear(
+                &[n00, n10, n01, n11],
+                fx,
+                fz,
+            ));
+        }
         let gx = point.x / step;
         let gz = point.z / step;
         let ix = gx.floor() as i64;
@@ -1223,6 +1426,32 @@ mod tests {
     use super::{GenError, Generator};
     use crate::mode::Mode;
     use crate::version::GenVersion;
+
+    /// T79: список плит из блоков совпадает с прямым расчётом Д-061, в том
+    /// числе для окон через границы блоков и в отрицательных координатах.
+    #[test]
+    fn owner_blocks_match_direct_window() {
+        let generator = Generator::new(42, Mode::Gameplay, GenVersion::V1Dev).unwrap();
+        let windows = [
+            ((0, 0), (27, 27)),
+            ((-13, -13), (14, 14)),
+            ((-40, 5), (-13, 32)),
+            ((1470, 90), (1497, 117)),
+            ((15, 15), (16, 16)),
+            ((-17, -1), (-16, 0)),
+            ((300, -700), (420, -650)),
+        ];
+        for (lo, hi) in windows {
+            let direct =
+                crate::drainage::owners_in_window(lo, hi, generator.seed, &generator.params);
+            assert_eq!(
+                generator.owners_in_window(lo, hi),
+                direct,
+                "окно {lo:?}…{hi:?}"
+            );
+            assert!(!direct.is_empty());
+        }
+    }
 
     #[test]
     fn v1_is_not_implemented_yet() {
@@ -1865,6 +2094,7 @@ mod ray_lattice_tests {
     fn frozen_v0_never_uses_the_lattice() {
         let g = Generator::new(42, Mode::Gameplay, GenVersion::V0).unwrap();
         assert_eq!(g.params.boundaries.ray_lattice_l, 0.0);
+        assert_eq!(g.params.boundaries.ray_field_l, 0.0);
         for (x, z) in points(8) {
             let fast = g.sample(x, z).unwrap();
             let reference = g.sample_reference(x, z).unwrap();
@@ -1874,6 +2104,77 @@ mod ray_lattice_tests {
             );
         }
         assert_eq!(g.ray_nodes(), 0);
+        assert_eq!(g.ray_field_nodes(), 0);
+    }
+
+    /// T79: решётка луча стоит на блочной сетке (32 блока в gameplay).
+    /// Колонка в узле платит за один луч, на ребре — за два, внутри клетки —
+    /// за четыре: редкие колонки дальнего рельефа попадают в узлы.
+    #[test]
+    fn column_on_a_lattice_node_traces_one_ray() {
+        let fresh = || Generator::new(42, Mode::Gameplay, GenVersion::V1Dev).unwrap();
+        let blocks = fresh().params.boundaries.ray_lattice_l * Mode::Gameplay.l_blocks();
+        assert_eq!(blocks, 32.0);
+        for (x, z, rays) in [
+            (640.0, -1280.0, 1),
+            (640.0, -1279.0, 2),
+            (641.0, -1280.0, 2),
+            (641.0, -1279.0, 4),
+        ] {
+            let g = fresh();
+            g.sample(x, z).unwrap();
+            assert_eq!(g.ray_nodes(), rays, "колонка ({x}, {z})");
+            assert!(g.ray_field_nodes() > 0);
+        }
+    }
+
+    /// T79: узел решётки высот хранит точную высоту, ветер и широту своей
+    /// точки и считается один раз.
+    #[test]
+    fn ray_field_node_holds_exact_height_and_wind() {
+        for mode in Mode::ALL {
+            let g = Generator::new(42, mode, GenVersion::V1Dev).unwrap();
+            let step = g.params.boundaries.ray_field_l;
+            assert!(step > 0.0);
+            let nodes = [(0, 0), (17, -5), (-33, 40), (-1, -1), (16, 16)];
+            for (ix, iz) in nodes {
+                let q = Vec2::new(ix as f64 * step, iz as f64 * step);
+                let node = g.ray_field_node(ix, iz);
+                let (wind, phi_deg) = crate::climate::wind_at(q, g.seed, &g.params);
+                assert_eq!(node.e_km.to_bits(), g.surface_at(q).e_km.to_bits());
+                assert_eq!(node.wind_x.to_bits(), wind.x.to_bits());
+                assert_eq!(node.wind_z.to_bits(), wind.z.to_bits());
+                assert_eq!(node.phi_deg.to_bits(), phi_deg.to_bits());
+                assert_eq!(g.ray_field_node(ix, iz), node);
+            }
+            assert_eq!(g.ray_field_nodes(), nodes.len() as u64);
+            // Сплайн в узле отдаёт высоту узла (и читает его соседей).
+            for (ix, iz) in nodes {
+                let q = Vec2::new(ix as f64 * step, iz as f64 * step);
+                let node = g.ray_field_node(ix, iz);
+                assert_eq!(g.ray_field_height(q).to_bits(), node.e_km.to_bits());
+            }
+            assert!(g.ray_field_nodes() > nodes.len() as u64);
+        }
+    }
+
+    /// T79: два мира в одном потоке не читают тайлы друг друга, а сброс
+    /// решётки отвязывает генератор от потоковой памяти тайлов (Р14).
+    #[test]
+    fn ray_field_tiles_are_not_shared_between_worlds() {
+        let a = Generator::new(42, Mode::Gameplay, GenVersion::V1Dev).unwrap();
+        let b = Generator::new(43, Mode::Gameplay, GenVersion::V1Dev).unwrap();
+        let va = a.ray_field_node(3, 3);
+        let vb = b.ray_field_node(3, 3);
+        assert_ne!(va, vb);
+        assert_eq!(a.ray_field_node(3, 3), va);
+        assert_eq!(b.ray_field_node(3, 3), vb);
+        let lattice = a.params.boundaries.ray_lattice_l;
+        let reset = a.clone().with_ray_lattice(lattice);
+        assert_eq!(reset.ray_field_nodes(), 0);
+        assert_eq!(reset.ray_field_node(3, 3), va);
+        assert_eq!(reset.ray_field_nodes(), 1);
+        assert_eq!(a.ray_field_nodes(), 1);
     }
 
     /// Выключенная решётка возвращает быстрый путь v1-dev к лучу из колонки.

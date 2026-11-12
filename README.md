@@ -29,7 +29,7 @@
 документов — [docs/README.md](docs/README.md).
 
 - **v0 заморожена** (Д-026): scientific `5cdbe1d36ef8d16a`, gameplay `b48e8037c4e85977`. Хеши не менялись.
-- **v1-dev** — рабочая линия: scientific `8a871b7f9a261626`, gameplay `8690cab5a14ba7a1`. Таблица: [docs/PARAMS-V1-DEV.md](docs/PARAMS-V1-DEV.md).
+- **v1-dev** — рабочая линия: scientific `8887e6a4ec1f7f65`, gameplay `c83af97b33674349`. Таблица: [docs/PARAMS-V1-DEV.md](docs/PARAMS-V1-DEV.md).
 - Рабочий мод восстановлен: `.hnmod` и паки v0/v1-dev/smoke собирает `tools/package_mod.py`; единые пины Horizon `66f3981`, mixins `5a64af9`, данные 26.3 `5f312935`, libm `0.2.16`. CI применяет настоящий `horizon-mixins plan`, проверяет density graph и `depth(80) = 0.375 + offset`.
 - **К2 исправлена и подтверждена в игре:** `offset = y/128 − 1`, поверхность `128·(1 + offset)`. Тест №2 пройден: высота, уровень моря, берега и равнины в норме.
 - **Вариант B по R2:** v1 без воды выше моря, T142/T143 уезжают в v1.1. См. [docs/T142-DECISION.md](docs/T142-DECISION.md).

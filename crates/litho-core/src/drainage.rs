@@ -442,6 +442,7 @@ fn find_anchor(plate: &Plate, seed: u64, params: &Params) -> Result<Cell, RiverN
 /// состоит из её узлов и кольца в один узел, поэтому плита без узлов в окне,
 /// расширенном на одну клетку, не имеет в самом окне ни одного узла сети.
 /// Список зависит только от сида, параметров и окна.
+#[cfg(test)]
 pub(crate) fn owners_in_window(lo: Cell, hi: Cell, seed: u64, params: &Params) -> Vec<u64> {
     let mut out: Vec<u64> = Vec::new();
     let mut last = None;
@@ -461,6 +462,30 @@ pub(crate) fn owners_in_window(lo: Cell, hi: Cell, seed: u64, params: &Params) -
         }
     }
     out.sort_unstable();
+    out
+}
+
+/// T79: владельцы узлов решётки стока в блоке `side × side` клеток с углом
+/// `(bx·side, bz·side)`, построчно. Признак владения тот же, что в
+/// `owners_in_window`. Блок — чистая функция сида, параметров и своего номера.
+pub(crate) fn owner_block(
+    bx: i64,
+    bz: i64,
+    side: i64,
+    seed: u64,
+    params: &Params,
+) -> Vec<Option<u64>> {
+    let mut out = Vec::with_capacity((side * side) as usize);
+    for j in 0..side {
+        for i in 0..side {
+            let cell = (
+                bx.saturating_mul(side).saturating_add(i),
+                bz.saturating_mul(side).saturating_add(j),
+            );
+            let point = jittered_point(cell, seed, params);
+            out.push(plate_query(point, seed, params).map(|sample| sample.a.id));
+        }
+    }
     out
 }
 

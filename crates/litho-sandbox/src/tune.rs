@@ -94,6 +94,8 @@ fn set(p: &mut Params, key: &str, value: f64) -> Result<(), String> {
         None => (key, Vec::new()),
     };
     let scalar: Option<&mut f64> = match name {
+        "boundaries.ray_field_l" => Some(&mut p.boundaries.ray_field_l),
+        "boundaries.ray_lattice_l" => Some(&mut p.boundaries.ray_lattice_l),
         "relief.a_lo" => Some(&mut p.relief.a_lo),
         "relief.a_hi" => Some(&mut p.relief.a_hi),
         "climate.m_e_lo" => Some(&mut p.climate.m_e_lo),

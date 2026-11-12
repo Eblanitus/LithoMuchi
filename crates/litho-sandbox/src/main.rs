@@ -894,6 +894,138 @@ fn cmd_drainage(args: &[String]) -> Result<(), String> {
     Ok(())
 }
 
+/// T79: цена редких колонок дальнего рельефа (LOD). Horizon просит тайлы
+/// 16 × 16 колонок с шагом 4…128 блоков и для каждой колонки зовёт
+/// `field_column`. Здесь тот же рисунок запросов: квадрат соседних тайлов у
+/// центра, все холодные (решётки луча сброшены, сети рек прогреты).
+fn cmd_lod(args: &[String]) -> Result<(), String> {
+    let opts = options_from(args)?;
+    let tiles = match value(args, "--tiles") {
+        Some(text) => text.parse::<usize>().map_err(|e| format!("--tiles: {e}"))?,
+        None => 3,
+    };
+    let strides: Vec<i64> = match value(args, "--strides") {
+        Some(text) => text
+            .split(',')
+            .map(|part| {
+                part.trim()
+                    .parse::<i64>()
+                    .map_err(|e| format!("--strides: {e}"))
+            })
+            .collect::<Result<_, _>>()?,
+        None => vec![4, 8, 16, 32, 64, 128],
+    };
+    if tiles == 0 || strides.is_empty() || strides.iter().any(|s| *s <= 0) {
+        return Err("--tiles должен быть > 0, шаги --strides — целые > 0".to_string());
+    }
+    let json = args.iter().any(|arg| arg == "--json");
+    let fields = [
+        Field::Continents,
+        Field::Erosion,
+        Field::Ridges,
+        Field::Temperature,
+        Field::Vegetation,
+    ];
+    const SIDE: i64 = 16;
+    // Точек прогрева сетей рек на сторону тайла.
+    const WARM: i64 = 9;
+    let mut generator = with_ray_lattice(generator(&opts)?, args)?;
+    let mut sink = 0.0_f64;
+    let mut rows = Vec::new();
+    for &stride in &strides {
+        // Тайлы стоят на сетке своего шага вплотную друг к другу квадратом
+        // `tiles × tiles`, как их просит Horizon: соседние тайлы делят узлы
+        // решёток, но не колонки.
+        let span = stride * SIDE;
+        let (cx, cz) = (
+            (opts.center_x / span as f64).floor() as i64 * span,
+            (opts.center_z / span as f64).floor() as i64 * span,
+        );
+        let origins: Vec<(i64, i64)> = (0..tiles * tiles)
+            .map(|k| {
+                let (i, j) = ((k % tiles) as i64, (k / tiles) as i64);
+                (cx + i * span, cz + j * span)
+            })
+            .collect();
+        // Сети рек строятся один раз на плиту и меряются отдельно
+        // (`drainage`): прогреваем их в точках вне сетки колонок.
+        for &(ox, oz) in &origins {
+            for wz in 0..WARM {
+                for wx in 0..WARM {
+                    let fx = wx as f64 / (WARM - 1) as f64;
+                    let fz = wz as f64 / (WARM - 1) as f64;
+                    sink += generator.field_column(
+                        Field::Continents,
+                        ox as f64 + fx * (span - stride) as f64 + 0.5,
+                        oz as f64 + fz * (span - stride) as f64 + 0.5,
+                    );
+                }
+            }
+        }
+        let lattice_l = generator.params().boundaries.ray_lattice_l;
+        generator = generator.with_ray_lattice(lattice_l);
+        let mut per_tile = Vec::with_capacity(origins.len());
+        for &(ox, oz) in &origins {
+            let start = Instant::now();
+            for iz in 0..SIDE {
+                for ix in 0..SIDE {
+                    let x = (ox + ix * stride) as f64;
+                    let z = (oz + iz * stride) as f64;
+                    for field in fields {
+                        sink += generator.field_column(field, x, z);
+                    }
+                }
+            }
+            per_tile.push(start.elapsed().as_secs_f64() * 1e3 / (SIDE * SIDE) as f64);
+        }
+        per_tile.sort_by(f64::total_cmp);
+        let median = per_tile[per_tile.len() / 2];
+        let worst = per_tile[per_tile.len() - 1];
+        let columns = (origins.len() as i64 * SIDE * SIDE) as f64;
+        let mean = per_tile.iter().sum::<f64>() / per_tile.len() as f64;
+        let rays = generator.ray_nodes() as f64 / columns;
+        let nodes = generator.ray_field_nodes() as f64 / columns;
+        rows.push((stride, mean, median, worst, rays, nodes));
+    }
+    if json {
+        let body = rows
+            .iter()
+            .map(|(stride, mean, median, worst, rays, nodes)| {
+                format!(
+                    "{{\"stride\":{stride},\"ms_per_column_mean\":{mean:.5},\"ms_per_column\":{median:.5},\"ms_per_column_worst\":{worst:.5},\"rays_per_column\":{rays:.4},\"field_nodes_per_column\":{nodes:.3}}}"
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(",");
+        println!(
+            "{{\"seed\":{seed},\"mode\":\"{mode}\",\"version\":\"{version}\",\"tiles\":{tiles},\"ray_lattice_l\":{lattice:?},\"ray_field_l\":{field:?},\"strides\":[{body}]}}",
+            seed = opts.seed,
+            mode = opts.mode.as_str(),
+            version = opts.version.as_str(),
+            lattice = generator.params().boundaries.ray_lattice_l,
+            field = generator.params().boundaries.ray_field_l,
+        );
+        return Ok(());
+    }
+    println!(
+        "lod ({version}, {mode}, сид {seed}): квадрат {tiles} × {tiles} холодных тайлов по 16 × 16 колонок на шаг, решётка луча {lattice} L, решётка высот {field} L (sink={sink:.3})",
+        version = opts.version.as_str(),
+        mode = opts.mode.as_str(),
+        seed = opts.seed,
+        lattice = generator.params().boundaries.ray_lattice_l,
+        field = generator.params().boundaries.ray_field_l,
+    );
+    println!(
+        "  шаг, блоков | мс/колонку: среднее | медиана тайлов | худший тайл | лучей/колонку | узлов высот/колонку"
+    );
+    for (stride, mean, median, worst, rays, nodes) in rows {
+        println!(
+            "  {stride:>11} | {mean:>19.4} | {median:>14.4} | {worst:>11.4} | {rays:>13.3} | {nodes:>19.2}"
+        );
+    }
+    Ok(())
+}
+
 fn cmd_bench(args: &[String]) -> Result<(), String> {
     let opts = options_from(args)?;
     let chunk_target_ms = match value(args, "--chunk-target-ms") {
@@ -1478,6 +1610,8 @@ fn usage() -> &'static str {
        drainage     T110–T116: сток, русла, озёра, дельты и поверхность R1 в --at x,z (v1-dev)\n\
        bench        время эталонного/быстрого пути, колонки и чанка v1-dev\n\
                     --chunk-target-ms N | --enforce-chunk-target\n\
+       lod          T79: цена холодных тайлов дальнего рельефа 16 × 16 колонок\n\
+                    --strides 4,8,16,32,64,128 --tiles 3 --json\n\
        profile      разбивка времени по слоям\n\
        hash         хеши параметров для замка v0\n\
        checkpoints  10 точек вокруг точки появления\n\
@@ -1519,6 +1653,7 @@ fn main() -> Result<(), String> {
         "paths" => cmd_paths(&args[1..]),
         "drainage" => cmd_drainage(&args[1..]),
         "bench" => cmd_bench(&args[1..]),
+        "lod" => cmd_lod(&args[1..]),
         "profile" => cmd_profile(),
         "hash" => cmd_hash(),
         "checkpoints" => cmd_checkpoints(&args[1..]),

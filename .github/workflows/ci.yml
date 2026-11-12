@@ -66,6 +66,17 @@ jobs:
           set -o pipefail
           cargo run -q -p litho-sandbox --release -- paths --seed 42 --mode gameplay --version v1-dev --center 2000,2000 --min-zone-share 0.97 | python3 tools/ci_annotations.py report
           cargo run -q -p litho-sandbox --release -- paths --seed 42 --mode scientific --version v1-dev --center 2000,2000 --min-zone-share 0.97 | python3 tools/ci_annotations.py report
+      - name: "T79 — цена редких колонок дальнего рельефа (LOD), без гейта"
+        run: |
+          set -o pipefail
+          # Horizon просит дальний рельеф тайлами 16 × 16 колонок с шагом
+          # 4…128 блоков. Вторая строка каждого режима — тот же мир без
+          # решётки высот луча (луч Д-059 с точной корой), для сравнения. Скорость
+          # ванили здесь не меряется: ей нужны файлы игры.
+          for mode in gameplay scientific; do
+            cargo run -q -p litho-sandbox --release -- lod --seed 42 --mode "$mode" --version v1-dev --center 2000,2000 | python3 tools/ci_annotations.py report
+            cargo run -q -p litho-sandbox --release -- lod --seed 42 --mode "$mode" --version v1-dev --center 2000,2000 --set boundaries.ray_field_l=0 | python3 tools/ci_annotations.py report
+          done
       - name: "Э3.5 — v1-dev smoke (синтетика НЕ является приёмкой)"
         run: |
           set -o pipefail
