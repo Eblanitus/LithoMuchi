@@ -680,7 +680,17 @@ impl HeightStats {
                         .morpho_weights(x, z)
                         .map(|w| w.dominant())
                         .unwrap_or(usize::MAX);
-                    plan.add(c_land, v.e, river, h.water > 0.5, dominant);
+                    // Котловина без воды: отложенная до R2 (T143/T145) и сухая
+                    // по климату различаются — иначе «озёр в зоне 0 %» читается
+                    // как «озёр тут не бывает», хотя это разные вещи.
+                    let basin = if h.r2_deferred > 0.5 {
+                        plan_metrics::Basin::Deferred
+                    } else if h.dry_basin > 0.5 {
+                        plan_metrics::Basin::Dry
+                    } else {
+                        plan_metrics::Basin::None
+                    };
+                    plan.add(c_land, v.e, river, h.water > 0.5, basin, dominant);
                     // T123: те же величины, что входят в перевод E, чтобы
                     // видеть перекрытие гор/плато, а не догадываться о нём.
                     let params = generator.params();
@@ -1144,12 +1154,14 @@ impl HeightStats {
             .iter()
             .map(|z| {
                 format!(
-                    "{{\"name\": {}, \"land\": {}, \"erosion_pct\": {:?}, \"lake_pct\": {:.4}, \"river_pct\": {:.4}, \"distinct_bands\": {}, \"max_gap_pp\": {:.3}}}",
+                    "{{\"name\": {}, \"land\": {}, \"erosion_pct\": {:?}, \"lake_pct\": {:.4}, \"river_pct\": {:.4}, \"deferred_pct\": {:.4}, \"dry_pct\": {:.4}, \"distinct_bands\": {}, \"max_gap_pp\": {:.3}}}",
                     crate::json::quote(z.name),
                     z.land,
                     z.erosion_pct,
                     z.lake_pct,
                     z.river_pct,
+                    z.deferred_pct,
+                    z.dry_pct,
                     z.distinct_bands,
                     z.max_gap_pp
                 )

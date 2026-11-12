@@ -43,6 +43,8 @@ TARGETS = {
     "климат влияет на форму": ((True, True), (True, True)),
     "вода озёр на суше, %": ((None, None), (None, None)),
     "озёр на 100 L² суши": ((1.0, None), (1.0, None)),
+    "холодные зоны: котловины без воды, %": ((None, None), (None, None)),
+    "холодные зоны: сухие котловины, %": ((None, None), (None, None)),
 }
 MODES = ("gameplay", "scientific")
 CAUSE_NAMES = {
@@ -95,10 +97,21 @@ def _plan_metrics(j):
         return {}
     shape = plan.get("climate_shape") or {}
     rivers = plan.get("rivers_lakes") or {}
+    zones = {z.get("name"): z for z in shape.get("zones") or []}
+    # Д-069: провал «озёр в холодных зонах» — это в основном долг R2, а не
+    # свойство мира: в полярной зоне 5 % суши приходится на котловины, вода
+    # которых ждёт T143/T145. Отдельная строка не даёт читать «озёр 0 %» как
+    # «озёр тут не бывает».
+    cold_deferred = max(
+        (zones.get(n) or {}).get("deferred_pct") or 0.0 for n in ("polar", "boreal")
+    )
+    cold_dry = max((zones.get(n) or {}).get("dry_pct") or 0.0 for n in ("polar", "boreal"))
     return {
         "климат влияет на форму": shape.get("pass"),
         "вода озёр на суше, %": rivers.get("lake_pct"),
         "озёр на 100 L² суши": rivers.get("lakes_per_100_l2"),
+        "холодные зоны: котловины без воды, %": cold_deferred,
+        "холодные зоны: сухие котловины, %": cold_dry,
     }
 
 
