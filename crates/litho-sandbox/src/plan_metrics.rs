@@ -34,6 +34,14 @@ pub struct ZoneShape {
     pub lake_pct: f64,
     /// Доля точек зоны в русле, %.
     pub river_pct: f64,
+    /// Доля точек зоны в котловине, которой вода ещё не выдана: замкнутая
+    /// впадина с годовым избытком без топографического перелива или озеро
+    /// выше порога R1. Показывает, есть ли в зоне озёрные места, ждущие
+    /// T143/T145, — иначе «озёр 0 %» читается как «озёр тут не бывает».
+    pub deferred_pct: f64,
+    /// Доля точек зоны в сухой котловине: впадина без воды по климату
+    /// (испарение съедает приход). Это честная пустыня, а не долг R2.
+    pub dry_pct: f64,
     /// Полосы E, отличающиеся от средней по суше на ≥ 10 п.п.
     pub distinct_bands: usize,
     /// Самое большое отличие от средней по суше, п.п.
@@ -110,6 +118,17 @@ fn e_band(e: f64) -> usize {
     E_EDGES.partition_point(|edge| e >= *edge)
 }
 
+/// Состояние котловины в точке суши: вода есть, вода отложена до R2 или
+/// котловина сухая по климату. Нужно, чтобы «озёр в зоне 0 %» не путалось
+/// с «озёра в зоне есть, но вода ждёт T143/T145».
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Basin {
+    #[default]
+    None,
+    Deferred,
+    Dry,
+}
+
 /// Сколько точек зоны нужно, чтобы вердикт по зоне имел смысл. Меньше —
 /// зона попала в выборку краем и в вердикт не идёт, только в таблицу.
 pub const MIN_ZONE_LAND: usize = 50;
@@ -123,6 +142,10 @@ pub struct PlanAccumulator {
     zone_erosion: [[usize; 7]; MORPHO_ZONES],
     zone_lake: [usize; MORPHO_ZONES],
     zone_river: [usize; MORPHO_ZONES],
+    /// Точки зоны, где вода озера отложена до R2 (T143/T145).
+    zone_deferred: [usize; MORPHO_ZONES],
+    /// Точки зоны в сухой котловине (воды нет по климату).
+    zone_dry: [usize; MORPHO_ZONES],
     dry_land: usize,
     lake_land: usize,
     river_land: usize,
@@ -138,15 +161,40 @@ impl PlanAccumulator {
     /// считает генератор для формы рельефа), `e` — эрозия в игре, `in_river`
     /// и `in_lake` — узкое русло и вода озера.
     #[allow(clippy::too_many_arguments)]
-    pub fn add(&mut self, land: bool, e: f64, in_river: bool, in_lake: bool, dominant: usize) {
+    pub fn add(
+        &mut self,
+        land: bool,
+        e: f64,
+        in_river: bool,
+        in_lake: bool,
+        in_basin: Basin,
+        dominant: usize,
+    ) {
         if !land && !in_river && !in_lake {
             return;
         }
+        // Вода считается по зоне всегда, а не только на сухих точках: иначе
+        // доля озёр в полярной и бореальной зонах остаётся нулевой, и
+        // требование 10.1 «озёра ≥ 2× среднего» невыполнимо по построению.
+        let zoned = dominant < MORPHO_ZONES;
         if in_river {
             self.river_land += 1;
+            if zoned {
+                self.zone_river[dominant] += 1;
+            }
         }
         if in_lake {
             self.lake_land += 1;
+            if zoned {
+                self.zone_lake[dominant] += 1;
+            }
+        }
+        if zoned {
+            match in_basin {
+                Basin::Deferred => self.zone_deferred[dominant] += 1,
+                Basin::Dry => self.zone_dry[dominant] += 1,
+                Basin::None => {}
+            }
         }
         if !land || in_river || in_lake {
             return;
@@ -203,6 +251,8 @@ impl PlanAccumulator {
             }
             z.lake_pct = pct(self.zone_lake[zone], total);
             z.river_pct = pct(self.zone_river[zone], total);
+            z.deferred_pct = pct(self.zone_deferred[zone], total);
+            z.dry_pct = pct(self.zone_dry[zone], total);
             for (here, all) in z.erosion_pct.iter().zip(shape.erosion_pct.iter()) {
                 let gap = (here - all).abs();
                 z.max_gap_pp = z.max_gap_pp.max(gap);
@@ -220,7 +270,18 @@ impl PlanAccumulator {
                 continue;
             }
             any_zone_verdict = true;
-            if z.distinct_bands == 0 {
+            // 10.1 перечисляет пять зон, у которых форма обязана отличаться от
+            // средней по суше: аридная, влажная тропическая, умеренная,
+            // бореальная, полярная. Полуаридная в списке нет — она переходная
+            // между умеренной и аридной и по построению близка к средней.
+            // Требовать отступление от всех восьми значит требовать его и от
+            // горных зон, где оно есть по определению, и от полуаридной, где
+            // его быть не должно.
+            let in_plan_list = matches!(
+                z.name,
+                "arid" | "tropical_humid" | "temperate_humid" | "boreal" | "polar"
+            );
+            if in_plan_list && z.distinct_bands == 0 {
                 zone_ok = false;
             }
             if z.name == "arid" && z.erosion_pct[2] < ARID_E2_MIN_PCT {
@@ -478,7 +539,7 @@ pub fn text(
     out.push_str("  зона               точек   E0    E1    E2    E3    E4    E5    E6   озёра%  реки%  отличий\n");
     for z in &shape.zones {
         out.push_str(&format!(
-            "  {:<17} {:>6}  {:>4.1}  {:>4.1}  {:>4.1}  {:>4.1}  {:>4.1}  {:>4.1}  {:>4.1}  {:>6.2}  {:>5.2}  {:>7}\n",
+            "  {:<17} {:>6}  {:>4.1}  {:>4.1}  {:>4.1}  {:>4.1}  {:>4.1}  {:>4.1}  {:>4.1}  {:>6.2}  {:>5.2}  {:>5.1}  {:>5.1}  {:>7}\n",
             z.name,
             z.land,
             z.erosion_pct[0],
@@ -490,6 +551,8 @@ pub fn text(
             z.erosion_pct[6],
             z.lake_pct,
             z.river_pct,
+            z.deferred_pct,
+            z.dry_pct,
             z.distinct_bands
         ));
     }
@@ -574,6 +637,61 @@ mod tests {
         assert_eq!(report.lakes, 1);
         assert_eq!(report.high_lakes, 1);
         assert!(report.plain_sinuosity_median.is_some());
+    }
+
+    #[test]
+    fn zone_water_is_counted_in_the_zone_not_only_on_dry_land() {
+        // Регрессия: до 2026-11-12 zone_lake/zone_river не увеличивались вообще,
+        // поэтому доля озёр в полярной и бореальной зонах была 0 % на всех
+        // 32 прогонах, и требование 10.1 было невыполнимо по построению.
+        let mut acc = PlanAccumulator::new();
+        // 10 сухих точек полярной зоны, 3 озера и 2 русла в ней же.
+        for _ in 0..10 {
+            acc.add(true, 0.2, false, false, Basin::None, 0);
+        }
+        for _ in 0..3 {
+            acc.add(true, 0.2, false, true, Basin::None, 0);
+        }
+        for _ in 0..2 {
+            acc.add(true, 0.2, true, false, Basin::None, 0);
+        }
+        // 4 котловины без воды: есть места под озёра, воды ещё нет (R2).
+        for _ in 0..4 {
+            acc.add(true, 0.2, false, false, Basin::Deferred, 0);
+        }
+        // 2 сухие котловины: воды нет по климату, это не долг R2.
+        for _ in 0..2 {
+            acc.add(true, 0.2, false, false, Basin::Dry, 0);
+        }
+        let (shape, _rivers, _diag) = acc.finish(100.0);
+        let polar = shape
+            .zones
+            .iter()
+            .find(|z| z.name == "polar")
+            .expect("полярная зона есть");
+        assert_eq!(
+            polar.land, 21,
+            "суша зоны включает воду озёр, русла и котловины"
+        );
+        assert!(polar.lake_pct > 0.0, "озёра в зоне должны считаться");
+        assert!(polar.river_pct > 0.0, "русла в зоне должны считаться");
+        assert!(
+            (polar.lake_pct - 100.0 * 3.0 / 21.0).abs() < 1e-9,
+            "озёра 3 из 21 точки зоны: {}",
+            polar.lake_pct
+        );
+        // Котловина без воды — сухая суша: входит в `land` и в базу процентов.
+        // Отложенная и сухая различаются: первая — долг R2, вторая — климат.
+        assert!(
+            (polar.deferred_pct - 100.0 * 4.0 / 21.0).abs() < 1e-9,
+            "отложенная вода считается по зоне: {}",
+            polar.deferred_pct
+        );
+        assert!(
+            (polar.dry_pct - 100.0 * 2.0 / 21.0).abs() < 1e-9,
+            "сухая котловина считается по зоне: {}",
+            polar.dry_pct
+        );
     }
 
     #[test]
