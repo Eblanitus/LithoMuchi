@@ -1,9 +1,10 @@
 # Параметры генератора v1-dev
 
-> **Актуально на 2026-11-11, второй инкремент шага 5 (Д-057).** Таблица и хеши
-> сгенерированы из `Params::defaults`; `v0` не менялась. Что изменилось и что
-> проверить в игре — [STEP5-RELIEF-2026-11-11.md](STEP5-RELIEF-2026-11-11.md),
-> карта документов — [docs/README.md](README.md).
+> **Актуально на 2026-11-11, шаг 6 (Д-059).** Таблица и хеши сгенерированы из
+> `Params::defaults`; `v0` не менялась. Что изменилось и что проверить в игре —
+> [STEP5-RELIEF-2026-11-11.md](STEP5-RELIEF-2026-11-11.md) и
+> [STEP6-SPEED-2026-11-11.md](STEP6-SPEED-2026-11-11.md), карта документов —
+> [docs/README.md](README.md).
 
 Сгенерировано `cargo run -p xtask -- params-doc --version v1-dev > docs/PARAMS-V1-DEV.md`.
 Источник правды — `Params::defaults` в `crates/litho-core/src/params.rs`.
@@ -43,6 +44,7 @@
 | `boundaries.ray_fan_half_angle_deg` | `20.0` | `20.0` |
 | `boundaries.ray_fan_rays` | `3` | `3` |
 | `boundaries.ray_fan_sigma_deg` | `20.0` | `20.0` |
+| `boundaries.ray_lattice_l` | `0.128` | `0.128` |
 | `boundaries.wind_belt_fade_deg` | `21.0` | `21.0` |
 | `boundaries.wind_fd_step_l` | `0.5` | `0.5` |
 | `boundaries.wind_grad_floor_deg_per_l` | `20.0` | `20.0` |
@@ -409,4 +411,4 @@
 | `wind.knot7.phi_deg` | `90` | `90` |
 | `wind.knot7.s` | `0.3` | `0.3` |
 
-params_hash: scientific = 67fc5915a67ea73c, gameplay = 4bf2bb80787af69d
+params_hash: scientific = 8a871b7f9a261626, gameplay = 8690cab5a14ba7a1

@@ -498,20 +498,20 @@ where
     }
 }
 
-fn trace_single_ray<F, W>(
+/// Линия тока против ветра: высоты и широты в `ray_steps + 1` точках. Это
+/// вся дорогая часть луча; порядок вызовов `wind_fn` и `field` прежний.
+fn ray_path<F, W>(
     point: Vec2,
     params: &Params,
     field: &F,
-    wind_dir: Vec2,
     wind_fn: &W,
     seed: u64,
-) -> RayResult
+) -> (Vec<f64>, Vec<f64>)
 where
     F: Fn(Vec2) -> SurfaceSample,
     W: Fn(Vec2) -> (Vec2, f64),
 {
     let pr = &params.precip;
-    let c = &params.climate;
     let steps = pr.ray_steps;
     let ds = pr.ray_step_l;
     let mut points = Vec::with_capacity(steps + 1);
@@ -534,6 +534,26 @@ where
     for candidate in &points {
         heights.push(field(*candidate).e_km);
     }
+    (heights, phis)
+}
+
+fn trace_single_ray<F, W>(
+    point: Vec2,
+    params: &Params,
+    field: &F,
+    wind_dir: Vec2,
+    wind_fn: &W,
+    seed: u64,
+) -> RayResult
+where
+    F: Fn(Vec2) -> SurfaceSample,
+    W: Fn(Vec2) -> (Vec2, f64),
+{
+    let pr = &params.precip;
+    let c = &params.climate;
+    let steps = pr.ray_steps;
+    let ds = pr.ray_step_l;
+    let (heights, phis) = ray_path(point, params, field, wind_fn, seed);
 
     let n = steps;
     let sat_last = w_sat(phis[n], params);
@@ -573,6 +593,220 @@ where
         mu: moisture,
         cont_ray: 1.0 - m_ind,
         slope,
+    }
+}
+
+/// Наибольшее число лучей веера (`boundaries.ray_fan_rays` ∈ {1, 3, 5}).
+pub const RAY_FAN_MAX: usize = 5;
+
+/// Д-059: луч влаги в узле решётки быстрого пути.
+///
+/// Последний шаг луча зависит только от самой точки: море под ней или суша,
+/// её широта и её высота над предыдущей точкой луча. Эти величины колонка
+/// знает точно, а на берегу и на склоне они меняются за один блок. Поэтому
+/// узел хранит только то, что пришло с наветренной стороны, по каждому лучу
+/// веера отдельно, а последний шаг колонка делает сама в [`RayNode::resolve`].
+/// В своей точке узел даёт тот же ответ, что `trace_ray`.
+#[derive(Clone, Copy, Debug)]
+pub struct RayNode {
+    rays: usize,
+    /// Нормированные веса лучей веера.
+    weight: [f64; RAY_FAN_MAX],
+    /// Влага, пришедшая к точке до последнего шага.
+    arrived: [f64; RAY_FAN_MAX],
+    /// Высота предыдущей точки луча, км: от неё считается подъём.
+    before_km: [f64; RAY_FAN_MAX],
+    /// Высота в точке замера наветренного уклона, км.
+    probe_km: [f64; RAY_FAN_MAX],
+    /// Доля моря на луче без самой точки (вес континентальности).
+    sea_rest: f64,
+    /// Вес самой точки в континентальности луча.
+    own: f64,
+}
+
+impl RayNode {
+    /// Билинейная смесь четырёх узлов клетки: (0,0), (1,0), (0,1), (1,1).
+    pub fn bilinear(nodes: &[RayNode; 4], fx: f64, fz: f64) -> RayNode {
+        let mix = |value: &dyn Fn(&RayNode) -> f64| {
+            lerp(
+                lerp(value(&nodes[0]), value(&nodes[1]), fx),
+                lerp(value(&nodes[2]), value(&nodes[3]), fx),
+                fz,
+            )
+        };
+        let mut out = nodes[0];
+        for k in 0..out.rays {
+            out.arrived[k] = mix(&|node| node.arrived[k]);
+            out.before_km[k] = mix(&|node| node.before_km[k]);
+            out.probe_km[k] = mix(&|node| node.probe_km[k]);
+        }
+        out.sea_rest = mix(&|node| node.sea_rest);
+        out
+    }
+
+    /// Последний шаг луча для точки с высотой `e_km` на широте `phi_deg`.
+    pub fn resolve(&self, e_km: f64, phi_deg: f64, params: &Params) -> RayResult {
+        let pr = &params.precip;
+        let c = &params.climate;
+        let ds = pr.ray_step_l;
+        let sea = e_km < 0.0;
+        let mut mu = 0.0;
+        let mut slope = 0.0;
+        for k in 0..self.rays {
+            let mut moisture = self.arrived[k];
+            if sea {
+                let sat = w_sat(phi_deg, params);
+                moisture += (sat - moisture) * (1.0 - dexp(-ds / pr.ocean_length_l));
+            } else {
+                moisture *= dexp(-ds / pr.land_length_l);
+                let climb = (e_km - self.before_km[k]).max(0.0);
+                moisture *= dexp(-climb / pr.orographic_height_km);
+            }
+            mu += self.weight[k] * moisture;
+            slope += self.weight[k] * ((e_km - self.probe_km[k]) / c.slope_probe_l).max(0.0);
+        }
+        let sea_weight = self.sea_rest + if sea { self.own } else { 0.0 };
+        RayResult {
+            mu,
+            cont_ray: 1.0 - sea_weight,
+            slope,
+        }
+    }
+}
+
+/// Д-059: тот же веер, что `trace_ray`, но без последнего шага.
+pub fn trace_ray_node<F, W>(
+    point: Vec2,
+    params: &Params,
+    field: &F,
+    wind_dir: Vec2,
+    wind_fn: &W,
+    seed: u64,
+) -> RayNode
+where
+    F: Fn(Vec2) -> SurfaceSample,
+    W: Fn(Vec2) -> (Vec2, f64),
+{
+    let b = &params.boundaries;
+    let n = if params.version.is_water_relief_dev() {
+        b.ray_fan_rays.clamp(1, RAY_FAN_MAX)
+    } else {
+        1
+    };
+    let mut node = RayNode {
+        rays: n,
+        weight: [0.0; RAY_FAN_MAX],
+        arrived: [0.0; RAY_FAN_MAX],
+        before_km: [0.0; RAY_FAN_MAX],
+        probe_km: [0.0; RAY_FAN_MAX],
+        sea_rest: 0.0,
+        own: 0.0,
+    };
+    let mut total = 0.0;
+    for k in 0..n {
+        let (weight, angle) = if n > 1 {
+            let t = k as f64 / (n - 1) as f64 * 2.0 - 1.0;
+            let offset_deg = t * b.ray_fan_half_angle_deg;
+            let ratio = offset_deg / b.ray_fan_sigma_deg;
+            (
+                dexp(-0.5 * ratio * ratio),
+                offset_deg * (std::f64::consts::PI / 180.0),
+            )
+        } else {
+            (1.0, 0.0)
+        };
+        let part = if n > 1 {
+            let fan_wind = |q: Vec2| {
+                let (v, phi) = wind_fn(q);
+                (rotate_unit(v, angle).scale(v.len()), phi)
+            };
+            trace_single_node(
+                point,
+                params,
+                field,
+                rotate_unit(wind_dir, angle),
+                &fan_wind,
+                seed,
+            )
+        } else {
+            trace_single_node(point, params, field, wind_dir, wind_fn, seed)
+        };
+        node.weight[k] = weight;
+        node.arrived[k] = part.arrived;
+        node.before_km[k] = part.before_km;
+        node.probe_km[k] = part.probe_km;
+        node.sea_rest += weight * part.sea_rest;
+        node.own = part.own;
+        total += weight;
+    }
+    for weight in &mut node.weight[..n] {
+        *weight /= total;
+    }
+    node.sea_rest /= total;
+    node
+}
+
+/// Один луч веера без последнего шага.
+struct RayPart {
+    arrived: f64,
+    before_km: f64,
+    probe_km: f64,
+    sea_rest: f64,
+    own: f64,
+}
+
+fn trace_single_node<F, W>(
+    point: Vec2,
+    params: &Params,
+    field: &F,
+    wind_dir: Vec2,
+    wind_fn: &W,
+    seed: u64,
+) -> RayPart
+where
+    F: Fn(Vec2) -> SurfaceSample,
+    W: Fn(Vec2) -> (Vec2, f64),
+{
+    let pr = &params.precip;
+    let c = &params.climate;
+    let n = pr.ray_steps;
+    let ds = pr.ray_step_l;
+    let (heights, phis) = ray_path(point, params, field, wind_fn, seed);
+
+    let sat_last = w_sat(phis[n], params);
+    let mut moisture = if heights[n] < 0.0 {
+        sat_last
+    } else {
+        c.w_land_start * sat_last
+    };
+    for k in (1..n).rev() {
+        if heights[k] < 0.0 {
+            let sat = w_sat(phis[k], params);
+            moisture += (sat - moisture) * (1.0 - dexp(-ds / pr.ocean_length_l));
+        } else {
+            moisture *= dexp(-ds / pr.land_length_l);
+            let climb = (heights[k] - heights[k + 1]).max(0.0);
+            moisture *= dexp(-climb / pr.orographic_height_km);
+        }
+    }
+
+    let mut sea_rest = 0.0;
+    let mut total_weight = 0.0;
+    for (k, height) in heights.iter().enumerate() {
+        let weight = dexp(-(k as f64) * ds / c.cont_decay_l);
+        total_weight += weight;
+        if k > 0 && *height < 0.0 {
+            sea_rest += weight;
+        }
+    }
+    let upwind = point.sub(wind_dir.scale(c.slope_probe_l));
+    RayPart {
+        arrived: moisture,
+        before_km: heights[1.min(n)],
+        probe_km: field(upwind).e_km,
+        sea_rest: sea_rest / total_weight,
+        // Вес самой точки равен exp(0) = 1.
+        own: 1.0 / total_weight,
     }
 }
 

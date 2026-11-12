@@ -56,7 +56,16 @@ jobs:
           if [ "$(python3 -c 'import json; print(json.load(open("tools/bench-targets.json"))["enforce_in_ci"])')" = "True" ]; then
             enforce=(--enforce-chunk-target)
           fi
-          cargo run -p litho-sandbox --release -- bench --seed 42 --mode gameplay --version v1-dev --chunk-target-ms "$target" "${enforce[@]}"
+          # Д-059: вывод уходит в аннотацию прогона, чтобы нативную цифру можно
+          # было прочитать без сырых логов.
+          set -o pipefail
+          cargo run -q -p litho-sandbox --release -- bench --seed 42 --mode gameplay --version v1-dev --chunk-target-ms "$target" "${enforce[@]}" | python3 tools/ci_annotations.py report
+          cargo run -q -p litho-sandbox --release -- bench --seed 42 --mode scientific --version v1-dev --chunk-target-ms "$target" "${enforce[@]}" | python3 tools/ci_annotations.py report
+      - name: "Д-059 — быстрый путь v1-dev против эталона (зона совпадает ≥ 0.97, как в 14.2)"
+        run: |
+          set -o pipefail
+          cargo run -q -p litho-sandbox --release -- paths --seed 42 --mode gameplay --version v1-dev --center 2000,2000 --min-zone-share 0.97 | python3 tools/ci_annotations.py report
+          cargo run -q -p litho-sandbox --release -- paths --seed 42 --mode scientific --version v1-dev --center 2000,2000 --min-zone-share 0.97 | python3 tools/ci_annotations.py report
       - name: "Э3.5 — v1-dev smoke (синтетика НЕ является приёмкой)"
         run: |
           set -o pipefail

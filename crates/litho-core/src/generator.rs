@@ -38,6 +38,10 @@ const COARSE_N: usize = 4;
 /// колонке. Ёмкость инфраструктурная, в хеш мира не входит; вытеснение меняет
 /// только скорость, не ответ.
 const COLUMN_CACHE_CAPACITY: usize = 4096;
+/// Д-059: кэш лучей влаги в узлах решётки быстрого пути. Узел — два десятка
+/// чисел; при шаге 32 блока ёмкости хватает на область 4096×4096 блоков.
+/// В хеш мира не входит: вытеснение меняет только скорость, не ответ.
+const RAY_CACHE_CAPACITY: usize = 16384;
 /// К2/К7: `field()` раньше молча подменял ошибку и нечисловое значение нулём.
 /// litho-core не имеет зависимостей (план 5.4), поэтому пишем в stderr без
 /// внешнего `log`-крейта; первые ошибки видны в логе игры/CI, далее только
@@ -137,6 +141,10 @@ pub struct Generator {
     coarse: Arc<CoarseTiles>,
     /// T160: точная колонка `(x,z)` для повторных запросов полей.
     column: Arc<crate::cache::ShardedCache<(i64, i64), Arc<FullSample>>>,
+    /// Д-059: лучи влаги в узлах решётки быстрого пути (только v1-dev).
+    rays: Arc<crate::cache::ShardedCache<(i64, i64), Option<crate::climate::RayNode>>>,
+    /// Д-059: счётчик посчитанных узлов, только для диагностики.
+    ray_traces: Arc<std::sync::atomic::AtomicU64>,
     spawn_shift: Vec2,
 }
 
@@ -178,6 +186,8 @@ impl Generator {
                 shards,
                 COLUMN_CACHE_CAPACITY,
             )),
+            rays: Arc::new(crate::cache::ShardedCache::new(shards, RAY_CACHE_CAPACITY)),
+            ray_traces: Arc::new(std::sync::atomic::AtomicU64::new(0)),
             spawn_shift: shift,
         })
     }
@@ -824,14 +834,27 @@ impl Generator {
         // роняла совпадение зон до 0,953. Берём ветер точно, как в эталоне:
         // это дешевле, чем ослаблять инвариант 14.2.
         let wind_fn = |q: Vec2| crate::climate::wind_at(q, self.seed, &self.params);
-        let ray = crate::climate::trace_ray(
-            point,
-            &self.params,
-            &|q| self.surface_at(q),
-            dir,
-            &wind_fn,
-            self.seed,
-        );
+        let exact_ray = || {
+            crate::climate::trace_ray(
+                point,
+                &self.params,
+                &|q| self.surface_at(q),
+                dir,
+                &wind_fn,
+                self.seed,
+            )
+        };
+        // Д-059: в v1-dev луч берётся с решётки; эталон считает его из точки.
+        let ray = if self.params.version.is_water_relief_dev()
+            && self.params.boundaries.ray_lattice_l > 0.0
+            && self.params.precip.ray_steps > 0
+        {
+            self.lattice_ray(point)
+                .map(|node| node.resolve(surface.e_km, pole.phi_deg, &self.params))
+                .unwrap_or_else(exact_ray)
+        } else {
+            exact_ray()
+        };
         let c = &self.params.climate;
         let c_iso = crate::math::smoothstep(0.0, c.c_iso_end_l, surface.iota_l);
         let cont = crate::math::lerp(
@@ -894,6 +917,82 @@ impl Generator {
     /// T160: кэш точной колонки. Ключ — биты координат, без квантования;
     /// попадание/промах не меняет ответ. Ошибки/None не кэшируются.
     /// К7: ошибку сети стока не проглатываем — `field()` пишет её в лог.
+    /// Диагностика Д-059: тот же мир с другой решёткой луча влаги быстрого
+    /// пути. Эталонный путь и хеш параметров не меняются; для игры решётка
+    /// берётся только из `Params::defaults`.
+    pub fn with_ray_lattice(mut self, step_l: f64) -> Self {
+        self.params.boundaries.ray_lattice_l = step_l;
+        self.rays = Arc::new(crate::cache::ShardedCache::new(
+            self.params.lattice.cache_shards.max(1),
+            RAY_CACHE_CAPACITY,
+        ));
+        self.column = Arc::new(crate::cache::ShardedCache::new(
+            self.params.lattice.cache_shards.max(1),
+            COLUMN_CACHE_CAPACITY,
+        ));
+        self.ray_traces = Arc::new(std::sync::atomic::AtomicU64::new(0));
+        self
+    }
+
+    /// Диагностика Д-059: сколько узлов решётки луча посчитано с создания
+    /// генератора (каждый узел — один веер лучей, как одна колонка эталона).
+    pub fn ray_nodes(&self) -> u64 {
+        self.ray_traces.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Д-059: наветренная часть луча влаги в узле решётки (`step` — её шаг
+    /// в L). Узел считает свой ветер и свой веер так же, как точка в
+    /// `try_sample`; `None` — у узла нет полюсов (тогда колонка считает луч
+    /// сама).
+    fn ray_node(&self, ix: i64, iz: i64, step: f64) -> Option<crate::climate::RayNode> {
+        if let Some(hit) = self.rays.get((ix, iz)) {
+            return hit;
+        }
+        self.ray_traces
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let q = Vec2::new(ix as f64 * step, iz as f64 * step);
+        let value = crate::climate::pole_sample(q, self.seed, &self.params).map(|pole| {
+            let wind = crate::climate::wind(pole.phi_deg, pole.north, pole.east, &self.params);
+            let dir = if wind.len() > 1e-9 {
+                wind.normalized()
+            } else {
+                crate::climate::fallback_dir(&self.params)
+            };
+            let wind_fn = |p: Vec2| crate::climate::wind_at(p, self.seed, &self.params);
+            crate::climate::trace_ray_node(
+                q,
+                &self.params,
+                &|p| self.surface_at(p),
+                dir,
+                &wind_fn,
+                self.seed,
+            )
+        });
+        self.rays.get_or_insert((ix, iz), || value)
+    }
+
+    /// Д-059: наветренная часть луча влаги для быстрого пути — билинейная
+    /// смесь четырёх узлов решётки. Узел зависит только от своих координат,
+    /// поэтому ответ не зависит от порядка запросов и от вытеснения из кэша.
+    fn lattice_ray(&self, point: Vec2) -> Option<crate::climate::RayNode> {
+        let step = self.params.boundaries.ray_lattice_l;
+        let gx = point.x / step;
+        let gz = point.z / step;
+        let ix = gx.floor() as i64;
+        let iz = gz.floor() as i64;
+        let nodes = [
+            self.ray_node(ix, iz, step)?,
+            self.ray_node(ix + 1, iz, step)?,
+            self.ray_node(ix, iz + 1, step)?,
+            self.ray_node(ix + 1, iz + 1, step)?,
+        ];
+        Some(crate::climate::RayNode::bilinear(
+            &nodes,
+            gx - ix as f64,
+            gz - iz as f64,
+        ))
+    }
+
     fn cached_full(&self, x: f64, z: f64) -> Result<Option<Arc<FullSample>>, RiverNetError> {
         let key = (x.to_bits() as i64, z.to_bits() as i64);
         if let Some(hit) = self.column.get(key) {
@@ -1284,9 +1383,20 @@ mod tests {
         assert!(fast.world.hydrology.gallery > fast.world.river);
         assert_eq!(fast.cell.biome, "forest");
         assert!(fast.vanilla.h > 0.0);
-        assert_eq!(fast.vanilla.h.to_bits(), reference.vanilla.h.to_bits());
+        // Д-059: быстрый путь берёт наветренную часть луча влаги с решётки,
+        // поэтому H у него близко к эталону, но не побитово. Побитовое
+        // равенство двух путей проверяется с выключенной решёткой.
+        assert!((fast.vanilla.h - reference.vanilla.h).abs() < 0.02);
         assert_eq!(fast.vanilla.t.to_bits(), reference.vanilla.t.to_bits());
         assert_eq!(fast.cell, reference.cell);
+        let exact = Generator::new(42, Mode::Gameplay, GenVersion::V1Dev)
+            .unwrap()
+            .with_ray_lattice(0.0)
+            .sample(x, z)
+            .unwrap();
+        assert_eq!(exact.vanilla.h.to_bits(), reference.vanilla.h.to_bits());
+        assert_eq!(exact.vanilla.t.to_bits(), reference.vanilla.t.to_bits());
+        assert_eq!(exact.cell, reference.cell);
     }
 
     #[test]
@@ -1520,5 +1630,160 @@ mod field_log_tests {
         assert_eq!(counter.load(Ordering::Relaxed), FIELD_LOG_LIMIT + 5);
         // Публичный счётчик доступен игре/CI и монотонно растёт.
         let _ = field_error_log_count();
+    }
+}
+
+/// Д-059: решётка луча влаги быстрого пути.
+#[cfg(test)]
+mod ray_lattice_tests {
+    use super::Generator;
+    use crate::math::Vec2;
+    use crate::mode::Mode;
+    use crate::version::GenVersion;
+
+    fn points(n: usize) -> Vec<(f64, f64)> {
+        (0..n)
+            .map(|k| {
+                (
+                    k as f64 * 173.0 - 4100.5,
+                    (k * k % 97) as f64 * 83.0 - 3900.5,
+                )
+            })
+            .collect()
+    }
+
+    /// Узел без последнего шага плюс `resolve` в его же точке дают луч
+    /// эталона — и на суше, и на море.
+    #[test]
+    fn node_reproduces_the_reference_ray_at_its_own_point() {
+        for mode in Mode::ALL {
+            let g = Generator::new(42, mode, GenVersion::V1Dev).unwrap();
+            let (mut land, mut sea) = (0, 0);
+            for (x, z) in points(60) {
+                let point = g.macro_point(x, z);
+                let pole = crate::climate::pole_sample(point, g.seed, &g.params).unwrap();
+                let wind = crate::climate::wind(pole.phi_deg, pole.north, pole.east, &g.params);
+                let dir = wind.normalized();
+                let wind_fn = |p: Vec2| crate::climate::wind_at(p, g.seed, &g.params);
+                let field = |p: Vec2| g.surface_at(p);
+                let exact =
+                    crate::climate::trace_ray(point, &g.params, &field, dir, &wind_fn, g.seed);
+                let node =
+                    crate::climate::trace_ray_node(point, &g.params, &field, dir, &wind_fn, g.seed);
+                let e_km = g.surface_at(point).e_km;
+                if e_km < 0.0 {
+                    sea += 1;
+                } else {
+                    land += 1;
+                }
+                let got = node.resolve(e_km, pole.phi_deg, &g.params);
+                assert!((got.mu - exact.mu).abs() < 1e-12, "μ в ({x}, {z})");
+                assert!(
+                    (got.cont_ray - exact.cont_ray).abs() < 1e-12,
+                    "континентальность в ({x}, {z})"
+                );
+                assert!(
+                    (got.slope - exact.slope).abs() < 1e-12,
+                    "уклон в ({x}, {z})"
+                );
+            }
+            assert!(land > 5 && sea > 5, "суша {land}, море {sea}");
+        }
+    }
+
+    /// Ответ быстрого пути не зависит от порядка запросов: какие узлы
+    /// считать, решают только значения узлов.
+    #[test]
+    fn fast_path_does_not_depend_on_query_order() {
+        let pts = points(40);
+        let forward = Generator::new(42, Mode::Gameplay, GenVersion::V1Dev).unwrap();
+        let backward = Generator::new(42, Mode::Gameplay, GenVersion::V1Dev).unwrap();
+        let a: Vec<_> = pts
+            .iter()
+            .map(|(x, z)| forward.sample(*x, *z).unwrap())
+            .collect();
+        let mut b: Vec<_> = pts
+            .iter()
+            .rev()
+            .map(|(x, z)| backward.sample(*x, *z).unwrap())
+            .collect();
+        b.reverse();
+        assert!(forward.ray_nodes() > 0);
+        for (a, b) in a.iter().zip(&b) {
+            assert_eq!(a.climate.precip.mu.to_bits(), b.climate.precip.mu.to_bits());
+            assert_eq!(
+                a.climate.precip.p_mm.to_bits(),
+                b.climate.precip.p_mm.to_bits()
+            );
+            assert_eq!(a.vanilla.t.to_bits(), b.vanilla.t.to_bits());
+            assert_eq!(a.vanilla.h.to_bits(), b.vanilla.h.to_bits());
+            assert_eq!(a.zone, b.zone);
+        }
+    }
+
+    /// v0 заморожен: решётка в нём выключена и ни один узел не считается.
+    #[test]
+    fn frozen_v0_never_uses_the_lattice() {
+        let g = Generator::new(42, Mode::Gameplay, GenVersion::V0).unwrap();
+        assert_eq!(g.params.boundaries.ray_lattice_l, 0.0);
+        for (x, z) in points(8) {
+            let fast = g.sample(x, z).unwrap();
+            let reference = g.sample_reference(x, z).unwrap();
+            assert_eq!(
+                fast.climate.precip.mu.to_bits(),
+                reference.climate.precip.mu.to_bits()
+            );
+        }
+        assert_eq!(g.ray_nodes(), 0);
+    }
+
+    /// Выключенная решётка возвращает быстрый путь v1-dev к лучу из колонки.
+    #[test]
+    fn disabled_lattice_matches_the_reference_bit_for_bit() {
+        let g = Generator::new(42, Mode::Gameplay, GenVersion::V1Dev)
+            .unwrap()
+            .with_ray_lattice(0.0);
+        for (x, z) in points(8) {
+            let fast = g.sample(x, z).unwrap();
+            let reference = g.sample_reference(x, z).unwrap();
+            assert_eq!(
+                fast.climate.precip.p_mm.to_bits(),
+                reference.climate.precip.p_mm.to_bits()
+            );
+        }
+        assert_eq!(g.ray_nodes(), 0);
+    }
+
+    /// Решётка близка к эталону. На 2304 точках (`litho-sandbox paths`) зона
+    /// совпадает в 0.973 точек; здесь выборка в 160 точек, поэтому порог
+    /// 0.95 — он ловит поломку, а не меряет качество. Расхождения лежат на
+    /// ступеньках μ эталона (луч с шагом 0.25 L пересекает берег).
+    #[test]
+    fn lattice_stays_close_to_the_reference() {
+        for mode in Mode::ALL {
+            let g = Generator::new(42, mode, GenVersion::V1Dev).unwrap();
+            let pts = points(160);
+            let mut same = 0_usize;
+            let mut errors = Vec::with_capacity(pts.len());
+            for (x, z) in &pts {
+                let reference = g.sample_reference(*x, *z).unwrap();
+                let fast = g.sample(*x, *z).unwrap();
+                same += usize::from(reference.zone == fast.zone);
+                errors.push((reference.climate.precip.mu - fast.climate.precip.mu).abs());
+                // C/E/W от луча не зависят и остаются побитовыми.
+                assert_eq!(reference.vanilla.c.to_bits(), fast.vanilla.c.to_bits());
+                assert_eq!(reference.vanilla.e.to_bits(), fast.vanilla.e.to_bits());
+                assert_eq!(reference.vanilla.w.to_bits(), fast.vanilla.w.to_bits());
+            }
+            errors.sort_by(f64::total_cmp);
+            let share = same as f64 / pts.len() as f64;
+            assert!(share >= 0.95, "{mode:?}: зона совпала в {share}");
+            // На 2304 точках среднее |Δμ| 0.005, p95 0.025.
+            assert!(
+                errors[errors.len() / 2] < 0.01,
+                "{mode:?}: медиана |Δμ| {}",
+                errors[errors.len() / 2]
+            );
+        }
     }
 }

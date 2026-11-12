@@ -930,6 +930,11 @@ pub struct BoundaryParams {
     pub ray_fan_rays: usize,
     pub ray_fan_half_angle_deg: f64,
     pub ray_fan_sigma_deg: f64,
+    /// Д-059 / шаг 6: шаг решётки, в узлах которой быстрый путь считает
+    /// наветренную часть луча влаги, L. Между узлами — билинейная
+    /// интерполяция, последний шаг луча колонка делает сама по своей высоте.
+    /// 0 — луч из каждой колонки, как в эталоне.
+    pub ray_lattice_l: f64,
     /// T131: шаг центральных разностей скалярной φ, L (план Б3: 0.25–0.5).
     pub wind_fd_step_l: f64,
     /// T131: плавный уход к запасному направлению при малом |∇φ| и у полюса.
@@ -990,6 +995,10 @@ impl BoundaryParams {
         {
             return Err("σ весов веера влаги должна лежать в (0, 20]°");
         }
+        if !self.ray_lattice_l.is_finite() || !(0.0..=1.0).contains(&self.ray_lattice_l) {
+            return Err("шаг решётки луча влаги должен лежать в 0…1 L");
+        }
+
         if !self.wind_fd_step_l.is_finite() || !(0.25..=0.5).contains(&self.wind_fd_step_l) {
             return Err("шаг конечных разностей ветра должен лежать в 0.25…0.5 L");
         }
@@ -1503,6 +1512,7 @@ impl Params {
                 ray_fan_rays: 3,
                 ray_fan_half_angle_deg: 20.0,
                 ray_fan_sigma_deg: 20.0,
+                ray_lattice_l: 0.0,
                 wind_fd_step_l: 0.5,
                 wind_grad_floor_deg_per_l: 20.0,
                 wind_pole_fade_l: 16.0,
@@ -1673,6 +1683,10 @@ impl Params {
             // К5 / Д-057: впадины сверх 3 % узлов суши плиты прорезаются
             // руслом, а не заливаются. С полосой берега это ≤5–8 % суши.
             p.drainage.lake_area_max_fraction = 0.03;
+            // Д-059: луч влаги — около 85 % цены колонки. Быстрый путь считает его
+            // наветренную часть в узлах решётки 0.128 L (32 блока gameplay,
+            // 128 scientific) — вдвое мельче шага самого луча (0.25 L).
+            p.boundaries.ray_lattice_l = 0.128;
             p.relief.basin_strength = 0.08;
             // T113/T110: равнинные русла были почти прямыми (1,01–1,02).
             // Тесты T113/T115 ищут отрезки и дельты по сети, а не по точкам.
@@ -2197,6 +2211,7 @@ impl Params {
                     bd.ray_fan_half_angle_deg,
                 ),
                 ("boundaries.ray_fan_sigma_deg", bd.ray_fan_sigma_deg),
+                ("boundaries.ray_lattice_l", bd.ray_lattice_l),
             ] {
                 writeln!(w, "{name}={value:?}").unwrap();
             }

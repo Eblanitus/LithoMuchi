@@ -305,6 +305,128 @@ fn seam_components(generator: &Generator, x: f64, z: f64, label: &str) {
 /// Полный скан карты, а не 100 точек юнит-теста: 64×64 узла с шагом 16
 /// блоков, соседи по обеим осям для всех трёх полей. Возвращает ошибку при
 /// любом превышении порога — это и есть обязательный гейт из Д-022.
+/// Диагностика Д-059: `--ray-lattice ШАГ_L` подменяет шаг решётки луча
+/// влаги быстрого пути (0 — луч из каждой колонки, как в эталоне).
+fn with_ray_lattice(generator: Generator, args: &[String]) -> Result<Generator, String> {
+    let Some(text) = value(args, "--ray-lattice") else {
+        return Ok(generator);
+    };
+    let step = text
+        .parse::<f64>()
+        .map_err(|e| format!("--ray-lattice: {e}"))?;
+    if !(0.0..=1.0).contains(&step) {
+        return Err("--ray-lattice: шаг должен лежать в 0…1 L".to_string());
+    }
+    Ok(generator.with_ray_lattice(step))
+}
+
+/// Д-059: сверка быстрого пути с эталоном на сетке точек. Быстрый путь
+/// v1-dev берёт луч влаги с решётки; здесь видно, сколько это стоит в μ,
+/// осадках, полях T/H, высоте и классе зоны. `--min-zone-share X` делает
+/// команду гейтом.
+fn cmd_paths(args: &[String]) -> Result<(), String> {
+    let opts = options_from(args)?;
+    let generator = with_ray_lattice(generator(&opts)?, args)?;
+    let n = match value(args, "--n") {
+        Some(text) => text.parse::<usize>().map_err(|e| format!("--n: {e}"))?,
+        None => 48,
+    };
+    let span_l = match value(args, "--span-l") {
+        Some(text) => text.parse::<f64>().map_err(|e| format!("--span-l: {e}"))?,
+        None => 40.0,
+    };
+    let min_share = value(args, "--min-zone-share")
+        .map(|text| {
+            text.parse::<f64>()
+                .map_err(|e| format!("--min-zone-share: {e}"))
+        })
+        .transpose()?;
+    if n == 0 || !span_l.is_finite() || span_l <= 0.0 {
+        return Err("--n должен быть > 0, --span-l строго > 0".to_string());
+    }
+    let step = span_l * opts.mode.l_blocks() / n as f64;
+    let names = ["μ", "P, мм", "T", "H", "C", "E", "W", "высота, блоков"];
+    let mut errors: Vec<Vec<f64>> = vec![Vec::with_capacity(n * n); names.len()];
+    let mut worst = [(0.0_f64, 0.0_f64, 0.0_f64); 8];
+    let (mut total, mut same, mut land, mut land_same) = (0_usize, 0_usize, 0_usize, 0_usize);
+    for j in 0..n {
+        for i in 0..n {
+            // Полблока сдвига: точки не попадают в узлы решётки луча.
+            let x = (opts.center_x + (i as f64 - n as f64 * 0.5) * step).floor() + 0.5;
+            let z = (opts.center_z + (j as f64 - n as f64 * 0.5) * step).floor() + 0.5;
+            let (Some(reference), Some(fast)) = (
+                generator
+                    .try_sample_reference(x, z)
+                    .map_err(|e| e.to_string())?,
+                generator.try_sample(x, z).map_err(|e| e.to_string())?,
+            ) else {
+                continue;
+            };
+            total += 1;
+            let zone_same = reference.zone == fast.zone;
+            same += usize::from(zone_same);
+            if !reference.world.is_ocean {
+                land += 1;
+                land_same += usize::from(zone_same);
+            }
+            let deltas = [
+                reference.climate.precip.mu - fast.climate.precip.mu,
+                reference.climate.precip.p_mm - fast.climate.precip.p_mm,
+                reference.vanilla.t - fast.vanilla.t,
+                reference.vanilla.h - fast.vanilla.h,
+                reference.vanilla.c - fast.vanilla.c,
+                reference.vanilla.e - fast.vanilla.e,
+                reference.vanilla.w - fast.vanilla.w,
+                reference.world.height.surface_y - fast.world.height.surface_y,
+            ];
+            for (k, delta) in deltas.iter().enumerate() {
+                let delta = delta.abs();
+                errors[k].push(delta);
+                if delta > worst[k].0 {
+                    worst[k] = (delta, x, z);
+                }
+            }
+        }
+    }
+    if total == 0 {
+        return Err("paths: в окне нет ни одной точки с плитой".to_string());
+    }
+    let share = same as f64 / total as f64;
+    let land_share = if land == 0 {
+        1.0
+    } else {
+        land_same as f64 / land as f64
+    };
+    println!(
+        "paths ({version}, {mode}, сид {seed}): {total} точек, окно {span_l} L, шаг {step:.0} блоков",
+        version = opts.version.as_str(),
+        mode = opts.mode.as_str(),
+        seed = opts.seed,
+    );
+    println!(
+        "paths: зона совпала в {share:.4} точек; на суше {land_share:.4} ({land_same}/{land})"
+    );
+    let nodes = generator.ray_nodes();
+    println!(
+        "paths: узлов луча влаги {nodes} — {per:.4} на колонку (эталон: 1 луч на колонку)",
+        per = nodes as f64 / total as f64
+    );
+    for (k, name) in names.iter().enumerate() {
+        let list = &mut errors[k];
+        list.sort_by(f64::total_cmp);
+        let mean = list.iter().sum::<f64>() / list.len() as f64;
+        let p95 = list[(list.len() - 1) * 95 / 100];
+        let (max, x, z) = worst[k];
+        println!("paths: |Δ {name}| среднее {mean:.5}, p95 {p95:.5}, max {max:.5} в ({x}, {z})");
+    }
+    match min_share {
+        Some(min) if share < min => Err(format!(
+            "paths: совпадение зон {share:.4} ниже требуемого {min}"
+        )),
+        _ => Ok(()),
+    }
+}
+
 fn cmd_seams(args: &[String]) -> Result<(), String> {
     let opts = options_from(args)?;
     let generator = generator(&opts)?;
@@ -783,7 +905,7 @@ fn cmd_bench(args: &[String]) -> Result<(), String> {
         return Err("--chunk-target-ms должен быть конечным и > 0".into());
     }
     let enforce_chunk_target = args.iter().any(|arg| arg == "--enforce-chunk-target");
-    let generator = generator(&opts)?;
+    let generator = with_ray_lattice(generator(&opts)?, args)?;
     let n = 1000;
     let mut sink = 0.0_f64;
     let mut refs = [0.0_f64; 3];
@@ -857,14 +979,20 @@ fn cmd_bench(args: &[String]) -> Result<(), String> {
     // углы и центр области трогаем заранее, в точках вне сетки чанка: иначе
     // одна постройка сети, случайно попавшая в чанк, утраивает «мс/чанк».
     let chunk_span = ((CHUNK_SIDE - 1) * 4) as f64;
+    let (chunk_x, chunk_z) = (opts.center_x.floor(), opts.center_z.floor());
     for (fx, fz) in [(0.0, 0.0), (1.0, 0.0), (0.0, 1.0), (1.0, 1.0), (0.5, 0.5)] {
         sink += generator.field(
             Field::Continents,
-            fx * chunk_span + 0.5,
+            chunk_x + fx * chunk_span + 0.5,
             64.0,
-            fz * chunk_span + 0.5,
+            chunk_z + fz * chunk_span + 0.5,
         );
     }
+    // Д-059: прогрев и замеры выше уже посчитали узлы решётки луча влаги
+    // вокруг чанка. Сбрасываем решётку и кэш колонок (сети рек остаются):
+    // холодный чанк обязан заплатить за свои лучи сам.
+    let lattice_l = generator.params().boundaries.ray_lattice_l;
+    let generator = generator.with_ray_lattice(lattice_l);
     // Д-057: холодный проход — ровно один. Раньше время трёх повторов (один
     // холодный и два из кэша) делилось на три, и «cold» выходил втрое меньше.
     let mut chunk_pass = |repeats: usize| {
@@ -872,8 +1000,8 @@ fn cmd_bench(args: &[String]) -> Result<(), String> {
         for _ in 0..repeats {
             for iz in 0..CHUNK_SIDE {
                 for ix in 0..CHUNK_SIDE {
-                    let x = (ix * 4) as f64;
-                    let z = (iz * 4) as f64;
+                    let x = chunk_x + (ix * 4) as f64;
+                    let z = chunk_z + (iz * 4) as f64;
                     for field in column_fields {
                         sink += generator.field(field, x, 64.0, z);
                     }
@@ -885,6 +1013,13 @@ fn cmd_bench(args: &[String]) -> Result<(), String> {
     let chunk_cold = chunk_pass(1);
     let chunk_warm = chunk_pass(CHUNK_REPEATS);
     let per_column_ms = chunk_cold / chunk_columns as f64;
+    if generator.params().version.is_water_relief_dev() {
+        println!(
+            "bench K4: лучей влаги на холодный чанк — {rays} на {chunk_columns} колонок \
+             (эталон: луч на колонку); шаг решётки {lattice_l} L",
+            rays = generator.ray_nodes(),
+        );
+    }
     let target_status = if chunk_cold <= chunk_target_ms {
         "в цели"
     } else {
@@ -1337,6 +1472,8 @@ fn usage() -> &'static str {
        acceptance   T151/10.1: вердикт границ PASS/FAIL/NO-VOLUME\n\
                     --seeds 0,42,-7 | --seed N | --mode | --json\n\
        seams        скачки C/E/W между соседними блоками\n\
+       paths        Д-059: быстрый путь против эталона (μ, P, T/H, высота, зона)\n\
+                    --n 48 --span-l 40 --min-zone-share 0.97 --ray-lattice ШАГ_L\n\
        drainage     T110–T116: сток, русла, озёра, дельты и поверхность R1 в --at x,z (v1-dev)\n\
        bench        время эталонного/быстрого пути, колонки и чанка v1-dev\n\
                     --chunk-target-ms N | --enforce-chunk-target\n\
@@ -1374,6 +1511,7 @@ fn main() -> Result<(), String> {
         "stats-all" => cmd_stats_all(&args[1..]),
         "acceptance" => cmd_acceptance(&args[1..]),
         "seams" => cmd_seams(&args[1..]),
+        "paths" => cmd_paths(&args[1..]),
         "drainage" => cmd_drainage(&args[1..]),
         "bench" => cmd_bench(&args[1..]),
         "profile" => cmd_profile(),
