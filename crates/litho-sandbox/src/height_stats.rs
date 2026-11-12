@@ -2,7 +2,7 @@
 //! не подмена существующих метрик 12.4 команды `stats` без новых флагов.
 
 use litho_core::vanilla::peaks_valleys;
-use litho_core::{Generator, Mode, SurfaceKind};
+use litho_core::{Mode, SurfaceKind};
 
 use crate::height::{HeightInput, HeightModel, SEA_LEVEL};
 use crate::render::RenderOptions;
@@ -503,8 +503,7 @@ impl HeightStats {
         opts: &StatsOptions,
         model: &HeightModel,
     ) -> Result<Self, String> {
-        let generator =
-            Generator::new(base.seed, base.mode, base.version).map_err(|e| e.to_string())?;
+        let generator = crate::tune::generator(base.seed, base.mode, base.version)?;
         let step = opts.span_l * base.mode.l_blocks() / opts.size as f64;
         let mut out = Self {
             seed: base.seed,
@@ -905,7 +904,7 @@ impl HeightStats {
     }
     pub fn json(&self, base: &RenderOptions, opts: &StatsOptions, model: &HeightModel) -> String {
         format!(
-            "{{\n  \"seed\": {}, \"mode\": {}, \"version\": {}, \"path\": {},\n  \"height_source\": {}, \"height_data_hash\": \"{:016x}\", \"synthetic\": {}, \"pv_field\": {},\n  \"approximation\": {},\n  \"span_l\": {}, \"size\": {}, \"samples\": {}, \"land_samples\": {},\n  \"flooded_land_pct\": {}, \"hyps_pct\": {:?}, \"erosion_pct\": {:?},\n  \"valley_pct\": {}, \"patches\": {}, \"relief_step\": {}, \"relief_windows\": {}, \"relief_median\": {}, \"flat_windows_pct\": {},\n  \"river_samples\": {}, \"river_water_pct\": {}, \"gallery_samples\": {}, \"gallery_pct\": {},\n  \"boundary\": {{\"size\": {}, \"step\": {}, \"span_l\": {}, \"land\": {}, \"humidity_jump_pct\": {}, \"humidity_jump_pair_pct\": {}, \"humidity_jump_pairs\": {}, \"humidity_pairs\": {}, \"climate_land\": {}, \"climate_humidity_jump_pct\": {}, \"climate_humidity_pair_pct\": {}, \"climate_humidity_jump_pairs\": {}, \"climate_humidity_pairs\": {}, \"wind_max_deg\": {}, \"wind_pairs\": {}, \"straight_pct\": {}, \"straight_edges\": {}, \"boundary_edges\": {}, \"straight_model\": \"grid-edge-chord-512-deviation-16\", \"thin_pct\": {}, \"min_strip_blocks\": {}, \"acceptance_volume\": {}}}\n}}\n",
+            "{{\n  \"seed\": {}, \"mode\": {}, \"version\": {}, \"path\": {},\n  \"height_source\": {}, \"height_data_hash\": \"{:016x}\", \"synthetic\": {}, \"pv_field\": {},\n  \"approximation\": {},\n  \"span_l\": {}, \"size\": {}, \"samples\": {}, \"land_samples\": {},\n  \"flooded_land_pct\": {}, \"hyps_pct\": {:?}, \"erosion_pct\": {:?},\n  \"valley_pct\": {}, \"set\": {}, \"params_hash\": \"{:016x}\", \"patches\": {}, \"relief_step\": {}, \"relief_windows\": {}, \"relief_median\": {}, \"flat_windows_pct\": {},\n  \"river_samples\": {}, \"river_water_pct\": {}, \"gallery_samples\": {}, \"gallery_pct\": {},\n  \"boundary\": {{\"size\": {}, \"step\": {}, \"span_l\": {}, \"land\": {}, \"humidity_jump_pct\": {}, \"humidity_jump_pair_pct\": {}, \"humidity_jump_pairs\": {}, \"humidity_pairs\": {}, \"climate_land\": {}, \"climate_humidity_jump_pct\": {}, \"climate_humidity_pair_pct\": {}, \"climate_humidity_jump_pairs\": {}, \"climate_humidity_pairs\": {}, \"wind_max_deg\": {}, \"wind_pairs\": {}, \"straight_pct\": {}, \"straight_edges\": {}, \"boundary_edges\": {}, \"straight_model\": \"grid-edge-chord-512-deviation-16\", \"thin_pct\": {}, \"min_strip_blocks\": {}, \"acceptance_volume\": {}}}\n}}\n",
             self.seed,
             crate::json::quote(self.mode.as_str()),
             crate::json::quote(base.version.as_str()),
@@ -927,6 +926,10 @@ impl HeightStats {
             self.hyps.map(|n| self.pct(n, self.land)),
             self.erosion.map(|n| self.pct(n, self.land)),
             self.valley_pct(),
+            crate::json::quote(&crate::tune::label()),
+            crate::tune::params(self.mode, base.version)
+                .map(|p| p.params_hash())
+                .unwrap_or(0),
             opts.patches,
             opts.relief_step,
             self.relief_windows,

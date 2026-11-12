@@ -26,6 +26,7 @@ jobs:
     outputs:
       matrix: ${{ steps.plan.outputs.matrix }}
       name: ${{ steps.plan.outputs.name }}
+      count: ${{ steps.plan.outputs.count }}
       version: ${{ steps.plan.outputs.version }}
       args: ${{ steps.plan.outputs.args }}
     steps:
@@ -40,9 +41,24 @@ jobs:
           assert re.fullmatch(r"[A-Za-z0-9._-]+", r["name"]), "name: только латиница, цифры, . _ -"
           assert re.fullmatch(r"[A-Za-z0-9 .,_=-]*", r["args"]), "args: недопустимые символы"
           assert r["version"] in ("v0", "v1-dev")
-          include = [{"mode": m, "seed": str(int(s))} for m in r["modes"] for s in r["seeds"]]
-          assert 0 < len(include) <= 256
+          # Варианты подбора: свой `--set` и свой список режимов. Без
+          # `variants` — один прогон на параметрах по умолчанию.
+          variants = r.get("variants") or [{"name": "", "set": ""}]
+          include = []
+          for v in variants:
+              assert re.fullmatch(r"[A-Za-z0-9_-]*", v["name"]), "variant.name"
+              assert re.fullmatch(r"[A-Za-z0-9_.\[\]=,-]*", v.get("set", "")), "variant.set"
+              for m in v.get("modes", r["modes"]):
+                  assert m in ("gameplay", "scientific")
+                  for s in r["seeds"]:
+                      include.append({
+                          "variant": v["name"], "set": v.get("set", ""),
+                          "mode": m, "seed": str(int(s)),
+                      })
+          assert len({v["name"] for v in variants}) == len(variants), "имена вариантов повторяются"
+          assert 0 < len(include) <= 256, "не больше 256 прогонов на замер"
           print("matrix=" + json.dumps({"include": include}))
+          print("count=" + str(len(include)))
           print("name=" + r["name"])
           print("version=" + r["version"])
           print("args=" + r["args"])
@@ -56,7 +72,7 @@ jobs:
           retention-days: 3
 
   run:
-    name: ${{ matrix.mode }} ${{ matrix.seed }}
+    name: ${{ matrix.variant }} ${{ matrix.mode }} ${{ matrix.seed }}
     needs: plan
     runs-on: ubuntu-latest
     timeout-minutes: 330
@@ -69,18 +85,23 @@ jobs:
           name: t151-bin
       - name: stats --json
         env:
+          VARIANT: ${{ matrix.variant }}
+          SET: ${{ matrix.set }}
           MODE: ${{ matrix.mode }}
           SEED: ${{ matrix.seed }}
           VERSION: ${{ needs.plan.outputs.version }}
           ARGS: ${{ needs.plan.outputs.args }}
         run: |
           chmod +x litho-sandbox
-          mkdir -p out
-          stem="out/${MODE}_${SEED}"
+          dir="out${VARIANT:+/$VARIANT}"
+          mkdir -p "$dir"
+          stem="$dir/${MODE}_${SEED}"
+          extra=()
+          if [ -n "$SET" ]; then extra=(--set "$SET"); fi
           start=$SECONDS
           set +e
           # shellcheck disable=SC2086
-          ./litho-sandbox stats --seed "$SEED" --mode "$MODE" --version "$VERSION" $ARGS --json > "$stem.json" 2> "$stem.err"
+          ./litho-sandbox stats --seed "$SEED" --mode "$MODE" --version "$VERSION" $ARGS "${extra[@]}" --json > "$stem.json" 2> "$stem.err"
           code=$?
           set -e
           echo "$code" > "$stem.exit"
@@ -88,14 +109,14 @@ jobs:
           grep -v 'сеть рек №' "$stem.err" | tail -n 20 || true
           if [ "$code" -ne 0 ]; then
             rm -f "$stem.json"
-            echo "::error::stats $MODE $SEED: код $code"
+            echo "::error::stats $VARIANT $MODE $SEED: код $code"
           fi
           # Падение одного сида не должно прятать остальные: о нём сообщает
           # сводка (раздел «Упавшие прогоны») и задание «Сводка».
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: t151-run-${{ matrix.mode }}-${{ matrix.seed }}
+          name: t151-run-${{ matrix.variant }}-${{ matrix.mode }}-${{ matrix.seed }}
           path: out/
           retention-days: 14
 
@@ -136,6 +157,7 @@ jobs:
             rm -rf "docs/t151/$NAME"
             mkdir -p docs/t151
             cp -r "result/$NAME" "docs/t151/$NAME"
+            rm -f "docs/t151/$NAME/status.json"
             git add "docs/t151/$NAME"
             if git diff --cached --quiet; then
               echo "Результат не изменился."
@@ -154,11 +176,11 @@ jobs:
           python3 - <<'PY'
           import json, os, sys
           name = os.environ["NAME"]
-          r = json.load(open(f"result/{name}/results.json"))
-          want = len(r["request"]["modes"]) * len(r["request"]["seeds"])
-          got = len(r["runs"])
-          print(f"готово {got} из {want}, упало {len(r['failures'])}")
-          sys.exit(0 if got == want else 1)
+          status = json.load(open(f"result/{name}/status.json"))
+          want = int(os.environ["WANT"])
+          print(f"готово {status['runs']} из {want}, упало {status['failures']}")
+          sys.exit(0 if status["runs"] == want else 1)
           PY
         env:
           NAME: ${{ needs.plan.outputs.name }}
+          WANT: ${{ needs.plan.outputs.count }}

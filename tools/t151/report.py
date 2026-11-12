@@ -4,10 +4,12 @@
     python3 tools/t151/report.py <каталог прогонов> [--out <каталог>] [--request <json>] [--sha <коммит>]
 
 Каталог прогонов: `<режим>_<сид>.json` (вывод stats --json), рядом могут лежать
-`.exit` (код возврата), `.time` (секунды) и `.err` (stderr). С `--out` пишет
-`results.json` (все прогоны одним файлом) и `summary.md`; сводка печатается в
-stdout в любом случае. Скрипт ничего не решает о приёмке: он только считает,
-сколько сидов попало в цель по каждой метрике.
+`.exit` (код возврата), `.time` (секунды) и `.err` (stderr). Варианты подбора
+(`variants` в запросе, флаг `--set`) лежат в подкаталогах `<вариант>/`.
+С `--out` пишет `summary.md` и, если в запросе нет `"results": "summary"`,
+`results.json` (все прогоны одним файлом); сводка печатается в stdout в любом
+случае. Скрипт ничего не решает о приёмке: он только считает, сколько сидов
+попало в цель по каждой метрике.
 """
 import glob
 import json
@@ -91,6 +93,8 @@ def load(directory):
                 stems.add(stem)
     for stem in sorted(stems):
         mode, seed = os.path.basename(stem).split("_", 1)
+        variant = os.path.relpath(os.path.dirname(stem), directory)
+        variant = "" if variant == "." else variant
         code = read_text(stem + ".exit", "?").strip()
         seconds = read_text(stem + ".time").strip()
         try:
@@ -100,18 +104,71 @@ def load(directory):
         except (OSError, ValueError, KeyError, TypeError, IndexError) as ex:
             err = [l for l in read_text(stem + ".err").splitlines() if "сеть рек №" not in l]
             failures.append(
-                {"mode": mode, "seed": seed, "exit": code, "seconds": seconds,
+                {"variant": variant, "mode": mode, "seed": seed, "exit": code, "seconds": seconds,
                  "error": str(ex), "stderr_tail": err[-12:]}
             )
             continue
         data["_seconds"] = float(seconds) if seconds else None
+        data["_variant"] = variant
         runs.append(data)
     return runs, failures
+
+
+def mode_table(rows, mi, keys):
+    out = []
+    out.append("| Метрика | Цель | Мин | Медиана | Макс | В цели | Сиды вне цели |")
+    out.append("|---|---|---|---|---|---|---|")
+    for key in keys:
+        lo, hi = TARGETS[key][mi]
+        values = [(seed, m[key]) for seed, m, _ in rows]
+        known = [v for _, v in values if v is not None]
+        bad = [(s, v) for s, v in values if not in_goal(v, lo, hi)]
+        bad_text = ", ".join(
+            f"{s} ({'нет' if v is None else format(v, '.2f')})" for s, v in bad
+        )
+        if known:
+            stats = f"{min(known):.2f} | {statistics.median(known):.2f} | {max(known):.2f}"
+        else:
+            stats = "— | — | —"
+        out.append(
+            f"| {key} | {goal(lo, hi)} | {stats} | {len(values) - len(bad)}/{len(values)} | {bad_text} |"
+        )
+    out.append("")
+    return out
+
+
+def compare_table(runs, variants, mi, mode, keys):
+    """Варианты подбора рядом: мин / медиана / макс и число сидов в цели."""
+    names = [v for v in variants if any(r["_variant"] == v and r["mode"] == mode for r in runs)]
+    if len(names) < 2:
+        return []
+    out = [f"### {mode}: варианты рядом (мин / медиана / макс, в цели)", ""]
+    out.append("| Метрика | Цель | " + " | ".join(f"`{n or 'без имени'}`" for n in names) + " |")
+    out.append("|---|---|" + "---|" * len(names))
+    for key in keys:
+        lo, hi = TARGETS[key][mi]
+        cells = []
+        for name in names:
+            values = [metrics(r)[key] for r in runs if r["_variant"] == name and r["mode"] == mode]
+            known = [v for v in values if v is not None]
+            ok = sum(1 for v in values if in_goal(v, lo, hi))
+            if known:
+                cells.append(
+                    f"{min(known):.2f} / {statistics.median(known):.2f} / {max(known):.2f}, {ok}/{len(values)}"
+                )
+            else:
+                cells.append("—")
+        out.append(f"| {key} | {goal(lo, hi)} | " + " | ".join(cells) + " |")
+    out.append("")
+    return out
 
 
 def summary(runs, failures, request, sha):
     out = []
     name = request.get("name", "?")
+    keys = [k for k in TARGETS if k in request.get("rows", TARGETS)]
+    declared = {v["name"]: v for v in request.get("variants", [])}
+    variants = list(declared) + sorted({r["_variant"] for r in runs} - set(declared))
     out.append(f"# T151: замер «{name}»")
     out.append("")
     if request.get("note"):
@@ -123,47 +180,60 @@ def summary(runs, failures, request, sha):
     out.append(f"- Прогонов готово: {len(runs)}, упало: {len(failures)}")
     volume = sum(1 for r in runs if r["boundary"].get("acceptance_volume"))
     out.append(f"- Прогонов в приёмочном объёме границ (10.1): {volume} из {len(runs)}")
-    out.append("")
-    for mi, mode in enumerate(MODES):
-        rows = [(r["seed"], metrics(r), r) for r in runs if r["mode"] == mode]
-        out.append(f"## {mode}: {len(rows)} сидов")
-        out.append("")
-        if not rows:
-            out.append("Нет готовых прогонов.")
-            out.append("")
-            continue
-        out.append("| Метрика | Цель | Мин | Медиана | Макс | В цели | Сиды вне цели |")
-        out.append("|---|---|---|---|---|---|---|")
-        for key, target in TARGETS.items():
-            lo, hi = target[mi]
-            values = [(seed, m[key]) for seed, m, _ in rows]
-            known = [v for _, v in values if v is not None]
-            bad = [(s, v) for s, v in values if not in_goal(v, lo, hi)]
-            bad_text = ", ".join(
-                f"{s} ({'нет' if v is None else format(v, '.2f')})" for s, v in bad
-            )
-            if known:
-                stats = f"{min(known):.2f} | {statistics.median(known):.2f} | {max(known):.2f}"
-            else:
-                stats = "— | — | —"
-            out.append(
-                f"| {key} | {goal(lo, hi)} | {stats} | {len(values) - len(bad)}/{len(values)} | {bad_text} |"
-            )
-        out.append("")
-        windows = [r["relief_windows"] for _, _, r in rows]
-        land = [r["boundary"]["land"] for _, _, r in rows]
-        times = [r["_seconds"] for _, _, r in rows if r.get("_seconds") is not None]
+    if any(r.get("set") for r in runs):
         out.append(
-            f"Объём: окон рельефа на сид {min(windows)}…{max(windows)}, "
-            f"точек суши в сетке границ {min(land)}…{max(land)}."
-            + (f" Время прогона {min(times):.0f}…{max(times):.0f} с." if times else "")
+            "- Варианты с `--set` считаются на изменённых параметрах: это подбор, не приёмка."
         )
+    if len(keys) < len(TARGETS):
+        out.append("- Показаны не все метрики: остальные на этом объёме замера не считаются.")
+    out.append("")
+    if len(variants) > 1:
+        out.append("## Варианты")
         out.append("")
+        out.append("| Вариант | Режимы | `--set` | Хеши параметров |")
+        out.append("|---|---|---|---|")
+        for v in variants:
+            mine = [r for r in runs if r["_variant"] == v]
+            modes = ", ".join(sorted({r["mode"] for r in mine}))
+            hashes = ", ".join(sorted({r.get("params_hash", "?") for r in mine}))
+            sets = declared.get(v, {}).get("set", "") or "—"
+            out.append(f"| `{v}` | {modes} | `{sets}` | `{hashes}` |")
+        out.append("")
+        for mi, mode in enumerate(MODES):
+            out.extend(compare_table(runs, variants, mi, mode, keys))
+    for variant in variants:
+        prefix = f"`{variant}`, " if variant else ""
+        for mi, mode in enumerate(MODES):
+            rows = [
+                (r["seed"], metrics(r), r)
+                for r in runs
+                if r["mode"] == mode and r["_variant"] == variant
+            ]
+            if not rows:
+                if len(variants) == 1:
+                    out.append(f"## {mode}: нет готовых прогонов")
+                    out.append("")
+                continue
+            out.append(f"## {prefix}{mode}: {len(rows)} сидов")
+            out.append("")
+            out.extend(mode_table(rows, mi, keys))
+            windows = [r["relief_windows"] for _, _, r in rows]
+            land = [r["boundary"]["land"] for _, _, r in rows]
+            samples = [r["land_samples"] for _, _, r in rows]
+            times = [r["_seconds"] for _, _, r in rows if r.get("_seconds") is not None]
+            out.append(
+                f"Объём: точек суши в основной сетке {min(samples)}…{max(samples)}, "
+                f"окон рельефа на сид {min(windows)}…{max(windows)}, "
+                f"точек суши в сетке границ {min(land)}…{max(land)}."
+                + (f" Время прогона {min(times):.0f}…{max(times):.0f} с." if times else "")
+            )
+            out.append("")
     if failures:
         out.append("## Упавшие прогоны")
         out.append("")
         for f in failures:
-            out.append(f"### {f['mode']} {f['seed']}: код {f['exit']}, {f['seconds'] or '?'} с")
+            label = f"{f['variant']} " if f.get("variant") else ""
+            out.append(f"### {label}{f['mode']} {f['seed']}: код {f['exit']}, {f['seconds'] or '?'} с")
             out.append("")
             out.append(f"Разбор результата: {f['error']}")
             out.append("")
@@ -191,12 +261,16 @@ def main(argv):
         os.makedirs(opts["--out"], exist_ok=True)
         with open(os.path.join(opts["--out"], "summary.md"), "w", encoding="utf-8") as f:
             f.write(text)
-        with open(os.path.join(opts["--out"], "results.json"), "w", encoding="utf-8") as f:
-            json.dump(
-                {"request": request, "sha": opts.get("--sha"), "runs": runs, "failures": failures},
-                f, ensure_ascii=False, indent=1, sort_keys=True,
-            )
+        with open(os.path.join(opts["--out"], "status.json"), "w", encoding="utf-8") as f:
+            json.dump({"runs": len(runs), "failures": len(failures)}, f)
             f.write("\n")
+        if request.get("results", "full") != "summary":
+            with open(os.path.join(opts["--out"], "results.json"), "w", encoding="utf-8") as f:
+                json.dump(
+                    {"request": request, "sha": opts.get("--sha"), "runs": runs, "failures": failures},
+                    f, ensure_ascii=False, indent=1, sort_keys=True,
+                )
+                f.write("\n")
     return 0
 
 

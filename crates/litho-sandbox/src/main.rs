@@ -7,6 +7,7 @@ mod json;
 mod palette;
 mod png;
 mod render;
+mod tune;
 
 use std::path::Path;
 use std::time::Instant;
@@ -117,7 +118,7 @@ fn options_from(args: &[String]) -> Result<RenderOptions, String> {
 }
 
 fn generator(opts: &RenderOptions) -> Result<Generator, String> {
-    Generator::new(opts.seed, opts.mode, opts.version).map_err(|error| error.to_string())
+    tune::generator(opts.seed, opts.mode, opts.version)
 }
 
 fn height_source(args: &[String]) -> Result<Option<HeightSource>, String> {
@@ -1503,6 +1504,10 @@ fn main() -> Result<(), String> {
         print!("{text}", text = usage());
         return Ok(());
     };
+    tune::init(&args)?;
+    if command == "acceptance" && !tune::label().is_empty() {
+        return Err("acceptance считает только Params::defaults; --set здесь запрещён".into());
+    }
     match command.as_str() {
         "render" => cmd_render(&args[1..]),
         "probe" => cmd_probe(&args[1..]),

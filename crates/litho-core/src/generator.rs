@@ -201,12 +201,25 @@ impl Generator {
     /// Создаётся один раз на мир. Пока дёшево; после T54 здесь появится поиск
     /// сдвига точки появления `p*` (около 256 эталонных расчётов).
     pub fn new(seed: i64, mode: Mode, version: GenVersion) -> Result<Self, GenError> {
+        if version == GenVersion::V1 {
+            return Err(GenError::UnsupportedVersion(version));
+        }
+        Self::with_params(seed, Params::defaults(version, mode))
+    }
+
+    /// T151: генератор с изменёнными параметрами — только для подбора в
+    /// песочнице (`--set`). Мод и приёмка идут через [`Generator::new`]:
+    /// мир с другими параметрами — другой мир с другим `params_hash`.
+    #[doc(hidden)]
+    pub fn with_params(seed: i64, mut params: Params) -> Result<Self, GenError> {
+        let version = params.version;
         match version {
             GenVersion::V0 | GenVersion::V1Dev => {}
             GenVersion::V1 => return Err(GenError::UnsupportedVersion(version)),
         }
+        // Ключ кэшей плит обязан соответствовать фактическим параметрам.
+        params.config_key = params.params_hash();
         let world_seed = from_world_seed(seed);
-        let params = Params::defaults(version, mode);
         if version.is_water_relief_dev() {
             debug_assert!(
                 params.boundaries.validate().is_ok(),

@@ -1,8 +1,106 @@
 {
-  "name": "p5",
-  "note": "Базовый замер v1-dev: мелкие сетки в 25 пятнах по области 200 L. Параметры генератора не менялись.",
+  "name": "tune1",
+  "note": "Подбор, круг 1: полосы эрозии и высот. Основная сетка 160×160 на 200 L; окна рельефа и границы на этом объёме не считаются.",
   "version": "v1-dev",
-  "modes": ["gameplay", "scientific"],
-  "seeds": [0, 1, 2, 7, 42, 123, 777, 1234, 2024, 12345, 54321, 99999, -1, -42, -123456789, 987654321],
-  "args": "--size 96 --patches 5 --relief-size 16 --boundary-size 32"
+  "modes": [
+    "gameplay",
+    "scientific"
+  ],
+  "seeds": [
+    0,
+    1,
+    2,
+    7,
+    42,
+    123,
+    777,
+    1234,
+    2024,
+    12345,
+    54321,
+    99999,
+    -1,
+    -42,
+    -123456789,
+    987654321
+  ],
+  "args": "--size 160 --relief-size 4 --boundary-size 4",
+  "results": "summary",
+  "rows": [
+    "затопленная суша, %",
+    "y 63–70, %",
+    "y 70–90, %",
+    "y 90–130, %",
+    "y > 130, %",
+    "E4, %",
+    "E3+E2, %",
+    "E0+E1, %",
+    "E5+E6, %",
+    "долина, %"
+  ],
+  "variants": [
+    {
+      "name": "g0",
+      "modes": [
+        "gameplay"
+      ],
+      "set": ""
+    },
+    {
+      "name": "g1",
+      "modes": [
+        "gameplay"
+      ],
+      "set": "relief.a_lo=0.05,relief.a_hi=0.53"
+    },
+    {
+      "name": "g2",
+      "modes": [
+        "gameplay"
+      ],
+      "set": "relief.a_lo=0.03,relief.a_hi=0.51"
+    },
+    {
+      "name": "g3",
+      "modes": [
+        "gameplay"
+      ],
+      "set": "climate.m_e_hi=0.9"
+    },
+    {
+      "name": "s0",
+      "modes": [
+        "scientific"
+      ],
+      "set": ""
+    },
+    {
+      "name": "s1",
+      "modes": [
+        "scientific"
+      ],
+      "set": "climate.m_e_hi=0.8"
+    },
+    {
+      "name": "s2",
+      "modes": [
+        "scientific"
+      ],
+      "set": "climate.m_e_hi=0.7"
+    },
+    {
+      "name": "s3",
+      "modes": [
+        "scientific"
+      ],
+      "set": "climate.m_e_hi=0.8,relief.a_lo=0.13,relief.a_hi=0.70"
+    },
+    {
+      "name": "s4",
+      "modes": [
+        "scientific"
+      ],
+      "set": "climate.m_e_hi=0.8,morpho.e_hill[3]=-0.44,morpho.e_hill[4]=-0.46"
+    }
+  ]
 }

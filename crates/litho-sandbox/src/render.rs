@@ -170,8 +170,7 @@ pub fn render_layer_with_height(
                 .into(),
         );
     }
-    let generator =
-        Generator::new(opts.seed, opts.mode, opts.version).map_err(|error| error.to_string())?;
+    let generator = crate::tune::generator(opts.seed, opts.mode, opts.version)?;
     let params: &Params = generator.params();
     let effective = options_for_layer(opts, layer);
     let noise_seed = subseed(generator.seed(), SALT_NOISE_DETAIL);
@@ -386,8 +385,7 @@ fn plates_color(
 
 /// Текстовая проба точки для команды `probe` (12.2).
 pub fn probe_text(opts: &RenderOptions, x: f64, z: f64) -> Result<String, String> {
-    let generator =
-        Generator::new(opts.seed, opts.mode, opts.version).map_err(|error| error.to_string())?;
+    let generator = crate::tune::generator(opts.seed, opts.mode, opts.version)?;
     let params = generator.params();
     let p: Vec2 = generator.macro_point(x, z);
     let Some(sample) = generator.plate_sample(x, z) else {
