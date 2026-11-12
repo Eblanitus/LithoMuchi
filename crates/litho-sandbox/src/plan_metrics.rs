@@ -126,6 +126,7 @@ pub struct PlanAccumulator {
     dry_land: usize,
     lake_land: usize,
     river_land: usize,
+    diag: ZoneDiagnostics,
 }
 
 impl PlanAccumulator {
@@ -159,8 +160,13 @@ impl PlanAccumulator {
         }
     }
 
+    /// Диагностика T123 по этой же выборке.
+    pub fn diagnose(&mut self, mountain: f64, plateau: f64, m_e: f64) {
+        self.diag.add(mountain, plateau, m_e);
+    }
+
     /// Замыкает: считает доли и вердикт 10.1 по зонам.
-    pub fn finish(self, area_l2: f64) -> (ClimateShape, RiverLake) {
+    pub fn finish(self, area_l2: f64) -> (ClimateShape, RiverLake, ZoneDiagnostics) {
         let mut shape = ClimateShape::default();
         let rivers = RiverLake {
             land: self.dry_land + self.lake_land + self.river_land,
@@ -171,7 +177,7 @@ impl PlanAccumulator {
         };
         shape.land = self.dry_land;
         if self.dry_land == 0 {
-            return (shape, rivers);
+            return (shape, rivers, self.diag);
         }
         for (band, count) in self.erosion.iter().enumerate() {
             shape.erosion_pct[band] = pct(*count, self.dry_land);
@@ -244,8 +250,23 @@ impl PlanAccumulator {
             shape.zones.push(z);
         }
         shape.pass = if any_zone_verdict { Some(all_ok) } else { None };
-        (shape, rivers)
+        (shape, rivers, self.diag)
     }
+}
+
+/// T123: `m_e` — вес гор в переводе E (`relief_fields::sample`).
+/// Повторяет формулу ядра, чтобы диагностика показывала то же число.
+pub fn mountain_weight(mountain: f64, params: &litho_core::Params) -> f64 {
+    let c = &params.climate;
+    smoothstep(c.m_e_lo, c.m_e_hi, mountain)
+}
+
+fn smoothstep(lo: f64, hi: f64, v: f64) -> f64 {
+    if hi <= lo {
+        return if v >= hi { 1.0 } else { 0.0 };
+    }
+    let t = ((v - lo) / (hi - lo)).clamp(0.0, 1.0);
+    t * t * (3.0 - 2.0 * t)
 }
 
 /// Итог по одной сети русел: строки 10.1, которые сеткой не считаются.
@@ -435,7 +456,12 @@ pub fn river_rows(report: &RiverReport, rivers: &RiverLake) -> Vec<(&'static str
 }
 
 /// Полный отчёт для печати: заголовок и строки.
-pub fn text(shape: &ClimateShape, rivers: &RiverLake, report: Option<&RiverReport>) -> String {
+pub fn text(
+    shape: &ClimateShape,
+    rivers: &RiverLake,
+    report: Option<&RiverReport>,
+    diag: Option<&ZoneDiagnostics>,
+) -> String {
     let mut out = String::new();
     out.push_str("климат влияет на форму (10.1)\n");
     out.push_str(&format!(
@@ -474,6 +500,10 @@ pub fn text(shape: &ClimateShape, rivers: &RiverLake, report: Option<&RiverRepor
     }
     for note in &shape.notes {
         out.push_str(&format!("  · {note}\n"));
+    }
+    if let Some(diag) = diag {
+        out.push('\n');
+        out.push_str(&diag.text());
     }
     out.push_str(&format!(
         "\nреки и озёра\n  суша {} точек, в русле {} ({:.1} %), вода озёр {} ({:.2} %), на 100 L² {:.2}\n",
@@ -568,5 +598,62 @@ mod tests {
             rows.iter()
                 .any(|(name, _, ok)| *name == "длинные реки, L" && !*ok)
         );
+    }
+}
+
+/// Диагностика T123: почему зоны не различаются по полосам E.
+///
+/// Считает по тем же точкам, что `stats`, но печатает внутренние величины:
+/// долю точек, где зону перекрывают горы и плато, распределение `A`
+/// (равнина ↔ холмы) и `mountain`, а также ширину зоны (T_bio).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct ZoneDiagnostics {
+    pub points: usize,
+    /// Зону перекрыли горы (`m_e > 0.5`).
+    pub mountain_override: usize,
+    /// Зону перекрыло плато (`plateau > 0.5` и не горы).
+    pub plateau_override: usize,
+    /// Гистограмма mountain по 5 корзинам.
+    pub mountain_hist: [usize; 5],
+    /// Доля точек кривого `A`, где зона вообще не влияет.
+    pub zone_neutral: usize,
+}
+
+impl ZoneDiagnostics {
+    pub fn add(&mut self, mountain: f64, plateau: f64, m_e: f64) {
+        self.points += 1;
+        let bucket = |v: f64| ((v.clamp(0.0, 1.0) * 5.0).floor() as usize).min(4);
+        self.mountain_hist[bucket(mountain)] += 1;
+        if m_e > 0.5 {
+            self.mountain_override += 1;
+        } else if plateau * (1.0 - m_e) > 0.5 {
+            self.plateau_override += 1;
+        }
+        if m_e <= 0.01 && plateau <= 0.01 {
+            self.zone_neutral += 1;
+        }
+    }
+
+    pub fn text(&self) -> String {
+        if self.points == 0 {
+            return "T123 диагностика: нет точек\n".to_string();
+        }
+        let p = |n: usize| 100.0 * n as f64 / self.points as f64;
+        let hist = |h: &[usize; 5]| {
+            h.iter()
+                .map(|n| format!("{:.0}", p(*n)))
+                .collect::<Vec<_>>()
+                .join(" / ")
+        };
+        format!(
+            "T123 диагностика зон ({points} точек):\n  \
+             горы перекрывают зону {mount:.1} %, плато {plateau:.1} %, зона влияет {neutral:.1} %\n  \
+             mountain по корзинам 0…1: {m_hist}\n",
+            points = self.points,
+            mount = p(self.mountain_override),
+            plateau = p(self.plateau_override),
+            neutral = p(self.zone_neutral),
+            m_hist = hist(&self.mountain_hist),
+        )
     }
 }

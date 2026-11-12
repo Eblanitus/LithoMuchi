@@ -5,7 +5,7 @@ use litho_core::vanilla::peaks_valleys;
 use litho_core::{Mode, SurfaceKind};
 
 use crate::height::{HeightInput, HeightModel, SEA_LEVEL};
-use crate::plan_metrics::{self, ClimateShape, PlanAccumulator, RiverLake};
+use crate::plan_metrics::{self, ClimateShape, PlanAccumulator, RiverLake, ZoneDiagnostics};
 use crate::render::RenderOptions;
 
 const E_EDGES: [f64; 6] = [-0.78, -0.375, -0.2225, 0.05, 0.45, 0.55];
@@ -124,6 +124,8 @@ pub struct HeightStats {
 pub struct PlanMetrics {
     pub shape: ClimateShape,
     pub rivers: RiverLake,
+    /// T123: почему зоны не различаются по полосам E.
+    pub diag: ZoneDiagnostics,
 }
 /// T134 / 10.1: метрики границ на отдельной сетке с шагом ≤32 блока.
 /// Суша = C≥порога без рек/озёр. Скачок влажности и ветер считаются на парах
@@ -679,6 +681,12 @@ impl HeightStats {
                         .map(|w| w.dominant())
                         .unwrap_or(usize::MAX);
                     plan.add(c_land, v.e, river, h.water > 0.5, dominant);
+                    // T123: те же величины, что входят в перевод E, чтобы
+                    // видеть перекрытие гор/плато, а не догадываться о нём.
+                    let params = generator.params();
+                    let surface = world.climate.surface;
+                    let m_e = plan_metrics::mountain_weight(surface.mountain, params);
+                    plan.diagnose(surface.mountain, surface.plateau, m_e);
                 }
                 out.water_samples += usize::from(h.water > 0.5);
                 out.swamp_samples += usize::from(h.swamp > 0.5);
@@ -883,8 +891,12 @@ impl HeightStats {
         // 10.1: у v0 нет ни морфозон, ни сети — строка остаётся `null`.
         if plan_dev {
             let area_l2 = opts.span_l * opts.span_l;
-            let (shape, rivers) = plan.finish(area_l2);
-            out.plan = Some(PlanMetrics { shape, rivers });
+            let (shape, rivers, diag) = plan.finish(area_l2);
+            out.plan = Some(PlanMetrics {
+                shape,
+                rivers,
+                diag,
+            });
         }
         Ok(out)
     }
@@ -1036,7 +1048,12 @@ impl HeightStats {
         }
         if let Some(plan) = &self.plan {
             out.push('\n');
-            out.push_str(&plan_metrics::text(&plan.shape, &plan.rivers, None));
+            out.push_str(&plan_metrics::text(
+                &plan.shape,
+                &plan.rivers,
+                None,
+                Some(&plan.diag),
+            ));
         }
         out.push_str("T115–T116/T141: сеть/низкие озёра подключены к C/E/W и биомам (R1), собственный PV доступен через --pv. Высокие озёра и вода выше моря — T143/T145. Проценты воды здесь не заменяют проверку реальной высоты.\n");
         out
