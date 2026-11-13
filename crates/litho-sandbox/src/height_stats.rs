@@ -187,9 +187,8 @@ impl PlateSizes {
 
     /// Фрагмент JSON для ключа `climate124`, как у `ZonalProfile::json`.
     pub fn json(&self, point_area_l2: f64) -> String {
-        let fmt = |v: Option<f64>| {
-            v.map_or_else(|| "null".to_string(), |x| format!("{x:.3}"))
-        };
+        let fmt =
+            |v: Option<f64>| v.map_or_else(|| "null".to_string(), |x| format!("{x:.3}"));
         format!(
             "\"plates\": {{\"plates\": {}, \"counted\": {}, \"median_diameter_l\": {}, \"min_diameter_l\": {}}}",
             self.counts.len(),
@@ -892,8 +891,7 @@ impl HeightStats {
                 // 12.4: поперечники плит. Отдельный plate_sample на точку:
                 // WorldSample владельца плиты не отдаёт.
                 if let Some(plate) = generator.plate_sample(x, z) {
-                    let on_border =
-                        i == 0 || j == 0 || i + 1 == opts.size || j + 1 == opts.size;
+                    let on_border = i == 0 || j == 0 || i + 1 == opts.size || j + 1 == opts.size;
                     out.plates.add(plate.plate_id(), on_border);
                 }
                 let input = HeightInput::from_fields(v.c, v.e, v.w);
@@ -1953,10 +1951,7 @@ mod plate_tests {
         let empty = crate::json::parse(&format!("{{{}}}", PlateSizes::default().json(1.0)))
             .expect("пустые плиты — валидный JSON");
         assert_eq!(
-            empty
-                .get("plates")
-                .unwrap()
-                .get("median_diameter_l"),
+            empty.get("plates").unwrap().get("median_diameter_l"),
             Some(&crate::json::Json::Null)
         );
     }
