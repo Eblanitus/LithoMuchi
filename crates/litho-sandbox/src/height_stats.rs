@@ -161,9 +161,7 @@ impl PlateSizes {
             .counts
             .iter()
             .filter(|(id, _)| !self.border.contains(id))
-            .map(|(_, count)| {
-                2.0 * ((*count as f64 * point_area_l2) / std::f64::consts::PI).sqrt()
-            })
+            .map(|(_, count)| 2.0 * ((*count as f64 * point_area_l2) / std::f64::consts::PI).sqrt())
             .collect();
         out.sort_by(|a, b| a.total_cmp(b));
         out
@@ -187,8 +185,7 @@ impl PlateSizes {
 
     /// Фрагмент JSON для ключа `climate124`, как у `ZonalProfile::json`.
     pub fn json(&self, point_area_l2: f64) -> String {
-        let fmt =
-            |v: Option<f64>| v.map_or_else(|| "null".to_string(), |x| format!("{x:.3}"));
+        let fmt = |v: Option<f64>| v.map_or_else(|| "null".to_string(), |x| format!("{x:.3}"));
         format!(
             "\"plates\": {{\"plates\": {}, \"counted\": {}, \"median_diameter_l\": {}, \"min_diameter_l\": {}}}",
             self.counts.len(),
@@ -1483,7 +1480,11 @@ impl HeightStats {
             self.spawn_good,
             self.spawn_shift_l.0,
             self.spawn_shift_l.1,
-            format!("{}, {}", self.zonal.json(), self.plates.json(self.plate_area_l2))
+            format!(
+                "{}, {}",
+                self.zonal.json(),
+                self.plates.json(self.plate_area_l2)
+            )
         )
     }
 
