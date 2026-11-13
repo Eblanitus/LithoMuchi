@@ -154,7 +154,7 @@ impl PlateSizes {
 
     /// Поперечники плит, целиком попавших в скан, по возрастанию.
     pub fn diameters(&self, point_area_l2: f64) -> Vec<f64> {
-        if !(point_area_l2 > 0.0) {
+        if point_area_l2 <= 0.0 {
             return Vec::new();
         }
         let mut out: Vec<f64> = self
@@ -1485,11 +1485,7 @@ impl HeightStats {
             self.spawn_good,
             self.spawn_shift_l.0,
             self.spawn_shift_l.1,
-            format!(
-                "{}, {}",
-                self.zonal.json(),
-                self.plates.json(self.plate_area_l2)
-            )
+            zonal_and_plates
         )
     }
 
