@@ -110,7 +110,7 @@ jobs:
             done
           done
           { echo "T100 synthetic sweep v1-dev local 16 L (НЕ приёмка, широкий скан после T160)"; cargo run -q -p litho-sandbox --release -- stats-all --version v1-dev --synthetic-height --span-l 16 --size 16 --relief-size 8 --boundary-size 8; } | python3 tools/ci_annotations.py report
-      - name: "T151 — вердикт границ 10.1 (объём малый, это НЕ приёмка)"
+      - name: "T151 — вердикт границ 10.1 и ориентиры 12.4 (объём малый, это НЕ приёмка)"
         run: |
           set -o pipefail
           # Полный объём 10.1 (16 сидов × 2 режима ≥200×200 L) в CI не считается.

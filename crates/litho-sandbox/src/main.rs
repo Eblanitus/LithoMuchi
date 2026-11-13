@@ -1663,6 +1663,7 @@ fn usage() -> &'static str {
        stats        метрики 12.4; с --game-data/--synthetic-height — T100\n\
        stats-all    16 сидов × 2 режима; принимает те же флаги высоты\n\
        acceptance   T151/10.1: вердикт границ PASS/FAIL/NO-VOLUME\n\
+                    и ориентиры 12.4 (ORIENTATION, не приёмка)\n\
                     --seeds 0,42,-7 | --seed N | --mode | --json\n\
        seams        скачки C/E/W между соседними блоками\n\
        paths        Д-059: быстрый путь против эталона (μ, P, T/H, высота, зона)\n\
