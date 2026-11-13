@@ -95,6 +95,20 @@ pub struct HeightStats {
     pub mode: Mode,
     pub samples: usize,
     pub land: usize,
+    /// 12.4: суша по C ≥ порога, включая реки и озёра (как `stats_row`,
+    /// только на основной сетке T100). Сухопутная гипсометрия (`land`)
+    /// реки и воду исключает, а доли климата 12.4 считаются по всей суше.
+    pub land_c: usize,
+    /// 12.4 на суше `land_c`: горы M > 0,5; пустыни — провинции К1+К2;
+    /// леса — К5+К6 в поясах П2–П6; полярные — пояса П0+П1.
+    pub mountains_c: usize,
+    pub deserts_c: usize,
+    pub forests_c: usize,
+    pub polar_c: usize,
+    /// 12.4: точка появления хороша по критериям 7.12 (`spawn::evaluate`
+    /// один раз на замер — поиск уже сделан в `Generator::new`).
+    pub spawn_good: bool,
+    pub spawn_shift_l: (f64, f64),
     pub river_samples: usize,
     pub river_water: usize,
     pub water_samples: usize,
@@ -576,6 +590,13 @@ impl HeightStats {
             mode: Mode::Gameplay,
             samples: 0,
             land: 0,
+            land_c: 0,
+            mountains_c: 0,
+            deserts_c: 0,
+            forests_c: 0,
+            polar_c: 0,
+            spawn_good: false,
+            spawn_shift_l: (0.0, 0.0),
             river_samples: 0,
             river_water: 0,
             water_samples: 0,
@@ -607,6 +628,13 @@ impl HeightStats {
             mode: base.mode,
             samples: opts.size * opts.size,
             land: 0,
+            land_c: 0,
+            mountains_c: 0,
+            deserts_c: 0,
+            forests_c: 0,
+            polar_c: 0,
+            spawn_good: false,
+            spawn_shift_l: (0.0, 0.0),
             river_samples: 0,
             river_water: 0,
             water_samples: 0,
@@ -630,6 +658,13 @@ impl HeightStats {
             plan: None,
         };
         let land_threshold = generator.params().climate.ocean_c_threshold;
+        // 12.4: точка появления. Поиск уже выполнен в `Generator::new`,
+        // здесь одна проверка критериев 7.12 на эффективных параметрах
+        // (с `--set` — на изменённых, как и весь замер).
+        let shift = generator.spawn_shift();
+        out.spawn_good =
+            litho_core::spawn::evaluate(shift, generator.seed(), generator.params()).good;
+        out.spawn_shift_l = (shift.x, shift.z);
         // 10.1: «климат влияет на форму» и «Реки и озёра» считаются на тех же
         // точках, что гипсометрия, без второго `world_sample` на точку.
         let plan_dev = base.version.is_water_relief_dev();
@@ -658,6 +693,25 @@ impl HeightStats {
                 };
                 let y = model.surface_y(input)?;
                 let c_land = v.c >= land_threshold;
+                // 12.4: доли климата на всей суше, включая реки и озёра.
+                // Зона климатическая и под руслами (Д-066 касается только
+                // ванильной ячейки), отдельного прохода не нужно.
+                if c_land {
+                    out.land_c += 1;
+                    if world.climate.surface.mountain > 0.5 {
+                        out.mountains_c += 1;
+                    }
+                    let zone = world.class.zone;
+                    if zone.province <= 2 {
+                        out.deserts_c += 1;
+                    }
+                    if zone.province >= 5 && (2..=6).contains(&zone.belt) {
+                        out.forests_c += 1;
+                    }
+                    if zone.belt <= 1 {
+                        out.polar_c += 1;
+                    }
+                }
                 // Д-057: в v1-dev «точка русла» — узкий вырез самого русла
                 // (`channels.bank`), где и должна стоять вода. Широкое поле
                 // `river` сглаживает C/E/W вокруг и водой быть не обязано.
@@ -920,6 +974,22 @@ impl HeightStats {
     pub fn flooded(&self) -> f64 {
         self.pct(self.hyps[0], self.land)
     }
+    /// 12.4: суша — от всех точек сетки, остальное — от суши `land_c`.
+    pub fn land_c_pct(&self) -> f64 {
+        self.pct(self.land_c, self.samples)
+    }
+    pub fn mountains_c_pct(&self) -> f64 {
+        self.pct(self.mountains_c, self.land_c)
+    }
+    pub fn deserts_c_pct(&self) -> f64 {
+        self.pct(self.deserts_c, self.land_c)
+    }
+    pub fn forests_c_pct(&self) -> f64 {
+        self.pct(self.forests_c, self.land_c)
+    }
+    pub fn polar_c_pct(&self) -> f64 {
+        self.pct(self.polar_c, self.land_c)
+    }
     pub fn e4(&self) -> f64 {
         self.pct(self.erosion[4], self.land)
     }
@@ -978,7 +1048,9 @@ impl HeightStats {
              долина PV<-0.85 {valley:.2}% (v1 ≤8% gameplay / ≤6% scientific)\n\
              окна {window}×{window} блоков: медиана перепада {median:.2} (быстрая цель ≥8), <4 блоков {flat:.2}%, окон={windows}\n\
              вода в руслах r≥0.5: {water:.2}% из {river} точек (R1: поверхность ниже y=63); сухой берег в полосе русла {dry_bank:.2}% суши\n\
-             T115–T116 от всех точек: вода {surface_water:.2}%, болото {swamp:.2}%, сухая котловина {dry:.2}%, эстуарий {estuary:.2}%, отложено R2 {deferred:.2}%, галерейный лес {gallery:.2}%\n",
+             T115–T116 от всех точек: вода {surface_water:.2}%, болото {swamp:.2}%, сухая котловина {dry:.2}%, эстуарий {estuary:.2}%, отложено R2 {deferred:.2}%, галерейный лес {gallery:.2}%\n\
+             12.4 климат на суше C≥порога ({land_c} точек): суша {land_c_pct:.2}% (25–40), горы {mnt_c:.2}% (5–20), пустыни {dst_c:.2}% (15–30), леса {frs_c:.2}% (30–50), полярные {pol_c:.2}% (10–25)\n\
+             12.4 точка появления: {spawn} (сдвиг {shift_x:.2}, {shift_z:.2} L)\n",
             base.seed,
             base.mode.as_str(),
             base.version.as_str(),
@@ -1017,6 +1089,19 @@ impl HeightStats {
             estuary = self.pct(self.estuary_samples, self.samples),
             deferred = self.pct(self.deferred_samples, self.samples),
             gallery = self.pct(self.gallery_samples, self.samples),
+            land_c = self.land_c,
+            land_c_pct = self.land_c_pct(),
+            mnt_c = self.mountains_c_pct(),
+            dst_c = self.deserts_c_pct(),
+            frs_c = self.forests_c_pct(),
+            pol_c = self.polar_c_pct(),
+            spawn = if self.spawn_good {
+                "хороша"
+            } else {
+                "НЕ ГОДНА"
+            },
+            shift_x = self.spawn_shift_l.0,
+            shift_z = self.spawn_shift_l.1,
         );
         let b = &self.boundary;
         out.push_str(&format!(
@@ -1076,7 +1161,7 @@ impl HeightStats {
             .collect::<Vec<_>>()
             .join(", ");
         format!(
-            "{{\n  \"seed\": {}, \"mode\": {}, \"version\": {}, \"path\": {},\n  \"height_source\": {}, \"height_data_hash\": \"{:016x}\", \"synthetic\": {}, \"pv_field\": {},\n  \"approximation\": {},\n  \"span_l\": {}, \"size\": {}, \"samples\": {}, \"land_samples\": {},\n  \"flooded_land_pct\": {}, \"hyps_pct\": {:?}, \"erosion_pct\": {:?},\n  \"valley_pct\": {}, \"set\": {}, \"params_hash\": \"{:016x}\", \"patches\": {}, \"relief_step\": {}, \"relief_windows\": {}, \"relief_median\": {}, \"flat_windows_pct\": {},\n  \"river_samples\": {}, \"river_water_pct\": {}, \"gallery_samples\": {}, \"gallery_pct\": {},\n  \"boundary\": {{\"size\": {}, \"step\": {}, \"span_l\": {}, \"land\": {}, \"humidity_jump_pct\": {}, \"humidity_jump_pair_pct\": {}, \"humidity_jump_pairs\": {}, \"humidity_pairs\": {}, \"climate_land\": {}, \"climate_humidity_jump_pct\": {}, \"climate_humidity_pair_pct\": {}, \"climate_humidity_jump_pairs\": {}, \"climate_humidity_pairs\": {}, \"humidity_jump_cause_pairs\": {{{}}}, \"field_humidity_jump_pct\": {}, \"field_humidity_jump_pairs\": {}, \"wind_max_deg\": {}, \"wind_pairs\": {}, \"straight_pct\": {}, \"straight_edges\": {}, \"boundary_edges\": {}, \"straight_model\": \"grid-edge-chord-512-deviation-16\", \"thin_pct\": {}, \"min_strip_blocks\": {}, \"acceptance_volume\": {}}},\n  \"plan\": {}\n}}\n",
+            "{{\n  \"seed\": {}, \"mode\": {}, \"version\": {}, \"path\": {},\n  \"height_source\": {}, \"height_data_hash\": \"{:016x}\", \"synthetic\": {}, \"pv_field\": {},\n  \"approximation\": {},\n  \"span_l\": {}, \"size\": {}, \"samples\": {}, \"land_samples\": {},\n  \"flooded_land_pct\": {}, \"hyps_pct\": {:?}, \"erosion_pct\": {:?},\n  \"valley_pct\": {}, \"set\": {}, \"params_hash\": \"{:016x}\", \"patches\": {}, \"relief_step\": {}, \"relief_windows\": {}, \"relief_median\": {}, \"flat_windows_pct\": {},\n  \"river_samples\": {}, \"river_water_pct\": {}, \"gallery_samples\": {}, \"gallery_pct\": {},\n  \"boundary\": {{\"size\": {}, \"step\": {}, \"span_l\": {}, \"land\": {}, \"humidity_jump_pct\": {}, \"humidity_jump_pair_pct\": {}, \"humidity_jump_pairs\": {}, \"humidity_pairs\": {}, \"climate_land\": {}, \"climate_humidity_jump_pct\": {}, \"climate_humidity_pair_pct\": {}, \"climate_humidity_jump_pairs\": {}, \"climate_humidity_pairs\": {}, \"humidity_jump_cause_pairs\": {{{}}}, \"field_humidity_jump_pct\": {}, \"field_humidity_jump_pairs\": {}, \"wind_max_deg\": {}, \"wind_pairs\": {}, \"straight_pct\": {}, \"straight_edges\": {}, \"boundary_edges\": {}, \"straight_model\": \"grid-edge-chord-512-deviation-16\", \"thin_pct\": {}, \"min_strip_blocks\": {}, \"acceptance_volume\": {}}},\n  \"climate124\": {},\n  \"plan\": {}\n}}\n",
             self.seed,
             crate::json::quote(self.mode.as_str()),
             crate::json::quote(base.version.as_str()),
@@ -1138,7 +1223,25 @@ impl HeightStats {
                 .min_strip_blocks
                 .map_or("null".to_string(), |v| v.to_string()),
             self.boundary.acceptance_volume(),
+            self.climate124_json(),
             self.plan_json(),
+        )
+    }
+
+    /// 12.4: доли климата и точка появления отдельным ключом.
+    /// Есть у обеих версий: нужные поля (`mountain`, зона) есть и в v0.
+    pub fn climate124_json(&self) -> String {
+        format!(
+            "{{\"land\": {}, \"land_pct\": {:.4}, \"mountains_pct\": {:.4}, \"deserts_pct\": {:.4}, \"forests_pct\": {:.4}, \"polar_pct\": {:.4}, \"spawn_good\": {}, \"spawn_shift_l\": [{:.4}, {:.4}]}}",
+            self.land_c,
+            self.land_c_pct(),
+            self.mountains_c_pct(),
+            self.deserts_c_pct(),
+            self.forests_c_pct(),
+            self.polar_c_pct(),
+            self.spawn_good,
+            self.spawn_shift_l.0,
+            self.spawn_shift_l.1
         )
     }
 
@@ -1231,6 +1334,20 @@ mod tests {
         assert!(stats.flooded().is_finite());
         let value = crate::json::parse(&stats.json(&base, &opts, &model)).unwrap();
         assert_eq!(value.get("synthetic"), Some(&crate::json::Json::Bool(true)));
+        // 12.4: суша с реками/озёрами не меньше сухой, доли конечны,
+        // точка появления сида 42 годна (как в ядерном тесте на 100 сидов).
+        assert!(stats.land_c >= stats.land);
+        assert!(stats.land_c_pct().is_finite());
+        assert!(stats.mountains_c_pct().is_finite());
+        assert!(stats.deserts_c_pct().is_finite());
+        assert!(stats.forests_c_pct().is_finite());
+        assert!(stats.polar_c_pct().is_finite());
+        assert!(stats.spawn_good, "точка появления сида 42 годна");
+        let climate = value.get("climate124").expect("12.4 в отчёте");
+        assert_eq!(
+            climate.get("spawn_good"),
+            Some(&crate::json::Json::Bool(true))
+        );
         let mut pv_base = base.clone();
         pv_base.pv = true;
         let pv_stats = HeightStats::collect(&pv_base, &opts, &model).unwrap();
