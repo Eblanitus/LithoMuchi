@@ -1,14 +1,14 @@
 {
-  "name": "t123-explore-3",
-  "note": "T123 в полном виде, круг 3 (по итогам t123-explore-1/2): аридная зона даёт 23-24 п.п. глобального E3+E2 из-за E3 47-50% внутри зоны. Круг 3 сдвигает e_flat[4] к границе E3/E4 (-0.12 и -0.05), e_hill[4] в E2 (-0.30/-0.35), сохраняет компенсацию e_hill[2]=0.05/e_hill[3]=-0.05 и A 0.30/0.90; вариант peak сильнее поднимает высокие столбцы land_y[0..1] против gameplay y>130 1.8-2.1% (цель 3-10), tight ужимает sigma_e[4] до 0.06. Сиды 42, 7, 777, 2024. Подбор (--set), не приёмка.",
+  "name": "t123-explore-4",
+  "note": "T123 в полном виде, круг 4 (по итогам t123-explore-3): подавление A (0.30/0.90) ломает гипсометрию и рельеф gameplay, поэтому A не трогаем. Глобальный E3+E2 снижаем подъёмом e_hill бореальной/умеренной/полуаридной зон в E4 (PV и высоты при этом сохраняются), аридная полоса e_flat[4]=-0.20/-0.25 с e_hill[4]=-0.30/-0.35. Сиды 42, 7, 777, 2024. Подбор (--set), не приёмка.",
   "version": "v1-dev",
   "modes": ["gameplay", "scientific"],
   "seeds": [42, 7, 777, 2024],
   "args": "--size 160 --patches 5 --relief-size 16 --boundary-size 32",
   "variants": [
-    {"name": "aridMid", "set": "morpho.e_flat[4]=-0.12,morpho.e_hill[4]=-0.30,morpho.e_hill[2]=0.05,morpho.e_hill[3]=-0.05,relief.a_lo=0.30,relief.a_hi=0.90"},
-    {"name": "aridMid-peak", "set": "morpho.e_flat[4]=-0.12,morpho.e_hill[4]=-0.30,morpho.e_hill[2]=0.05,morpho.e_hill[3]=-0.05,relief.a_lo=0.30,relief.a_hi=0.90,height.land_y[0][3]=215,height.land_y[0][4]=280,height.land_y[1][3]=160,height.land_y[1][4]=190"},
-    {"name": "aridMid-tight", "set": "morpho.e_flat[4]=-0.12,morpho.e_hill[4]=-0.30,morpho.e_hill[2]=0.05,morpho.e_hill[3]=-0.05,morpho.sigma_e[4]=0.06,relief.a_lo=0.30,relief.a_hi=0.90"},
-    {"name": "aridSoft", "set": "morpho.e_flat[4]=-0.05,morpho.e_hill[4]=-0.35,morpho.e_hill[2]=0.05,morpho.e_hill[3]=-0.05,relief.a_lo=0.30,relief.a_hi=0.90"}
+    {"name": "hillUp", "set": "morpho.e_flat[4]=-0.20,morpho.e_hill[4]=-0.30,morpho.e_hill[1]=0.10,morpho.e_hill[2]=0.15,morpho.e_hill[3]=0.05"},
+    {"name": "hillUpStrong", "set": "morpho.e_flat[4]=-0.25,morpho.e_hill[4]=-0.35,morpho.e_hill[1]=0.20,morpho.e_hill[2]=0.25,morpho.e_hill[3]=0.15,morpho.e_hill[5]=0.05"},
+    {"name": "hillUpAmild", "set": "morpho.e_flat[4]=-0.20,morpho.e_hill[4]=-0.30,morpho.e_hill[1]=0.10,morpho.e_hill[2]=0.15,morpho.e_hill[3]=0.05,relief.a_lo=0.15,relief.a_hi=0.70"},
+    {"name": "hillUpSoft", "set": "morpho.e_flat[4]=-0.15,morpho.e_hill[1]=0.10,morpho.e_hill[2]=0.15,morpho.e_hill[3]=0.05"}
   ]
 }
