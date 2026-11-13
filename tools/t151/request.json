@@ -1,34 +1,14 @@
 {
-  "name": "t123-explore-1",
-  "note": "T123 в полном виде, круг 1: подбор совместной правки полос E и land_y на урезанном объёме (сиды 42, 7, 777, 2024 — включая худшие по E3+E2 в climate124-zonal-1). Вариант aridA — лучший кандидат разведки 2026-11-13 (morpho.e_flat[4]=-0.28 + relief.a_lo=0.30/a_hi=0.90, проверялся только на малых сканах seed 42/7). arid — изолированный эффект одной полосы, aridA-e2low — aridA плюс понижение строки land_y[2] (E2) против роста гипсометрии 90-130/>130 от переезда аридной зоны в E2. Это подбор (--set), не приёмка: найденные значения переносятся в Params::defaults и перемеряются полным замером 16x2 под новым именем.",
+  "name": "t123-explore-2",
+  "note": "T123 в полном виде, круг 2 (по итогам t123-explore-1): e_flat[4]=-0.28 дал аридной зоне E2 36-49% при цели >=20% и поднял глобальный E3+E2 в scientific до 34-40% при потолке 30%. Круг 2 смягчает аридную полосу до -0.20 (край E2/E3), поднимает e_hill умеренной и полуаридной зон к границе E4 (компенсация глобального E3+E2) и в одном варианте поднимает высокие столбцы land_y[0..1] против провала y>130 в gameplay у aridA (1.9% при цели 3-10%). Сиды те же 42, 7, 777, 2024. Подбор (--set), не приёмка.",
   "version": "v1-dev",
-  "modes": [
-    "gameplay",
-    "scientific"
-  ],
-  "seeds": [
-    42,
-    7,
-    777,
-    2024
-  ],
+  "modes": ["gameplay", "scientific"],
+  "seeds": [42, 7, 777, 2024],
   "args": "--size 160 --patches 5 --relief-size 16 --boundary-size 32",
   "variants": [
-    {
-      "name": "base",
-      "set": ""
-    },
-    {
-      "name": "arid",
-      "set": "morpho.e_flat[4]=-0.28"
-    },
-    {
-      "name": "aridA",
-      "set": "morpho.e_flat[4]=-0.28,relief.a_lo=0.30,relief.a_hi=0.90"
-    },
-    {
-      "name": "aridA-e2low",
-      "set": "morpho.e_flat[4]=-0.28,relief.a_lo=0.30,relief.a_hi=0.90,height.land_y[2][1]=70,height.land_y[2][2]=85,height.land_y[2][3]=95,height.land_y[2][4]=110"
-    }
+    {"name": "aridM", "set": "morpho.e_flat[4]=-0.20,relief.a_lo=0.30,relief.a_hi=0.90"},
+    {"name": "aridM-hill", "set": "morpho.e_flat[4]=-0.20,relief.a_lo=0.30,relief.a_hi=0.90,morpho.e_hill[2]=0.05,morpho.e_hill[3]=-0.05"},
+    {"name": "aridM-hill-peak", "set": "morpho.e_flat[4]=-0.20,relief.a_lo=0.30,relief.a_hi=0.90,morpho.e_hill[2]=0.05,morpho.e_hill[3]=-0.05,height.land_y[0][4]=260,height.land_y[1][3]=145,height.land_y[1][4]=175"},
+    {"name": "arid-softA", "set": "morpho.e_flat[4]=-0.20,relief.a_lo=0.20,relief.a_hi=0.80"}
   ]
 }
