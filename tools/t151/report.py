@@ -54,6 +54,9 @@ TARGETS = {
     "леса 12.4, %": ((30, 50), (30, 50)),
     "полярные 12.4, %": ((10, 25), (10, 25)),
     "точка появления 12.4": ((True, True), (True, True)),
+    # Д-074: профиль P(φ) по 18 поясам. Ключа нет в climate124-1 и старше,
+    # поэтому в старых сводках строка пропускается, а не «0/16».
+    "зональный профиль осадков": ((True, True), (True, True)),
 }
 MODES = ("gameplay", "scientific")
 CAUSE_NAMES = {
@@ -110,7 +113,7 @@ def _climate124_metrics(j):
     c = j.get("climate124")
     if not isinstance(c, dict):
         return {}
-    return {
+    out = {
         "суша 12.4, %": c.get("land_pct"),
         "горы 12.4, %": c.get("mountains_pct"),
         "пустыни 12.4, %": c.get("deserts_pct"),
@@ -118,6 +121,12 @@ def _climate124_metrics(j):
         "полярные 12.4, %": c.get("polar_pct"),
         "точка появления 12.4": c.get("spawn_good"),
     }
+    # Д-074: в старых прогонах вложенного ключа нет. Строку не добавляем
+    # вовсе, чтобы mode_table пропустил её как «метрики нет в этих прогонах».
+    z = c.get("zonal_profile")
+    if isinstance(z, dict):
+        out["зональный профиль осадков"] = z.get("in_target")
+    return out
 
 
 def _plan_metrics(j):

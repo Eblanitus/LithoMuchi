@@ -1660,7 +1660,8 @@ fn usage() -> &'static str {
        probe        все поля в точке --at x,z\n\
        dump         T123: ингредиенты рельефа по сетке в TSV (--span-l, --size; v1-dev)\n\
        layers       список слоёв\n\
-       stats        метрики 12.4; с --game-data/--synthetic-height — T100\n\
+       stats        метрики 12.4 (доли климата, зональный профиль P(φ));\n\
+                    с --game-data/--synthetic-height — T100\n\
        stats-all    16 сидов × 2 режима; принимает те же флаги высоты\n\
        acceptance   T151/10.1: вердикт границ PASS/FAIL/NO-VOLUME\n\
                     и ориентиры 12.4 (ORIENTATION, не приёмка)\n\
