@@ -57,6 +57,10 @@ TARGETS = {
     # Д-074: профиль P(φ) по 18 поясам. Ключа нет в climate124-1 и старше,
     # поэтому в старых сводках строка пропускается, а не «0/16».
     "зональный профиль осадков": ((True, True), (True, True)),
+    # 12.4: поперечники плит. Ключа `plates` нет в прогонах до этой метрики —
+    # строки пропустятся, как у зонального профиля.
+    "медиана поперечника плиты, L": ((12, 25), (12, 25)),
+    "самая маленькая плита, L": ((4, None), (4, None)),
 }
 MODES = ("gameplay", "scientific")
 CAUSE_NAMES = {
@@ -126,6 +130,10 @@ def _climate124_metrics(j):
     z = c.get("zonal_profile")
     if isinstance(z, dict):
         out["зональный профиль осадков"] = z.get("in_target")
+    plates = c.get("plates")
+    if isinstance(plates, dict):
+        out["медиана поперечника плиты, L"] = plates.get("median_diameter_l")
+        out["самая маленькая плита, L"] = plates.get("min_diameter_l")
     return out
 
 

@@ -1,6 +1,8 @@
 //! Метрики T100 / раздела 10.1 пересмотра. Отдельная диагностика поверхности,
 //! не подмена существующих метрик 12.4 команды `stats` без новых флагов.
 
+use std::collections::{HashMap, HashSet};
+
 use litho_core::vanilla::peaks_valleys;
 use litho_core::{Mode, SurfaceKind};
 
@@ -131,6 +133,73 @@ impl ZonalProfile {
     }
 }
 
+/// 12.4: поперечники плит по основной сетке. Плита учитывается, только
+/// если она целиком попала в скан: плиты, касающиеся края области, обрезаны
+/// сканом, и их видимая площадь занижает поперечник. Поперечник —
+/// эквивалентный по площади: `2·sqrt(A/π)`, площадь — число точек плиты,
+/// умноженное на площадь точки сетки в L².
+#[derive(Clone, Debug, Default)]
+pub struct PlateSizes {
+    pub counts: HashMap<u64, usize>,
+    pub border: HashSet<u64>,
+}
+
+impl PlateSizes {
+    pub fn add(&mut self, plate_id: u64, on_border: bool) {
+        *self.counts.entry(plate_id).or_insert(0) += 1;
+        if on_border {
+            self.border.insert(plate_id);
+        }
+    }
+
+    /// Поперечники плит, целиком попавших в скан, по возрастанию.
+    pub fn diameters(&self, point_area_l2: f64) -> Vec<f64> {
+        if !(point_area_l2 > 0.0) {
+            return Vec::new();
+        }
+        let mut out: Vec<f64> = self
+            .counts
+            .iter()
+            .filter(|(id, _)| !self.border.contains(id))
+            .map(|(_, count)| {
+                2.0 * ((*count as f64 * point_area_l2) / std::f64::consts::PI).sqrt()
+            })
+            .collect();
+        out.sort_by(|a, b| a.total_cmp(b));
+        out
+    }
+
+    pub fn median_diameter(&self, point_area_l2: f64) -> Option<f64> {
+        let diameters = self.diameters(point_area_l2);
+        let n = diameters.len();
+        if n == 0 {
+            None
+        } else if n % 2 == 1 {
+            Some(diameters[n / 2])
+        } else {
+            Some((diameters[n / 2 - 1] + diameters[n / 2]) * 0.5)
+        }
+    }
+
+    pub fn min_diameter(&self, point_area_l2: f64) -> Option<f64> {
+        self.diameters(point_area_l2).first().copied()
+    }
+
+    /// Фрагмент JSON для ключа `climate124`, как у `ZonalProfile::json`.
+    pub fn json(&self, point_area_l2: f64) -> String {
+        let fmt = |v: Option<f64>| {
+            v.map_or_else(|| "null".to_string(), |x| format!("{x:.3}"))
+        };
+        format!(
+            "\"plates\": {{\"plates\": {}, \"counted\": {}, \"median_diameter_l\": {}, \"min_diameter_l\": {}}}",
+            self.counts.len(),
+            self.diameters(point_area_l2).len(),
+            fmt(self.median_diameter(point_area_l2)),
+            fmt(self.min_diameter(point_area_l2)),
+        )
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct StatsOptions {
     pub size: usize,
@@ -232,6 +301,11 @@ pub struct HeightStats {
     /// 12.4: профиль осадков по 18 поясам псевдошироты. Считается по всей
     /// основной сетке T100, включая океан, до всех `continue` в цикле.
     pub zonal: ZonalProfile,
+    /// 12.4: поперечники плит по той же сетке (все точки, океан включён:
+    /// плита не кончается на берегу). `plate_area_l2` — площадь одной
+    /// точки сетки в L², нужна, чтобы из счётчиков получить поперечники.
+    pub plates: PlateSizes,
+    pub plate_area_l2: f64,
     pub river_samples: usize,
     pub river_water: usize,
     pub water_samples: usize,
@@ -721,6 +795,8 @@ impl HeightStats {
             spawn_good: false,
             spawn_shift_l: (0.0, 0.0),
             zonal: ZonalProfile::default(),
+            plates: PlateSizes::default(),
+            plate_area_l2: 0.0,
             river_samples: 0,
             river_water: 0,
             water_samples: 0,
@@ -760,6 +836,8 @@ impl HeightStats {
             spawn_good: false,
             spawn_shift_l: (0.0, 0.0),
             zonal: ZonalProfile::default(),
+            plates: PlateSizes::default(),
+            plate_area_l2: 0.0,
             river_samples: 0,
             river_water: 0,
             water_samples: 0,
@@ -782,6 +860,7 @@ impl HeightStats {
             ),
             plan: None,
         };
+        out.plate_area_l2 = (opts.span_l / opts.size as f64).powi(2);
         let land_threshold = generator.params().climate.ocean_c_threshold;
         // 12.4: точка появления. Поиск уже выполнен в `Generator::new`,
         // здесь одна проверка критериев 7.12 на эффективных параметрах
@@ -810,6 +889,13 @@ impl HeightStats {
                 // `continue` ниже (вода, русло, не-суша).
                 out.zonal
                     .add(world.climate.pole.phi_deg, world.climate.precip.p_mm);
+                // 12.4: поперечники плит. Отдельный plate_sample на точку:
+                // WorldSample владельца плиты не отдаёт.
+                if let Some(plate) = generator.plate_sample(x, z) {
+                    let on_border =
+                        i == 0 || j == 0 || i + 1 == opts.size || j + 1 == opts.size;
+                    out.plates.add(plate.plate_id(), on_border);
+                }
                 let input = HeightInput::from_fields(v.c, v.e, v.w);
                 let input = if base.pv {
                     input.with_pv(world.pv)
@@ -1252,6 +1338,14 @@ impl HeightStats {
             front = fmt_deg(self.zonal.front_band()),
             verdict = self.zonal.verdict_text(),
         ));
+        let fmt_l = |v: Option<f64>| v.map_or_else(|| "нет".to_string(), |x| format!("{x:.1}"));
+        out.push_str(&format!(
+            "12.4 плиты: медиана поперечника {median} L (ориентир 12–25), наименьшая {min} L (ориентир ≥ 4), плит в скане {all}, целиком {counted}\n",
+            median = fmt_l(self.plates.median_diameter(self.plate_area_l2)),
+            min = fmt_l(self.plates.min_diameter(self.plate_area_l2)),
+            all = self.plates.counts.len(),
+            counted = self.plates.diameters(self.plate_area_l2).len(),
+        ));
         let b = &self.boundary;
         out.push_str(&format!(
             "T134 границы: сетка {bn}×{bn} ({bsamples} точек), шаг {bs:.3} блока, область {span:.3}×{span:.3} L, суша {bl}\n\
@@ -1391,7 +1485,7 @@ impl HeightStats {
             self.spawn_good,
             self.spawn_shift_l.0,
             self.spawn_shift_l.1,
-            self.zonal.json()
+            format!("{}, {}", self.zonal.json(), self.plates.json(self.plate_area_l2))
         )
     }
 
@@ -1801,6 +1895,69 @@ mod zonal_tests {
         assert_eq!(
             value.get("zonal_profile").unwrap().get("in_target"),
             Some(&crate::json::Json::Bool(true))
+        );
+    }
+}
+
+#[cfg(test)]
+mod plate_tests {
+    use super::*;
+
+    fn sizes() -> PlateSizes {
+        let mut p = PlateSizes::default();
+        // Плита 1: 100 точек целиком в скане; плита 2: 25 точек целиком;
+        // плита 3: 400 точек, но касается края и в поперечники не идёт.
+        for _ in 0..100 {
+            p.add(1, false);
+        }
+        for _ in 0..25 {
+            p.add(2, false);
+        }
+        for _ in 0..400 {
+            p.add(3, true);
+        }
+        p
+    }
+
+    #[test]
+    fn border_plates_are_excluded_from_diameters() {
+        let p = sizes();
+        assert_eq!(p.counts.len(), 3);
+        // Площадь точки 1 L²: поперечники 2·sqrt(100/π) и 2·sqrt(25/π).
+        let d = p.diameters(1.0);
+        assert_eq!(d.len(), 2);
+        assert!((d[0] - 5.6419).abs() < 0.001);
+        assert!((d[1] - 11.2838).abs() < 0.001);
+        assert!((p.min_diameter(1.0).unwrap() - 5.6419).abs() < 0.001);
+        assert!((p.median_diameter(1.0).unwrap() - 8.4629).abs() < 0.001);
+    }
+
+    #[test]
+    fn median_of_single_plate_and_empty_is_none() {
+        let mut p = PlateSizes::default();
+        assert_eq!(p.median_diameter(1.0), None);
+        assert_eq!(p.min_diameter(1.0), None);
+        assert!(p.diameters(0.0).is_empty());
+        p.add(7, false);
+        // Одна точка площадью 4 L²: 2·sqrt(4/π).
+        assert!((p.median_diameter(4.0).unwrap() - 2.2568).abs() < 0.001);
+    }
+
+    #[test]
+    fn plate_json_is_parseable() {
+        let value = crate::json::parse(&format!("{{{}}}", sizes().json(1.0)))
+            .expect("плиты — валидный JSON");
+        let plates = value.get("plates").expect("ключ plates");
+        assert_eq!(plates.get("plates"), Some(&crate::json::Json::Number(3.0)));
+        assert_eq!(plates.get("counted"), Some(&crate::json::Json::Number(2.0)));
+        let empty = crate::json::parse(&format!("{{{}}}", PlateSizes::default().json(1.0)))
+            .expect("пустые плиты — валидный JSON");
+        assert_eq!(
+            empty
+                .get("plates")
+                .unwrap()
+                .get("median_diameter_l"),
+            Some(&crate::json::Json::Null)
         );
     }
 }
