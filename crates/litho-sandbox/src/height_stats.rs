@@ -1469,6 +1469,11 @@ impl HeightStats {
     /// 12.4: доли климата и точка появления отдельным ключом.
     /// Есть у обеих версий: нужные поля (`mountain`, зона) есть и в v0.
     pub fn climate124_json(&self) -> String {
+        let zonal_and_plates = format!(
+            "{}, {}",
+            self.zonal.json(),
+            self.plates.json(self.plate_area_l2)
+        );
         format!(
             "{{\"land\": {}, \"land_pct\": {:.4}, \"mountains_pct\": {:.4}, \"deserts_pct\": {:.4}, \"forests_pct\": {:.4}, \"polar_pct\": {:.4}, \"spawn_good\": {}, \"spawn_shift_l\": [{:.4}, {:.4}], {}}}",
             self.land_c,
