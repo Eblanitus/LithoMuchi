@@ -1,0 +1,21 @@
+name: clippy-fix (временный)
+on:
+  push:
+    branches: [arena/265f4bd2-lithomuchi]
+    paths: [clippy-fix.trigger]
+permissions:
+  contents: write
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - run: cargo clippy --workspace --all-targets --fix --allow-dirty --allow-staged -- -D warnings || true
+      - run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then echo "изменений нет"; else git commit -m "clippy-fix: cargo clippy --fix (временный workflow)"; git push; fi
