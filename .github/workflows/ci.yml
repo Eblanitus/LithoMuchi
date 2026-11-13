@@ -5,8 +5,24 @@ name: CI
 on:
   push:
     branches: ["**"]
+    paths-ignore:
+      # Документация CI не проверяет (PARAMS.md и карты собирает render.yml,
+      # замеры T151 пишет t151.yml с [skip ci]); docs-only правки полный
+      # прогон из 7 job'ов не запускают. См. BRANCH-ANALYSIS-2026-11-12, п. 7.
+      - "docs/**"
+      - "*.md"
   pull_request:
+    paths-ignore:
+      - "docs/**"
+      - "*.md"
   workflow_dispatch:
+
+# На ветках новый push отменяет устаревший прогон: 33 запуска за день по
+# 7 job'ов (2026-11-12) — дорого для бесплатных минут. На main прогоны не
+# отменяются, а ждут очереди: там собирается артефакт для игровых тестов.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 env:
   HORIZON_REV: 66f3981f522b24c250b21523a70080965b940424
