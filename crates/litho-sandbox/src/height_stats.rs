@@ -11,6 +11,126 @@ use crate::render::RenderOptions;
 const E_EDGES: [f64; 6] = [-0.78, -0.375, -0.2225, 0.05, 0.45, 0.55];
 const HYPS_EDGES: [f64; 4] = [63.0, 70.0, 90.0, 130.0];
 
+/// 12.4: зональный профиль осадков. Псевдоширота φ = 0…90° (0 — «экватор»)
+/// бьётся на 18 поясов по 5°; в каждом — среднее `p_mm` по всем точкам
+/// скана. Осадки атмосферные, поэтому океан из профиля не исключается.
+pub const ZONAL_BAND_DEG: f64 = 5.0;
+pub const ZONAL_BANDS: usize = 18;
+/// Пояс с меньшим числом точек в профиль не берётся: один выброс луча
+/// влаги не должен становиться максимумом или минимумом всего пояса.
+pub const ZONAL_MIN_SAMPLES: usize = 8;
+
+#[derive(Clone, Copy, Debug, Default)]
+pub struct ZonalProfile {
+    pub sums: [f64; ZONAL_BANDS],
+    pub counts: [usize; ZONAL_BANDS],
+}
+
+impl ZonalProfile {
+    pub fn add(&mut self, phi_deg: f64, p_mm: f64) {
+        if !phi_deg.is_finite() || !p_mm.is_finite() || phi_deg < 0.0 {
+            return;
+        }
+        // φ = 90° ровно (полюс) относится к последнему поясу 85–90°.
+        let band = (phi_deg.min(90.0 - 1e-9) / ZONAL_BAND_DEG) as usize;
+        self.sums[band] += p_mm;
+        self.counts[band] += 1;
+    }
+
+    pub fn samples(&self) -> usize {
+        self.counts.iter().sum()
+    }
+
+    /// Среднее по поясу; `None`, если точек нет или их меньше порога.
+    pub fn mean(&self, band: usize) -> Option<f64> {
+        (self.counts[band] >= ZONAL_MIN_SAMPLES).then(|| self.sums[band] / self.counts[band] as f64)
+    }
+
+    fn arg_extreme<F>(&self, better: F) -> Option<usize>
+    where
+        F: Fn(f64, f64) -> bool,
+    {
+        let mut best: Option<(usize, f64)> = None;
+        for i in 0..ZONAL_BANDS {
+            let Some(v) = self.mean(i) else { continue };
+            if best.is_none_or(|(_, b)| better(v, b)) {
+                best = Some((i, v));
+            }
+        }
+        best.map(|(i, _)| i)
+    }
+
+    pub fn max_band(&self) -> Option<usize> {
+        self.arg_extreme(|v, b| v > b)
+    }
+
+    pub fn min_band(&self) -> Option<usize> {
+        self.arg_extreme(|v, b| v < b)
+    }
+
+    /// Второй максимум по 12.4 лежит в 45–55°: пояса 9 и 10.
+    pub fn front_band(&self) -> Option<usize> {
+        (9..=10)
+            .filter_map(|i| self.mean(i).map(|v| (i, v)))
+            .max_by(|a, b| a.1.total_cmp(&b.1))
+            .map(|(i, _)| i)
+    }
+
+    /// Ориентир 12.4 без придуманных порогов: максимум в 0–5°, минимум
+    /// в 20–30° (пояса 4, 5), в 45–55° — локальный второй максимум.
+    /// `None` — профиль не покрыт сканом: это «НЕТ ДАННЫХ», а не провал.
+    pub fn in_target(&self) -> Option<bool> {
+        if self.mean(0).is_none()
+            || (self.mean(4).is_none() && self.mean(5).is_none())
+            || self.front_band().is_none()
+        {
+            return None;
+        }
+        let front = self.front_band()?;
+        let front_v = self.mean(front)?;
+        let left = front.checked_sub(1).and_then(|i| self.mean(i));
+        let right = self.mean((front + 1).min(ZONAL_BANDS - 1));
+        let local_max = left.is_none_or(|v| front_v > v) && right.is_none_or(|v| front_v > v);
+        Some(self.max_band() == Some(0) && matches!(self.min_band(), Some(4 | 5)) && local_max)
+    }
+
+    pub fn verdict_text(&self) -> &'static str {
+        match self.in_target() {
+            Some(true) => "в ориентире",
+            Some(false) => "ВНЕ ОРИЕНТИРА",
+            None => "НЕТ ДАННЫХ",
+        }
+    }
+
+    /// Фрагмент JSON для ключа `climate124` — без обрамляющих фигурных
+    /// скобок: их печатает `HeightStats::climate124_json`.
+    pub fn json(&self) -> String {
+        let values = (0..ZONAL_BANDS)
+            .map(|i| {
+                self.mean(i)
+                    .map_or_else(|| "null".to_string(), |v| format!("{v:.3}"))
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
+        let counts = self
+            .counts
+            .iter()
+            .map(|c| c.to_string())
+            .collect::<Vec<_>>()
+            .join(", ");
+        let deg = |b: Option<usize>| b.map_or_else(|| "null".to_string(), |i| (i * 5).to_string());
+        format!(
+            "\"zonal_profile\": {{\"band_deg\": 5, \"points\": {}, \"p_mm\": [{values}], \"samples\": [{counts}], \"max_deg\": {}, \"min_deg\": {}, \"front_deg\": {}, \"in_target\": {}}}",
+            self.samples(),
+            deg(self.max_band()),
+            deg(self.min_band()),
+            deg(self.front_band()),
+            self.in_target()
+                .map_or_else(|| "null".to_string(), |v| v.to_string()),
+        )
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct StatsOptions {
     pub size: usize,
@@ -109,6 +229,9 @@ pub struct HeightStats {
     /// один раз на замер — поиск уже сделан в `Generator::new`).
     pub spawn_good: bool,
     pub spawn_shift_l: (f64, f64),
+    /// 12.4: профиль осадков по 18 поясам псевдошироты. Считается по всей
+    /// основной сетке T100, включая океан, до всех `continue` в цикле.
+    pub zonal: ZonalProfile,
     pub river_samples: usize,
     pub river_water: usize,
     pub water_samples: usize,
@@ -597,6 +720,7 @@ impl HeightStats {
             polar_c: 0,
             spawn_good: false,
             spawn_shift_l: (0.0, 0.0),
+            zonal: ZonalProfile::default(),
             river_samples: 0,
             river_water: 0,
             water_samples: 0,
@@ -635,6 +759,7 @@ impl HeightStats {
             polar_c: 0,
             spawn_good: false,
             spawn_shift_l: (0.0, 0.0),
+            zonal: ZonalProfile::default(),
             river_samples: 0,
             river_water: 0,
             water_samples: 0,
@@ -680,6 +805,11 @@ impl HeightStats {
                 }
                 .ok_or_else(|| format!("нет образца в ({x}, {z})"))?;
                 let v = world.vanilla;
+                // 12.4: зональный профиль осадков. Осадки атмосферные,
+                // океан не исключается, поэтому точка берётся до всех
+                // `continue` ниже (вода, русло, не-суша).
+                out.zonal
+                    .add(world.climate.pole.phi_deg, world.climate.precip.p_mm);
                 let input = HeightInput::from_fields(v.c, v.e, v.w);
                 let input = if base.pv {
                     input.with_pv(world.pv)
@@ -1103,6 +1233,25 @@ impl HeightStats {
             shift_x = self.spawn_shift_l.0,
             shift_z = self.spawn_shift_l.1,
         );
+        let fmt_band = |v: Option<f64>| v.map_or_else(|| "нет".to_string(), |x| format!("{x:.0}"));
+        let fmt_deg = |b: Option<usize>| {
+            b.map_or_else(
+                || "нет".to_string(),
+                |i| format!("{}–{}°", i * 5, (i + 1) * 5),
+            )
+        };
+        out.push_str(&format!(
+            "12.4 зональный профиль P(φ), мм/год: 0–5° {p0}, 20–30° {p20}/{p25}, 45–55° {p45}/{p50}; макс {max}, мин {min}, второй макс {front} — {verdict}\n",
+            p0 = fmt_band(self.zonal.mean(0)),
+            p20 = fmt_band(self.zonal.mean(4)),
+            p25 = fmt_band(self.zonal.mean(5)),
+            p45 = fmt_band(self.zonal.mean(9)),
+            p50 = fmt_band(self.zonal.mean(10)),
+            max = fmt_deg(self.zonal.max_band()),
+            min = fmt_deg(self.zonal.min_band()),
+            front = fmt_deg(self.zonal.front_band()),
+            verdict = self.zonal.verdict_text(),
+        ));
         let b = &self.boundary;
         out.push_str(&format!(
             "T134 границы: сетка {bn}×{bn} ({bsamples} точек), шаг {bs:.3} блока, область {span:.3}×{span:.3} L, суша {bl}\n\
@@ -1232,7 +1381,7 @@ impl HeightStats {
     /// Есть у обеих версий: нужные поля (`mountain`, зона) есть и в v0.
     pub fn climate124_json(&self) -> String {
         format!(
-            "{{\"land\": {}, \"land_pct\": {:.4}, \"mountains_pct\": {:.4}, \"deserts_pct\": {:.4}, \"forests_pct\": {:.4}, \"polar_pct\": {:.4}, \"spawn_good\": {}, \"spawn_shift_l\": [{:.4}, {:.4}]}}",
+            "{{\"land\": {}, \"land_pct\": {:.4}, \"mountains_pct\": {:.4}, \"deserts_pct\": {:.4}, \"forests_pct\": {:.4}, \"polar_pct\": {:.4}, \"spawn_good\": {}, \"spawn_shift_l\": [{:.4}, {:.4}], {}}}",
             self.land_c,
             self.land_c_pct(),
             self.mountains_c_pct(),
@@ -1241,7 +1390,8 @@ impl HeightStats {
             self.polar_c_pct(),
             self.spawn_good,
             self.spawn_shift_l.0,
-            self.spawn_shift_l.1
+            self.spawn_shift_l.1,
+            self.zonal.json()
         )
     }
 
@@ -1565,5 +1715,92 @@ mod boundary_tests {
         let (edges, straight) = straight_boundary_edges(&class, &land, n, 16.0);
         assert!(straight <= edges);
         assert!(straight > 0);
+    }
+}
+
+#[cfg(test)]
+mod zonal_tests {
+    use super::*;
+
+    /// Профиль «по учебнику» 12.4: экваториальный максимум, субтропический
+    /// минимум, фронтальный второй максимум в 45–55°.
+    const TEXTBOOK: [f64; ZONAL_BANDS] = [
+        1800.0, 1700.0, 1400.0, 1000.0, 500.0, 520.0, 700.0, 850.0, 1000.0, 1200.0, 1150.0, 900.0,
+        800.0, 750.0, 700.0, 680.0, 660.0, 650.0,
+    ];
+
+    fn profile(values: &[f64; ZONAL_BANDS]) -> ZonalProfile {
+        let mut z = ZonalProfile::default();
+        for (i, &p) in values.iter().enumerate() {
+            for _ in 0..ZONAL_MIN_SAMPLES {
+                z.add(i as f64 * ZONAL_BAND_DEG + 1.0, p);
+            }
+        }
+        z
+    }
+
+    #[test]
+    fn textbook_profile_is_within_12_4_orientation() {
+        let z = profile(&TEXTBOOK);
+        assert_eq!(z.samples(), ZONAL_BANDS * ZONAL_MIN_SAMPLES);
+        assert_eq!(z.max_band(), Some(0));
+        assert_eq!(z.min_band(), Some(4));
+        assert_eq!(z.front_band(), Some(9));
+        assert_eq!(z.in_target(), Some(true));
+        assert_eq!(z.verdict_text(), "в ориентире");
+    }
+
+    #[test]
+    fn wrong_max_or_min_is_outside_orientation() {
+        let mut moved = TEXTBOOK;
+        moved[0] = 400.0; // максимум уехал из 0–5°
+        let z = profile(&moved);
+        assert_eq!(z.in_target(), Some(false));
+        assert_eq!(z.verdict_text(), "ВНЕ ОРИЕНТИРА");
+
+        let mut flat = TEXTBOOK;
+        flat[16] = 100.0; // глобальный минимум не в 20–30°
+        assert_eq!(profile(&flat).in_target(), Some(false));
+    }
+
+    #[test]
+    fn sparse_bands_and_non_finite_values_are_no_data() {
+        let z = ZonalProfile::default();
+        assert_eq!(z.in_target(), None);
+        assert_eq!(z.verdict_text(), "НЕТ ДАННЫХ");
+        assert_eq!(z.samples(), 0);
+
+        let mut sparse = ZonalProfile::default();
+        sparse.add(2.0, 99_999.0); // один выброс не должен стать максимумом
+        sparse.add(f64::NAN, 1000.0);
+        sparse.add(2.0, f64::INFINITY);
+        sparse.add(-1.0, 1000.0);
+        assert_eq!(sparse.samples(), 1);
+        assert_eq!(sparse.max_band(), None);
+        assert_eq!(sparse.in_target(), None);
+    }
+
+    #[test]
+    fn pole_boundary_belongs_to_last_band() {
+        let mut z = ZonalProfile::default();
+        z.add(90.0, 700.0);
+        assert_eq!(z.counts[ZONAL_BANDS - 1], 1);
+        assert_eq!(z.counts[0], 0);
+    }
+
+    #[test]
+    fn zonal_json_is_parseable_and_no_data_is_null() {
+        let empty = ZonalProfile::default();
+        let value = crate::json::parse(&format!("{{{}}}", empty.json()))
+            .expect("зональный профиль — валидный JSON");
+        let z = value.get("zonal_profile").expect("ключ zonal_profile");
+        assert_eq!(z.get("in_target"), Some(&crate::json::Json::Null));
+
+        let value = crate::json::parse(&format!("{{{}}}", profile(&TEXTBOOK).json()))
+            .expect("зональный профиль — валидный JSON");
+        assert_eq!(
+            value.get("zonal_profile").unwrap().get("in_target"),
+            Some(&crate::json::Json::Bool(true))
+        );
     }
 }

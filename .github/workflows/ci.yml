@@ -20,8 +20,14 @@ on:
 # На ветках новый push отменяет устаревший прогон: 33 запуска за день по
 # 7 job'ов (2026-11-12) — дорого для бесплатных минут. На main прогоны не
 # отменяются, а ждут очереди: там собирается артефакт для игровых тестов.
+# Д-075: группа по имени ветки, а не по `github.ref`. У push это
+# `refs/heads/<ветка>`, у pull_request — `refs/pull/N/merge`: с `github.ref`
+# один и тот же коммит PR давал два полных прогона по 7 job'ов (PR #21 —
+# 14 проверок). `head_ref`/`ref_name` сводят их в одну группу, более поздний
+# прогон (pull_request) отменяет дубль. Префикс репозитория разделяет ветки
+# с одинаковыми именами из форков. На main по-прежнему очередь, не отмена.
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ci-${{ github.event.pull_request.head.repo.full_name || github.repository }}-${{ github.event.pull_request.head_ref || github.ref_name }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 env:
