@@ -1,6 +1,8 @@
 name: fmt-fix (временный)
 on:
-  workflow_dispatch:
+  push:
+    branches: [arena/265f4bd2-lithomuchi]
+    paths: [crates/litho-sandbox/src/height_stats.rs.fmt-trigger]
 permissions:
   contents: write
 jobs:
