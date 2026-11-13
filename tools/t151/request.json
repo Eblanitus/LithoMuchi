@@ -1,14 +1,8 @@
 {
-  "name": "t123-explore-5",
-  "note": "T123 в полном виде, круг 5 (по итогам t123-explore-4): hillUpStrong удержал gameplay, scientific не хватает 3-7 п.п. по E3+E2. Круг 5 раздельный по режимам: gpStrong — контроль hillUpStrong для gameplay, gpPlus добавляет снижение высоких столбцов land_y[4] против y 70-90, scPlus/scPlus2 — усиленный подъём e_hill и ужатие sigma_e только для scientific. Сиды 42, 7, 777, 2024. Подбор (--set), не приёмка.",
+  "name": "t123-final-1",
+  "note": "T123 в полном виде: полный замер 16x2 после переноса кандидата кругов t123-explore-1...5 в Params::defaults (аридная e_flat[4]=-0.25, подъём e_hill зон, scientific sigma_e ужата). Хеши v1-dev ожидаются scientific 65892fea04e2f1cc, gameplay 7583258fb934be38. Основная сетка 160x160 на 200 L; окна рельефа и сетка границ в 25 пятнах, неполный объём 10.1.",
   "version": "v1-dev",
   "modes": ["gameplay", "scientific"],
-  "seeds": [42, 7, 777, 2024],
-  "args": "--size 160 --patches 5 --relief-size 16 --boundary-size 32",
-  "variants": [
-    {"name": "gpStrong", "modes": ["gameplay"], "set": "morpho.e_flat[4]=-0.25,morpho.e_hill[4]=-0.35,morpho.e_hill[1]=0.20,morpho.e_hill[2]=0.25,morpho.e_hill[3]=0.15,morpho.e_hill[5]=0.05"},
-    {"name": "gpPlus", "modes": ["gameplay"], "set": "morpho.e_flat[4]=-0.25,morpho.e_hill[4]=-0.35,morpho.e_hill[1]=0.20,morpho.e_hill[2]=0.25,morpho.e_hill[3]=0.15,morpho.e_hill[5]=0.05,height.land_y[4][3]=70,height.land_y[4][4]=75"},
-    {"name": "scPlus", "modes": ["scientific"], "set": "morpho.e_flat[4]=-0.25,morpho.e_hill[4]=-0.35,morpho.e_hill[1]=0.30,morpho.e_hill[2]=0.35,morpho.e_hill[3]=0.25,morpho.e_hill[5]=0.10,morpho.sigma_e[1]=0.08,morpho.sigma_e[2]=0.10,morpho.sigma_e[3]=0.08"},
-    {"name": "scPlus2", "modes": ["scientific"], "set": "morpho.e_flat[4]=-0.25,morpho.e_hill[4]=-0.35,morpho.e_hill[1]=0.30,morpho.e_hill[2]=0.35,morpho.e_hill[3]=0.25,morpho.e_hill[5]=0.10,morpho.sigma_e[0]=0.06,morpho.sigma_e[1]=0.08,morpho.sigma_e[2]=0.10,morpho.sigma_e[3]=0.08,morpho.e_flat[2]=0.35,morpho.e_flat[3]=0.30"}
-  ]
+  "seeds": [0, 1, 2, 7, 42, 123, 777, 1234, 2024, 12345, 54321, 99999, -1, -42, -123456789, 987654321],
+  "args": "--size 160 --patches 5 --relief-size 16 --boundary-size 32"
 }
