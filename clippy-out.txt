@@ -1,0 +1,25 @@
+[1m[33mwarning[0m[1m: unused field `license` in `workspace.package`[0m
+  [1m[94m--> [0mCargo.toml:13:1
+   [1m[94m|[0m
+[1m[94m13[0m [1m[94m|[0m license = "MIT OR Apache-2.0"
+   [1m[94m|[0m [1m[33m^^^^^^^[0m
+   [1m[94m|[0m
+   [1m[94m= [0m[1mnote[0m: `cargo::unused_workspace_package_fields` is set to `warn` by default
+[1m[96mhelp[0m: consider removing the field `workspace.package.license`
+[1m[33mwarning[0m[1m: unused field `repository` in `workspace.package`[0m
+  [1m[94m--> [0mCargo.toml:14:1
+   [1m[94m|[0m
+[1m[94m14[0m [1m[94m|[0m repository = "https://github.com/Eblanitus/LithoMuchi"
+   [1m[94m|[0m [1m[33m^^^^^^^^^^[0m
+   [1m[94m|[0m
+[1m[96mhelp[0m: consider removing the field `workspace.package.repository`
+[1m[33mwarning[0m: workspace (manifest) generated 2 warnings
+[1m[92m    Checking[0m litho-core v0.1.0 (/home/runner/work/LithoMuchi/LithoMuchi/crates/litho-core)
+[1m[92m    Checking[0m litho-tests v0.1.0 (/home/runner/work/LithoMuchi/LithoMuchi/crates/litho-tests)
+[1m[92m    Checking[0m xtask v0.1.0 (/home/runner/work/LithoMuchi/LithoMuchi/tools/xtask)
+[1m[92m    Checking[0m litho-sandbox v0.1.0 (/home/runner/work/LithoMuchi/LithoMuchi/crates/litho-sandbox)
+crates/litho-sandbox/src/height_stats.rs:157:12: [1m[91merror[0m: the use of negated comparison operators on partially ordered types produces code that is hard to read and refactor, please consider using the `partial_cmp` method instead, to make it clear that the two values could be incomparable
+crates/litho-sandbox/src/height_stats.rs:1472:9: [1m[91merror[0m: `format!` in `format!` args
+[1m[91merror[0m: could not compile `litho-sandbox` (bin "litho-sandbox") due to 2 previous errors
+[1m[33mwarning[0m: build failed, waiting for other jobs to finish...
+[1m[91merror[0m: could not compile `litho-sandbox` (bin "litho-sandbox" test) due to 2 previous errors
