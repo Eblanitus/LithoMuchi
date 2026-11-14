@@ -1,9 +1,9 @@
 {
-  "name": "acceptance-vol-probe-1",
-  "note": "Проба приёмочного объёма 10.1: сетка границ 6250 при шаге 32 блока даёт span 200 L в scientific (800 L в gameplay), patches 1. Один сид, оба режима: цель — цена полного объёма и первые вердикты строк границ, а не приёмка. Полный замер на 16 сидах — следующим именем, если цена терпимая.",
+  "name": "acceptance-vol-sc-1",
+  "note": "Приёмочный объём 10.1, scientific: сетка границ 6250 при шаге 32 блока — span ровно 200 L, шаг 32 (критерий acceptance_volume). 16 сидов, patches 1. Проба acceptance-vol-probe-1 показала цену: scientific ~18 мин на прогон; gameplay тем же размером не тянет (область 800 L), для него отдельный замер acceptance-vol-gp-1 с размером 1600.",
   "version": "v1-dev",
-  "modes": ["gameplay", "scientific"],
-  "seeds": [42],
+  "modes": ["scientific"],
+  "seeds": [-123456789, -42, -1, 0, 1, 2, 7, 42, 123, 777, 1234, 2024, 12345, 54321, 99999, 987654321],
   "args": "--size 160 --patches 1 --relief-size 16 --boundary-size 6250",
   "variants": []
 }
