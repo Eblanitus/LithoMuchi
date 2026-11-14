@@ -1,0 +1,5788 @@
+{
+ "failures": [],
+ "request": {
+  "args": "--size 160 --patches 1 --relief-size 16 --boundary-size 6250",
+  "modes": [
+   "scientific"
+  ],
+  "name": "acceptance-vol-sc-1",
+  "note": "Приёмочный объём 10.1, scientific: сетка границ 6250 при шаге 32 блока — span ровно 200 L, шаг 32 (критерий acceptance_volume). 16 сидов, patches 1. Проба acceptance-vol-probe-1 показала цену: scientific ~18 мин на прогон; gameplay тем же размером не тянет (область 800 L), для него отдельный замер acceptance-vol-gp-1 с размером 1600.",
+  "seeds": [
+   -123456789,
+   -42,
+   -1,
+   0,
+   1,
+   2,
+   7,
+   42,
+   123,
+   777,
+   1234,
+   2024,
+   12345,
+   54321,
+   99999,
+   987654321
+  ],
+  "variants": [],
+  "version": "v1-dev"
+ },
+ "runs": [
+  {
+   "_seconds": 842.0,
+   "_variant": "",
+   "approximation": "litho-core owned I2 surface; no vanilla splines",
+   "boundary": {
+    "acceptance_volume": true,
+    "boundary_edges": 2805087,
+    "climate_humidity_jump_pairs": 2795,
+    "climate_humidity_jump_pct": 0.04051361047987387,
+    "climate_humidity_pair_pct": 0.012577465034647203,
+    "climate_humidity_pairs": 22222284,
+    "climate_land": 11322121,
+    "field_humidity_jump_pairs": 3918,
+    "field_humidity_jump_pct": 0.05090056197639409,
+    "humidity_jump_cause_pairs": {
+     "climate": 2795,
+     "dry_basin": 35016,
+     "estuary": 13423,
+     "gallery": 18695,
+     "other": 10225,
+     "river": 470680,
+     "swamp": 1182
+    },
+    "humidity_jump_pair_pct": 2.2029884028393942,
+    "humidity_jump_pairs": 552016,
+    "humidity_jump_pct": 5.694260218634812,
+    "humidity_pairs": 25057599,
+    "land": 12752315,
+    "min_strip_blocks": 32,
+    "size": 6250,
+    "span_l": 200,
+    "step": 32,
+    "straight_edges": 12138,
+    "straight_model": "grid-edge-chord-512-deviation-16",
+    "straight_pct": 0.43271385165593795,
+    "thin_pct": 0,
+    "wind_max_deg": 0.6138331755972607,
+    "wind_pairs": 78112500
+   },
+   "climate124": {
+    "coast_asymmetry": {
+     "band_deg": [
+      10,
+      25
+     ],
+     "east_mean_mm": 754.007,
+     "east_samples": 230,
+     "in_target": false,
+     "ratio": 0.583,
+     "west_mean_mm": 1293.249,
+     "west_samples": 197
+    },
+    "deserts_pct": 7.6164,
+    "forests_pct": 37.4685,
+    "island_dust": {
+     "area_l2": 40000.0,
+     "cell_area_l2": 0.001,
+     "in_target": false,
+     "per_1000_l2": 100.3,
+     "specks": 4012
+    },
+    "land": 9125,
+    "land_pct": 35.6445,
+    "mountains_pct": 4.7781,
+    "plates": {
+     "counted": 160,
+     "median_diameter_l": 15.386,
+     "min_diameter_l": 9.974,
+     "plates": 233
+    },
+    "polar_pct": 14.926,
+    "rain_shadow": {
+     "drop_pct": 43.742,
+     "in_target": true,
+     "leeward_mean_mm": 562.649,
+     "ridge_samples": 306,
+     "windward_mean_mm": 1000.13
+    },
+    "spawn_good": true,
+    "spawn_shift_l": [
+     -108.8712,
+     -174.8938
+    ],
+    "zonal_profile": {
+     "band_deg": 5,
+     "front_deg": 45,
+     "in_target": false,
+     "max_deg": 0,
+     "min_deg": 85,
+     "p_mm": [
+      3044.284,
+      2353.925,
+      1942.188,
+      1583.392,
+      1005.12,
+      803.486,
+      755.319,
+      960.69,
+      1299.71,
+      1326.916,
+      981.443,
+      599.101,
+      338.384,
+      195.355,
+      165.292,
+      123.394,
+      81.03,
+      61.659
+     ],
+     "points": 25600,
+     "samples": [
+      4079,
+      3489,
+      2741,
+      2532,
+      2171,
+      1781,
+      1592,
+      1435,
+      1179,
+      1004,
+      794,
+      753,
+      675,
+      523,
+      411,
+      260,
+      141,
+      40
+     ]
+    }
+   },
+   "erosion_pct": [
+    1.865038996269922,
+    5.990731321351871,
+    7.154967785690064,
+    18.989487962021023,
+    57.7257827512151,
+    8.047925850570815,
+    0.22606533288120267
+   ],
+   "flat_windows_pct": 0,
+   "flooded_land_pct": 0.4408273991183452,
+   "gallery_pct": 0.015625,
+   "gallery_samples": 4,
+   "height_data_hash": "356e89ef6fbdb19b",
+   "height_source": "litho-core-owned-I2",
+   "hyps_pct": [
+    0.4408273991183452,
+    42.13857804905618,
+    36.67910025997513,
+    13.462190573075619,
+    7.279303718774726
+   ],
+   "land_samples": 8847,
+   "mode": "scientific",
+   "params_hash": "8887e6a4ec1f7f65",
+   "patches": 1,
+   "path": "fast",
+   "plan": {
+    "climate_shape": {
+     "erosion_pct": [
+      1.865038996269922,
+      5.990731321351871,
+      7.154967785690064,
+      18.989487962021023,
+      57.7257827512151,
+      8.047925850570815,
+      0.22606533288120267
+     ],
+     "lake_pct": 0.1969,
+     "land": 8847,
+     "notes": [
+      "polar: озёра 0.08 % < 2× среднего 0.20 %",
+      "arid: E2 10.8 % < 20 %"
+     ],
+     "pass": false,
+     "river_pct": 3.0406,
+     "zones": [
+      {
+       "deferred_pct": 4.9342,
+       "distinct_bands": 0,
+       "dry_pct": 0.4934,
+       "erosion_pct": [
+        1.5912897822445562,
+        5.360134003350084,
+        5.025125628140704,
+        12.89782244556114,
+        65.91289782244556,
+        8.710217755443885,
+        0.5025125628140703
+       ],
+       "lake_pct": 0.0822,
+       "land": 1216,
+       "max_gap_pp": 8.187,
+       "name": "polar",
+       "river_pct": 1.727
+      },
+      {
+       "deferred_pct": 6.6929,
+       "distinct_bands": 0,
+       "dry_pct": 0.9186,
+       "erosion_pct": [
+        0.4172461752433936,
+        3.0598052851182196,
+        2.642559109874826,
+        17.663421418636997,
+        63.97774687065368,
+        11.821974965229485,
+        0.4172461752433936
+       ],
+       "lake_pct": 0.5249,
+       "land": 762,
+       "max_gap_pp": 6.252,
+       "name": "boreal",
+       "river_pct": 5.1181
+      },
+      {
+       "deferred_pct": 4.4556,
+       "distinct_bands": 0,
+       "dry_pct": 0.0719,
+       "erosion_pct": [
+        0.6558641975308642,
+        2.314814814814815,
+        4.70679012345679,
+        21.064814814814813,
+        60.95679012345679,
+        10.030864197530864,
+        0.2700617283950617
+       ],
+       "lake_pct": 0.3593,
+       "land": 2783,
+       "max_gap_pp": 3.676,
+       "name": "temperate_humid",
+       "river_pct": 6.5038
+      },
+      {
+       "deferred_pct": 1.8018,
+       "distinct_bands": 0,
+       "dry_pct": 5.2338,
+       "erosion_pct": [
+        0.6917423259835711,
+        5.188067444876784,
+        9.727626459143968,
+        23.13013402507566,
+        54.17207090358841,
+        7.047124945957631,
+        0.043233895373973194
+       ],
+       "lake_pct": 0.0858,
+       "land": 2331,
+       "max_gap_pp": 4.141,
+       "name": "semiarid",
+       "river_pct": 0.6864
+      },
+      {
+       "deferred_pct": 0.2345,
+       "distinct_bands": 0,
+       "dry_pct": 5.2169,
+       "erosion_pct": [
+        0.5878894767783657,
+        6.643151087595532,
+        10.758377425044092,
+        17.754262198706645,
+        58.49500293944738,
+        5.584950029394474,
+        0.1763668430335097
+       ],
+       "lake_pct": 0.0586,
+       "land": 1706,
+       "max_gap_pp": 3.603,
+       "name": "arid",
+       "river_pct": 0.2345
+      },
+      {
+       "deferred_pct": 0.0,
+       "distinct_bands": 0,
+       "dry_pct": 0.0,
+       "erosion_pct": [
+        2.0408163265306123,
+        8.16326530612245,
+        2.0408163265306123,
+        24.489795918367346,
+        53.06122448979592,
+        10.204081632653061,
+        0.0
+       ],
+       "lake_pct": 0.0,
+       "land": 63,
+       "max_gap_pp": 5.5,
+       "name": "tropical_humid",
+       "river_pct": 22.2222
+      },
+      {
+       "deferred_pct": 1.3699,
+       "distinct_bands": 4,
+       "dry_pct": 0.0,
+       "erosion_pct": [
+        35.61643835616438,
+        53.42465753424658,
+        8.219178082191782,
+        1.82648401826484,
+        0.91324200913242,
+        0.0,
+        0.0
+       ],
+       "lake_pct": 0.0,
+       "land": 219,
+       "max_gap_pp": 56.813,
+       "name": "mountain_cold",
+       "river_pct": 0.0
+      },
+      {
+       "deferred_pct": 0.0,
+       "distinct_bands": 4,
+       "dry_pct": 6.3492,
+       "erosion_pct": [
+        35.0,
+        50.0,
+        8.333333333333334,
+        0.0,
+        6.666666666666667,
+        0.0,
+        0.0
+       ],
+       "lake_pct": 0.0,
+       "land": 63,
+       "max_gap_pp": 51.059,
+       "name": "mountain_warm",
+       "river_pct": 4.7619
+      }
+     ]
+    },
+    "rivers_lakes": {
+     "area_l2": 40000.0,
+     "dry_land": 8847,
+     "lake_land": 18,
+     "lake_pct": 0.1969,
+     "lakes_per_100_l2": 0.0451,
+     "land": 9143,
+     "river_land": 278,
+     "river_pct": 3.0406
+    }
+   },
+   "pv_field": false,
+   "relief_median": 9.062012961062003,
+   "relief_step": 32,
+   "relief_windows": 16,
+   "river_samples": 263,
+   "river_water_pct": 100,
+   "samples": 25600,
+   "seed": -1,
+   "set": "",
+   "size": 160,
+   "span_l": 200,
+   "synthetic": false,
+   "valley_pct": 1.4403778040141677,
+   "version": "v1-dev"
+  },
+  {
+   "_seconds": 1099.0,
+   "_variant": "",
+   "approximation": "litho-core owned I2 surface; no vanilla splines",
+   "boundary": {
+    "acceptance_volume": true,
+    "boundary_edges": 3328673,
+    "climate_humidity_jump_pairs": 3308,
+    "climate_humidity_jump_pct": 0.040290881632587386,
+    "climate_humidity_pair_pct": 0.012102670303467872,
+    "climate_humidity_pairs": 27332811,
+    "climate_land": 13921264,
+    "field_humidity_jump_pairs": 5648,
+    "field_humidity_jump_pct": 0.06064579660231417,
+    "humidity_jump_cause_pairs": {
+     "climate": 3308,
+     "dry_basin": 38531,
+     "estuary": 16688,
+     "gallery": 46225,
+     "other": 12156,
+     "river": 575748,
+     "swamp": 842
+    },
+    "humidity_jump_pair_pct": 2.236336749236048,
+    "humidity_jump_pairs": 693498,
+    "humidity_jump_pct": 5.754321393311823,
+    "humidity_pairs": 31010446,
+    "land": 15776856,
+    "min_strip_blocks": 32,
+    "size": 6250,
+    "span_l": 200,
+    "step": 32,
+    "straight_edges": 14922,
+    "straight_model": "grid-edge-chord-512-deviation-16",
+    "straight_pct": 0.44828674970476223,
+    "thin_pct": 0,
+    "wind_max_deg": 0.7400780172926834,
+    "wind_pairs": 78112500
+   },
+   "climate124": {
+    "coast_asymmetry": {
+     "band_deg": [
+      10,
+      25
+     ],
+     "east_mean_mm": 741.889,
+     "east_samples": 283,
+     "in_target": false,
+     "ratio": 0.616,
+     "west_mean_mm": 1204.758,
+     "west_samples": 272
+    },
+    "deserts_pct": 10.9114,
+    "forests_pct": 37.1076,
+    "island_dust": {
+     "area_l2": 40000.0,
+     "cell_area_l2": 0.001,
+     "in_target": false,
+     "per_1000_l2": 129.8,
+     "specks": 5192
+    },
+    "land": 11181,
+    "land_pct": 43.6758,
+    "mountains_pct": 4.2751,
+    "plates": {
+     "counted": 159,
+     "median_diameter_l": 15.706,
+     "min_diameter_l": 9.031,
+     "plates": 233
+    },
+    "polar_pct": 5.4378,
+    "rain_shadow": {
+     "drop_pct": 43.208,
+     "in_target": true,
+     "leeward_mean_mm": 692.982,
+     "ridge_samples": 363,
+     "windward_mean_mm": 1220.206
+    },
+    "spawn_good": true,
+    "spawn_shift_l": [
+     88.9301,
+     -33.2193
+    ],
+    "zonal_profile": {
+     "band_deg": 5,
+     "front_deg": 45,
+     "in_target": false,
+     "max_deg": 0,
+     "min_deg": 70,
+     "p_mm": [
+      2827.88,
+      2204.673,
+      1741.353,
+      1294.555,
+      856.155,
+      758.68,
+      769.231,
+      952.664,
+      1219.077,
+      1179.896,
+      912.421,
+      640.619,
+      383.171,
+      210.934,
+      201.0,
+      213.314,
+      201.99,
+      202.261
+     ],
+     "points": 25600,
+     "samples": [
+      4620,
+      3887,
+      3127,
+      2644,
+      2521,
+      2041,
+      1581,
+      1307,
+      1048,
+      770,
+      594,
+      503,
+      359,
+      247,
+      157,
+      110,
+      62,
+      22
+     ]
+    }
+   },
+   "erosion_pct": [
+    1.8660812294182216,
+    6.064763995609221,
+    8.598609586534943,
+    20.27076472740578,
+    56.63190633004025,
+    6.384924990852543,
+    0.18294914013904134
+   ],
+   "flat_windows_pct": 0,
+   "flooded_land_pct": 0.32016099524332237,
+   "gallery_pct": 0.03515625,
+   "gallery_samples": 9,
+   "height_data_hash": "356e89ef6fbdb19b",
+   "height_source": "litho-core-owned-I2",
+   "hyps_pct": [
+    0.32016099524332237,
+    38.14489571899012,
+    38.154043175997074,
+    15.75192096597146,
+    7.628979143798024
+   ],
+   "land_samples": 10932,
+   "mode": "scientific",
+   "params_hash": "8887e6a4ec1f7f65",
+   "patches": 1,
+   "path": "fast",
+   "plan": {
+    "climate_shape": {
+     "erosion_pct": [
+      1.8660812294182216,
+      6.064763995609221,
+      8.598609586534943,
+      20.27076472740578,
+      56.63190633004025,
+      6.384924990852543,
+      0.18294914013904134
+     ],
+     "lake_pct": 0.1964,
+     "land": 10932,
+     "notes": [
+      "polar: озёра 0.00 % < 2× среднего 0.20 %",
+      "boreal: озёра 0.18 % < 2× среднего 0.20 %",
+      "arid: E2 11.4 % < 20 %"
+     ],
+     "pass": false,
+     "river_pct": 2.2052,
+     "zones": [
+      {
+       "deferred_pct": 1.7301,
+       "distinct_bands": 0,
+       "dry_pct": 2.0761,
+       "erosion_pct": [
+        3.4965034965034967,
+        9.44055944055944,
+        14.685314685314685,
+        15.734265734265735,
+        50.0,
+        6.643356643356643,
+        0.0
+       ],
+       "lake_pct": 0.0,
+       "land": 289,
+       "max_gap_pp": 6.632,
+       "name": "polar",
+       "river_pct": 1.0381
+      },
+      {
+       "deferred_pct": 3.8938,
+       "distinct_bands": 0,
+       "dry_pct": 0.177,
+       "erosion_pct": [
+        1.2704174228675136,
+        5.44464609800363,
+        4.900181488203267,
+        19.96370235934664,
+        62.06896551724138,
+        6.352087114337568,
+        0.0
+       ],
+       "lake_pct": 0.177,
+       "land": 565,
+       "max_gap_pp": 5.437,
+       "name": "boreal",
+       "river_pct": 2.3009
+      },
+      {
+       "deferred_pct": 4.3559,
+       "distinct_bands": 0,
+       "dry_pct": 0.1584,
+       "erosion_pct": [
+        0.6133258990800111,
+        2.4254251463618623,
+        5.241148592138277,
+        21.21550041817675,
+        61.695009757457484,
+        8.447170337329245,
+        0.36241984945637024
+       ],
+       "lake_pct": 0.4224,
+       "land": 3788,
+       "max_gap_pp": 5.063,
+       "name": "temperate_humid",
+       "river_pct": 4.8838
+      },
+      {
+       "deferred_pct": 1.7681,
+       "distinct_bands": 0,
+       "dry_pct": 3.1465,
+       "erosion_pct": [
+        0.42475728155339804,
+        5.400485436893204,
+        9.860436893203884,
+        23.756067961165048,
+        55.67354368932039,
+        4.733009708737864,
+        0.15169902912621358
+       ],
+       "lake_pct": 0.1498,
+       "land": 3337,
+       "max_gap_pp": 3.485,
+       "name": "semiarid",
+       "river_pct": 1.0788
+      },
+      {
+       "deferred_pct": 0.3936,
+       "distinct_bands": 0,
+       "dry_pct": 6.1896,
+       "erosion_pct": [
+        0.6088825214899714,
+        5.945558739255015,
+        11.425501432664756,
+        17.729226361031518,
+        57.843839541547275,
+        6.411174785100287,
+        0.03581661891117478
+       ],
+       "lake_pct": 0.0,
+       "land": 2795,
+       "max_gap_pp": 2.827,
+       "name": "arid",
+       "river_pct": 0.1073
+      },
+      {
+       "deferred_pct": 0.0,
+       "distinct_bands": 0,
+       "dry_pct": 0.0,
+       "erosion_pct": [
+        1.2820512820512822,
+        10.256410256410257,
+        8.974358974358974,
+        19.23076923076923,
+        52.56410256410256,
+        6.410256410256411,
+        1.2820512820512822
+       ],
+       "lake_pct": 0.0,
+       "land": 84,
+       "max_gap_pp": 4.192,
+       "name": "tropical_humid",
+       "river_pct": 7.1429
+      },
+      {
+       "deferred_pct": 0.3717,
+       "distinct_bands": 4,
+       "dry_pct": 0.7435,
+       "erosion_pct": [
+        36.56716417910448,
+        50.37313432835821,
+        9.701492537313433,
+        2.611940298507463,
+        0.373134328358209,
+        0.373134328358209,
+        0.0
+       ],
+       "lake_pct": 0.0,
+       "land": 269,
+       "max_gap_pp": 56.259,
+       "name": "mountain_cold",
+       "river_pct": 0.3717
+      },
+      {
+       "deferred_pct": 1.3514,
+       "distinct_bands": 4,
+       "dry_pct": 0.0,
+       "erosion_pct": [
+        47.2972972972973,
+        43.24324324324324,
+        8.108108108108109,
+        0.0,
+        1.3513513513513513,
+        0.0,
+        0.0
+       ],
+       "lake_pct": 0.0,
+       "land": 74,
+       "max_gap_pp": 55.281,
+       "name": "mountain_warm",
+       "river_pct": 0.0
+      }
+     ]
+    },
+    "rivers_lakes": {
+     "area_l2": 40000.0,
+     "dry_land": 10932,
+     "lake_land": 22,
+     "lake_pct": 0.1964,
+     "lakes_per_100_l2": 0.0551,
+     "land": 11201,
+     "river_land": 247,
+     "river_pct": 2.2052
+    }
+   },
+   "pv_field": false,
+   "relief_median": 7.194829345212803,
+   "relief_step": 32,
+   "relief_windows": 16,
+   "river_samples": 233,
+   "river_water_pct": 99.57081545064378,
+   "samples": 25600,
+   "seed": -123456789,
+   "set": "",
+   "size": 160,
+   "span_l": 200,
+   "synthetic": false,
+   "valley_pct": 1.6144259818731117,
+   "version": "v1-dev"
+  },
+  {
+   "_seconds": 793.0,
+   "_variant": "",
+   "approximation": "litho-core owned I2 surface; no vanilla splines",
+   "boundary": {
+    "acceptance_volume": true,
+    "boundary_edges": 3135896,
+    "climate_humidity_jump_pairs": 3566,
+    "climate_humidity_jump_pct": 0.04454102364659022,
+    "climate_humidity_pair_pct": 0.013835040152848095,
+    "climate_humidity_pairs": 25775133,
+    "climate_land": 13124979,
+    "field_humidity_jump_pairs": 6619,
+    "field_humidity_jump_pct": 0.07270619698212921,
+    "humidity_jump_cause_pairs": {
+     "climate": 3566,
+     "dry_basin": 32050,
+     "estuary": 15991,
+     "gallery": 44228,
+     "other": 10231,
+     "river": 520409,
+     "swamp": 659
+    },
+    "humidity_jump_pair_pct": 2.1403480247238944,
+    "humidity_jump_pairs": 627134,
+    "humidity_jump_pct": 5.504320738194687,
+    "humidity_pairs": 29300562,
+    "land": 14903819,
+    "min_strip_blocks": 32,
+    "size": 6250,
+    "span_l": 200,
+    "step": 32,
+    "straight_edges": 14926,
+    "straight_model": "grid-edge-chord-512-deviation-16",
+    "straight_pct": 0.4759724174526196,
+    "thin_pct": 0,
+    "wind_max_deg": 0.6071921226274588,
+    "wind_pairs": 78112500
+   },
+   "climate124": {
+    "coast_asymmetry": {
+     "band_deg": [
+      10,
+      25
+     ],
+     "east_mean_mm": 795.707,
+     "east_samples": 218,
+     "in_target": false,
+     "ratio": 0.617,
+     "west_mean_mm": 1289.004,
+     "west_samples": 262
+    },
+    "deserts_pct": 10.0582,
+    "forests_pct": 34.3503,
+    "island_dust": {
+     "area_l2": 40000.0,
+     "cell_area_l2": 0.001,
+     "in_target": false,
+     "per_1000_l2": 120.075,
+     "specks": 4803
+    },
+    "land": 10489,
+    "land_pct": 40.9727,
+    "mountains_pct": 4.9385,
+    "plates": {
+     "counted": 162,
+     "median_diameter_l": 15.895,
+     "min_diameter_l": 8.921,
+     "plates": 230
+    },
+    "polar_pct": 8.6186,
+    "rain_shadow": {
+     "drop_pct": 46.991,
+     "in_target": true,
+     "leeward_mean_mm": 694.021,
+     "ridge_samples": 397,
+     "windward_mean_mm": 1309.262
+    },
+    "spawn_good": true,
+    "spawn_shift_l": [
+     155.688,
+     -12.4203
+    ],
+    "zonal_profile": {
+     "band_deg": 5,
+     "front_deg": 45,
+     "in_target": false,
+     "max_deg": 0,
+     "min_deg": 75,
+     "p_mm": [
+      2768.786,
+      2207.043,
+      1740.645,
+      1383.893,
+      937.811,
+      771.796,
+      830.424,
+      1025.437,
+      1295.467,
+      1381.065,
+      998.537,
+      594.517,
+      347.456,
+      200.527,
+      169.011,
+      153.78,
+      154.863,
+      166.389
+     ],
+     "points": 25600,
+     "samples": [
+      3939,
+      3455,
+      3006,
+      2748,
+      2477,
+      2108,
+      1752,
+      1509,
+      1147,
+      807,
+      671,
+      532,
+      447,
+      424,
+      285,
+      168,
+      86,
+      39
+     ]
+    }
+   },
+   "erosion_pct": [
+    1.933404940923738,
+    6.610682550532174,
+    8.446440777267846,
+    19.69534225173323,
+    56.48862415779709,
+    6.571623864856948,
+    0.2538814568889757
+   ],
+   "flat_windows_pct": 0,
+   "flooded_land_pct": 0.3905868567522703,
+   "gallery_pct": 0.08203125,
+   "gallery_samples": 21,
+   "height_data_hash": "356e89ef6fbdb19b",
+   "height_source": "litho-core-owned-I2",
+   "hyps_pct": [
+    0.3905868567522703,
+    38.08221853334635,
+    37.91621911922664,
+    15.66253295576604,
+    7.9484425349087005
+   ],
+   "land_samples": 10241,
+   "mode": "scientific",
+   "params_hash": "8887e6a4ec1f7f65",
+   "patches": 1,
+   "path": "fast",
+   "plan": {
+    "climate_shape": {
+     "erosion_pct": [
+      1.933404940923738,
+      6.610682550532174,
+      8.446440777267846,
+      19.69534225173323,
+      56.48862415779709,
+      6.571623864856948,
+      0.2538814568889757
+     ],
+     "lake_pct": 0.1046,
+     "land": 10241,
+     "notes": [
+      "polar: озёра 0.00 % < 2× среднего 0.10 %",
+      "boreal: озёра 0.00 % < 2× среднего 0.10 %",
+      "arid: E2 10.7 % < 20 %"
+     ],
+     "pass": false,
+     "river_pct": 2.4826,
+     "zones": [
+      {
+       "deferred_pct": 2.9321,
+       "distinct_bands": 0,
+       "dry_pct": 0.3086,
+       "erosion_pct": [
+        2.5157232704402515,
+        7.389937106918239,
+        8.647798742138365,
+        13.679245283018869,
+        62.264150943396224,
+        5.50314465408805,
+        0.0
+       ],
+       "lake_pct": 0.0,
+       "land": 648,
+       "max_gap_pp": 6.016,
+       "name": "polar",
+       "river_pct": 1.8519
+      },
+      {
+       "deferred_pct": 4.7259,
+       "distinct_bands": 0,
+       "dry_pct": 0.5671,
+       "erosion_pct": [
+        0.39447731755424065,
+        3.5502958579881656,
+        4.339250493096647,
+        18.73767258382643,
+        64.1025641025641,
+        8.678500986193294,
+        0.19723865877712032
+       ],
+       "lake_pct": 0.0,
+       "land": 529,
+       "max_gap_pp": 7.614,
+       "name": "boreal",
+       "river_pct": 4.1588
+      },
+      {
+       "deferred_pct": 3.9253,
+       "distinct_bands": 0,
+       "dry_pct": 0.2849,
+       "erosion_pct": [
+        0.6386554621848739,
+        3.495798319327731,
+        5.411764705882353,
+        21.84873949579832,
+        60.26890756302521,
+        7.73109243697479,
+        0.6050420168067226
+       ],
+       "lake_pct": 0.3166,
+       "land": 3159,
+       "max_gap_pp": 3.78,
+       "name": "temperate_humid",
+       "river_pct": 5.5081
+      },
+      {
+       "deferred_pct": 1.3946,
+       "distinct_bands": 0,
+       "dry_pct": 3.7718,
+       "erosion_pct": [
+        0.4801536491677337,
+        5.345710627400768,
+        10.051216389244559,
+        22.887323943661972,
+        55.537772087067864,
+        5.569782330345711,
+        0.12804097311139565
+       ],
+       "lake_pct": 0.0317,
+       "land": 3155,
+       "max_gap_pp": 3.192,
+       "name": "semiarid",
+       "river_pct": 0.9509
+      },
+      {
+       "deferred_pct": 0.2338,
+       "distinct_bands": 0,
+       "dry_pct": 6.9758,
+       "erosion_pct": [
+        0.5873140172278778,
+        5.364134690681285,
+        10.689115113547377,
+        17.26703210649961,
+        58.848864526233356,
+        7.243539545810493,
+        0.0
+       ],
+       "lake_pct": 0.0,
+       "land": 2566,
+       "max_gap_pp": 2.428,
+       "name": "arid",
+       "river_pct": 0.4677
+      },
+      {
+       "deferred_pct": 0.0,
+       "distinct_bands": 1,
+       "dry_pct": 0.0,
+       "erosion_pct": [
+        4.225352112676056,
+        5.633802816901408,
+        11.267605633802816,
+        28.169014084507044,
+        43.66197183098591,
+        2.816901408450704,
+        4.225352112676056
+       ],
+       "lake_pct": 0.0,
+       "land": 81,
+       "max_gap_pp": 12.827,
+       "name": "tropical_humid",
+       "river_pct": 12.3457
+      },
+      {
+       "deferred_pct": 1.0753,
+       "distinct_bands": 4,
+       "dry_pct": 0.0,
+       "erosion_pct": [
+        34.172661870503596,
+        52.51798561151079,
+        10.431654676258994,
+        1.7985611510791366,
+        0.3597122302158273,
+        0.7194244604316546,
+        0.0
+       ],
+       "lake_pct": 0.0,
+       "land": 279,
+       "max_gap_pp": 56.129,
+       "name": "mountain_cold",
+       "river_pct": 0.3584
+      },
+      {
+       "deferred_pct": 0.0,
+       "distinct_bands": 4,
+       "dry_pct": 1.0417,
+       "erosion_pct": [
+        34.375,
+        56.25,
+        3.125,
+        4.166666666666667,
+        1.0416666666666667,
+        1.0416666666666667,
+        0.0
+       ],
+       "lake_pct": 0.0,
+       "land": 96,
+       "max_gap_pp": 55.447,
+       "name": "mountain_warm",
+       "river_pct": 0.0
+      }
+     ]
+    },
+    "rivers_lakes": {
+     "area_l2": 40000.0,
+     "dry_land": 10241,
+     "lake_land": 11,
+     "lake_pct": 0.1046,
+     "lakes_per_100_l2": 0.0275,
+     "land": 10513,
+     "river_land": 261,
+     "river_pct": 2.4826
+    }
+   },
+   "pv_field": false,
+   "relief_median": 8.884597974767935,
+   "relief_step": 32,
+   "relief_windows": 14,
+   "river_samples": 239,
+   "river_water_pct": 99.581589958159,
+   "samples": 25600,
+   "seed": -42,
+   "set": "",
+   "size": 160,
+   "span_l": 200,
+   "synthetic": false,
+   "valley_pct": 1.5869806934195896,
+   "version": "v1-dev"
+  },
+  {
+   "_seconds": 1303.0,
+   "_variant": "",
+   "approximation": "litho-core owned I2 surface; no vanilla splines",
+   "boundary": {
+    "acceptance_volume": true,
+    "boundary_edges": 2404037,
+    "climate_humidity_jump_pairs": 3327,
+    "climate_humidity_jump_pct": 0.05470283110919914,
+    "climate_humidity_pair_pct": 0.01661241127377049,
+    "climate_humidity_pairs": 20027195,
+    "climate_land": 10202397,
+    "field_humidity_jump_pairs": 6389,
+    "field_humidity_jump_pct": 0.09075775044992875,
+    "humidity_jump_cause_pairs": {
+     "climate": 3327,
+     "dry_basin": 23353,
+     "estuary": 13902,
+     "gallery": 29926,
+     "other": 8311,
+     "river": 409453,
+     "swamp": 410
+    },
+    "humidity_jump_pair_pct": 2.1569282938594,
+    "humidity_jump_pairs": 488682,
+    "humidity_jump_pct": 5.516783981807855,
+    "humidity_pairs": 22656386,
+    "land": 11528492,
+    "min_strip_blocks": 32,
+    "size": 6250,
+    "span_l": 200,
+    "step": 32,
+    "straight_edges": 13179,
+    "straight_model": "grid-edge-chord-512-deviation-16",
+    "straight_pct": 0.5482028770771831,
+    "thin_pct": 0,
+    "wind_max_deg": 0.774154180344447,
+    "wind_pairs": 78112500
+   },
+   "climate124": {
+    "coast_asymmetry": {
+     "band_deg": [
+      10,
+      25
+     ],
+     "east_mean_mm": 830.246,
+     "east_samples": 207,
+     "in_target": false,
+     "ratio": 0.762,
+     "west_mean_mm": 1088.871,
+     "west_samples": 245
+    },
+    "deserts_pct": 12.5688,
+    "forests_pct": 33.6227,
+    "island_dust": {
+     "area_l2": 40000.0,
+     "cell_area_l2": 0.001,
+     "in_target": false,
+     "per_1000_l2": 90.35,
+     "specks": 3614
+    },
+    "land": 8179,
+    "land_pct": 31.9492,
+    "mountains_pct": 5.294,
+    "plates": {
+     "counted": 172,
+     "median_diameter_l": 15.191,
+     "min_diameter_l": 8.808,
+     "plates": 238
+    },
+    "polar_pct": 9.4021,
+    "rain_shadow": {
+     "drop_pct": 42.443,
+     "in_target": true,
+     "leeward_mean_mm": 762.406,
+     "ridge_samples": 313,
+     "windward_mean_mm": 1324.613
+    },
+    "spawn_good": true,
+    "spawn_shift_l": [
+     118.3125,
+     94.5415
+    ],
+    "zonal_profile": {
+     "band_deg": 5,
+     "front_deg": 45,
+     "in_target": false,
+     "max_deg": 0,
+     "min_deg": 85,
+     "p_mm": [
+      3002.647,
+      2329.807,
+      1889.632,
+      1460.651,
+      950.454,
+      800.585,
+      873.813,
+      1105.243,
+      1561.046,
+      1547.937,
+      1081.815,
+      638.643,
+      358.807,
+      212.876,
+      126.191,
+      67.518,
+      58.925,
+      43.411
+     ],
+     "points": 25600,
+     "samples": [
+      4527,
+      3752,
+      3329,
+      3101,
+      2626,
+      2058,
+      1626,
+      1264,
+      896,
+      675,
+      510,
+      379,
+      288,
+      220,
+      159,
+      116,
+      56,
+      18
+     ]
+    }
+   },
+   "erosion_pct": [
+    2.2222222222222223,
+    7.0536828963795255,
+    8.976279650436954,
+    19.113607990012483,
+    56.05493133583021,
+    6.404494382022472,
+    0.17478152309612985
+   ],
+   "flat_windows_pct": 0,
+   "flooded_land_pct": 0.23720349563046192,
+   "gallery_pct": 0.0625,
+   "gallery_samples": 16,
+   "height_data_hash": "356e89ef6fbdb19b",
+   "height_source": "litho-core-owned-I2",
+   "hyps_pct": [
+    0.23720349563046192,
+    38.476903870162296,
+    36.35455680399501,
+    15.830212234706616,
+    9.101123595505618
+   ],
+   "land_samples": 8010,
+   "mode": "scientific",
+   "params_hash": "8887e6a4ec1f7f65",
+   "patches": 1,
+   "path": "fast",
+   "plan": {
+    "climate_shape": {
+     "erosion_pct": [
+      2.2222222222222223,
+      7.0536828963795255,
+      8.976279650436954,
+      19.113607990012483,
+      56.05493133583021,
+      6.404494382022472,
+      0.17478152309612985
+     ],
+     "lake_pct": 0.1099,
+     "land": 8010,
+     "notes": [
+      "polar: озёра 0.17 % < 2× среднего 0.11 %",
+      "arid: E2 11.7 % < 20 %"
+     ],
+     "pass": false,
+     "river_pct": 2.052,
+     "zones": [
+      {
+       "deferred_pct": 3.9519,
+       "distinct_bands": 0,
+       "dry_pct": 0.3436,
+       "erosion_pct": [
+        2.2491349480968856,
+        7.439446366782007,
+        8.477508650519031,
+        12.975778546712803,
+        62.28373702422145,
+        6.57439446366782,
+        0.0
+       ],
+       "lake_pct": 0.1718,
+       "land": 582,
+       "max_gap_pp": 6.229,
+       "name": "polar",
+       "river_pct": 0.5155
+      },
+      {
+       "deferred_pct": 5.7065,
+       "distinct_bands": 0,
+       "dry_pct": 0.2717,
+       "erosion_pct": [
+        1.3888888888888888,
+        2.5,
+        8.055555555555555,
+        16.666666666666668,
+        61.94444444444444,
+        8.88888888888889,
+        0.5555555555555556
+       ],
+       "lake_pct": 0.2717,
+       "land": 368,
+       "max_gap_pp": 5.89,
+       "name": "boreal",
+       "river_pct": 1.9022
+      },
+      {
+       "deferred_pct": 3.2821,
+       "distinct_bands": 0,
+       "dry_pct": 0.1662,
+       "erosion_pct": [
+        1.314060446780552,
+        4.6430135786246165,
+        5.650459921156373,
+        20.76215505913272,
+        59.74594831362243,
+        7.490144546649145,
+        0.39421813403416556
+       ],
+       "lake_pct": 0.2493,
+       "land": 2407,
+       "max_gap_pp": 3.691,
+       "name": "temperate_humid",
+       "river_pct": 4.9024
+      },
+      {
+       "deferred_pct": 2.0842,
+       "distinct_bands": 0,
+       "dry_pct": 2.9527,
+       "erosion_pct": [
+        0.5704256252742431,
+        6.537955243527863,
+        9.872751206669593,
+        22.24659938569548,
+        55.94559017112769,
+        4.782799473453269,
+        0.04387889425186485
+       ],
+       "lake_pct": 0.0434,
+       "land": 2303,
+       "max_gap_pp": 3.133,
+       "name": "semiarid",
+       "river_pct": 0.9987
+      },
+      {
+       "deferred_pct": 0.3207,
+       "distinct_bands": 0,
+       "dry_pct": 7.0087,
+       "erosion_pct": [
+        0.7816091954022989,
+        5.195402298850575,
+        11.67816091954023,
+        18.344827586206897,
+        56.87356321839081,
+        7.126436781609195,
+        0.0
+       ],
+       "lake_pct": 0.0,
+       "land": 2183,
+       "max_gap_pp": 2.702,
+       "name": "arid",
+       "river_pct": 0.3665
+      },
+      {
+       "deferred_pct": 0.0,
+       "distinct_bands": 0,
+       "dry_pct": 0.0,
+       "erosion_pct": [
+        0.0,
+        10.526315789473685,
+        12.280701754385966,
+        14.035087719298245,
+        49.12280701754386,
+        10.526315789473685,
+        3.508771929824561
+       ],
+       "lake_pct": 0.0,
+       "land": 64,
+       "max_gap_pp": 6.932,
+       "name": "tropical_humid",
+       "river_pct": 10.9375
+      },
+      {
+       "deferred_pct": 0.995,
+       "distinct_bands": 4,
+       "dry_pct": 0.995,
+       "erosion_pct": [
+        34.32835820895522,
+        51.74129353233831,
+        9.45273631840796,
+        1.9900497512437811,
+        1.492537313432836,
+        0.9950248756218906,
+        0.0
+       ],
+       "lake_pct": 0.0,
+       "land": 201,
+       "max_gap_pp": 54.562,
+       "name": "mountain_cold",
+       "river_pct": 0.0
+      },
+      {
+       "deferred_pct": 0.0,
+       "distinct_bands": 4,
+       "dry_pct": 0.0,
+       "erosion_pct": [
+        40.25974025974026,
+        45.45454545454545,
+        9.090909090909092,
+        5.194805194805195,
+        0.0,
+        0.0,
+        0.0
+       ],
+       "lake_pct": 0.0,
+       "land": 79,
+       "max_gap_pp": 56.055,
+       "name": "mountain_warm",
+       "river_pct": 2.5316
+      }
+     ]
+    },
+    "rivers_lakes": {
+     "area_l2": 40000.0,
+     "dry_land": 8010,
+     "lake_land": 9,
+     "lake_pct": 0.1099,
+     "lakes_per_100_l2": 0.0225,
+     "land": 8187,
+     "river_land": 168,
+     "river_pct": 2.052
+    }
+   },
+   "pv_field": false,
+   "relief_median": 19.066118990556873,
+   "relief_step": 32,
+   "relief_windows": 13,
+   "river_samples": 161,
+   "river_water_pct": 98.75776397515529,
+   "samples": 25600,
+   "seed": 0,
+   "set": "",
+   "size": 160,
+   "span_l": 200,
+   "synthetic": false,
+   "valley_pct": 1.4969673506258871,
+   "version": "v1-dev"
+  },
+  {
+   "_seconds": 920.0,
+   "_variant": "",
+   "approximation": "litho-core owned I2 surface; no vanilla splines",
+   "boundary": {
+    "acceptance_volume": true,
+    "boundary_edges": 3318280,
+    "climate_humidity_jump_pairs": 3506,
+    "climate_humidity_jump_pct": 0.04195316743498188,
+    "climate_humidity_pair_pct": 0.013016375796208849,
+    "climate_humidity_pairs": 26935301,
+    "climate_land": 13717677,
+    "field_humidity_jump_pairs": 6791,
+    "field_humidity_jump_pct": 0.07100647868394999,
+    "humidity_jump_cause_pairs": {
+     "climate": 3506,
+     "dry_basin": 39315,
+     "estuary": 14924,
+     "gallery": 37909,
+     "other": 11338,
+     "river": 559723,
+     "swamp": 1191
+    },
+    "humidity_jump_pair_pct": 2.1789229027402994,
+    "humidity_jump_pairs": 667906,
+    "humidity_jump_pct": 5.613583435497853,
+    "humidity_pairs": 30653035,
+    "land": 15595760,
+    "min_strip_blocks": 32,
+    "size": 6250,
+    "span_l": 200,
+    "step": 32,
+    "straight_edges": 15646,
+    "straight_model": "grid-edge-chord-512-deviation-16",
+    "straight_pct": 0.4715093361621081,
+    "thin_pct": 0,
+    "wind_max_deg": 0.5120668289814566,
+    "wind_pairs": 78112500
+   },
+   "climate124": {
+    "coast_asymmetry": {
+     "band_deg": [
+      10,
+      25
+     ],
+     "east_mean_mm": 817.524,
+     "east_samples": 254,
+     "in_target": false,
+     "ratio": 0.645,
+     "west_mean_mm": 1266.538,
+     "west_samples": 350
+    },
+    "deserts_pct": 10.2105,
+    "forests_pct": 35.5471,
+    "island_dust": {
+     "area_l2": 40000.0,
+     "cell_area_l2": 0.001,
+     "in_target": false,
+     "per_1000_l2": 130.125,
+     "specks": 5205
+    },
+    "land": 11067,
+    "land_pct": 43.2305,
+    "mountains_pct": 4.4908,
+    "plates": {
+     "counted": 162,
+     "median_diameter_l": 16.02,
+     "min_diameter_l": 7.853,
+     "plates": 235
+    },
+    "polar_pct": 9.5419,
+    "rain_shadow": {
+     "drop_pct": 48.254,
+     "in_target": true,
+     "leeward_mean_mm": 567.941,
+     "ridge_samples": 382,
+     "windward_mean_mm": 1097.558
+    },
+    "spawn_good": true,
+    "spawn_shift_l": [
+     179.0656,
+     33.0653
+    ],
+    "zonal_profile": {
+     "band_deg": 5,
+     "front_deg": 45,
+     "in_target": false,
+     "max_deg": 0,
+     "min_deg": 85,
+     "p_mm": [
+      2821.892,
+      2214.881,
+      1811.093,
+      1516.769,
+      918.594,
+      693.822,
+      746.346,
+      848.322,
+      1152.241,
+      1295.201,
+      1011.034,
+      620.55,
+      344.811,
+      187.849,
+      129.041,
+      97.303,
+      83.11,
+      65.953
+     ],
+     "points": 25600,
+     "samples": [
+      4472,
+      3774,
+      3273,
+      2780,
+      2297,
+      1837,
+      1539,
+      1292,
+      1010,
+      803,
+      686,
+      533,
+      435,
+      337,
+      251,
+      165,
+      91,
+      25
+     ]
+    }
+   },
+   "erosion_pct": [
+    1.8557843227772135,
+    6.305973594312621,
+    8.0232665497184,
+    19.121041455082633,
+    57.400055396546946,
+    7.183085587665036,
+    0.11079309389714707
+   ],
+   "flat_windows_pct": 0,
+   "flooded_land_pct": 0.30468100821715444,
+   "gallery_pct": 0.08984375,
+   "gallery_samples": 23,
+   "height_data_hash": "356e89ef6fbdb19b",
+   "height_source": "litho-core-owned-I2",
+   "hyps_pct": [
+    0.30468100821715444,
+    40.356384452035826,
+    37.01412611947189,
+    14.615455636598652,
+    7.709352783676485
+   ],
+   "land_samples": 10831,
+   "mode": "scientific",
+   "params_hash": "8887e6a4ec1f7f65",
+   "patches": 1,
+   "path": "fast",
+   "plan": {
+    "climate_shape": {
+     "erosion_pct": [
+      1.8557843227772135,
+      6.305973594312621,
+      8.0232665497184,
+      19.121041455082633,
+      57.400055396546946,
+      7.183085587665036,
+      0.11079309389714707
+     ],
+     "lake_pct": 0.1353,
+     "land": 10831,
+     "notes": [
+      "polar: озёра 0.13 % < 2× среднего 0.14 %",
+      "boreal: озёра 0.00 % < 2× среднего 0.14 %",
+      "arid: E2 10.4 % < 20 %"
+     ],
+     "pass": false,
+     "river_pct": 2.1561,
+     "zones": [
+      {
+       "deferred_pct": 4.6658,
+       "distinct_bands": 0,
+       "dry_pct": 0.6305,
+       "erosion_pct": [
+        1.78343949044586,
+        6.496815286624204,
+        7.006369426751593,
+        11.59235668789809,
+        64.45859872611464,
+        8.280254777070065,
+        0.3821656050955414
+       ],
+       "lake_pct": 0.1261,
+       "land": 793,
+       "max_gap_pp": 7.529,
+       "name": "polar",
+       "river_pct": 0.8827
+      },
+      {
+       "deferred_pct": 5.2434,
+       "distinct_bands": 0,
+       "dry_pct": 0.5618,
+       "erosion_pct": [
+        0.9487666034155597,
+        4.174573055028463,
+        4.743833017077799,
+        19.54459203036053,
+        61.8595825426945,
+        8.72865275142315,
+        0.0
+       ],
+       "lake_pct": 0.0,
+       "land": 534,
+       "max_gap_pp": 4.46,
+       "name": "boreal",
+       "river_pct": 1.3109
+      },
+      {
+       "deferred_pct": 4.3789,
+       "distinct_bands": 0,
+       "dry_pct": 0.0859,
+       "erosion_pct": [
+        0.6674757281553398,
+        2.9733009708737863,
+        4.459951456310679,
+        20.843446601941746,
+        61.771844660194176,
+        9.101941747572816,
+        0.1820388349514563
+       ],
+       "lake_pct": 0.2576,
+       "land": 3494,
+       "max_gap_pp": 4.372,
+       "name": "temperate_humid",
+       "river_pct": 5.4093
+      },
+      {
+       "deferred_pct": 1.5156,
+       "distinct_bands": 0,
+       "dry_pct": 3.8697,
+       "erosion_pct": [
+        0.45454545454545453,
+        5.422077922077922,
+        10.292207792207792,
+        22.175324675324674,
+        56.006493506493506,
+        5.5519480519480515,
+        0.09740259740259741
+       ],
+       "lake_pct": 0.1612,
+       "land": 3101,
+       "max_gap_pp": 3.054,
+       "name": "semiarid",
+       "river_pct": 0.516
+      },
+      {
+       "deferred_pct": 0.2912,
+       "distinct_bands": 0,
+       "dry_pct": 6.6618,
+       "erosion_pct": [
+        0.6576543660942638,
+        6.211180124223603,
+        10.41286079649251,
+        17.975886006576545,
+        57.83704786262331,
+        6.90537084398977,
+        0.0
+       ],
+       "lake_pct": 0.0,
+       "land": 2747,
+       "max_gap_pp": 2.39,
+       "name": "arid",
+       "river_pct": 0.364
+      },
+      {
+       "deferred_pct": 0.0,
+       "distinct_bands": 0,
+       "dry_pct": 0.0,
+       "erosion_pct": [
+        1.6666666666666667,
+        13.333333333333334,
+        6.666666666666667,
+        13.333333333333334,
+        58.333333333333336,
+        6.666666666666667,
+        0.0
+       ],
+       "lake_pct": 0.0,
+       "land": 69,
+       "max_gap_pp": 7.027,
+       "name": "tropical_humid",
+       "river_pct": 13.0435
+      },
+      {
+       "deferred_pct": 1.6892,
+       "distinct_bands": 4,
+       "dry_pct": 1.3514,
+       "erosion_pct": [
+        38.30508474576271,
+        45.76271186440678,
+        10.847457627118644,
+        2.3728813559322033,
+        2.0338983050847457,
+        0.6779661016949152,
+        0.0
+       ],
+       "lake_pct": 0.0,
+       "land": 296,
+       "max_gap_pp": 55.366,
+       "name": "mountain_cold",
+       "river_pct": 0.3378
+      },
+      {
+       "deferred_pct": 1.9608,
+       "distinct_bands": 4,
+       "dry_pct": 0.0,
+       "erosion_pct": [
+        27.45098039215686,
+        62.745098039215684,
+        7.8431372549019605,
+        0.0,
+        0.0,
+        1.9607843137254901,
+        0.0
+       ],
+       "lake_pct": 0.0,
+       "land": 51,
+       "max_gap_pp": 57.4,
+       "name": "mountain_warm",
+       "river_pct": 0.0
+      }
+     ]
+    },
+    "rivers_lakes": {
+     "area_l2": 40000.0,
+     "dry_land": 10831,
+     "lake_land": 15,
+     "lake_pct": 0.1353,
+     "lakes_per_100_l2": 0.0376,
+     "land": 11085,
+     "river_land": 239,
+     "river_pct": 2.1561
+    }
+   },
+   "pv_field": false,
+   "relief_median": 24.56574897792938,
+   "relief_step": 32,
+   "relief_windows": 16,
+   "river_samples": 225,
+   "river_water_pct": 100,
+   "samples": 25600,
+   "seed": 1,
+   "set": "",
+   "size": 160,
+   "span_l": 200,
+   "synthetic": false,
+   "valley_pct": 1.7007783222830788,
+   "version": "v1-dev"
+  },
+  {
+   "_seconds": 1286.0,
+   "_variant": "",
+   "approximation": "litho-core owned I2 surface; no vanilla splines",
+   "boundary": {
+    "acceptance_volume": true,
+    "boundary_edges": 3237222,
+    "climate_humidity_jump_pairs": 3553,
+    "climate_humidity_jump_pct": 0.041214679136286375,
+    "climate_humidity_pair_pct": 0.012721006907975778,
+    "climate_humidity_pairs": 27930179,
+    "climate_land": 14186693,
+    "field_humidity_jump_pairs": 7384,
+    "field_humidity_jump_pct": 0.0755029084289689,
+    "humidity_jump_cause_pairs": {
+     "climate": 3553,
+     "dry_basin": 34159,
+     "estuary": 12461,
+     "gallery": 36254,
+     "other": 10995,
+     "river": 423286,
+     "swamp": 567
+    },
+    "humidity_jump_pair_pct": 1.6505528192259078,
+    "humidity_jump_pairs": 521275,
+    "humidity_jump_pct": 4.285124054137845,
+    "humidity_pairs": 31581843,
+    "land": 16017926,
+    "min_strip_blocks": 32,
+    "size": 6250,
+    "span_l": 200,
+    "step": 32,
+    "straight_edges": 13571,
+    "straight_model": "grid-edge-chord-512-deviation-16",
+    "straight_pct": 0.41921746485103584,
+    "thin_pct": 0,
+    "wind_max_deg": 0.6824068472058813,
+    "wind_pairs": 78112500
+   },
+   "climate124": {
+    "coast_asymmetry": {
+     "band_deg": [
+      10,
+      25
+     ],
+     "east_mean_mm": 794.729,
+     "east_samples": 263,
+     "in_target": false,
+     "ratio": 0.656,
+     "west_mean_mm": 1211.336,
+     "west_samples": 311
+    },
+    "deserts_pct": 12.3513,
+    "forests_pct": 29.7648,
+    "island_dust": {
+     "area_l2": 40000.0,
+     "cell_area_l2": 0.001,
+     "in_target": false,
+     "per_1000_l2": 92.875,
+     "specks": 3715
+    },
+    "land": 11181,
+    "land_pct": 43.6758,
+    "mountains_pct": 4.2662,
+    "plates": {
+     "counted": 169,
+     "median_diameter_l": 15.515,
+     "min_diameter_l": 9.141,
+     "plates": 236
+    },
+    "polar_pct": 8.7738,
+    "rain_shadow": {
+     "drop_pct": 39.18,
+     "in_target": false,
+     "leeward_mean_mm": 677.063,
+     "ridge_samples": 330,
+     "windward_mean_mm": 1113.216
+    },
+    "spawn_good": true,
+    "spawn_shift_l": [
+     -109.6936,
+     -127.8465
+    ],
+    "zonal_profile": {
+     "band_deg": 5,
+     "front_deg": 45,
+     "in_target": false,
+     "max_deg": 0,
+     "min_deg": 70,
+     "p_mm": [
+      2855.636,
+      2221.538,
+      1742.672,
+      1319.39,
+      832.502,
+      680.236,
+      731.886,
+      923.233,
+      1353.891,
+      1423.307,
+      1074.373,
+      725.608,
+      380.749,
+      200.849,
+      148.358,
+      153.76,
+      167.315,
+      175.353
+     ],
+     "points": 25600,
+     "samples": [
+      3422,
+      2936,
+      2759,
+      2693,
+      2457,
+      2247,
+      1857,
+      1629,
+      1341,
+      1071,
+      901,
+      692,
+      510,
+      385,
+      312,
+      206,
+      133,
+      49
+     ]
+    }
+   },
+   "erosion_pct": [
+    1.8361967093900555,
+    6.317607490228161,
+    8.89010089991819,
+    18.834651395327697,
+    56.976638487410234,
+    6.972093446050359,
+    0.17271157167530224
+   ],
+   "flat_windows_pct": 0,
+   "flooded_land_pct": 0.218161985274066,
+   "gallery_pct": 0.078125,
+   "gallery_samples": 20,
+   "height_data_hash": "356e89ef6fbdb19b",
+   "height_source": "litho-core-owned-I2",
+   "hyps_pct": [
+    0.218161985274066,
+    38.74193255158622,
+    37.35114989546405,
+    16.18943732387965,
+    7.499318243796019
+   ],
+   "land_samples": 11001,
+   "mode": "scientific",
+   "params_hash": "8887e6a4ec1f7f65",
+   "patches": 1,
+   "path": "fast",
+   "plan": {
+    "climate_shape": {
+     "erosion_pct": [
+      1.8361967093900555,
+      6.317607490228161,
+      8.89010089991819,
+      18.834651395327697,
+      56.976638487410234,
+      6.972093446050359,
+      0.17271157167530224
+     ],
+     "lake_pct": 0.1519,
+     "land": 11001,
+     "notes": [
+      "polar: озёра 0.00 % < 2× среднего 0.15 %",
+      "boreal: озёра 0.21 % < 2× среднего 0.15 %",
+      "arid: E2 11.0 % < 20 %"
+     ],
+     "pass": false,
+     "river_pct": 1.5547,
+     "zones": [
+      {
+       "deferred_pct": 2.1025,
+       "distinct_bands": 0,
+       "dry_pct": 0.657,
+       "erosion_pct": [
+        1.5894039735099337,
+        6.754966887417218,
+        6.887417218543046,
+        12.317880794701987,
+        65.03311258278146,
+        7.152317880794702,
+        0.26490066225165565
+       ],
+       "lake_pct": 0.0,
+       "land": 761,
+       "max_gap_pp": 8.056,
+       "name": "polar",
+       "river_pct": 0.7884
+      },
+      {
+       "deferred_pct": 3.1185,
+       "distinct_bands": 0,
+       "dry_pct": 0.8316,
+       "erosion_pct": [
+        1.6877637130801688,
+        4.219409282700422,
+        6.118143459915612,
+        14.978902953586498,
+        66.03375527426161,
+        6.962025316455696,
+        0.0
+       ],
+       "lake_pct": 0.2079,
+       "land": 481,
+       "max_gap_pp": 9.057,
+       "name": "boreal",
+       "river_pct": 1.2474
+      },
+      {
+       "deferred_pct": 4.5796,
+       "distinct_bands": 0,
+       "dry_pct": 0.1709,
+       "erosion_pct": [
+        0.6810035842293907,
+        3.225806451612903,
+        5.376344086021505,
+        21.93548387096774,
+        59.71326164874552,
+        8.67383512544803,
+        0.3942652329749104
+       ],
+       "lake_pct": 0.4785,
+       "land": 2926,
+       "max_gap_pp": 3.514,
+       "name": "temperate_humid",
+       "river_pct": 4.1695
+      },
+      {
+       "deferred_pct": 1.6608,
+       "distinct_bands": 0,
+       "dry_pct": 4.2798,
+       "erosion_pct": [
+        0.41881443298969073,
+        5.380154639175258,
+        10.92139175257732,
+        21.713917525773194,
+        55.347938144329895,
+        6.056701030927835,
+        0.16108247422680413
+       ],
+       "lake_pct": 0.0319,
+       "land": 3131,
+       "max_gap_pp": 2.879,
+       "name": "semiarid",
+       "river_pct": 0.8304
+      },
+      {
+       "deferred_pct": 0.396,
+       "distinct_bands": 0,
+       "dry_pct": 6.5347,
+       "erosion_pct": [
+        0.6806579693703914,
+        6.040839478162224,
+        11.003970504821327,
+        17.04480998298355,
+        58.19625638116846,
+        7.005104934770278,
+        0.02836074872376631
+       ],
+       "lake_pct": 0.0283,
+       "land": 3535,
+       "max_gap_pp": 2.114,
+       "name": "arid",
+       "river_pct": 0.2263
+      },
+      {
+       "deferred_pct": 3.7736,
+       "distinct_bands": 1,
+       "dry_pct": 0.0,
+       "erosion_pct": [
+        1.9607843137254901,
+        17.647058823529413,
+        3.9215686274509802,
+        21.568627450980394,
+        49.01960784313726,
+        5.882352941176471,
+        0.0
+       ],
+       "lake_pct": 0.0,
+       "land": 53,
+       "max_gap_pp": 11.329,
+       "name": "tropical_humid",
+       "river_pct": 3.7736
+      },
+      {
+       "deferred_pct": 0.431,
+       "distinct_bands": 4,
+       "dry_pct": 0.431,
+       "erosion_pct": [
+        39.82683982683983,
+        49.78354978354978,
+        6.926406926406926,
+        2.5974025974025974,
+        0.8658008658008658,
+        0.0,
+        0.0
+       ],
+       "lake_pct": 0.0,
+       "land": 232,
+       "max_gap_pp": 56.111,
+       "name": "mountain_cold",
+       "river_pct": 0.431
+      },
+      {
+       "deferred_pct": 1.3699,
+       "distinct_bands": 4,
+       "dry_pct": 0.0,
+       "erosion_pct": [
+        47.142857142857146,
+        42.857142857142854,
+        2.857142857142857,
+        5.714285714285714,
+        1.4285714285714286,
+        0.0,
+        0.0
+       ],
+       "lake_pct": 0.0,
+       "land": 73,
+       "max_gap_pp": 55.548,
+       "name": "mountain_warm",
+       "river_pct": 4.1096
+      }
+     ]
+    },
+    "rivers_lakes": {
+     "area_l2": 40000.0,
+     "dry_land": 11001,
+     "lake_land": 17,
+     "lake_pct": 0.1519,
+     "lakes_per_100_l2": 0.0426,
+     "land": 11192,
+     "river_land": 174,
+     "river_pct": 1.5547
+    }
+   },
+   "pv_field": false,
+   "relief_median": 30.66456762249767,
+   "relief_step": 32,
+   "relief_windows": 16,
+   "river_samples": 166,
+   "river_water_pct": 99.39759036144578,
+   "samples": 25600,
+   "seed": 123,
+   "set": "",
+   "size": 160,
+   "span_l": 200,
+   "synthetic": false,
+   "valley_pct": 1.4865370231862378,
+   "version": "v1-dev"
+  },
+  {
+   "_seconds": 1098.0,
+   "_variant": "",
+   "approximation": "litho-core owned I2 surface; no vanilla splines",
+   "boundary": {
+    "acceptance_volume": true,
+    "boundary_edges": 3934393,
+    "climate_humidity_jump_pairs": 3623,
+    "climate_humidity_jump_pct": 0.03776103662523514,
+    "climate_humidity_pair_pct": 0.011428584767403065,
+    "climate_humidity_pairs": 31701213,
+    "climate_land": 16159514,
+    "field_humidity_jump_pairs": 6362,
+    "field_humidity_jump_pct": 0.058279298818639545,
+    "humidity_jump_cause_pairs": {
+     "climate": 3623,
+     "dry_basin": 45109,
+     "estuary": 16273,
+     "gallery": 65101,
+     "other": 11126,
+     "river": 722652,
+     "swamp": 524
+    },
+    "humidity_jump_pair_pct": 2.388807946952152,
+    "humidity_jump_pairs": 864408,
+    "humidity_jump_pct": 6.142866003357083,
+    "humidity_pairs": 36185747,
+    "land": 18428499,
+    "min_strip_blocks": 32,
+    "size": 6250,
+    "span_l": 200,
+    "step": 32,
+    "straight_edges": 18256,
+    "straight_model": "grid-edge-chord-512-deviation-16",
+    "straight_pct": 0.4640105856227377,
+    "thin_pct": 0,
+    "wind_max_deg": 0.5940121497931552,
+    "wind_pairs": 78112500
+   },
+   "climate124": {
+    "coast_asymmetry": {
+     "band_deg": [
+      10,
+      25
+     ],
+     "east_mean_mm": 856.412,
+     "east_samples": 272,
+     "in_target": false,
+     "ratio": 0.666,
+     "west_mean_mm": 1286.836,
+     "west_samples": 323
+    },
+    "deserts_pct": 9.3262,
+    "forests_pct": 37.1907,
+    "island_dust": {
+     "area_l2": 40000.0,
+     "cell_area_l2": 0.001,
+     "in_target": false,
+     "per_1000_l2": 173.825,
+     "specks": 6953
+    },
+    "land": 13135,
+    "land_pct": 51.3086,
+    "mountains_pct": 4.0426,
+    "plates": {
+     "counted": 174,
+     "median_diameter_l": 15.126,
+     "min_diameter_l": 9.566,
+     "plates": 243
+    },
+    "polar_pct": 5.847,
+    "rain_shadow": {
+     "drop_pct": 47.375,
+     "in_target": true,
+     "leeward_mean_mm": 706.609,
+     "ridge_samples": 376,
+     "windward_mean_mm": 1342.727
+    },
+    "spawn_good": true,
+    "spawn_shift_l": [
+     179.7176,
+     -78.4689
+    ],
+    "zonal_profile": {
+     "band_deg": 5,
+     "front_deg": 45,
+     "in_target": false,
+     "max_deg": 0,
+     "min_deg": 75,
+     "p_mm": [
+      2505.36,
+      1997.11,
+      1616.318,
+      1326.723,
+      929.81,
+      742.383,
+      759.002,
+      858.842,
+      1240.603,
+      1309.179,
+      884.84,
+      605.37,
+      339.534,
+      214.326,
+      173.945,
+      150.327,
+      162.328,
+      194.703
+     ],
+     "points": 25600,
+     "samples": [
+      4258,
+      3852,
+      3355,
+      2868,
+      2364,
+      1989,
+      1633,
+      1244,
+      1075,
+      863,
+      640,
+      485,
+      365,
+      253,
+      176,
+      111,
+      54,
+      15
+     ]
+    }
+   },
+   "erosion_pct": [
+    1.7708823068484563,
+    5.88465757718226,
+    8.28240087760539,
+    20.04388026955023,
+    57.24808023820718,
+    6.589876194953769,
+    0.180222535652719
+   ],
+   "flat_windows_pct": 0,
+   "flooded_land_pct": 0.3996238834038552,
+   "gallery_pct": 0.03515625,
+   "gallery_samples": 9,
+   "height_data_hash": "356e89ef6fbdb19b",
+   "height_source": "litho-core-owned-I2",
+   "hyps_pct": [
+    0.3996238834038552,
+    37.76053910045447,
+    38.920231938567625,
+    15.334587055320483,
+    7.585018022253565
+   ],
+   "land_samples": 12762,
+   "mode": "scientific",
+   "params_hash": "8887e6a4ec1f7f65",
+   "patches": 1,
+   "path": "fast",
+   "plan": {
+    "climate_shape": {
+     "erosion_pct": [
+      1.7708823068484563,
+      5.88465757718226,
+      8.28240087760539,
+      20.04388026955023,
+      57.24808023820718,
+      6.589876194953769,
+      0.180222535652719
+     ],
+     "lake_pct": 0.1367,
+     "land": 12762,
+     "notes": [
+      "polar: озёра 0.00 % < 2× среднего 0.14 %",
+      "boreal: озёра 0.00 % < 2× среднего 0.14 %",
+      "arid: E2 10.2 % < 20 %"
+     ],
+     "pass": false,
+     "river_pct": 2.9392,
+     "zones": [
+      {
+       "deferred_pct": 5.5901,
+       "distinct_bands": 0,
+       "dry_pct": 0.207,
+       "erosion_pct": [
+        2.7083333333333335,
+        12.291666666666666,
+        8.958333333333334,
+        10.208333333333334,
+        56.666666666666664,
+        9.166666666666666,
+        0.0
+       ],
+       "lake_pct": 0.0,
+       "land": 483,
+       "max_gap_pp": 9.836,
+       "name": "polar",
+       "river_pct": 0.6211
+      },
+      {
+       "deferred_pct": 5.364,
+       "distinct_bands": 0,
+       "dry_pct": 0.0,
+       "erosion_pct": [
+        1.3888888888888888,
+        5.555555555555555,
+        4.563492063492063,
+        17.46031746031746,
+        61.904761904761905,
+        9.126984126984127,
+        0.0
+       ],
+       "lake_pct": 0.0,
+       "land": 522,
+       "max_gap_pp": 4.657,
+       "name": "boreal",
+       "river_pct": 3.4483
+      },
+      {
+       "deferred_pct": 4.3895,
+       "distinct_bands": 0,
+       "dry_pct": 0.1114,
+       "erosion_pct": [
+        1.0973282442748091,
+        3.6498091603053435,
+        5.224236641221374,
+        21.063931297709924,
+        60.42461832061068,
+        8.134541984732824,
+        0.40553435114503816
+       ],
+       "lake_pct": 0.2228,
+       "land": 4488,
+       "max_gap_pp": 3.177,
+       "name": "temperate_humid",
+       "river_pct": 6.3725
+      },
+      {
+       "deferred_pct": 1.9903,
+       "distinct_bands": 0,
+       "dry_pct": 4.0291,
+       "erosion_pct": [
+        0.37037037037037035,
+        4.469135802469136,
+        10.197530864197532,
+        24.074074074074073,
+        55.28395061728395,
+        5.45679012345679,
+        0.14814814814814814
+       ],
+       "lake_pct": 0.1942,
+       "land": 4120,
+       "max_gap_pp": 4.03,
+       "name": "semiarid",
+       "river_pct": 1.5049
+      },
+      {
+       "deferred_pct": 0.1905,
+       "distinct_bands": 0,
+       "dry_pct": 6.2242,
+       "erosion_pct": [
+        0.4137492043284532,
+        5.569700827498409,
+        10.216422660725652,
+        16.963717377466583,
+        60.9484404837683,
+        5.887969446212604,
+        0.0
+       ],
+       "lake_pct": 0.0,
+       "land": 3149,
+       "max_gap_pp": 3.7,
+       "name": "arid",
+       "river_pct": 0.2223
+      },
+      {
+       "deferred_pct": 0.0,
+       "distinct_bands": 0,
+       "dry_pct": 0.0,
+       "erosion_pct": [
+        3.3333333333333335,
+        8.333333333333334,
+        10.0,
+        23.333333333333332,
+        51.666666666666664,
+        3.3333333333333335,
+        0.0
+       ],
+       "lake_pct": 0.0,
+       "land": 69,
+       "max_gap_pp": 5.581,
+       "name": "tropical_humid",
+       "river_pct": 13.0435
+      },
+      {
+       "deferred_pct": 1.1236,
+       "distinct_bands": 4,
+       "dry_pct": 1.1236,
+       "erosion_pct": [
+        37.827715355805246,
+        45.3183520599251,
+        10.861423220973784,
+        4.119850187265918,
+        1.1235955056179776,
+        0.7490636704119851,
+        0.0
+       ],
+       "lake_pct": 0.0,
+       "land": 267,
+       "max_gap_pp": 56.124,
+       "name": "mountain_cold",
+       "river_pct": 0.0
+      },
+      {
+       "deferred_pct": 0.0,
+       "distinct_bands": 4,
+       "dry_pct": 1.4493,
+       "erosion_pct": [
+        43.28358208955224,
+        43.28358208955224,
+        4.477611940298507,
+        7.462686567164179,
+        1.492537313432836,
+        0.0,
+        0.0
+       ],
+       "lake_pct": 0.0,
+       "land": 69,
+       "max_gap_pp": 55.756,
+       "name": "mountain_warm",
+       "river_pct": 2.8986
+      }
+     ]
+    },
+    "rivers_lakes": {
+     "area_l2": 40000.0,
+     "dry_land": 12762,
+     "lake_land": 18,
+     "lake_pct": 0.1367,
+     "lakes_per_100_l2": 0.0451,
+     "land": 13167,
+     "river_land": 387,
+     "river_pct": 2.9392
+    }
+   },
+   "pv_field": false,
+   "relief_median": 7.560193264011268,
+   "relief_step": 32,
+   "relief_windows": 16,
+   "river_samples": 364,
+   "river_water_pct": 99.72527472527473,
+   "samples": 25600,
+   "seed": 1234,
+   "set": "",
+   "size": 160,
+   "span_l": 200,
+   "synthetic": false,
+   "valley_pct": 1.400879622088288,
+   "version": "v1-dev"
+  },
+  {
+   "_seconds": 1084.0,
+   "_variant": "",
+   "approximation": "litho-core owned I2 surface; no vanilla splines",
+   "boundary": {
+    "acceptance_volume": true,
+    "boundary_edges": 3637315,
+    "climate_humidity_jump_pairs": 4678,
+    "climate_humidity_jump_pct": 0.050302364133015094,
+    "climate_humidity_pair_pct": 0.015490989016200005,
+    "climate_humidity_pairs": 30198201,
+    "climate_land": 15365083,
+    "field_humidity_jump_pairs": 8364,
+    "field_humidity_jump_pct": 0.07897222136410437,
+    "humidity_jump_cause_pairs": {
+     "climate": 4678,
+     "dry_basin": 38403,
+     "estuary": 14232,
+     "gallery": 56711,
+     "other": 9934,
+     "river": 580818,
+     "swamp": 725
+    },
+    "humidity_jump_pair_pct": 2.04728071304118,
+    "humidity_jump_pairs": 705501,
+    "humidity_jump_pct": 5.270776218135095,
+    "humidity_pairs": 34460394,
+    "land": 17512487,
+    "min_strip_blocks": 32,
+    "size": 6250,
+    "span_l": 200,
+    "step": 32,
+    "straight_edges": 17992,
+    "straight_model": "grid-edge-chord-512-deviation-16",
+    "straight_pct": 0.4946505870401656,
+    "thin_pct": 0,
+    "wind_max_deg": 0.41251478035049627,
+    "wind_pairs": 78112500
+   },
+   "climate124": {
+    "coast_asymmetry": {
+     "band_deg": [
+      10,
+      25
+     ],
+     "east_mean_mm": 686.354,
+     "east_samples": 286,
+     "in_target": false,
+     "ratio": 0.6,
+     "west_mean_mm": 1144.005,
+     "west_samples": 287
+    },
+    "deserts_pct": 12.2301,
+    "forests_pct": 32.5975,
+    "island_dust": {
+     "area_l2": 40000.0,
+     "cell_area_l2": 0.001,
+     "in_target": false,
+     "per_1000_l2": 133.275,
+     "specks": 5331
+    },
+    "land": 12412,
+    "land_pct": 48.4844,
+    "mountains_pct": 4.8824,
+    "plates": {
+     "counted": 172,
+     "median_diameter_l": 15.289,
+     "min_diameter_l": 9.772,
+     "plates": 246
+    },
+    "polar_pct": 6.6549,
+    "rain_shadow": {
+     "drop_pct": 46.55,
+     "in_target": true,
+     "leeward_mean_mm": 601.277,
+     "ridge_samples": 454,
+     "windward_mean_mm": 1124.941
+    },
+    "spawn_good": true,
+    "spawn_shift_l": [
+     -42.4531,
+     -77.2527
+    ],
+    "zonal_profile": {
+     "band_deg": 5,
+     "front_deg": 45,
+     "in_target": false,
+     "max_deg": 0,
+     "min_deg": 75,
+     "p_mm": [
+      2864.024,
+      2152.268,
+      1597.786,
+      1178.123,
+      742.058,
+      619.778,
+      679.94,
+      885.096,
+      1245.995,
+      1226.384,
+      958.749,
+      643.804,
+      396.102,
+      251.002,
+      195.673,
+      174.022,
+      204.61,
+      183.68
+     ],
+     "points": 25600,
+     "samples": [
+      4614,
+      3884,
+      3227,
+      2678,
+      2136,
+      1636,
+      1406,
+      1210,
+      965,
+      986,
+      806,
+      664,
+      476,
+      381,
+      282,
+      163,
+      62,
+      24
+     ]
+    }
+   },
+   "erosion_pct": [
+    1.9721099100585857,
+    7.005528508952884,
+    9.208680584206618,
+    18.95370905190197,
+    56.258767225018566,
+    6.502186649063454,
+    0.09901807079792062
+   ],
+   "flat_windows_pct": 0,
+   "flooded_land_pct": 0.28880270649393514,
+   "gallery_pct": 0.0859375,
+   "gallery_samples": 22,
+   "height_data_hash": "356e89ef6fbdb19b",
+   "height_source": "litho-core-owned-I2",
+   "hyps_pct": [
+    0.28880270649393514,
+    37.67637593860879,
+    37.10702203152075,
+    16.271969634458287,
+    8.655829688918228
+   ],
+   "land_samples": 12119,
+   "mode": "scientific",
+   "params_hash": "8887e6a4ec1f7f65",
+   "patches": 1,
+   "path": "fast",
+   "plan": {
+    "climate_shape": {
+     "erosion_pct": [
+      1.9721099100585857,
+      7.005528508952884,
+      9.208680584206618,
+      18.95370905190197,
+      56.258767225018566,
+      6.502186649063454,
+      0.09901807079792062
+     ],
+     "lake_pct": 0.1449,
+     "land": 12119,
+     "notes": [
+      "polar: озёра 0.00 % < 2× среднего 0.14 %",
+      "boreal: озёра 0.16 % < 2× среднего 0.14 %",
+      "arid: E2 11.6 % < 20 %"
+     ],
+     "pass": false,
+     "river_pct": 2.3258,
+     "zones": [
+      {
+       "deferred_pct": 1.4218,
+       "distinct_bands": 0,
+       "dry_pct": 0.4739,
+       "erosion_pct": [
+        3.8004750593824226,
+        10.21377672209026,
+        10.688836104513063,
+        16.152019002375297,
+        55.10688836104513,
+        4.038004750593824,
+        0.0
+       ],
+       "lake_pct": 0.0,
+       "land": 422,
+       "max_gap_pp": 3.208,
+       "name": "polar",
+       "river_pct": 0.237
+      },
+      {
+       "deferred_pct": 3.9936,
+       "distinct_bands": 0,
+       "dry_pct": 0.1597,
+       "erosion_pct": [
+        0.9803921568627451,
+        3.9215686274509802,
+        5.392156862745098,
+        18.464052287581698,
+        62.745098039215684,
+        8.169934640522875,
+        0.32679738562091504
+       ],
+       "lake_pct": 0.1597,
+       "land": 626,
+       "max_gap_pp": 6.486,
+       "name": "boreal",
+       "river_pct": 2.0767
+      },
+      {
+       "deferred_pct": 3.8329,
+       "distinct_bands": 0,
+       "dry_pct": 0.0288,
+       "erosion_pct": [
+        0.6148170919151552,
+        3.258530587150323,
+        5.533353827236398,
+        20.657854288349217,
+        61.020596372579156,
+        8.761143559790963,
+        0.1537042729787888
+       ],
+       "lake_pct": 0.3746,
+       "land": 3470,
+       "max_gap_pp": 4.762,
+       "name": "temperate_humid",
+       "river_pct": 5.879
+      },
+      {
+       "deferred_pct": 1.8366,
+       "distinct_bands": 0,
+       "dry_pct": 3.3169,
+       "erosion_pct": [
+        0.2787068004459309,
+        5.546265328874025,
+        10.56298773690078,
+        22.32441471571906,
+        55.657748049052394,
+        5.546265328874025,
+        0.08361204013377926
+       ],
+       "lake_pct": 0.1096,
+       "land": 3648,
+       "max_gap_pp": 3.371,
+       "name": "semiarid",
+       "river_pct": 1.5351
+      },
+      {
+       "deferred_pct": 0.0801,
+       "distinct_bands": 0,
+       "dry_pct": 5.7173,
+       "erosion_pct": [
+        0.4550321199143469,
+        6.423982869379015,
+        11.589935760171306,
+        16.595289079229122,
+        58.779443254817984,
+        6.129550321199144,
+        0.02676659528907923
+       ],
+       "lake_pct": 0.0,
+       "land": 3743,
+       "max_gap_pp": 2.521,
+       "name": "arid",
+       "river_pct": 0.187
+      },
+      {
+       "deferred_pct": 0.0,
+       "distinct_bands": 0,
+       "dry_pct": 0.0,
+       "erosion_pct": [
+        0.0,
+        12.76595744680851,
+        6.382978723404255,
+        19.148936170212767,
+        46.808510638297875,
+        12.76595744680851,
+        2.127659574468085
+       ],
+       "lake_pct": 0.0,
+       "land": 51,
+       "max_gap_pp": 9.45,
+       "name": "tropical_humid",
+       "river_pct": 7.8431
+      },
+      {
+       "deferred_pct": 0.0,
+       "distinct_bands": 4,
+       "dry_pct": 0.2532,
+       "erosion_pct": [
+        35.53299492385787,
+        51.26903553299493,
+        9.390862944162437,
+        3.045685279187817,
+        0.5076142131979695,
+        0.25380710659898476,
+        0.0
+       ],
+       "lake_pct": 0.0,
+       "land": 395,
+       "max_gap_pp": 55.751,
+       "name": "mountain_cold",
+       "river_pct": 0.2532
+      },
+      {
+       "deferred_pct": 1.4085,
+       "distinct_bands": 4,
+       "dry_pct": 0.0,
+       "erosion_pct": [
+        44.11764705882353,
+        42.64705882352941,
+        8.823529411764707,
+        2.9411764705882355,
+        0.0,
+        1.4705882352941178,
+        0.0
+       ],
+       "lake_pct": 0.0,
+       "land": 71,
+       "max_gap_pp": 56.259,
+       "name": "mountain_warm",
+       "river_pct": 4.2254
+      }
+     ]
+    },
+    "rivers_lakes": {
+     "area_l2": 40000.0,
+     "dry_land": 12119,
+     "lake_land": 18,
+     "lake_pct": 0.1449,
+     "lakes_per_100_l2": 0.0451,
+     "land": 12426,
+     "river_land": 289,
+     "river_pct": 2.3258
+    }
+   },
+   "pv_field": false,
+   "relief_median": 8.302378490636983,
+   "relief_step": 32,
+   "relief_windows": 16,
+   "river_samples": 280,
+   "river_water_pct": 99.64285714285714,
+   "samples": 25600,
+   "seed": 12345,
+   "set": "",
+   "size": 160,
+   "span_l": 200,
+   "synthetic": false,
+   "valley_pct": 1.6885553470919326,
+   "version": "v1-dev"
+  },
+  {
+   "_seconds": 923.0,
+   "_variant": "",
+   "approximation": "litho-core owned I2 surface; no vanilla splines",
+   "boundary": {
+    "acceptance_volume": true,
+    "boundary_edges": 3063086,
+    "climate_humidity_jump_pairs": 3476,
+    "climate_humidity_jump_pct": 0.04799960748135375,
+    "climate_humidity_pair_pct": 0.01433177126921853,
+    "climate_humidity_pairs": 24253806,
+    "climate_land": 12391768,
+    "field_humidity_jump_pairs": 5268,
+    "field_humidity_jump_pct": 0.06266717894877546,
+    "humidity_jump_cause_pairs": {
+     "climate": 3476,
+     "dry_basin": 37562,
+     "estuary": 17025,
+     "gallery": 38467,
+     "other": 11605,
+     "river": 645660,
+     "swamp": 424
+    },
+    "humidity_jump_pair_pct": 2.705347255680512,
+    "humidity_jump_pairs": 754219,
+    "humidity_jump_pct": 6.91060787304137,
+    "humidity_pairs": 27878824,
+    "land": 14229139,
+    "min_strip_blocks": 32,
+    "size": 6250,
+    "span_l": 200,
+    "step": 32,
+    "straight_edges": 15509,
+    "straight_model": "grid-edge-chord-512-deviation-16",
+    "straight_pct": 0.5063194438549881,
+    "thin_pct": 0,
+    "wind_max_deg": 0.5194604492899548,
+    "wind_pairs": 78112500
+   },
+   "climate124": {
+    "coast_asymmetry": {
+     "band_deg": [
+      10,
+      25
+     ],
+     "east_mean_mm": 872.165,
+     "east_samples": 282,
+     "in_target": false,
+     "ratio": 0.69,
+     "west_mean_mm": 1263.216,
+     "west_samples": 302
+    },
+    "deserts_pct": 8.7861,
+    "forests_pct": 40.6745,
+    "island_dust": {
+     "area_l2": 40000.0,
+     "cell_area_l2": 0.001,
+     "in_target": false,
+     "per_1000_l2": 159.075,
+     "specks": 6363
+    },
+    "land": 10289,
+    "land_pct": 40.1914,
+    "mountains_pct": 4.3542,
+    "plates": {
+     "counted": 159,
+     "median_diameter_l": 15.515,
+     "min_diameter_l": 8.808,
+     "plates": 234
+    },
+    "polar_pct": 6.6673,
+    "rain_shadow": {
+     "drop_pct": 43.34,
+     "in_target": true,
+     "leeward_mean_mm": 832.324,
+     "ridge_samples": 334,
+     "windward_mean_mm": 1468.972
+    },
+    "spawn_good": true,
+    "spawn_shift_l": [
+     177.4202,
+     75.0456
+    ],
+    "zonal_profile": {
+     "band_deg": 5,
+     "front_deg": 45,
+     "in_target": false,
+     "max_deg": 0,
+     "min_deg": 85,
+     "p_mm": [
+      2754.94,
+      2258.91,
+      1816.794,
+      1467.061,
+      940.678,
+      833.77,
+      815.187,
+      969.966,
+      1332.531,
+      1437.789,
+      1082.079,
+      619.399,
+      362.257,
+      195.476,
+      139.977,
+      118.519,
+      121.154,
+      112.383
+     ],
+     "points": 25600,
+     "samples": [
+      5138,
+      4341,
+      3666,
+      2954,
+      2288,
+      1760,
+      1148,
+      1034,
+      839,
+      704,
+      512,
+      346,
+      274,
+      227,
+      169,
+      125,
+      58,
+      17
+     ]
+    }
+   },
+   "erosion_pct": [
+    1.8768094239792352,
+    6.279325147249676,
+    7.736847359488869,
+    18.93780573025856,
+    57.83168613357292,
+    7.137865628431666,
+    0.1996605770190676
+   ],
+   "flat_windows_pct": 0,
+   "flooded_land_pct": 0.35938903863432164,
+   "gallery_pct": 0.03515625,
+   "gallery_samples": 9,
+   "height_data_hash": "356e89ef6fbdb19b",
+   "height_source": "litho-core-owned-I2",
+   "hyps_pct": [
+    0.35938903863432164,
+    39.96206449036638,
+    37.705899970050915,
+    14.38554457422382,
+    7.587101926724568
+   ],
+   "land_samples": 10017,
+   "mode": "scientific",
+   "params_hash": "8887e6a4ec1f7f65",
+   "patches": 1,
+   "path": "fast",
+   "plan": {
+    "climate_shape": {
+     "erosion_pct": [
+      1.8768094239792352,
+      6.279325147249676,
+      7.736847359488869,
+      18.93780573025856,
+      57.83168613357292,
+      7.137865628431666,
+      0.1996605770190676
+     ],
+     "lake_pct": 0.165,
+     "land": 10017,
+     "notes": [
+      "polar: озёра 0.22 % < 2× среднего 0.17 %",
+      "boreal: озёра 0.29 % < 2× среднего 0.17 %",
+      "arid: E2 11.2 % < 20 %"
+     ],
+     "pass": false,
+     "river_pct": 2.5825,
+     "zones": [
+      {
+       "deferred_pct": 4.5652,
+       "distinct_bands": 0,
+       "dry_pct": 0.4348,
+       "erosion_pct": [
+        1.7621145374449338,
+        7.929515418502203,
+        6.167400881057269,
+        10.79295154185022,
+        64.09691629955947,
+        8.810572687224669,
+        0.44052863436123346
+       ],
+       "lake_pct": 0.2174,
+       "land": 460,
+       "max_gap_pp": 8.145,
+       "name": "polar",
+       "river_pct": 1.087
+      },
+      {
+       "deferred_pct": 4.9275,
+       "distinct_bands": 0,
+       "dry_pct": 0.0,
+       "erosion_pct": [
+        2.949852507374631,
+        5.014749262536873,
+        5.6047197640118,
+        15.339233038348082,
+        62.83185840707964,
+        7.964601769911504,
+        0.2949852507374631
+       ],
+       "lake_pct": 0.2899,
+       "land": 345,
+       "max_gap_pp": 5.0,
+       "name": "boreal",
+       "river_pct": 1.4493
+      },
+      {
+       "deferred_pct": 4.0184,
+       "distinct_bands": 0,
+       "dry_pct": 0.1536,
+       "erosion_pct": [
+        0.54333061668025,
+        3.504482477587612,
+        4.45531105677805,
+        20.184732409671284,
+        62.727519695734856,
+        8.285791904373811,
+        0.29883183917413747
+       ],
+       "lake_pct": 0.3839,
+       "land": 3907,
+       "max_gap_pp": 4.896,
+       "name": "temperate_humid",
+       "river_pct": 5.4006
+      },
+      {
+       "deferred_pct": 1.6257,
+       "distinct_bands": 0,
+       "dry_pct": 4.5786,
+       "erosion_pct": [
+        0.4694835680751174,
+        5.264922870556673,
+        9.456740442655935,
+        21.830985915492956,
+        56.70690811535882,
+        6.170355466130114,
+        0.1006036217303823
+       ],
+       "lake_pct": 0.0,
+       "land": 3014,
+       "max_gap_pp": 2.893,
+       "name": "semiarid",
+       "river_pct": 1.0617
+      },
+      {
+       "deferred_pct": 0.3212,
+       "distinct_bands": 0,
+       "dry_pct": 6.838,
+       "erosion_pct": [
+        0.8275862068965517,
+        6.022988505747127,
+        11.218390804597702,
+        17.24137931034483,
+        57.60919540229885,
+        6.988505747126437,
+        0.09195402298850575
+       ],
+       "lake_pct": 0.0,
+       "land": 2179,
+       "max_gap_pp": 3.482,
+       "name": "arid",
+       "river_pct": 0.1836
+      },
+      {
+       "deferred_pct": 0.0,
+       "distinct_bands": 2,
+       "dry_pct": 0.0,
+       "erosion_pct": [
+        0.0,
+        14.102564102564102,
+        6.410256410256411,
+        29.487179487179485,
+        39.743589743589745,
+        8.974358974358974,
+        1.2820512820512822
+       ],
+       "lake_pct": 0.0,
+       "land": 84,
+       "max_gap_pp": 18.088,
+       "name": "tropical_humid",
+       "river_pct": 7.1429
+      },
+      {
+       "deferred_pct": 1.3333,
+       "distinct_bands": 4,
+       "dry_pct": 0.4444,
+       "erosion_pct": [
+        40.17857142857143,
+        47.767857142857146,
+        9.375,
+        0.8928571428571429,
+        1.7857142857142858,
+        0.0,
+        0.0
+       ],
+       "lake_pct": 0.0,
+       "land": 225,
+       "max_gap_pp": 56.046,
+       "name": "mountain_cold",
+       "river_pct": 0.4444
+      },
+      {
+       "deferred_pct": 0.0,
+       "distinct_bands": 4,
+       "dry_pct": 0.0,
+       "erosion_pct": [
+        33.333333333333336,
+        48.80952380952381,
+        14.285714285714286,
+        2.380952380952381,
+        1.1904761904761905,
+        0.0,
+        0.0
+       ],
+       "lake_pct": 0.0,
+       "land": 86,
+       "max_gap_pp": 56.641,
+       "name": "mountain_warm",
+       "river_pct": 2.3256
+      }
+     ]
+    },
+    "rivers_lakes": {
+     "area_l2": 40000.0,
+     "dry_land": 10017,
+     "lake_land": 17,
+     "lake_pct": 0.165,
+     "lakes_per_100_l2": 0.0426,
+     "land": 10300,
+     "river_land": 266,
+     "river_pct": 2.5825
+    }
+   },
+   "pv_field": false,
+   "relief_median": 8.532487392744429,
+   "relief_step": 32,
+   "relief_windows": 12,
+   "river_samples": 257,
+   "river_water_pct": 100,
+   "samples": 25600,
+   "seed": 2,
+   "set": "",
+   "size": 160,
+   "span_l": 200,
+   "synthetic": false,
+   "valley_pct": 1.6016640665626625,
+   "version": "v1-dev"
+  },
+  {
+   "_seconds": 1281.0,
+   "_variant": "",
+   "approximation": "litho-core owned I2 surface; no vanilla splines",
+   "boundary": {
+    "acceptance_volume": true,
+    "boundary_edges": 2833864,
+    "climate_humidity_jump_pairs": 3026,
+    "climate_humidity_jump_pct": 0.03964583479265866,
+    "climate_humidity_pair_pct": 0.0122589819729766,
+    "climate_humidity_pairs": 24683942,
+    "climate_land": 12548607,
+    "field_humidity_jump_pairs": 4891,
+    "field_humidity_jump_pct": 0.056976734100652925,
+    "humidity_jump_cause_pairs": {
+     "climate": 3026,
+     "dry_basin": 29907,
+     "estuary": 14575,
+     "gallery": 23017,
+     "other": 8791,
+     "river": 463184,
+     "swamp": 380
+    },
+    "humidity_jump_pair_pct": 1.9437459415782037,
+    "humidity_jump_pairs": 542880,
+    "humidity_jump_pct": 4.966248689200166,
+    "humidity_pairs": 27929576,
+    "land": 14181227,
+    "min_strip_blocks": 32,
+    "size": 6250,
+    "span_l": 200,
+    "step": 32,
+    "straight_edges": 15052,
+    "straight_model": "grid-edge-chord-512-deviation-16",
+    "straight_pct": 0.5311475780065663,
+    "thin_pct": 0,
+    "wind_max_deg": 0.5849569725110852,
+    "wind_pairs": 78112500
+   },
+   "climate124": {
+    "coast_asymmetry": {
+     "band_deg": [
+      10,
+      25
+     ],
+     "east_mean_mm": 827.444,
+     "east_samples": 274,
+     "in_target": false,
+     "ratio": 0.671,
+     "west_mean_mm": 1232.792,
+     "west_samples": 261
+    },
+    "deserts_pct": 12.8837,
+    "forests_pct": 33.2864,
+    "island_dust": {
+     "area_l2": 40000.0,
+     "cell_area_l2": 0.001,
+     "in_target": false,
+     "per_1000_l2": 106.6,
+     "specks": 4264
+    },
+    "land": 9935,
+    "land_pct": 38.8086,
+    "mountains_pct": 4.3684,
+    "plates": {
+     "counted": 157,
+     "median_diameter_l": 15.515,
+     "min_diameter_l": 9.249,
+     "plates": 230
+    },
+    "polar_pct": 4.3885,
+    "rain_shadow": {
+     "drop_pct": 50.295,
+     "in_target": true,
+     "leeward_mean_mm": 512.482,
+     "ridge_samples": 323,
+     "windward_mean_mm": 1031.041
+    },
+    "spawn_good": true,
+    "spawn_shift_l": [
+     -199.4963,
+     -75.0006
+    ],
+    "zonal_profile": {
+     "band_deg": 5,
+     "front_deg": 45,
+     "in_target": false,
+     "max_deg": 0,
+     "min_deg": 85,
+     "p_mm": [
+      2968.776,
+      2226.031,
+      1753.721,
+      1394.244,
+      856.506,
+      733.211,
+      766.764,
+      923.012,
+      1203.771,
+      1310.174,
+      1068.412,
+      745.693,
+      502.177,
+      267.586,
+      209.354,
+      216.648,
+      174.782,
+      163.451
+     ],
+     "points": 25600,
+     "samples": [
+      4273,
+      3739,
+      3292,
+      2791,
+      2384,
+      2036,
+      1733,
+      1483,
+      1055,
+      816,
+      636,
+      479,
+      352,
+      244,
+      139,
+      93,
+      40,
+      15
+     ]
+    }
+   },
+   "erosion_pct": [
+    1.9601774476426288,
+    6.262251109047766,
+    9.305684514598164,
+    19.673991540286806,
+    56.84514598163623,
+    5.890849066336531,
+    0.06190034045187248
+   ],
+   "flat_windows_pct": 0,
+   "flooded_land_pct": 0.3404518724852987,
+   "gallery_pct": 0.03125,
+   "gallery_samples": 8,
+   "height_data_hash": "356e89ef6fbdb19b",
+   "height_source": "litho-core-owned-I2",
+   "hyps_pct": [
+    0.3404518724852987,
+    37.387805632930984,
+    38.429794697204166,
+    15.94965438976581,
+    7.892293407613742
+   ],
+   "land_samples": 9693,
+   "mode": "scientific",
+   "params_hash": "8887e6a4ec1f7f65",
+   "patches": 1,
+   "path": "fast",
+   "plan": {
+    "climate_shape": {
+     "erosion_pct": [
+      1.9601774476426288,
+      6.262251109047766,
+      9.305684514598164,
+      19.673991540286806,
+      56.84514598163623,
+      5.890849066336531,
+      0.06190034045187248
+     ],
+     "lake_pct": 0.1205,
+     "land": 9693,
+     "notes": [
+      "polar: озёра 0.00 % < 2× среднего 0.12 %",
+      "boreal: озёра 0.00 % < 2× среднего 0.12 %",
+      "arid: E2 11.2 % < 20 %"
+     ],
+     "pass": false,
+     "river_pct": 2.5407,
+     "zones": [
+      {
+       "deferred_pct": 0.0,
+       "distinct_bands": 3,
+       "dry_pct": 0.0,
+       "erosion_pct": [
+        8.904109589041095,
+        21.232876712328768,
+        19.863013698630137,
+        18.493150684931507,
+        28.767123287671232,
+        2.0547945205479454,
+        0.684931506849315
+       ],
+       "lake_pct": 0.0,
+       "land": 149,
+       "max_gap_pp": 28.078,
+       "name": "polar",
+       "river_pct": 2.0134
+      },
+      {
+       "deferred_pct": 0.3906,
+       "distinct_bands": 0,
+       "dry_pct": 0.0,
+       "erosion_pct": [
+        1.9920318725099602,
+        7.569721115537849,
+        13.54581673306773,
+        17.529880478087648,
+        54.18326693227092,
+        5.179282868525896,
+        0.0
+       ],
+       "lake_pct": 0.0,
+       "land": 256,
+       "max_gap_pp": 4.24,
+       "name": "boreal",
+       "river_pct": 1.9531
+      },
+      {
+       "deferred_pct": 2.9402,
+       "distinct_bands": 0,
+       "dry_pct": 0.0653,
+       "erosion_pct": [
+        0.4914004914004914,
+        2.5272025272025274,
+        4.703404703404703,
+        20.182520182520182,
+        63.706563706563706,
+        8.283608283608284,
+        0.1053001053001053
+       ],
+       "lake_pct": 0.294,
+       "land": 3061,
+       "max_gap_pp": 6.861,
+       "name": "temperate_humid",
+       "river_pct": 6.6318
+      },
+      {
+       "deferred_pct": 1.2338,
+       "distinct_bands": 0,
+       "dry_pct": 2.6181,
+       "erosion_pct": [
+        0.42514424536896445,
+        5.192833282720923,
+        11.144852717886426,
+        22.593379896750683,
+        56.05830549650774,
+        4.524749468569693,
+        0.06073489219556635
+       ],
+       "lake_pct": 0.0903,
+       "land": 3323,
+       "max_gap_pp": 2.919,
+       "name": "semiarid",
+       "river_pct": 0.8125
+      },
+      {
+       "deferred_pct": 0.107,
+       "distinct_bands": 0,
+       "dry_pct": 4.8163,
+       "erosion_pct": [
+        0.6428571428571429,
+        5.892857142857143,
+        11.178571428571429,
+        17.785714285714285,
+        58.714285714285715,
+        5.785714285714286,
+        0.0
+       ],
+       "lake_pct": 0.0,
+       "land": 2803,
+       "max_gap_pp": 1.888,
+       "name": "arid",
+       "river_pct": 0.107
+      },
+      {
+       "deferred_pct": 0.0,
+       "distinct_bands": 0,
+       "dry_pct": 0.0,
+       "erosion_pct": [
+        4.3478260869565215,
+        4.3478260869565215,
+        4.3478260869565215,
+        17.391304347826086,
+        56.52173913043478,
+        13.043478260869565,
+        0.0
+       ],
+       "lake_pct": 0.0,
+       "land": 52,
+       "max_gap_pp": 7.153,
+       "name": "tropical_humid",
+       "river_pct": 11.5385
+      },
+      {
+       "deferred_pct": 0.3802,
+       "distinct_bands": 4,
+       "dry_pct": 0.0,
+       "erosion_pct": [
+        40.38461538461539,
+        47.69230769230769,
+        8.076923076923077,
+        3.076923076923077,
+        0.38461538461538464,
+        0.38461538461538464,
+        0.0
+       ],
+       "lake_pct": 0.0,
+       "land": 263,
+       "max_gap_pp": 56.461,
+       "name": "mountain_cold",
+       "river_pct": 1.1407
+      },
+      {
+       "deferred_pct": 1.9608,
+       "distinct_bands": 4,
+       "dry_pct": 0.0,
+       "erosion_pct": [
+        39.583333333333336,
+        47.916666666666664,
+        4.166666666666667,
+        6.25,
+        0.0,
+        2.0833333333333335,
+        0.0
+       ],
+       "lake_pct": 0.0,
+       "land": 51,
+       "max_gap_pp": 56.845,
+       "name": "mountain_warm",
+       "river_pct": 5.8824
+      }
+     ]
+    },
+    "rivers_lakes": {
+     "area_l2": 40000.0,
+     "dry_land": 9693,
+     "lake_land": 12,
+     "lake_pct": 0.1205,
+     "lakes_per_100_l2": 0.03,
+     "land": 9958,
+     "river_land": 253,
+     "river_pct": 2.5407
+    }
+   },
+   "pv_field": false,
+   "relief_median": 22.162301182777234,
+   "relief_step": 32,
+   "relief_windows": 16,
+   "river_samples": 234,
+   "river_water_pct": 99.57264957264957,
+   "samples": 25600,
+   "seed": 2024,
+   "set": "",
+   "size": 160,
+   "span_l": 200,
+   "synthetic": false,
+   "valley_pct": 1.535344919501013,
+   "version": "v1-dev"
+  },
+  {
+   "_seconds": 787.0,
+   "_variant": "",
+   "approximation": "litho-core owned I2 surface; no vanilla splines",
+   "boundary": {
+    "acceptance_volume": true,
+    "boundary_edges": 2790688,
+    "climate_humidity_jump_pairs": 2845,
+    "climate_humidity_jump_pct": 0.04020033094882531,
+    "climate_humidity_pair_pct": 0.012171800449727705,
+    "climate_humidity_pairs": 23373699,
+    "climate_land": 11897912,
+    "field_humidity_jump_pairs": 4798,
+    "field_humidity_jump_pct": 0.06024641676998431,
+    "humidity_jump_cause_pairs": {
+     "climate": 2845,
+     "dry_basin": 30768,
+     "estuary": 14479,
+     "gallery": 36902,
+     "other": 9802,
+     "river": 441677,
+     "swamp": 352
+    },
+    "humidity_jump_pair_pct": 2.0300701865592243,
+    "humidity_jump_pairs": 536825,
+    "humidity_jump_pct": 5.222799058936094,
+    "humidity_pairs": 26443667,
+    "land": 13444783,
+    "min_strip_blocks": 32,
+    "size": 6250,
+    "span_l": 200,
+    "step": 32,
+    "straight_edges": 13674,
+    "straight_model": "grid-edge-chord-512-deviation-16",
+    "straight_pct": 0.4899866986205552,
+    "thin_pct": 0,
+    "wind_max_deg": 0.4085580786534029,
+    "wind_pairs": 78112500
+   },
+   "climate124": {
+    "coast_asymmetry": {
+     "band_deg": [
+      10,
+      25
+     ],
+     "east_mean_mm": 819.761,
+     "east_samples": 263,
+     "in_target": false,
+     "ratio": 0.62,
+     "west_mean_mm": 1322.91,
+     "west_samples": 225
+    },
+    "deserts_pct": 10.334,
+    "forests_pct": 33.5434,
+    "island_dust": {
+     "area_l2": 40000.0,
+     "cell_area_l2": 0.001,
+     "in_target": false,
+     "per_1000_l2": 100.475,
+     "specks": 4019
+    },
+    "land": 9522,
+    "land_pct": 37.1953,
+    "mountains_pct": 4.3058,
+    "plates": {
+     "counted": 152,
+     "median_diameter_l": 16.205,
+     "min_diameter_l": 9.249,
+     "plates": 225
+    },
+    "polar_pct": 9.6723,
+    "rain_shadow": {
+     "drop_pct": 52.689,
+     "in_target": true,
+     "leeward_mean_mm": 694.408,
+     "ridge_samples": 304,
+     "windward_mean_mm": 1467.756
+    },
+    "spawn_good": true,
+    "spawn_shift_l": [
+     174.4701,
+     26.1667
+    ],
+    "zonal_profile": {
+     "band_deg": 5,
+     "front_deg": 45,
+     "in_target": false,
+     "max_deg": 0,
+     "min_deg": 85,
+     "p_mm": [
+      2960.068,
+      2258.725,
+      1821.901,
+      1417.807,
+      928.6,
+      781.608,
+      804.487,
+      957.576,
+      1397.674,
+      1422.812,
+      1123.639,
+      726.832,
+      384.865,
+      208.671,
+      150.081,
+      94.977,
+      97.645,
+      92.535
+     ],
+     "points": 25600,
+     "samples": [
+      3991,
+      3418,
+      2981,
+      2542,
+      2239,
+      1929,
+      1751,
+      1608,
+      1355,
+      1082,
+      875,
+      624,
+      409,
+      287,
+      233,
+      172,
+      77,
+      27
+     ]
+    }
+   },
+   "erosion_pct": [
+    1.7868606890648406,
+    6.312861117055425,
+    8.238818745987588,
+    19.601968756687352,
+    57.5326342820458,
+    6.409158998502033,
+    0.11769741065696554
+   ],
+   "flat_windows_pct": 6.25,
+   "flooded_land_pct": 0.2460945859191098,
+   "gallery_pct": 0.04296875,
+   "gallery_samples": 11,
+   "height_data_hash": "356e89ef6fbdb19b",
+   "height_source": "litho-core-owned-I2",
+   "hyps_pct": [
+    0.2460945859191098,
+    38.93644339824524,
+    37.6524716456238,
+    15.996148084742135,
+    7.16884228546972
+   ],
+   "land_samples": 9346,
+   "mode": "scientific",
+   "params_hash": "8887e6a4ec1f7f65",
+   "patches": 1,
+   "path": "fast",
+   "plan": {
+    "climate_shape": {
+     "erosion_pct": [
+      1.7868606890648406,
+      6.312861117055425,
+      8.238818745987588,
+      19.601968756687352,
+      57.5326342820458,
+      6.409158998502033,
+      0.11769741065696554
+     ],
+     "lake_pct": 0.1993,
+     "land": 9346,
+     "notes": [
+      "polar: озёра 0.00 % < 2× среднего 0.20 %",
+      "boreal: озёра 0.28 % < 2× среднего 0.20 %",
+      "arid: E2 10.7 % < 20 %"
+     ],
+     "pass": false,
+     "river_pct": 1.752,
+     "zones": [
+      {
+       "deferred_pct": 5.1282,
+       "distinct_bands": 1,
+       "dry_pct": 0.135,
+       "erosion_pct": [
+        2.032520325203252,
+        4.878048780487805,
+        4.065040650406504,
+        10.29810298102981,
+        69.91869918699187,
+        8.672086720867208,
+        0.13550135501355012
+       ],
+       "lake_pct": 0.0,
+       "land": 741,
+       "max_gap_pp": 12.386,
+       "name": "polar",
+       "river_pct": 0.4049
+      },
+      {
+       "deferred_pct": 2.7624,
+       "distinct_bands": 0,
+       "dry_pct": 0.8287,
+       "erosion_pct": [
+        0.28328611898017,
+        7.648725212464589,
+        4.53257790368272,
+        17.28045325779037,
+        63.172804532577906,
+        7.0821529745042495,
+        0.0
+       ],
+       "lake_pct": 0.2762,
+       "land": 362,
+       "max_gap_pp": 5.64,
+       "name": "boreal",
+       "river_pct": 2.2099
+      },
+      {
+       "deferred_pct": 4.0481,
+       "distinct_bands": 0,
+       "dry_pct": 0.0729,
+       "erosion_pct": [
+        0.8061420345489443,
+        3.7236084452975047,
+        5.143953934740883,
+        21.420345489443378,
+        60.99808061420345,
+        7.677543186180422,
+        0.23032629558541268
+       ],
+       "lake_pct": 0.3647,
+       "land": 2742,
+       "max_gap_pp": 3.465,
+       "name": "temperate_humid",
+       "river_pct": 4.6317
+      },
+      {
+       "deferred_pct": 1.597,
+       "distinct_bands": 0,
+       "dry_pct": 3.3299,
+       "erosion_pct": [
+        0.5831903945111492,
+        4.562607204116638,
+        10.154373927958833,
+        24.1852487135506,
+        55.711835334476845,
+        4.699828473413379,
+        0.10291595197255575
+       ],
+       "lake_pct": 0.2718,
+       "land": 2943,
+       "max_gap_pp": 4.583,
+       "name": "semiarid",
+       "river_pct": 0.6796
+      },
+      {
+       "deferred_pct": 0.3767,
+       "distinct_bands": 0,
+       "dry_pct": 6.7392,
+       "erosion_pct": [
+        0.20964360587002095,
+        6.540880503144654,
+        10.733752620545074,
+        17.40041928721174,
+        57.9454926624738,
+        7.127882599580713,
+        0.041928721174004195
+       ],
+       "lake_pct": 0.0,
+       "land": 2389,
+       "max_gap_pp": 2.495,
+       "name": "arid",
+       "river_pct": 0.1674
+      },
+      {
+       "deferred_pct": 0.0,
+       "distinct_bands": 0,
+       "dry_pct": 0.0,
+       "erosion_pct": [
+        1.639344262295082,
+        8.19672131147541,
+        8.19672131147541,
+        16.39344262295082,
+        62.295081967213115,
+        3.278688524590164,
+        0.0
+       ],
+       "lake_pct": 0.0,
+       "land": 65,
+       "max_gap_pp": 4.762,
+       "name": "tropical_humid",
+       "river_pct": 6.1538
+      },
+      {
+       "deferred_pct": 1.7699,
+       "distinct_bands": 4,
+       "dry_pct": 0.4425,
+       "erosion_pct": [
+        31.555555555555557,
+        49.77777777777778,
+        13.777777777777779,
+        3.111111111111111,
+        1.7777777777777777,
+        0.0,
+        0.0
+       ],
+       "lake_pct": 0.0,
+       "land": 226,
+       "max_gap_pp": 55.755,
+       "name": "mountain_cold",
+       "river_pct": 0.4425
+      },
+      {
+       "deferred_pct": 1.5625,
+       "distinct_bands": 4,
+       "dry_pct": 0.0,
+       "erosion_pct": [
+        56.25,
+        37.5,
+        3.125,
+        0.0,
+        1.5625,
+        1.5625,
+        0.0
+       ],
+       "lake_pct": 0.0,
+       "land": 64,
+       "max_gap_pp": 55.97,
+       "name": "mountain_warm",
+       "river_pct": 0.0
+      }
+     ]
+    },
+    "rivers_lakes": {
+     "area_l2": 40000.0,
+     "dry_land": 9346,
+     "lake_land": 19,
+     "lake_pct": 0.1993,
+     "lakes_per_100_l2": 0.0476,
+     "land": 9532,
+     "river_land": 167,
+     "river_pct": 1.752
+    }
+   },
+   "pv_field": false,
+   "relief_median": 12.260209622768862,
+   "relief_step": 32,
+   "relief_windows": 16,
+   "river_samples": 160,
+   "river_water_pct": 100,
+   "samples": 25600,
+   "seed": 42,
+   "set": "",
+   "size": 160,
+   "span_l": 200,
+   "synthetic": false,
+   "valley_pct": 1.559925299351862,
+   "version": "v1-dev"
+  },
+  {
+   "_seconds": 919.0,
+   "_variant": "",
+   "approximation": "litho-core owned I2 surface; no vanilla splines",
+   "boundary": {
+    "acceptance_volume": true,
+    "boundary_edges": 3137918,
+    "climate_humidity_jump_pairs": 4046,
+    "climate_humidity_jump_pct": 0.05084286174636554,
+    "climate_humidity_pair_pct": 0.015332288317504937,
+    "climate_humidity_pairs": 26388755,
+    "climate_land": 13427647,
+    "field_humidity_jump_pairs": 7187,
+    "field_humidity_jump_pct": 0.0791923656110099,
+    "humidity_jump_cause_pairs": {
+     "climate": 4046,
+     "dry_basin": 36568,
+     "estuary": 14768,
+     "gallery": 45519,
+     "other": 8248,
+     "river": 502234,
+     "swamp": 623
+    },
+    "humidity_jump_pair_pct": 2.0481857067757736,
+    "humidity_jump_pairs": 612006,
+    "humidity_jump_pct": 5.2826582085945475,
+    "humidity_pairs": 29880396,
+    "land": 15187070,
+    "min_strip_blocks": 32,
+    "size": 6250,
+    "span_l": 200,
+    "step": 32,
+    "straight_edges": 15221,
+    "straight_model": "grid-edge-chord-512-deviation-16",
+    "straight_pct": 0.4850668500579046,
+    "thin_pct": 0,
+    "wind_max_deg": 0.587571463196969,
+    "wind_pairs": 78112500
+   },
+   "climate124": {
+    "coast_asymmetry": {
+     "band_deg": [
+      10,
+      25
+     ],
+     "east_mean_mm": 790.298,
+     "east_samples": 253,
+     "in_target": false,
+     "ratio": 0.656,
+     "west_mean_mm": 1204.594,
+     "west_samples": 240
+    },
+    "deserts_pct": 11.8342,
+    "forests_pct": 33.29,
+    "island_dust": {
+     "area_l2": 40000.0,
+     "cell_area_l2": 0.001,
+     "in_target": false,
+     "per_1000_l2": 116.05,
+     "specks": 4642
+    },
+    "land": 10757,
+    "land_pct": 42.0195,
+    "mountains_pct": 5.522,
+    "plates": {
+     "counted": 164,
+     "median_diameter_l": 15.611,
+     "min_diameter_l": 10.46,
+     "plates": 233
+    },
+    "polar_pct": 7.7996,
+    "rain_shadow": {
+     "drop_pct": 49.624,
+     "in_target": true,
+     "leeward_mean_mm": 648.903,
+     "ridge_samples": 443,
+     "windward_mean_mm": 1288.116
+    },
+    "spawn_good": true,
+    "spawn_shift_l": [
+     -65.9549,
+     54.1636
+    ],
+    "zonal_profile": {
+     "band_deg": 5,
+     "front_deg": 45,
+     "in_target": false,
+     "max_deg": 0,
+     "min_deg": 70,
+     "p_mm": [
+      2885.688,
+      2202.836,
+      1636.866,
+      1182.866,
+      852.525,
+      780.661,
+      875.025,
+      1005.526,
+      1285.89,
+      1197.852,
+      896.382,
+      631.394,
+      402.218,
+      246.766,
+      163.39,
+      181.497,
+      190.101,
+      179.846
+     ],
+     "points": 25600,
+     "samples": [
+      4483,
+      3721,
+      3120,
+      2705,
+      2217,
+      1908,
+      1661,
+      1293,
+      1101,
+      815,
+      650,
+      528,
+      426,
+      333,
+      267,
+      209,
+      134,
+      29
+     ]
+    }
+   },
+   "erosion_pct": [
+    2.125640539001708,
+    7.411273486430063,
+    8.749288289998102,
+    19.538811918770165,
+    55.873979882330616,
+    6.15866388308977,
+    0.14234200037957867
+   ],
+   "flat_windows_pct": 0,
+   "flooded_land_pct": 0.20876826722338204,
+   "gallery_pct": 0.0390625,
+   "gallery_samples": 10,
+   "height_data_hash": "356e89ef6fbdb19b",
+   "height_source": "litho-core-owned-I2",
+   "hyps_pct": [
+    0.20876826722338204,
+    37.21768836591384,
+    37.38849876636933,
+    15.999240842664642,
+    9.18580375782881
+   ],
+   "land_samples": 10538,
+   "mode": "scientific",
+   "params_hash": "8887e6a4ec1f7f65",
+   "patches": 1,
+   "path": "fast",
+   "plan": {
+    "climate_shape": {
+     "erosion_pct": [
+      2.125640539001708,
+      7.411273486430063,
+      8.749288289998102,
+      19.538811918770165,
+      55.873979882330616,
+      6.15866388308977,
+      0.14234200037957867
+     ],
+     "lake_pct": 0.1113,
+     "land": 10538,
+     "notes": [
+      "polar: озёра 0.00 % < 2× среднего 0.11 %",
+      "arid: E2 10.8 % < 20 %"
+     ],
+     "pass": false,
+     "river_pct": 2.1427,
+     "zones": [
+      {
+       "deferred_pct": 2.439,
+       "distinct_bands": 0,
+       "dry_pct": 0.2033,
+       "erosion_pct": [
+        3.4836065573770494,
+        11.885245901639344,
+        12.295081967213115,
+        15.778688524590164,
+        50.40983606557377,
+        6.147540983606557,
+        0.0
+       ],
+       "lake_pct": 0.0,
+       "land": 492,
+       "max_gap_pp": 5.464,
+       "name": "polar",
+       "river_pct": 0.813
+      },
+      {
+       "deferred_pct": 5.3819,
+       "distinct_bands": 0,
+       "dry_pct": 0.3472,
+       "erosion_pct": [
+        1.2589928057553956,
+        5.39568345323741,
+        5.0359712230215825,
+        16.366906474820144,
+        63.669064748201436,
+        7.733812949640288,
+        0.539568345323741
+       ],
+       "lake_pct": 0.3472,
+       "land": 576,
+       "max_gap_pp": 7.795,
+       "name": "boreal",
+       "river_pct": 3.125
+      },
+      {
+       "deferred_pct": 4.0041,
+       "distinct_bands": 0,
+       "dry_pct": 0.1018,
+       "erosion_pct": [
+        0.8605234851201148,
+        3.3703836500537827,
+        4.983865184653998,
+        21.835783434922913,
+        60.95374686267479,
+        7.744711366081033,
+        0.2509860164933668
+       ],
+       "lake_pct": 0.1697,
+       "land": 2947,
+       "max_gap_pp": 5.08,
+       "name": "temperate_humid",
+       "river_pct": 5.1917
+      },
+      {
+       "deferred_pct": 1.8101,
+       "distinct_bands": 0,
+       "dry_pct": 3.9466,
+       "erosion_pct": [
+        0.41991601679664065,
+        6.11877624475105,
+        10.137972405518896,
+        21.355728854229156,
+        56.14877024595081,
+        5.668866226754649,
+        0.14997000599880023
+       ],
+       "lake_pct": 0.0593,
+       "land": 3370,
+       "max_gap_pp": 1.817,
+       "name": "semiarid",
+       "river_pct": 1.0089
+      },
+      {
+       "deferred_pct": 0.3797,
+       "distinct_bands": 0,
+       "dry_pct": 5.4539,
+       "erosion_pct": [
+        0.970873786407767,
+        6.206657420249654,
+        10.78363384188627,
+        18.411927877947296,
+        57.940360610263525,
+        5.6865464632454925,
+        0.0
+       ],
+       "lake_pct": 0.069,
+       "land": 2897,
+       "max_gap_pp": 2.066,
+       "name": "arid",
+       "river_pct": 0.3797
+      },
+      {
+       "deferred_pct": 0.0,
+       "distinct_bands": 1,
+       "dry_pct": 0.0,
+       "erosion_pct": [
+        0.0,
+        6.25,
+        7.5,
+        30.0,
+        51.25,
+        5.0,
+        0.0
+       ],
+       "lake_pct": 1.1111,
+       "land": 90,
+       "max_gap_pp": 10.461,
+       "name": "tropical_humid",
+       "river_pct": 10.0
+      },
+      {
+       "deferred_pct": 0.9346,
+       "distinct_bands": 4,
+       "dry_pct": 0.3115,
+       "erosion_pct": [
+        32.8125,
+        50.9375,
+        10.9375,
+        4.0625,
+        0.9375,
+        0.3125,
+        0.0
+       ],
+       "lake_pct": 0.0,
+       "land": 321,
+       "max_gap_pp": 54.936,
+       "name": "mountain_cold",
+       "river_pct": 0.3115
+      },
+      {
+       "deferred_pct": 1.1364,
+       "distinct_bands": 4,
+       "dry_pct": 2.2727,
+       "erosion_pct": [
+        33.333333333333336,
+        55.172413793103445,
+        5.747126436781609,
+        2.2988505747126435,
+        1.1494252873563218,
+        2.2988505747126435,
+        0.0
+       ],
+       "lake_pct": 0.0,
+       "land": 88,
+       "max_gap_pp": 54.725,
+       "name": "mountain_warm",
+       "river_pct": 1.1364
+      }
+     ]
+    },
+    "rivers_lakes": {
+     "area_l2": 40000.0,
+     "dry_land": 10538,
+     "lake_land": 12,
+     "lake_pct": 0.1113,
+     "lakes_per_100_l2": 0.03,
+     "land": 10781,
+     "river_land": 231,
+     "river_pct": 2.1427
+    }
+   },
+   "pv_field": false,
+   "relief_median": 5.943789976580376,
+   "relief_step": 32,
+   "relief_windows": 9,
+   "river_samples": 211,
+   "river_water_pct": 99.0521327014218,
+   "samples": 25600,
+   "seed": 54321,
+   "set": "",
+   "size": 160,
+   "span_l": 200,
+   "synthetic": false,
+   "valley_pct": 1.5585427625170465,
+   "version": "v1-dev"
+  },
+  {
+   "_seconds": 763.0,
+   "_variant": "",
+   "approximation": "litho-core owned I2 surface; no vanilla splines",
+   "boundary": {
+    "acceptance_volume": true,
+    "boundary_edges": 3181981,
+    "climate_humidity_jump_pairs": 4438,
+    "climate_humidity_jump_pct": 0.05371855609916266,
+    "climate_humidity_pair_pct": 0.016363478956743043,
+    "climate_humidity_pairs": 27121372,
+    "climate_land": 13790393,
+    "field_humidity_jump_pairs": 6679,
+    "field_humidity_jump_pct": 0.07172969594056372,
+    "humidity_jump_cause_pairs": {
+     "climate": 4438,
+     "dry_basin": 33583,
+     "estuary": 12298,
+     "gallery": 41616,
+     "other": 6105,
+     "river": 498441,
+     "swamp": 550
+    },
+    "humidity_jump_pair_pct": 1.940241897578941,
+    "humidity_jump_pairs": 597031,
+    "humidity_jump_pct": 4.994935861712875,
+    "humidity_pairs": 30770957,
+    "land": 15629510,
+    "min_strip_blocks": 32,
+    "size": 6250,
+    "span_l": 200,
+    "step": 32,
+    "straight_edges": 13926,
+    "straight_model": "grid-edge-chord-512-deviation-16",
+    "straight_pct": 0.43765189044183483,
+    "thin_pct": 0,
+    "wind_max_deg": 0.6391335714809933,
+    "wind_pairs": 78112500
+   },
+   "climate124": {
+    "coast_asymmetry": {
+     "band_deg": [
+      10,
+      25
+     ],
+     "east_mean_mm": 789.964,
+     "east_samples": 316,
+     "in_target": false,
+     "ratio": 0.668,
+     "west_mean_mm": 1181.789,
+     "west_samples": 292
+    },
+    "deserts_pct": 13.0984,
+    "forests_pct": 30.902,
+    "island_dust": {
+     "area_l2": 40000.0,
+     "cell_area_l2": 0.001,
+     "in_target": false,
+     "per_1000_l2": 126.35,
+     "specks": 5054
+    },
+    "land": 11009,
+    "land_pct": 43.0039,
+    "mountains_pct": 4.9777,
+    "plates": {
+     "counted": 156,
+     "median_diameter_l": 16.113,
+     "min_diameter_l": 9.462,
+     "plates": 224
+    },
+    "polar_pct": 6.4039,
+    "rain_shadow": {
+     "drop_pct": 50.184,
+     "in_target": true,
+     "leeward_mean_mm": 574.084,
+     "ridge_samples": 415,
+     "windward_mean_mm": 1152.404
+    },
+    "spawn_good": true,
+    "spawn_shift_l": [
+     -188.9022,
+     109.3037
+    ],
+    "zonal_profile": {
+     "band_deg": 5,
+     "front_deg": 45,
+     "in_target": false,
+     "max_deg": 0,
+     "min_deg": 85,
+     "p_mm": [
+      2714.842,
+      2157.28,
+      1725.459,
+      1333.034,
+      827.202,
+      681.423,
+      747.949,
+      1011.418,
+      1376.672,
+      1348.263,
+      1040.186,
+      711.314,
+      421.9,
+      234.734,
+      173.931,
+      135.034,
+      110.962,
+      76.465
+     ],
+     "points": 25600,
+     "samples": [
+      3584,
+      3264,
+      3055,
+      2771,
+      2520,
+      2180,
+      1796,
+      1675,
+      1278,
+      1016,
+      758,
+      568,
+      433,
+      322,
+      212,
+      115,
+      42,
+      11
+     ]
+    }
+   },
+   "erosion_pct": [
+    2.0222634508348794,
+    7.1521335807050095,
+    9.267161410018552,
+    19.786641929499073,
+    54.66604823747681,
+    6.9480519480519485,
+    0.15769944341372913
+   ],
+   "flat_windows_pct": 0,
+   "flooded_land_pct": 0.2597402597402597,
+   "gallery_pct": 0.03125,
+   "gallery_samples": 8,
+   "height_data_hash": "356e89ef6fbdb19b",
+   "height_source": "litho-core-owned-I2",
+   "hyps_pct": [
+    0.2597402597402597,
+    37.365491651205936,
+    36.98515769944341,
+    16.595547309833023,
+    8.794063079777365
+   ],
+   "land_samples": 10780,
+   "mode": "scientific",
+   "params_hash": "8887e6a4ec1f7f65",
+   "patches": 1,
+   "path": "fast",
+   "plan": {
+    "climate_shape": {
+     "erosion_pct": [
+      2.0222634508348794,
+      7.1521335807050095,
+      9.267161410018552,
+      19.786641929499073,
+      54.66604823747681,
+      6.9480519480519485,
+      0.15769944341372913
+     ],
+     "lake_pct": 0.0907,
+     "land": 10780,
+     "notes": [
+      "polar: озёра 0.00 % < 2× среднего 0.09 %",
+      "arid: E2 11.3 % < 20 %"
+     ],
+     "pass": false,
+     "river_pct": 2.1049,
+     "zones": [
+      {
+       "deferred_pct": 1.292,
+       "distinct_bands": 0,
+       "dry_pct": 0.5168,
+       "erosion_pct": [
+        5.483028720626632,
+        12.010443864229766,
+        14.360313315926893,
+        14.360313315926893,
+        49.347258485639685,
+        4.438642297650131,
+        0.0
+       ],
+       "lake_pct": 0.0,
+       "land": 387,
+       "max_gap_pp": 5.426,
+       "name": "polar",
+       "river_pct": 1.0336
+      },
+      {
+       "deferred_pct": 3.4884,
+       "distinct_bands": 0,
+       "dry_pct": 0.2326,
+       "erosion_pct": [
+        2.857142857142857,
+        8.571428571428571,
+        6.904761904761905,
+        20.952380952380953,
+        54.285714285714285,
+        6.190476190476191,
+        0.23809523809523808
+       ],
+       "lake_pct": 0.2326,
+       "land": 430,
+       "max_gap_pp": 2.362,
+       "name": "boreal",
+       "river_pct": 2.093
+      },
+      {
+       "deferred_pct": 4.7635,
+       "distinct_bands": 0,
+       "dry_pct": 0.23,
+       "erosion_pct": [
+        0.7342657342657343,
+        3.9160839160839163,
+        5.419580419580419,
+        20.34965034965035,
+        59.61538461538461,
+        9.615384615384615,
+        0.34965034965034963
+       ],
+       "lake_pct": 0.1643,
+       "land": 3044,
+       "max_gap_pp": 4.949,
+       "name": "temperate_humid",
+       "river_pct": 5.8804
+      },
+      {
+       "deferred_pct": 1.2991,
+       "distinct_bands": 0,
+       "dry_pct": 4.3613,
+       "erosion_pct": [
+        0.4058694973462379,
+        5.775835154542616,
+        10.146737433655948,
+        23.47798938495161,
+        54.480174836091166,
+        5.588510771152045,
+        0.12488292226038089
+       ],
+       "lake_pct": 0.0928,
+       "land": 3233,
+       "max_gap_pp": 3.691,
+       "name": "semiarid",
+       "river_pct": 0.8351
+      },
+      {
+       "deferred_pct": 0.3411,
+       "distinct_bands": 0,
+       "dry_pct": 6.6515,
+       "erosion_pct": [
+        0.7687927107061503,
+        5.979498861047836,
+        11.304100227790434,
+        18.080865603644646,
+        56.80523917995444,
+        7.033029612756264,
+        0.02847380410022779
+       ],
+       "lake_pct": 0.0284,
+       "land": 3518,
+       "max_gap_pp": 2.139,
+       "name": "arid",
+       "river_pct": 0.1421
+      },
+      {
+       "deferred_pct": 0.0,
+       "distinct_bands": 0,
+       "dry_pct": 0.0,
+       "erosion_pct": [
+        2.0833333333333335,
+        12.5,
+        2.0833333333333335,
+        18.75,
+        52.083333333333336,
+        10.416666666666666,
+        2.0833333333333335
+       ],
+       "lake_pct": 0.0,
+       "land": 51,
+       "max_gap_pp": 7.184,
+       "name": "tropical_humid",
+       "river_pct": 5.8824
+      },
+      {
+       "deferred_pct": 0.3322,
+       "distinct_bands": 4,
+       "dry_pct": 0.9967,
+       "erosion_pct": [
+        33.0,
+        50.333333333333336,
+        11.333333333333334,
+        3.3333333333333335,
+        2.0,
+        0.0,
+        0.0
+       ],
+       "lake_pct": 0.0,
+       "land": 301,
+       "max_gap_pp": 52.666,
+       "name": "mountain_cold",
+       "river_pct": 0.3322
+      },
+      {
+       "deferred_pct": 0.0,
+       "distinct_bands": 4,
+       "dry_pct": 0.0,
+       "erosion_pct": [
+        44.44444444444444,
+        46.2962962962963,
+        5.555555555555555,
+        3.7037037037037037,
+        0.0,
+        0.0,
+        0.0
+       ],
+       "lake_pct": 0.0,
+       "land": 58,
+       "max_gap_pp": 54.666,
+       "name": "mountain_warm",
+       "river_pct": 6.8966
+      }
+     ]
+    },
+    "rivers_lakes": {
+     "area_l2": 40000.0,
+     "dry_land": 10780,
+     "lake_land": 10,
+     "lake_pct": 0.0907,
+     "lakes_per_100_l2": 0.025,
+     "land": 11022,
+     "river_land": 232,
+     "river_pct": 2.1049
+    }
+   },
+   "pv_field": false,
+   "relief_median": 15.180628907167979,
+   "relief_step": 32,
+   "relief_windows": 16,
+   "river_samples": 223,
+   "river_water_pct": 100,
+   "samples": 25600,
+   "seed": 7,
+   "set": "",
+   "size": 160,
+   "span_l": 200,
+   "synthetic": false,
+   "valley_pct": 1.7616084250837722,
+   "version": "v1-dev"
+  },
+  {
+   "_seconds": 1257.0,
+   "_variant": "",
+   "approximation": "litho-core owned I2 surface; no vanilla splines",
+   "boundary": {
+    "acceptance_volume": true,
+    "boundary_edges": 2383836,
+    "climate_humidity_jump_pairs": 2796,
+    "climate_humidity_jump_pct": 0.04591579354528082,
+    "climate_humidity_pair_pct": 0.013735479618287288,
+    "climate_humidity_pairs": 20356042,
+    "climate_land": 10351558,
+    "field_humidity_jump_pairs": 4710,
+    "field_humidity_jump_pct": 0.06737758847082811,
+    "humidity_jump_cause_pairs": {
+     "climate": 2796,
+     "dry_basin": 24926,
+     "estuary": 11008,
+     "gallery": 28491,
+     "other": 7553,
+     "river": 359734,
+     "swamp": 479
+    },
+    "humidity_jump_pair_pct": 1.8894265831587553,
+    "humidity_jump_pairs": 434987,
+    "humidity_jump_pct": 4.880576923915845,
+    "humidity_pairs": 23022170,
+    "land": 11690831,
+    "min_strip_blocks": 32,
+    "size": 6250,
+    "span_l": 200,
+    "step": 32,
+    "straight_edges": 10404,
+    "straight_model": "grid-edge-chord-512-deviation-16",
+    "straight_pct": 0.43643941949026693,
+    "thin_pct": 0,
+    "wind_max_deg": 0.6830943486933931,
+    "wind_pairs": 78112500
+   },
+   "climate124": {
+    "coast_asymmetry": {
+     "band_deg": [
+      10,
+      25
+     ],
+     "east_mean_mm": 779.598,
+     "east_samples": 198,
+     "in_target": false,
+     "ratio": 0.615,
+     "west_mean_mm": 1267.669,
+     "west_samples": 249
+    },
+    "deserts_pct": 12.3306,
+    "forests_pct": 34.2815,
+    "island_dust": {
+     "area_l2": 40000.0,
+     "cell_area_l2": 0.001,
+     "in_target": false,
+     "per_1000_l2": 74.575,
+     "specks": 2983
+    },
+    "land": 8191,
+    "land_pct": 31.9961,
+    "mountains_pct": 4.92,
+    "plates": {
+     "counted": 156,
+     "median_diameter_l": 16.327,
+     "min_diameter_l": 9.974,
+     "plates": 229
+    },
+    "polar_pct": 5.3595,
+    "rain_shadow": {
+     "drop_pct": 51.104,
+     "in_target": true,
+     "leeward_mean_mm": 564.945,
+     "ridge_samples": 288,
+     "windward_mean_mm": 1155.39
+    },
+    "spawn_good": true,
+    "spawn_shift_l": [
+     34.0202,
+     145.3512
+    ],
+    "zonal_profile": {
+     "band_deg": 5,
+     "front_deg": 45,
+     "in_target": false,
+     "max_deg": 0,
+     "min_deg": 85,
+     "p_mm": [
+      2959.851,
+      2265.782,
+      1854.324,
+      1369.344,
+      915.321,
+      835.654,
+      885.016,
+      1065.111,
+      1432.32,
+      1498.968,
+      1127.868,
+      780.553,
+      468.613,
+      262.984,
+      195.198,
+      211.124,
+      176.481,
+      165.811
+     ],
+     "points": 25600,
+     "samples": [
+      3404,
+      3079,
+      2723,
+      2512,
+      2570,
+      2202,
+      2005,
+      1785,
+      1516,
+      1153,
+      857,
+      575,
+      413,
+      306,
+      223,
+      166,
+      89,
+      22
+     ]
+    }
+   },
+   "erosion_pct": [
+    1.7576432726822626,
+    6.597351157321451,
+    9.072905062507736,
+    20.274786483475676,
+    56.09605149152123,
+    5.9784626810248795,
+    0.2227998514667657
+   ],
+   "flat_windows_pct": 0,
+   "flooded_land_pct": 0.18566654288897141,
+   "gallery_pct": 0.01953125,
+   "gallery_samples": 5,
+   "height_data_hash": "356e89ef6fbdb19b",
+   "height_source": "litho-core-owned-I2",
+   "hyps_pct": [
+    0.18566654288897141,
+    36.799108800594134,
+    38.84144077237282,
+    16.190122539918306,
+    7.98366134422577
+   ],
+   "land_samples": 8079,
+   "mode": "scientific",
+   "params_hash": "8887e6a4ec1f7f65",
+   "patches": 1,
+   "path": "fast",
+   "plan": {
+    "climate_shape": {
+     "erosion_pct": [
+      1.7576432726822626,
+      6.597351157321451,
+      9.072905062507736,
+      20.274786483475676,
+      56.09605149152123,
+      5.9784626810248795,
+      0.2227998514667657
+     ],
+     "lake_pct": 0.122,
+     "land": 8079,
+     "notes": [
+      "arid: E2 11.3 % < 20 %",
+      "tropical_humid: 45 точек < 50, в вердикт не идёт"
+     ],
+     "pass": false,
+     "river_pct": 1.3416,
+     "zones": [
+      {
+       "deferred_pct": 1.1494,
+       "distinct_bands": 1,
+       "dry_pct": 1.1494,
+       "erosion_pct": [
+        6.976744186046512,
+        10.465116279069768,
+        18.023255813953487,
+        15.69767441860465,
+        45.348837209302324,
+        3.488372093023256,
+        0.0
+       ],
+       "lake_pct": 0.5747,
+       "land": 174,
+       "max_gap_pp": 10.747,
+       "name": "polar",
+       "river_pct": 0.5747
+      },
+      {
+       "deferred_pct": 2.5641,
+       "distinct_bands": 0,
+       "dry_pct": 0.0,
+       "erosion_pct": [
+        1.1278195488721805,
+        7.518796992481203,
+        8.646616541353383,
+        18.796992481203006,
+        56.015037593984964,
+        7.894736842105263,
+        0.0
+       ],
+       "lake_pct": 1.4652,
+       "land": 273,
+       "max_gap_pp": 1.916,
+       "name": "boreal",
+       "river_pct": 1.0989
+      },
+      {
+       "deferred_pct": 3.9759,
+       "distinct_bands": 0,
+       "dry_pct": 0.1606,
+       "erosion_pct": [
+        0.37375415282392027,
+        2.4086378737541527,
+        4.526578073089701,
+        22.00996677740864,
+        62.915282392026576,
+        7.308970099667774,
+        0.4568106312292359
+       ],
+       "lake_pct": 0.1606,
+       "land": 2490,
+       "max_gap_pp": 6.819,
+       "name": "temperate_humid",
+       "river_pct": 3.1325
+      },
+      {
+       "deferred_pct": 1.0832,
+       "distinct_bands": 0,
+       "dry_pct": 2.94,
+       "erosion_pct": [
+        0.31201248049922,
+        5.421216848673947,
+        10.881435257410297,
+        22.34789391575663,
+        56.47425897035881,
+        4.329173166926677,
+        0.23400936037441497
+       ],
+       "lake_pct": 0.0387,
+       "land": 2585,
+       "max_gap_pp": 2.073,
+       "name": "semiarid",
+       "river_pct": 0.7737
+      },
+      {
+       "deferred_pct": 0.0852,
+       "distinct_bands": 0,
+       "dry_pct": 6.7291,
+       "erosion_pct": [
+        0.5541346973572038,
+        6.0528559249786875,
+        11.295822676896845,
+        18.499573742540495,
+        56.43648763853368,
+        7.1184995737425405,
+        0.042625745950554135
+       ],
+       "lake_pct": 0.0,
+       "land": 2348,
+       "max_gap_pp": 2.223,
+       "name": "arid",
+       "river_pct": 0.0852
+      },
+      {
+       "deferred_pct": 0.0,
+       "distinct_bands": 3,
+       "dry_pct": 0.0,
+       "erosion_pct": [
+        4.878048780487805,
+        17.073170731707318,
+        7.317073170731708,
+        31.70731707317073,
+        36.58536585365854,
+        2.4390243902439024,
+        0.0
+       ],
+       "lake_pct": 0.0,
+       "land": 45,
+       "max_gap_pp": 19.511,
+       "name": "tropical_humid",
+       "river_pct": 8.8889
+      },
+      {
+       "deferred_pct": 0.8584,
+       "distinct_bands": 4,
+       "dry_pct": 0.8584,
+       "erosion_pct": [
+        32.900432900432904,
+        52.81385281385281,
+        8.658008658008658,
+        4.329004329004329,
+        0.8658008658008658,
+        0.4329004329004329,
+        0.0
+       ],
+       "lake_pct": 0.0,
+       "land": 233,
+       "max_gap_pp": 55.23,
+       "name": "mountain_cold",
+       "river_pct": 0.8584
+      },
+      {
+       "deferred_pct": 0.0,
+       "distinct_bands": 4,
+       "dry_pct": 0.0,
+       "erosion_pct": [
+        37.254901960784316,
+        52.94117647058823,
+        5.882352941176471,
+        1.9607843137254901,
+        1.9607843137254901,
+        0.0,
+        0.0
+       ],
+       "lake_pct": 0.0,
+       "land": 51,
+       "max_gap_pp": 54.135,
+       "name": "mountain_warm",
+       "river_pct": 0.0
+      }
+     ]
+    },
+    "rivers_lakes": {
+     "area_l2": 40000.0,
+     "dry_land": 8079,
+     "lake_land": 10,
+     "lake_pct": 0.122,
+     "lakes_per_100_l2": 0.025,
+     "land": 8199,
+     "river_land": 110,
+     "river_pct": 1.3416
+    }
+   },
+   "pv_field": false,
+   "relief_median": 26.163560337211052,
+   "relief_step": 32,
+   "relief_windows": 14,
+   "river_samples": 105,
+   "river_water_pct": 100,
+   "samples": 25600,
+   "seed": 777,
+   "set": "",
+   "size": 160,
+   "span_l": 200,
+   "synthetic": false,
+   "valley_pct": 1.7215189873417722,
+   "version": "v1-dev"
+  },
+  {
+   "_seconds": 1258.0,
+   "_variant": "",
+   "approximation": "litho-core owned I2 surface; no vanilla splines",
+   "boundary": {
+    "acceptance_volume": true,
+    "boundary_edges": 3088831,
+    "climate_humidity_jump_pairs": 3428,
+    "climate_humidity_jump_pct": 0.04440330481204802,
+    "climate_humidity_pair_pct": 0.013633621943481557,
+    "climate_humidity_pairs": 25143722,
+    "climate_land": 12800849,
+    "field_humidity_jump_pairs": 7128,
+    "field_humidity_jump_pct": 0.07988153571715717,
+    "humidity_jump_cause_pairs": {
+     "climate": 3428,
+     "dry_basin": 35051,
+     "estuary": 16696,
+     "gallery": 36710,
+     "other": 11242,
+     "river": 483520,
+     "swamp": 475
+    },
+    "humidity_jump_pair_pct": 2.0673613411858898,
+    "humidity_jump_pairs": 587122,
+    "humidity_jump_pct": 5.336141987057875,
+    "humidity_pairs": 28399583,
+    "land": 14440133,
+    "min_strip_blocks": 32,
+    "size": 6250,
+    "span_l": 200,
+    "step": 32,
+    "straight_edges": 14342,
+    "straight_model": "grid-edge-chord-512-deviation-16",
+    "straight_pct": 0.4643180543059818,
+    "thin_pct": 0,
+    "wind_max_deg": 0.684487890960541,
+    "wind_pairs": 78112500
+   },
+   "climate124": {
+    "coast_asymmetry": {
+     "band_deg": [
+      10,
+      25
+     ],
+     "east_mean_mm": 727.472,
+     "east_samples": 230,
+     "in_target": false,
+     "ratio": 0.659,
+     "west_mean_mm": 1103.156,
+     "west_samples": 261
+    },
+    "deserts_pct": 10.4489,
+    "forests_pct": 36.6497,
+    "island_dust": {
+     "area_l2": 40000.0,
+     "cell_area_l2": 0.001,
+     "in_target": false,
+     "per_1000_l2": 98.525,
+     "specks": 3941
+    },
+    "land": 10202,
+    "land_pct": 39.8516,
+    "mountains_pct": 4.0972,
+    "plates": {
+     "counted": 162,
+     "median_diameter_l": 15.579,
+     "min_diameter_l": 8.463,
+     "plates": 228
+    },
+    "polar_pct": 8.5669,
+    "rain_shadow": {
+     "drop_pct": 45.78,
+     "in_target": true,
+     "leeward_mean_mm": 646.894,
+     "ridge_samples": 306,
+     "windward_mean_mm": 1193.098
+    },
+    "spawn_good": true,
+    "spawn_shift_l": [
+     116.6214,
+     -41.5459
+    ],
+    "zonal_profile": {
+     "band_deg": 5,
+     "front_deg": 45,
+     "in_target": false,
+     "max_deg": 0,
+     "min_deg": 80,
+     "p_mm": [
+      2878.04,
+      2254.205,
+      1821.267,
+      1424.812,
+      911.526,
+      807.02,
+      848.004,
+      1016.116,
+      1251.989,
+      1263.182,
+      825.804,
+      560.808,
+      360.799,
+      199.794,
+      156.504,
+      143.477,
+      125.657,
+      139.083
+     ],
+     "points": 25600,
+     "samples": [
+      3790,
+      3547,
+      3142,
+      2821,
+      2364,
+      1949,
+      1762,
+      1669,
+      1371,
+      873,
+      660,
+      494,
+      374,
+      284,
+      232,
+      156,
+      88,
+      24
+     ]
+    }
+   },
+   "erosion_pct": [
+    1.7892842862854859,
+    6.1375449820071974,
+    8.266693322670932,
+    19.52219112355058,
+    57.516993202718915,
+    6.597361055577769,
+    0.16993202718912434
+   ],
+   "flat_windows_pct": 56.25,
+   "flooded_land_pct": 0.34986005597760894,
+   "gallery_pct": 0.05859375,
+   "gallery_samples": 15,
+   "height_data_hash": "356e89ef6fbdb19b",
+   "height_source": "litho-core-owned-I2",
+   "hyps_pct": [
+    0.34986005597760894,
+    39.43422630947621,
+    37.80487804878049,
+    15.013994402239105,
+    7.397041183526589
+   ],
+   "land_samples": 10004,
+   "mode": "scientific",
+   "params_hash": "8887e6a4ec1f7f65",
+   "patches": 1,
+   "path": "fast",
+   "plan": {
+    "climate_shape": {
+     "erosion_pct": [
+      1.7892842862854859,
+      6.1375449820071974,
+      8.266693322670932,
+      19.52219112355058,
+      57.516993202718915,
+      6.597361055577769,
+      0.16993202718912434
+     ],
+     "lake_pct": 0.1369,
+     "land": 10004,
+     "notes": [
+      "boreal: озёра 0.00 % < 2× среднего 0.14 %",
+      "arid: E2 10.4 % < 20 %"
+     ],
+     "pass": false,
+     "river_pct": 2.0053,
+     "zones": [
+      {
+       "deferred_pct": 3.4826,
+       "distinct_bands": 0,
+       "dry_pct": 0.6633,
+       "erosion_pct": [
+        2.684563758389262,
+        7.214765100671141,
+        5.704697986577181,
+        9.899328859060402,
+        65.26845637583892,
+        9.060402684563758,
+        0.16778523489932887
+       ],
+       "lake_pct": 0.3317,
+       "land": 603,
+       "max_gap_pp": 9.623,
+       "name": "polar",
+       "river_pct": 0.8292
+      },
+      {
+       "deferred_pct": 5.2402,
+       "distinct_bands": 0,
+       "dry_pct": 0.1456,
+       "erosion_pct": [
+        0.45045045045045046,
+        3.1531531531531534,
+        4.504504504504505,
+        18.76876876876877,
+        64.86486486486487,
+        7.807807807807808,
+        0.45045045045045046
+       ],
+       "lake_pct": 0.0,
+       "land": 687,
+       "max_gap_pp": 7.348,
+       "name": "boreal",
+       "river_pct": 3.0568
+      },
+      {
+       "deferred_pct": 3.7153,
+       "distinct_bands": 0,
+       "dry_pct": 0.2498,
+       "erosion_pct": [
+        0.9171306911234851,
+        3.1772027513920733,
+        5.830330822142155,
+        20.864723223059286,
+        60.72715361939076,
+        8.221421552571242,
+        0.26203734032099574
+       ],
+       "lake_pct": 0.3122,
+       "land": 3203,
+       "max_gap_pp": 3.21,
+       "name": "temperate_humid",
+       "river_pct": 4.3709
+      },
+      {
+       "deferred_pct": 1.7562,
+       "distinct_bands": 0,
+       "dry_pct": 3.2369,
+       "erosion_pct": [
+        0.3819444444444444,
+        5.416666666666667,
+        10.3125,
+        23.92361111111111,
+        54.61805555555556,
+        5.173611111111111,
+        0.1736111111111111
+       ],
+       "lake_pct": 0.0689,
+       "land": 2904,
+       "max_gap_pp": 4.401,
+       "name": "semiarid",
+       "river_pct": 0.7576
+      },
+      {
+       "deferred_pct": 0.2841,
+       "distinct_bands": 0,
+       "dry_pct": 5.8442,
+       "erosion_pct": [
+        0.6506710044733631,
+        6.425376169174461,
+        10.370069133794225,
+        16.958113054087026,
+        59.6177307848719,
+        5.978039853599024,
+        0.0
+       ],
+       "lake_pct": 0.0,
+       "land": 2464,
+       "max_gap_pp": 2.564,
+       "name": "arid",
+       "river_pct": 0.2029
+      },
+      {
+       "deferred_pct": 0.0,
+       "distinct_bands": 0,
+       "dry_pct": 0.0,
+       "erosion_pct": [
+        4.3478260869565215,
+        7.246376811594203,
+        5.797101449275362,
+        21.73913043478261,
+        55.072463768115945,
+        5.797101449275362,
+        0.0
+       ],
+       "lake_pct": 0.0,
+       "land": 78,
+       "max_gap_pp": 2.559,
+       "name": "tropical_humid",
+       "river_pct": 11.5385
+      },
+      {
+       "deferred_pct": 1.3274,
+       "distinct_bands": 4,
+       "dry_pct": 0.885,
+       "erosion_pct": [
+        36.44444444444444,
+        45.77777777777778,
+        11.555555555555555,
+        4.444444444444445,
+        0.4444444444444444,
+        1.3333333333333333,
+        0.0
+       ],
+       "lake_pct": 0.0,
+       "land": 226,
+       "max_gap_pp": 57.073,
+       "name": "mountain_cold",
+       "river_pct": 0.4425
+      },
+      {
+       "deferred_pct": 0.0,
+       "distinct_bands": 4,
+       "dry_pct": 0.0,
+       "erosion_pct": [
+        35.714285714285715,
+        55.357142857142854,
+        5.357142857142857,
+        1.7857142857142858,
+        1.7857142857142858,
+        0.0,
+        0.0
+       ],
+       "lake_pct": 0.0,
+       "land": 58,
+       "max_gap_pp": 55.731,
+       "name": "mountain_warm",
+       "river_pct": 3.4483
+      }
+     ]
+    },
+    "rivers_lakes": {
+     "area_l2": 40000.0,
+     "dry_land": 10004,
+     "lake_land": 14,
+     "lake_pct": 0.1369,
+     "lakes_per_100_l2": 0.035,
+     "land": 10223,
+     "river_land": 205,
+     "river_pct": 2.0053
+    }
+   },
+   "pv_field": false,
+   "relief_median": 0,
+   "relief_step": 32,
+   "relief_windows": 16,
+   "river_samples": 188,
+   "river_water_pct": 100,
+   "samples": 25600,
+   "seed": 987654321,
+   "set": "",
+   "size": 160,
+   "span_l": 200,
+   "synthetic": false,
+   "valley_pct": 1.807538256136387,
+   "version": "v1-dev"
+  },
+  {
+   "_seconds": 833.0,
+   "_variant": "",
+   "approximation": "litho-core owned I2 surface; no vanilla splines",
+   "boundary": {
+    "acceptance_volume": true,
+    "boundary_edges": 3214647,
+    "climate_humidity_jump_pairs": 3142,
+    "climate_humidity_jump_pct": 0.03944197956232336,
+    "climate_humidity_pair_pct": 0.012115198806093814,
+    "climate_humidity_pairs": 25934366,
+    "climate_land": 13221953,
+    "field_humidity_jump_pairs": 6653,
+    "field_humidity_jump_pct": 0.07337583574838383,
+    "humidity_jump_cause_pairs": {
+     "climate": 3142,
+     "dry_basin": 39567,
+     "estuary": 15735,
+     "gallery": 45604,
+     "other": 12029,
+     "river": 566055,
+     "swamp": 738
+    },
+    "humidity_jump_pair_pct": 2.303938967395925,
+    "humidity_jump_pairs": 682870,
+    "humidity_jump_pct": 5.920477132434703,
+    "humidity_pairs": 29639240,
+    "land": 15092162,
+    "min_strip_blocks": 32,
+    "size": 6250,
+    "span_l": 200,
+    "step": 32,
+    "straight_edges": 14834,
+    "straight_model": "grid-edge-chord-512-deviation-16",
+    "straight_pct": 0.4614503552022975,
+    "thin_pct": 0,
+    "wind_max_deg": 0.851675257727033,
+    "wind_pairs": 78112500
+   },
+   "climate124": {
+    "coast_asymmetry": {
+     "band_deg": [
+      10,
+      25
+     ],
+     "east_mean_mm": 779.472,
+     "east_samples": 291,
+     "in_target": false,
+     "ratio": 0.683,
+     "west_mean_mm": 1140.599,
+     "west_samples": 281
+    },
+    "deserts_pct": 8.9137,
+    "forests_pct": 38.6385,
+    "island_dust": {
+     "area_l2": 40000.0,
+     "cell_area_l2": 0.001,
+     "in_target": false,
+     "per_1000_l2": 121.925,
+     "specks": 4877
+    },
+    "land": 10826,
+    "land_pct": 42.2891,
+    "mountains_pct": 4.1474,
+    "plates": {
+     "counted": 170,
+     "median_diameter_l": 15.643,
+     "min_diameter_l": 9.67,
+     "plates": 235
+    },
+    "polar_pct": 7.2234,
+    "rain_shadow": {
+     "drop_pct": 51.175,
+     "in_target": true,
+     "leeward_mean_mm": 665.469,
+     "ridge_samples": 332,
+     "windward_mean_mm": 1362.973
+    },
+    "spawn_good": true,
+    "spawn_shift_l": [
+     194.9972,
+     -160.4189
+    ],
+    "zonal_profile": {
+     "band_deg": 5,
+     "front_deg": 45,
+     "in_target": false,
+     "max_deg": 0,
+     "min_deg": 75,
+     "p_mm": [
+      2660.731,
+      2123.677,
+      1696.947,
+      1356.7,
+      952.742,
+      842.725,
+      860.462,
+      952.134,
+      1187.011,
+      1254.183,
+      982.041,
+      665.709,
+      419.555,
+      241.271,
+      189.477,
+      165.814,
+      174.994,
+      196.457
+     ],
+     "points": 25600,
+     "samples": [
+      3661,
+      3363,
+      2991,
+      2722,
+      2414,
+      2163,
+      1684,
+      1402,
+      1151,
+      935,
+      742,
+      589,
+      479,
+      465,
+      385,
+      271,
+      136,
+      47
+     ]
+    }
+   },
+   "erosion_pct": [
+    1.6691814409656733,
+    6.299509619011694,
+    7.657487740475292,
+    19.794417201056206,
+    57.610335722368916,
+    6.780460203696718,
+    0.18860807242549982
+   ],
+   "flat_windows_pct": 50,
+   "flooded_land_pct": 0.33006412674462465,
+   "gallery_pct": 0.0390625,
+   "gallery_samples": 10,
+   "height_data_hash": "356e89ef6fbdb19b",
+   "height_source": "litho-core-owned-I2",
+   "hyps_pct": [
+    0.33006412674462465,
+    39.30592229347416,
+    38.334590720482836,
+    14.89060731799321,
+    7.138815541305168
+   ],
+   "land_samples": 10604,
+   "mode": "scientific",
+   "params_hash": "8887e6a4ec1f7f65",
+   "patches": 1,
+   "path": "fast",
+   "plan": {
+    "climate_shape": {
+     "erosion_pct": [
+      1.6691814409656733,
+      6.299509619011694,
+      7.657487740475292,
+      19.794417201056206,
+      57.610335722368916,
+      6.780460203696718,
+      0.18860807242549982
+     ],
+     "lake_pct": 0.12,
+     "land": 10604,
+     "notes": [
+      "polar: озёра 0.18 % < 2× среднего 0.12 %",
+      "boreal: озёра 0.20 % < 2× среднего 0.12 %",
+      "arid: E2 11.0 % < 20 %"
+     ],
+     "pass": false,
+     "river_pct": 2.0301,
+     "zones": [
+      {
+       "deferred_pct": 1.7544,
+       "distinct_bands": 0,
+       "dry_pct": 0.0,
+       "erosion_pct": [
+        3.019538188277087,
+        7.63765541740675,
+        5.328596802841918,
+        15.452930728241563,
+        63.41030195381883,
+        4.618117229129663,
+        0.5328596802841918
+       ],
+       "lake_pct": 0.1754,
+       "land": 570,
+       "max_gap_pp": 5.8,
+       "name": "polar",
+       "river_pct": 1.0526
+      },
+      {
+       "deferred_pct": 3.7773,
+       "distinct_bands": 0,
+       "dry_pct": 1.3917,
+       "erosion_pct": [
+        1.6427104722792607,
+        4.312114989733059,
+        4.722792607802875,
+        20.53388090349076,
+        59.13757700205339,
+        9.650924024640657,
+        0.0
+       ],
+       "lake_pct": 0.1988,
+       "land": 503,
+       "max_gap_pp": 2.935,
+       "name": "boreal",
+       "river_pct": 2.9821
+      },
+      {
+       "deferred_pct": 3.8429,
+       "distinct_bands": 0,
+       "dry_pct": 0.0281,
+       "erosion_pct": [
+        0.7653812187224022,
+        2.6788342655284074,
+        4.562849573152782,
+        21.254047689137476,
+        61.966440977332944,
+        8.478068884309685,
+        0.2943773918163085
+       ],
+       "lake_pct": 0.2244,
+       "land": 3565,
+       "max_gap_pp": 4.356,
+       "name": "temperate_humid",
+       "river_pct": 4.4881
+      },
+      {
+       "deferred_pct": 1.8513,
+       "distinct_bands": 0,
+       "dry_pct": 3.0952,
+       "erosion_pct": [
+        0.32144944476914084,
+        5.464640561075394,
+        9.205143191116306,
+        22.092343658679134,
+        57.071887784921095,
+        5.727644652250146,
+        0.11689070718877849
+       ],
+       "lake_pct": 0.0289,
+       "land": 3457,
+       "max_gap_pp": 2.298,
+       "name": "semiarid",
+       "river_pct": 0.9835
+      },
+      {
+       "deferred_pct": 0.0424,
+       "distinct_bands": 0,
+       "dry_pct": 5.8973,
+       "erosion_pct": [
+        0.42480883602378927,
+        6.202209005947323,
+        10.960067969413764,
+        17.544604927782498,
+        58.241291418861515,
+        6.542056074766355,
+        0.08496176720475786
+       ],
+       "lake_pct": 0.0849,
+       "land": 2357,
+       "max_gap_pp": 3.303,
+       "name": "arid",
+       "river_pct": 0.0424
+      },
+      {
+       "deferred_pct": 1.3699,
+       "distinct_bands": 0,
+       "dry_pct": 0.0,
+       "erosion_pct": [
+        0.0,
+        15.942028985507246,
+        8.695652173913043,
+        20.28985507246377,
+        47.82608695652174,
+        5.797101449275362,
+        1.4492753623188406
+       ],
+       "lake_pct": 0.0,
+       "land": 73,
+       "max_gap_pp": 9.784,
+       "name": "tropical_humid",
+       "river_pct": 5.4795
+      },
+      {
+       "deferred_pct": 1.25,
+       "distinct_bands": 4,
+       "dry_pct": 0.0,
+       "erosion_pct": [
+        34.583333333333336,
+        55.0,
+        7.5,
+        1.6666666666666667,
+        0.4166666666666667,
+        0.8333333333333334,
+        0.0
+       ],
+       "lake_pct": 0.0,
+       "land": 240,
+       "max_gap_pp": 57.194,
+       "name": "mountain_cold",
+       "river_pct": 0.0
+      },
+      {
+       "deferred_pct": 1.3889,
+       "distinct_bands": 4,
+       "dry_pct": 1.3889,
+       "erosion_pct": [
+        30.555555555555557,
+        51.388888888888886,
+        9.722222222222221,
+        4.166666666666667,
+        1.3888888888888888,
+        2.7777777777777777,
+        0.0
+       ],
+       "lake_pct": 0.0,
+       "land": 72,
+       "max_gap_pp": 56.221,
+       "name": "mountain_warm",
+       "river_pct": 0.0
+      }
+     ]
+    },
+    "rivers_lakes": {
+     "area_l2": 40000.0,
+     "dry_land": 10604,
+     "lake_land": 13,
+     "lake_pct": 0.12,
+     "lakes_per_100_l2": 0.0325,
+     "land": 10837,
+     "river_land": 220,
+     "river_pct": 2.0301
+    }
+   },
+   "pv_field": false,
+   "relief_median": 3.974196318408012,
+   "relief_step": 32,
+   "relief_windows": 16,
+   "river_samples": 211,
+   "river_water_pct": 100,
+   "samples": 25600,
+   "seed": 99999,
+   "set": "",
+   "size": 160,
+   "span_l": 200,
+   "synthetic": false,
+   "valley_pct": 1.3613380007779075,
+   "version": "v1-dev"
+  }
+ ],
+ "sha": "ecadd5da448328b9b9ed8f35082de61cf56733ee"
+}
