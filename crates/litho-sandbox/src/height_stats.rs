@@ -1020,7 +1020,11 @@ impl HeightStats {
                 let c_land = v.c >= land_threshold;
                 // 12.4 (Д-079): строка для асимметрии берегов собирается
                 // до всех `continue` ниже, как зональный профиль.
-                coast_row.push((c_land, world.climate.pole.phi_deg, world.climate.precip.p_mm));
+                coast_row.push((
+                    c_land,
+                    world.climate.pole.phi_deg,
+                    world.climate.precip.p_mm,
+                ));
                 // 12.4: доли климата на всей суше, включая реки и озёра.
                 // Зона климатическая и под руслами (Д-066 касается только
                 // ванильной ячейки), отдельного прохода не нужно.
@@ -1460,8 +1464,7 @@ impl HeightStats {
             counted = self.plates.diameters(self.plate_area_l2).len(),
         ));
         let fmt_mm = |v: Option<f64>| v.map_or_else(|| "нет".to_string(), |x| format!("{x:.0}"));
-        let fmt_ratio =
-            |v: Option<f64>| v.map_or_else(|| "нет".to_string(), |x| format!("{x:.2}"));
+        let fmt_ratio = |v: Option<f64>| v.map_or_else(|| "нет".to_string(), |x| format!("{x:.2}"));
         out.push_str(&format!(
             "12.4 берега пассатов 10–25°: восток {east} мм/год ({en} точек), запад {west} мм/год ({wn} точек), отношение {ratio} — {verdict}\n",
             east = fmt_mm(self.coast.east_mean()),
@@ -2107,7 +2110,13 @@ mod coast_tests {
     fn east_and_west_coasts_are_separated() {
         let mut c = CoastAsymmetry::default();
         c.push_row(row(&[(true, 0.0); 5]));
-        c.push_row(row(&[(false, 0.0), (true, 100.0), (true, 50.0), (true, 200.0), (false, 0.0)]));
+        c.push_row(row(&[
+            (false, 0.0),
+            (true, 100.0),
+            (true, 50.0),
+            (true, 200.0),
+            (false, 0.0),
+        ]));
         c.push_row(row(&[(true, 0.0); 5]));
         // Западная точка — 100 мм, восточная — 200 мм; средняя суша внутри.
         assert_eq!(c.east_count, 1);
@@ -2130,7 +2139,13 @@ mod coast_tests {
         assert_eq!(c.east_count + c.west_count, 0);
 
         let mut c = CoastAsymmetry::default();
-        let mut mid = row(&[(false, 0.0), (true, 100.0), (true, 50.0), (true, 200.0), (false, 0.0)]);
+        let mut mid = row(&[
+            (false, 0.0),
+            (true, 100.0),
+            (true, 50.0),
+            (true, 200.0),
+            (false, 0.0),
+        ]);
         for cell in &mut mid {
             cell.1 = 30.0; // вне пояса пассатов 10–25°
         }
@@ -2144,7 +2159,13 @@ mod coast_tests {
     #[test]
     fn verdict_needs_min_samples_on_both_sides() {
         let land = row(&[(true, 0.0); 5]);
-        let coast = row(&[(false, 0.0), (true, 100.0), (true, 50.0), (true, 200.0), (false, 0.0)]);
+        let coast = row(&[
+            (false, 0.0),
+            (true, 100.0),
+            (true, 50.0),
+            (true, 200.0),
+            (false, 0.0),
+        ]);
         let mut c = CoastAsymmetry::default();
         c.push_row(land.clone());
         for _ in 0..ZONAL_MIN_SAMPLES {
@@ -2162,6 +2183,9 @@ mod coast_tests {
             .expect("берега — валидный JSON");
         let coast = value.get("coast_asymmetry").expect("ключ coast_asymmetry");
         assert_eq!(coast.get("in_target"), Some(&crate::json::Json::Null));
-        assert_eq!(coast.get("east_samples"), Some(&crate::json::Json::Number(0.0)));
+        assert_eq!(
+            coast.get("east_samples"),
+            Some(&crate::json::Json::Number(0.0))
+        );
     }
 }
