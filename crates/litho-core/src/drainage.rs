@@ -173,7 +173,7 @@ impl RiverNet {
         seed: u64,
         params: &Params,
         input: &impl Fn(Vec2) -> DrainageInput,
-        climate: &(impl Fn(Vec2) -> Option<RunoffClimate> + Sync),
+        climate: &impl Fn(Vec2) -> Option<RunoffClimate>,
     ) -> Result<Self, RiverNetError> {
         if !params.version.is_water_relief_dev() {
             return Err(RiverNetError::UnsupportedVersion(params.version));
