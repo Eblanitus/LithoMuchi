@@ -15,10 +15,11 @@
 - Датапаки: поля роутера ссылаются на `minecraft:overworld/{temperature, vegetation,
   continents, erosion, ridges, depth}`. Достаточно переопределить 5 функций плотности.
 - Лава: аквиферы (`aquifers` в `noise_settings`); глобально `y < min(−54, sea_level)`.
-- Точка №4 `GlobalFluidPicker` — const fn, создаётся в `Pipeline<R>::new`, не принимает
-  mixins. Водой выше моря она не может помочь: уровень — константа `sea_level`, без
-  сида и без x/z; шум `surface_level` у аквифера различает только «сухой/затопленный»,
-  затопленные ячейки всегда получают `global.level` (море). См. Д-087.
+- Точка №4 `GlobalFluidPicker` — const fn `new`, создаётся один раз в `Pipeline<R>::new`;
+  уровень — константа `sea_level`, без сида и без x/z; шум `surface_level` у аквифера различает только
+  «сухой/затопленный», затопленные ячейки всегда получают `global.level` (море). См. Д-087.
+  HEAD-хук на `<GlobalFluidPicker as FluidPicker>::compute` в пине невозможен (Д-088:
+  деструктурированный параметр — E_INVALID_BINDING).
 
 ## Сборка мода
 
@@ -32,9 +33,41 @@
 ## Вода
 
 - Вода выше уровня моря: механизма не найдено. Прежний вариант B (v1 без R2) из
-  [../archive/T142-DECISION.md](../archive/T142-DECISION.md) отменён решением автора Д-079:
-  R2 входит в v1. Технический разбор спайка в архиве остаётся верным.
+  [../archive/T142-DECISION.md](../archive/T142-DECISION.md) отменён решением автора Д-079
+  («R2 в объёме v1»); **Д-088 (2026-11-14) это уточнил: R2 вынесен из v1 на последний шаг
+  плана** — релиз v1 его не ждёт (см. «Решение по R2» ниже). Технический разбор спайка
+  в архиве остаётся верным.
 - Холодные озёра ждут этого механизма (Д-070).
+
+### Разведка T142-бис: миксин-хук на пине невозможен (Д-088)
+
+Попытка повесить cancellable HEAD на вердикт воды `<GlobalFluidPicker as FluidPicker>::compute`
+отклонена CI (run 43587773951, маркер удалён, после уборки CI 43589348842 — 7/7):
+
+- id трейт-impl метода — `crate::module::<Type as Trait>::function`; плэйсхолдером без
+  `<… as …>` не резолвится (E_TARGET_NOT_FOUND в пинном `resolve()`);
+- пинный horizon-mixins `5a64af9` безусловно отклоняет деструктурированный параметр
+  `compute(&self, [_, y, _]: [i32; 3])` (E_INVALID_BINDING, `parameters()`), до любых
+  биндингов; смёрженный 2026-11-09 [#24](https://github.com/horizon-rust/horizon-mixins/pull/24)
+  эту ошибку снимает для именованных частей паттерна (`y`), но не для `position`, и в пин
+  не входит (пин 2026-11-05, отставание на 3 коммита от main mixins);
+- типово-generic кандидаты (`NoiseBasedAquifer::compute_substance`,
+  `DisabledAquifer::compute_substance`, `fill_noise`) идут в E_UNSUPPORTED_SIGNATURE
+  (`validate_target`); вопрос — открытая [horizon-mixins #16](https://github.com/horizon-rust/horizon-mixins/issues/16);
+- `const fn` (`FluidStatus::at`, `GlobalFluidPicker::new`) — тоже E_UNSUPPORTED_SIGNATURE.
+
+Итог: на пине 66f3981 / mixins 5a64af9 хук на любой воде-решатель Horizon невозможен;
+маркер не фичей не является.
+
+### Решение по R2 (Д-088)
+
+Сначала доделываем остальные шаги плана (LOD T79, T113, T123, T77, метрики, игровые тесты,
+выпуск v1). По завершении — смотрим, принял ли Horizon именованный параметр `position` в
+`<GlobalFluidPicker as FluidPicker>::compute`: открытый issue
+[horizon-rust/horizon#16388](https://github.com/horizon-rust/horizon/issues/16388)
+(поведение не меняется; пин также должен включить horizon-mixins ≥ #24). Принял — обновить
+пин и делать R2 cancellable HEAD-хуком с биндингом `position: [i32; 3]`; нет — форк Horizon.
+Строка приёмки «озёр на 100 L²» (10.3) уходит вместе с R2 и v1 не блокирует.
 
 ## Ограничения Horizon
 
