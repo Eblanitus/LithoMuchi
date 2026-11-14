@@ -1,6 +1,7 @@
 # Параметры генератора v1-dev
 
-> **Актуально на 2026-11-12, T79 (Д-064) и шаг 7 (Д-065).** Таблица и хеши
+> **Актуально на 2026-11-14, шаг 2 плана T113 (Д-092); до этого T79 (Д-064) и шаг 7
+> (Д-065).** Таблица и хеши
 > сгенерированы из `Params::defaults`; `v0` не менялась. Что изменилось —
 > [archive/T79-LOD-2026-11-12.md](archive/T79-LOD-2026-11-12.md) (дальний рельеф) и
 > `docs/t151/` (подбор по 16 сидам); прежние отчёты —
@@ -201,6 +202,7 @@
 | `drainage.depression_min_depth_km` | `0.015` | `0.015` |
 | `drainage.et_factor` | `1.0` | `1.0` |
 | `drainage.fill_epsilon_km` | `0.0001` | `0.0001` |
+| `drainage.handoff_max_hops` | `6` | `6` |
 | `drainage.jitter_fraction` | `0.35` | `0.35` |
 | `drainage.lake_area_max_fraction` | `0.03` | `0.03` |
 | `drainage.outlet_min_weight` | `0.5` | `0.5` |
@@ -414,4 +416,4 @@
 | `wind.knot7.phi_deg` | `90` | `90` |
 | `wind.knot7.s` | `0.3` | `0.3` |
 
-params_hash: scientific = 8887e6a4ec1f7f65, gameplay = c83af97b33674349
+params_hash: scientific = e2458101c5081779, gameplay = 5c6eb754e6390a4d

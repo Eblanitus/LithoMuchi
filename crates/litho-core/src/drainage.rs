@@ -33,6 +33,9 @@ pub enum DrainageOutlet {
     Sea,
     Rift,
     Transform,
+    /// Шаг 2 плана (T113): узел кольца, которому сеть передаёт воду.
+    /// Продолжение русла и расход ведёт сеть плиты-владельца узла.
+    Handoff,
 }
 
 impl DrainageOutlet {
@@ -46,6 +49,7 @@ impl DrainageOutlet {
             Self::Sea => "sea",
             Self::Rift => "rift",
             Self::Transform => "transform",
+            Self::Handoff => "handoff",
         }
     }
 }
@@ -120,15 +124,217 @@ pub struct DrainageNode {
     pub point: Vec2,
     pub in_plate: bool,
     pub route_km: f64,
+    /// Уровень priority-flood. У узла-передачи (`DrainageOutlet::Handoff`) —
+    /// уровень ухода воды в сети плиты-владельца, он не ниже `route_km`.
     pub filled_km: f64,
     pub downstream: Option<usize>,
     pub outlet: DrainageOutlet,
     pub depression: Option<usize>,
 }
 
+/// Узел топографии плиты до связывания с соседями (шаг 2 плана, T113).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct TopoNode {
+    pub cell: Cell,
+    pub point: Vec2,
+    pub in_plate: bool,
+    /// Плита-владелец узла: у кольца — сосед, `None` — плита не найдена.
+    pub owner: Option<u64>,
+    pub route_km: f64,
+    pub outlet: DrainageOutlet,
+    /// Уровень, с которого вода узла уходит через собственные выходы плиты
+    /// (море, рифт, трансформ), не заходя в соседние плиты. `INFINITY` —
+    /// такого пути нет. У узлов кольца не считается.
+    pub escape_km: f64,
+}
+
+/// Первая фаза сети плиты: узлы, высоты, выходы и заливка только по своим
+/// узлам. От соседних плит не зависит, поэтому соседи могут читать её без
+/// рекурсии. `escape_km` — верхняя граница итогового уровня узла в связанной
+/// сети: у той выходов не меньше.
 #[derive(Clone, Debug, PartialEq)]
-pub struct RiverNet {
-    plate_id: u64,
+pub struct PlateTopo {
+    plate: Plate,
+    nodes: Vec<TopoNode>,
+    neighbors: Vec<Plate>,
+}
+
+impl PlateTopo {
+    pub fn build(
+        plate: &Plate,
+        seed: u64,
+        params: &Params,
+        input: &impl Fn(Vec2) -> DrainageInput,
+    ) -> Result<Self, RiverNetError> {
+        if !params.version.is_water_relief_dev() {
+            return Err(RiverNetError::UnsupportedVersion(params.version));
+        }
+        let timings = timings_enabled();
+        let mut t = std::time::Instant::now();
+        validate_params(params)?;
+        let p = &params.drainage;
+        let anchor = find_anchor(plate, seed, params)?;
+        log_phase(timings, "якорь", t);
+        t = std::time::Instant::now();
+        let (owned, ring) = collect_cells(anchor, plate.id, seed, params);
+        let mut cells: Vec<(Cell, Option<Plate>)> = owned
+            .into_iter()
+            .map(|cell| (cell, Some(*plate)))
+            .chain(ring)
+            .collect();
+        cells.sort_unstable_by_key(|(cell, _)| *cell);
+        let mut neighbors: Vec<Plate> = Vec::new();
+        for (_, owner) in &cells {
+            if let Some(owner) = owner {
+                if owner.id != plate.id && !neighbors.iter().any(|n| n.id == owner.id) {
+                    neighbors.push(*owner);
+                }
+            }
+        }
+        neighbors.sort_unstable_by_key(|n| n.id);
+        log_phase(timings, "клетки", t);
+        t = std::time::Instant::now();
+        let mut nodes = Vec::with_capacity(cells.len());
+        for (cell, owner) in cells {
+            let point = jittered_point(cell, seed, params);
+            let sample = input(point);
+            if !sample.route_km.is_finite() {
+                return Err(RiverNetError::InvalidInput { cell });
+            }
+            if sample.outlet == DrainageOutlet::Handoff {
+                return Err(RiverNetError::InvalidInput { cell });
+            }
+            let in_plate = owner.is_some_and(|o| o.id == plate.id);
+            nodes.push(TopoNode {
+                cell,
+                point,
+                in_plate,
+                owner: owner.map(|o| o.id),
+                route_km: sample.route_km,
+                outlet: sample.outlet,
+                escape_km: f64::INFINITY,
+            });
+        }
+        log_phase(timings, "узлы", t);
+        t = std::time::Instant::now();
+        // Заливка только по своим узлам и настоящим выходам: чужой узел без
+        // выхода непроходим. Иначе путь через кольцо занизил бы уровень, а в
+        // связанной сети узел кольца терминален.
+        let passable: Vec<bool> = nodes
+            .iter()
+            .map(|node| node.in_plate || node.outlet.is_outlet())
+            .collect();
+        let cells: Vec<Cell> = nodes.iter().map(|node| node.cell).collect();
+        let neighbor_lists = cell_neighbors(&cells);
+        let route: Vec<f64> = nodes.iter().map(|node| node.route_km).collect();
+        let seeds: Vec<(usize, f64)> = nodes
+            .iter()
+            .enumerate()
+            .filter(|(_, node)| node.outlet.is_outlet())
+            .map(|(k, node)| (k, node.route_km))
+            .collect();
+        let flood = priority_flood(
+            &route,
+            &seeds,
+            &passable,
+            &neighbor_lists,
+            p.fill_epsilon_km,
+        );
+        for (k, node) in nodes.iter_mut().enumerate() {
+            if node.in_plate && flood.visited[k] {
+                node.escape_km = flood.level[k];
+            }
+        }
+        log_phase(timings, "заливка своя", t);
+        Ok(Self {
+            plate: *plate,
+            nodes,
+            neighbors,
+        })
+    }
+
+    pub const fn plate_id(&self) -> u64 {
+        self.plate.id
+    }
+
+    pub const fn plate(&self) -> &Plate {
+        &self.plate
+    }
+
+    pub fn nodes(&self) -> &[TopoNode] {
+        &self.nodes
+    }
+
+    /// Плиты-владельцы узлов кольца, по возрастанию id.
+    pub fn neighbors(&self) -> &[Plate] {
+        &self.neighbors
+    }
+
+    fn node_at(&self, cell: Cell) -> Option<&TopoNode> {
+        self.nodes
+            .binary_search_by_key(&cell, |node| node.cell)
+            .ok()
+            .map(|k| &self.nodes[k])
+    }
+
+    /// Уровень ухода воды своего узла без выхода; `None` — узел чужой, сам
+    /// является выходом или воде из него уйти некуда.
+    pub fn escape_level_km(&self, cell: Cell) -> Option<f64> {
+        let node = self.node_at(cell)?;
+        (node.in_plate && !node.outlet.is_outlet() && node.escape_km.is_finite())
+            .then_some(node.escape_km)
+    }
+
+    /// Необходимое условие передачи воды из этой плиты в узлы плиты `target`:
+    /// есть пара соседних узлов, где свой уровень ухода выше уровня соседа.
+    /// В связанной сети уровень своего узла не выше `escape_km`, поэтому
+    /// «нет» здесь означает «передачи нет точно»; «да» — только «возможно».
+    /// `wanted` ограничивает узлы `target`, которые интересуют вызывающего.
+    pub fn may_hand_to(&self, target: &PlateTopo, wanted: &dyn Fn(Cell) -> bool) -> bool {
+        for node in &self.nodes {
+            if node.in_plate
+                || node.owner != Some(target.plate.id)
+                || node.outlet.is_outlet()
+                || !wanted(node.cell)
+            {
+                continue;
+            }
+            let Some(level) = target.escape_level_km(node.cell) else {
+                continue;
+            };
+            for di in -1..=1 {
+                for dj in -1..=1 {
+                    if di == 0 && dj == 0 {
+                        continue;
+                    }
+                    let Some(next) = neighbor_cell(node.cell, di, dj) else {
+                        continue;
+                    };
+                    if self.node_at(next).is_some_and(|own| {
+                        own.in_plate && !own.outlet.is_outlet() && own.escape_km > level
+                    }) {
+                        return true;
+                    }
+                }
+            }
+        }
+        false
+    }
+}
+
+/// Вторая фаза: топография плиты, связанная с соседями. Узел кольца, из
+/// которого вода соседа уходит на конечном уровне, становится выходом-
+/// передачей с этим уровнем; остальные узлы кольца без выхода в сеть не
+/// входят. Расхода здесь ещё нет.
+///
+/// Почему передачи не образуют цикла. Уровень передачи в узел `r` — это
+/// `escape_km` узла у владельца, верхняя граница его итогового уровня. Вода
+/// входит в `r` с уровня строго выше и дальше течёт строго вниз, поэтому
+/// итоговый уровень узла у своего владельца убывает вдоль любого пути по
+/// всем плитам.
+#[derive(Clone, Debug, PartialEq)]
+pub struct PlateRouting {
+    plate: Plate,
     /// Шаг решётки нужен компактному запросу глубины впадины T120.
     step_l: f64,
     /// Рамка клеток узлов (min, max): точка вне рамки с запасом в две клетки
@@ -136,132 +342,95 @@ pub struct RiverNet {
     cell_bounds: Option<(Cell, Cell)>,
     nodes: Vec<DrainageNode>,
     depressions: Vec<Depression>,
-    runoff: Runoff,
-    channels: ChannelNetwork,
-    lakes: LakeNetwork,
+    neighbors: Vec<Plate>,
 }
 
-/// Рамка клеток набора узлов; `None` для пустого набора.
-fn cell_bounds(nodes: &[DrainageNode]) -> Option<(Cell, Cell)> {
-    let first = nodes.first()?.cell;
-    let mut lo = first;
-    let mut hi = first;
-    for node in nodes {
-        lo.0 = lo.0.min(node.cell.0);
-        lo.1 = lo.1.min(node.cell.1);
-        hi.0 = hi.0.max(node.cell.0);
-        hi.1 = hi.1.max(node.cell.1);
-    }
-    Some((lo, hi))
-}
-
-/// Env-gated фаза-замер сборки сети (T79 вторая часть): печатает в stdout
-/// строку `drainage-фазы: <имя> <мс>` только при `LITHO_DRAINAGE_TIMINGS=1`.
-/// Математика не меняется; без переменной окружения — роспуск незаметен.
-fn log_phase(enabled: bool, label: &str, started: std::time::Instant) {
-    if enabled {
-        println!(
-            "drainage-фазы: {label} {:.3} мс",
-            started.elapsed().as_secs_f64() * 1e3
-        );
-    }
-}
-
-impl RiverNet {
+impl PlateRouting {
+    /// `ring_level(владелец, клетка)` — `PlateTopo::escape_level_km` соседа.
     pub fn build(
-        plate: &Plate,
-        seed: u64,
+        topo: &PlateTopo,
         params: &Params,
-        input: &impl Fn(Vec2) -> DrainageInput,
-        climate: &(impl Fn(Vec2) -> Option<RunoffClimate> + Sync),
+        ring_level: &dyn Fn(u64, Cell) -> Option<f64>,
     ) -> Result<Self, RiverNetError> {
         if !params.version.is_water_relief_dev() {
             return Err(RiverNetError::UnsupportedVersion(params.version));
         }
-        let timings = std::env::var_os("LITHO_DRAINAGE_TIMINGS").is_some();
-        let t_total = std::time::Instant::now();
-        let mut t = std::time::Instant::now();
         validate_params(params)?;
         let p = &params.drainage;
-        let anchor = find_anchor(plate, seed, params)?;
-        log_phase(timings, "якорь", t);
-        t = std::time::Instant::now();
-        let (mut owned, ring) = collect_cells(anchor, plate.id, seed, params);
-        owned.sort_unstable();
-        let mut cells = owned.clone();
-        cells.extend(ring);
-        cells.sort_unstable();
-        log_phase(timings, "клетки", t);
-        let mut index = HashMap::with_capacity(cells.len());
-        let mut nodes = Vec::with_capacity(cells.len());
-        t = std::time::Instant::now();
-        for (k, cell) in cells.into_iter().enumerate() {
-            index.insert(cell, k);
-            let point = jittered_point(cell, seed, params);
-            let sample = input(point);
-            if !sample.route_km.is_finite() {
-                return Err(RiverNetError::InvalidInput { cell });
-            }
+        let timings = timings_enabled();
+        let t = std::time::Instant::now();
+        let mut nodes = Vec::with_capacity(topo.nodes.len());
+        for source in &topo.nodes {
+            let (outlet, filled_km) = if source.in_plate || source.outlet.is_outlet() {
+                (source.outlet, source.route_km)
+            } else {
+                let level = source
+                    .owner
+                    .and_then(|owner| ring_level(owner, source.cell))
+                    .filter(|level| level.is_finite());
+                match level {
+                    Some(level) => (DrainageOutlet::Handoff, level.max(source.route_km)),
+                    None => continue,
+                }
+            };
             nodes.push(DrainageNode {
-                cell,
-                point,
-                in_plate: owned.binary_search(&cell).is_ok(),
-                route_km: sample.route_km,
-                filled_km: sample.route_km,
+                cell: source.cell,
+                point: source.point,
+                in_plate: source.in_plate,
+                route_km: source.route_km,
+                filled_km,
                 downstream: None,
-                outlet: sample.outlet,
+                outlet,
                 depression: None,
             });
         }
-        log_phase(timings, "узлы", t);
-        t = std::time::Instant::now();
-        let neighbors = grid_neighbors(&nodes, &index);
-        log_phase(timings, "соседи", t);
-        t = std::time::Instant::now();
+        let cells: Vec<Cell> = nodes.iter().map(|node| node.cell).collect();
+        let neighbor_lists = cell_neighbors(&cells);
         let depressions = route_nodes(
             &mut nodes,
-            &neighbors,
+            &neighbor_lists,
             p.fill_epsilon_km,
             p.depression_min_depth_km,
             p.lake_area_max_fraction,
         );
-        log_phase(timings, "flood", t);
-        t = std::time::Instant::now();
-        let points: Vec<_> = nodes.iter().map(|node| node.point).collect();
-        let grid = ClimateGrid::build(&points, p.climate_step_l, climate)?;
-        log_phase(timings, "климат", t);
-        t = std::time::Instant::now();
-        let runoff = Runoff::calculate(&nodes, &depressions, &grid, params)?;
-        log_phase(timings, "сток", t);
-        t = std::time::Instant::now();
-        let channels = ChannelNetwork::build(plate.id, seed, &nodes, &runoff, params)?;
-        log_phase(timings, "русла", t);
-        t = std::time::Instant::now();
-        let lakes = LakeNetwork::build(plate.id, &nodes, &depressions, &runoff, params)?;
-        log_phase(timings, "озёра", t);
-        let net = Self {
-            plate_id: plate.id,
+        log_phase(timings, "заливка связанная", t);
+        let routing = Self {
+            plate: topo.plate,
             step_l: p.step_l,
             cell_bounds: cell_bounds(&nodes),
             nodes,
             depressions,
-            runoff,
-            channels,
-            lakes,
+            neighbors: topo.neighbors.clone(),
         };
-        t = std::time::Instant::now();
-        net.check_invariants(p.fill_epsilon_km)?;
-        log_phase(timings, "инварианты", t);
-        log_phase(timings, "итого", t_total);
-        Ok(net)
+        routing.check_invariants(p.fill_epsilon_km)?;
+        Ok(routing)
     }
 
     pub const fn plate_id(&self) -> u64 {
-        self.plate_id
+        self.plate.id
+    }
+
+    pub const fn plate(&self) -> &Plate {
+        &self.plate
     }
 
     pub fn nodes(&self) -> &[DrainageNode] {
         &self.nodes
+    }
+
+    pub fn depressions(&self) -> &[Depression] {
+        &self.depressions
+    }
+
+    /// Плиты-владельцы узлов кольца, по возрастанию id.
+    pub fn neighbors(&self) -> &[Plate] {
+        &self.neighbors
+    }
+
+    pub fn node_index(&self, cell: Cell) -> Option<usize> {
+        self.nodes
+            .binary_search_by_key(&cell, |node| node.cell)
+            .ok()
     }
 
     /// T120: непрерывная глубина впадины `filled_km - route_km` в точке.
@@ -313,33 +482,6 @@ impl RiverNet {
         if weight > 0.0 { sum / weight } else { 0.0 }
     }
 
-    pub fn depressions(&self) -> &[Depression] {
-        &self.depressions
-    }
-
-    pub const fn runoff(&self) -> &Runoff {
-        &self.runoff
-    }
-
-    pub const fn channels(&self) -> &ChannelNetwork {
-        &self.channels
-    }
-
-    pub const fn lakes(&self) -> &LakeNetwork {
-        &self.lakes
-    }
-
-    pub fn plate_node_count(&self) -> usize {
-        self.nodes.iter().filter(|node| node.in_plate).count()
-    }
-
-    pub fn outlet_count(&self) -> usize {
-        self.nodes
-            .iter()
-            .filter(|node| node.outlet.is_outlet())
-            .count()
-    }
-
     /// Проверка для диагностики и тестов: заполнение не ниже рельефа, поток
     /// идёт строго вниз по заполненной высоте, выходы терминальны.
     pub fn check_invariants(&self, epsilon_km: f64) -> Result<(), RiverNetError> {
@@ -348,6 +490,12 @@ impl RiverNet {
                 Some("неконечная высота")
             } else if node.filled_km < node.route_km {
                 Some("заполнение ниже рельефа")
+            } else if node.outlet == DrainageOutlet::Handoff {
+                if node.downstream.is_some() || node.in_plate || node.depression.is_some() {
+                    Some("узел-передача не терминален или принадлежит плите")
+                } else {
+                    None
+                }
             } else if node.outlet.is_outlet() {
                 if node.downstream.is_some() || node.filled_km != node.route_km {
                     Some("выход не терминален или заполнен")
@@ -383,6 +531,136 @@ impl RiverNet {
     }
 }
 
+/// Сеть плиты целиком: связанная топография, расход с притоком от соседних
+/// плит, русла и озёра.
+#[derive(Clone, Debug, PartialEq)]
+pub struct RiverNet {
+    routing: Arc<PlateRouting>,
+    runoff: Runoff,
+    channels: ChannelNetwork,
+    lakes: LakeNetwork,
+}
+
+/// Рамка клеток набора узлов; `None` для пустого набора.
+fn cell_bounds(nodes: &[DrainageNode]) -> Option<(Cell, Cell)> {
+    let first = nodes.first()?.cell;
+    let mut lo = first;
+    let mut hi = first;
+    for node in nodes {
+        lo.0 = lo.0.min(node.cell.0);
+        lo.1 = lo.1.min(node.cell.1);
+        hi.0 = hi.0.max(node.cell.0);
+        hi.1 = hi.1.max(node.cell.1);
+    }
+    Some((lo, hi))
+}
+
+fn timings_enabled() -> bool {
+    std::env::var_os("LITHO_DRAINAGE_TIMINGS").is_some()
+}
+
+/// Env-gated фаза-замер сборки сети (T79 вторая часть): печатает в stdout
+/// строку `drainage-фазы: <имя> <мс>` только при `LITHO_DRAINAGE_TIMINGS=1`.
+/// Математика не меняется; без переменной окружения — роспуск незаметен.
+fn log_phase(enabled: bool, label: &str, started: std::time::Instant) {
+    if enabled {
+        println!(
+            "drainage-фазы: {label} {:.3} мс",
+            started.elapsed().as_secs_f64() * 1e3
+        );
+    }
+}
+
+impl RiverNet {
+    /// Третья фаза: расход, русла и озёра поверх связанной топографии.
+    /// `inflow[k]` — вода, пришедшая в свой узел `k` из сетей соседних плит,
+    /// мм·L²/год; пустой срез — притока нет.
+    pub fn assemble(
+        routing: Arc<PlateRouting>,
+        seed: u64,
+        params: &Params,
+        climate: &(impl Fn(Vec2) -> Option<RunoffClimate> + Sync),
+        inflow: &[f64],
+    ) -> Result<Self, RiverNetError> {
+        if !params.version.is_water_relief_dev() {
+            return Err(RiverNetError::UnsupportedVersion(params.version));
+        }
+        validate_params(params)?;
+        let p = &params.drainage;
+        let timings = timings_enabled();
+        let nodes = routing.nodes();
+        let depressions = routing.depressions();
+        let mut t = std::time::Instant::now();
+        let points: Vec<_> = nodes.iter().map(|node| node.point).collect();
+        let grid = ClimateGrid::build(&points, p.climate_step_l, climate)?;
+        log_phase(timings, "климат", t);
+        t = std::time::Instant::now();
+        let inflow = (!inflow.is_empty()).then_some(inflow);
+        let runoff = Runoff::calculate_with(nodes, depressions, &grid, params, inflow, None)?;
+        log_phase(timings, "сток", t);
+        t = std::time::Instant::now();
+        let channels = ChannelNetwork::build(routing.plate_id(), seed, nodes, &runoff, params)?;
+        log_phase(timings, "русла", t);
+        t = std::time::Instant::now();
+        let lakes = LakeNetwork::build(routing.plate_id(), nodes, depressions, &runoff, params)?;
+        log_phase(timings, "озёра", t);
+        Ok(Self {
+            routing,
+            runoff,
+            channels,
+            lakes,
+        })
+    }
+
+    pub fn plate_id(&self) -> u64 {
+        self.routing.plate_id()
+    }
+
+    pub fn routing(&self) -> &Arc<PlateRouting> {
+        &self.routing
+    }
+
+    pub fn nodes(&self) -> &[DrainageNode] {
+        self.routing.nodes()
+    }
+
+    /// T120: глубина впадины в точке, см. [`PlateRouting::depression_depth_km`].
+    pub fn depression_depth_km(&self, point: Vec2) -> f64 {
+        self.routing.depression_depth_km(point)
+    }
+
+    pub fn depressions(&self) -> &[Depression] {
+        self.routing.depressions()
+    }
+
+    pub const fn runoff(&self) -> &Runoff {
+        &self.runoff
+    }
+
+    pub const fn channels(&self) -> &ChannelNetwork {
+        &self.channels
+    }
+
+    pub const fn lakes(&self) -> &LakeNetwork {
+        &self.lakes
+    }
+
+    pub fn plate_node_count(&self) -> usize {
+        self.nodes().iter().filter(|node| node.in_plate).count()
+    }
+
+    pub fn outlet_count(&self) -> usize {
+        self.nodes()
+            .iter()
+            .filter(|node| node.outlet.is_outlet())
+            .count()
+    }
+
+    pub fn check_invariants(&self, epsilon_km: f64) -> Result<(), RiverNetError> {
+        self.routing.check_invariants(epsilon_km)
+    }
+}
+
 fn validate_params(params: &Params) -> Result<(), RiverNetError> {
     let p = &params.drainage;
     let reason = if !params.plates.cell_g_l.is_finite() || params.plates.cell_g_l <= 0.0 {
@@ -403,6 +681,8 @@ fn validate_params(params: &Params) -> Result<(), RiverNetError> {
         Some("outlet_min_weight должен лежать в [0, 1]")
     } else if !(1..=8).contains(&p.anchor_search_radius_cells) {
         Some("anchor_search_radius_cells должен лежать в 1..=8")
+    } else if !(0..=8).contains(&p.handoff_max_hops) {
+        Some("handoff_max_hops должен лежать в 0..=8")
     } else if !p.climate_step_l.is_finite() || p.climate_step_l <= 0.0 {
         Some("climate_step_l должен быть положительным")
     } else if !p.et_factor.is_finite() || p.et_factor < 0.0 {
@@ -525,12 +805,14 @@ pub(crate) fn owner_block(
 }
 
 /// BFS только по узлам своей плиты; чужие соседи образуют кольцо в один узел.
+/// Для узла кольца возвращается и плита-владелец: связанная сеть спрашивает
+/// у неё уровень ухода воды.
 fn collect_cells(
     anchor: Cell,
     plate_id: u64,
     seed: u64,
     params: &Params,
-) -> (Vec<Cell>, Vec<Cell>) {
+) -> (Vec<Cell>, Vec<(Cell, Option<Plate>)>) {
     let mut status = HashMap::<Cell, bool>::new();
     let mut queue = VecDeque::new();
     let mut owned = Vec::new();
@@ -547,19 +829,41 @@ fn collect_cells(
                 continue;
             }
             let point = jittered_point(next, seed, params);
-            let is_owned = plate_query(point, seed, params).is_some_and(|s| s.a.id == plate_id);
+            let owner = plate_query(point, seed, params).map(|s| s.a);
+            let is_owned = owner.is_some_and(|o| o.id == plate_id);
             status.insert(next, is_owned);
             if is_owned {
                 owned.push(next);
                 queue.push_back(next);
             } else {
-                ring.push(next);
+                ring.push((next, owner));
             }
         }
     }
     (owned, ring)
 }
 
+/// Восемь соседей по решётке для отсортированного списка клеток.
+fn cell_neighbors(cells: &[Cell]) -> Vec<Vec<usize>> {
+    let mut neighbors = vec![Vec::with_capacity(8); cells.len()];
+    for (k, &cell) in cells.iter().enumerate() {
+        for di in -1..=1 {
+            for dj in -1..=1 {
+                if di == 0 && dj == 0 {
+                    continue;
+                }
+                if let Some(next) = neighbor_cell(cell, di, dj) {
+                    if let Ok(m) = cells.binary_search(&next) {
+                        neighbors[k].push(m);
+                    }
+                }
+            }
+        }
+    }
+    neighbors
+}
+
+#[cfg(test)]
 fn grid_neighbors(nodes: &[DrainageNode], index: &HashMap<Cell, usize>) -> Vec<Vec<usize>> {
     let mut neighbors = vec![Vec::with_capacity(8); nodes.len()];
     for (k, node) in nodes.iter().enumerate() {
@@ -610,8 +914,58 @@ impl PartialOrd for QueueEntry {
     }
 }
 
-/// Priority-flood с ε-подъёмом (Barnes et al., 2014). Все выходы стартуют в
-/// очереди сразу; незамкнутые узлы получают родителя ниже по течению.
+/// Итог priority-flood: уровень, родитель ниже по течению и признак обхода.
+struct Flood {
+    level: Vec<f64>,
+    parent: Vec<Option<usize>>,
+    visited: Vec<bool>,
+}
+
+/// Priority-flood с ε-подъёмом (Barnes et al., 2014). Все выходы `seeds`
+/// стартуют в очереди сразу со своим уровнем; узлы с `passable = false` в
+/// обход не входят.
+fn priority_flood(
+    route_km: &[f64],
+    seeds: &[(usize, f64)],
+    passable: &[bool],
+    neighbors: &[Vec<usize>],
+    epsilon_km: f64,
+) -> Flood {
+    let n = route_km.len();
+    let mut flood = Flood {
+        level: route_km.to_vec(),
+        parent: vec![None; n],
+        visited: vec![false; n],
+    };
+    let mut heap = BinaryHeap::new();
+    for &(k, level) in seeds {
+        flood.visited[k] = true;
+        flood.level[k] = level;
+        heap.push(QueueEntry {
+            filled_km: level,
+            node: k,
+        });
+    }
+    while let Some(entry) = heap.pop() {
+        for &next in &neighbors[entry.node] {
+            if flood.visited[next] || !passable[next] {
+                continue;
+            }
+            flood.visited[next] = true;
+            let level = entry.filled_km + epsilon_km;
+            flood.level[next] = route_km[next].max(level);
+            flood.parent[next] = Some(entry.node);
+            heap.push(QueueEntry {
+                filled_km: flood.level[next],
+                node: next,
+            });
+        }
+    }
+    flood
+}
+
+/// Заливка сети и разбор впадин. Настоящий выход стартует со своей высоты,
+/// узел-передача — с уровня, записанного в `filled_km` при сборке.
 fn route_nodes(
     nodes: &mut [DrainageNode],
     neighbors: &[Vec<usize>],
@@ -619,43 +973,40 @@ fn route_nodes(
     min_depth_km: f64,
     lake_area_max_fraction: f64,
 ) -> Vec<Depression> {
-    let mut visited = vec![false; nodes.len()];
-    let mut heap = BinaryHeap::new();
+    let route: Vec<f64> = nodes.iter().map(|node| node.route_km).collect();
+    let seeds: Vec<(usize, f64)> = nodes
+        .iter()
+        .enumerate()
+        .filter(|(_, node)| node.outlet.is_outlet())
+        .map(|(k, node)| {
+            let level = if node.outlet == DrainageOutlet::Handoff {
+                node.filled_km.max(node.route_km)
+            } else {
+                node.route_km
+            };
+            (k, level)
+        })
+        .collect();
+    let passable = vec![true; nodes.len()];
+    let flood = priority_flood(&route, &seeds, &passable, neighbors, epsilon_km);
+    let visited = flood.visited;
     for (k, node) in nodes.iter_mut().enumerate() {
-        node.filled_km = node.route_km;
-        node.downstream = None;
+        node.filled_km = flood.level[k];
+        node.downstream = flood.parent[k];
         node.depression = None;
-        if node.outlet.is_outlet() {
-            visited[k] = true;
-            heap.push(QueueEntry {
-                filled_km: node.route_km,
-                node: k,
-            });
-        }
-    }
-    while let Some(entry) = heap.pop() {
-        for &next in &neighbors[entry.node] {
-            if visited[next] {
-                continue;
-            }
-            visited[next] = true;
-            let level = entry.filled_km + epsilon_km;
-            nodes[next].filled_km = nodes[next].route_km.max(level);
-            nodes[next].downstream = Some(entry.node);
-            heap.push(QueueEntry {
-                filled_km: nodes[next].filled_km,
-                node: next,
-            });
-        }
     }
 
     let mut depressions = Vec::new();
     let closed: Vec<bool> = visited.iter().map(|v| !v).collect();
     add_components(nodes, neighbors, &closed, true, &mut depressions);
+    // Выход во впадину не входит: у настоящего выхода заполнение равно
+    // рельефу, а уровень узла-передачи — чужая вода, не своя яма.
     let flooded: Vec<bool> = nodes
         .iter()
         .enumerate()
-        .map(|(k, node)| visited[k] && node.filled_km - node.route_km > min_depth_km)
+        .map(|(k, node)| {
+            visited[k] && !node.outlet.is_outlet() && node.filled_km - node.route_km > min_depth_km
+        })
         .collect();
     add_components(nodes, neighbors, &flooded, false, &mut depressions);
     breach_over_budget(nodes, &mut depressions, lake_area_max_fraction);
@@ -777,25 +1128,28 @@ fn add_components(
     }
 }
 
-type CachedNet = Result<Arc<RiverNet>, RiverNetError>;
-type Slot = Arc<OnceLock<CachedNet>>;
+type Slot<T> = Arc<OnceLock<Result<Arc<T>, RiverNetError>>>;
 
 #[derive(Debug)]
-struct Shard {
-    entries: HashMap<u64, (Slot, u64)>,
+struct Shard<T> {
+    entries: HashMap<u64, (Slot<T>, u64)>,
     capacity: usize,
 }
 
-/// Шардированный LRU слотов `OnceLock`. Под блокировкой только поиск/вставка
-/// указателя; сама сеть считается вне блокировки. Разные плиты не ждут друг
-/// друга. Вытеснение cold-слота допустимо: ответ остаётся чистой функцией.
+/// Шардированный LRU слотов `OnceLock` по id плиты. Под блокировкой только
+/// поиск/вставка указателя; само значение считается вне блокировки. Разные
+/// плиты не ждут друг друга. Вытеснение cold-слота допустимо: ответ остаётся
+/// чистой функцией.
 #[derive(Debug)]
-pub struct RiverNetCache {
-    shards: Vec<Mutex<Shard>>,
+pub struct PlateCache<T> {
+    shards: Vec<Mutex<Shard<T>>>,
     clock: AtomicU64,
 }
 
-impl RiverNetCache {
+/// Кэш готовых сетей плит.
+pub type RiverNetCache = PlateCache<RiverNet>;
+
+impl<T> PlateCache<T> {
     pub fn new(shards: usize, capacity: usize) -> Self {
         // Не даём числу шардов съесть вместимость: при 64/64 каждый шард имел
         // бы один слот и случайные коллизии id вытесняли бы горячие плиты.
@@ -818,8 +1172,8 @@ impl RiverNetCache {
     pub fn get_or_build(
         &self,
         plate_id: u64,
-        build: impl FnOnce() -> Result<RiverNet, RiverNetError>,
-    ) -> Result<Arc<RiverNet>, RiverNetError> {
+        build: impl FnOnce() -> Result<T, RiverNetError>,
+    ) -> Result<Arc<T>, RiverNetError> {
         let shard = &self.shards[(plate_id as usize) % self.shards.len()];
         let slot = {
             let mut shard = shard.lock().expect("кэш сети стока не отравлен");
@@ -846,6 +1200,16 @@ impl RiverNetCache {
         slot.get_or_init(|| build().map(Arc::new)).clone()
     }
 
+    /// Есть ли уже посчитанное значение; LRU не трогает.
+    pub fn is_ready(&self, plate_id: u64) -> bool {
+        let shard = &self.shards[(plate_id as usize) % self.shards.len()];
+        let shard = shard.lock().expect("кэш сети стока не отравлен");
+        shard
+            .entries
+            .get(&plate_id)
+            .is_some_and(|(slot, _)| slot.get().is_some())
+    }
+
     pub fn len(&self) -> usize {
         self.shards
             .iter()
@@ -864,7 +1228,7 @@ impl RiverNetCache {
     }
 }
 
-impl Default for RiverNetCache {
+impl<T> Default for PlateCache<T> {
     fn default() -> Self {
         Self::new(NET_CACHE_CAPACITY, NET_CACHE_CAPACITY)
     }
@@ -873,11 +1237,9 @@ impl Default for RiverNetCache {
 #[cfg(test)]
 mod tests {
     use super::{
-        ClimateGrid, DepressionKind, DrainageNode, DrainageOutlet, RiverNet, RiverNetCache, Runoff,
+        DepressionKind, DrainageNode, DrainageOutlet, Plate, PlateRouting, RiverNet, RiverNetCache,
         RunoffClimate, grid_neighbors, route_nodes,
     };
-    use crate::channel::ChannelNetwork;
-    use crate::lake::LakeNetwork;
     use crate::math::Vec2;
     use crate::version::GenVersion;
     use std::collections::HashMap;
@@ -906,36 +1268,57 @@ mod tests {
         grid_neighbors(nodes, &index)
     }
 
-    fn tiny_net() -> RiverNet {
+    fn test_plate(id: u64) -> Plate {
+        Plate {
+            id,
+            cell_i: 0,
+            cell_j: 0,
+            index: 0,
+            seed_pos: Vec2::new(0.0, 0.0),
+            center: Vec2::new(0.0, 0.0),
+            has_continent: true,
+            radius_l: 1.0,
+            aspect: 1.0,
+            axis: Vec2::new(1.0, 0.0),
+            velocity: Vec2::new(0.0, 0.0),
+            omega: 0.0,
+            age: 0.0,
+        }
+    }
+
+    fn tiny_routing() -> PlateRouting {
         let mut nodes = vec![
             node(0, 0, 1.0, DrainageOutlet::Sea),
             node(1, 0, 2.0, DrainageOutlet::None),
         ];
         let neighbors = prepare(&mut nodes);
         let depressions = route_nodes(&mut nodes, &neighbors, 1e-4, 0.002, 1.0);
-        let params = crate::Params::defaults(GenVersion::V1Dev, crate::Mode::Gameplay);
-        let points: Vec<_> = nodes.iter().map(|node| node.point).collect();
-        let grid = ClimateGrid::build(&points, params.drainage.climate_step_l, |_| {
-            Some(RunoffClimate {
-                p_mm: 100.0,
-                pet_mm: 0.0,
-                t_min_c: 10.0,
-            })
-        })
-        .unwrap();
-        let runoff = Runoff::calculate(&nodes, &depressions, &grid, &params).unwrap();
-        let channels = ChannelNetwork::build(7, 42, &nodes, &runoff, &params).unwrap();
-        let lakes = LakeNetwork::build(7, &nodes, &depressions, &runoff, &params).unwrap();
-        RiverNet {
-            plate_id: 7,
-            step_l: params.drainage.step_l,
+        PlateRouting {
+            plate: test_plate(7),
+            step_l: 1.0,
             cell_bounds: super::cell_bounds(&nodes),
             nodes,
             depressions,
-            runoff,
-            channels,
-            lakes,
+            neighbors: Vec::new(),
         }
+    }
+
+    fn tiny_net() -> RiverNet {
+        let params = crate::Params::defaults(GenVersion::V1Dev, crate::Mode::Gameplay);
+        RiverNet::assemble(
+            Arc::new(tiny_routing()),
+            42,
+            &params,
+            &|_| {
+                Some(RunoffClimate {
+                    p_mm: 100.0,
+                    pet_mm: 0.0,
+                    t_min_c: 10.0,
+                })
+            },
+            &[],
+        )
+        .unwrap()
     }
 
     #[test]
@@ -1047,8 +1430,7 @@ mod tests {
 
     #[test]
     fn depression_depth_query_is_compact_and_continuous() {
-        let mut net = tiny_net();
-        net.step_l = 1.0;
+        let mut net = tiny_routing();
         net.nodes[1].filled_km = net.nodes[1].route_km + 0.5;
         let point = Vec2::new(1.0, 0.0);
         let depth = net.depression_depth_km(point);
@@ -1060,8 +1442,7 @@ mod tests {
 
     #[test]
     fn depression_depth_bounds_shortcut_does_not_change_the_answer() {
-        let mut net = tiny_net();
-        net.step_l = 1.0;
+        let mut net = tiny_routing();
         net.nodes[1].filled_km = net.nodes[1].route_km + 0.5;
         assert_eq!(net.cell_bounds, Some(((0, 0), (1, 0))));
         // Та же сеть с рамкой «весь мир»: ранний выход не срабатывает никогда.

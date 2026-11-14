@@ -575,6 +575,151 @@ mod drainage_dev {
         assert!(other.channels().total_length_l().is_finite());
     }
 
+    /// Плиты, попавшие в квадрат `span_l` × `span_l` вокруг начала координат.
+    fn plates_in_square(generator: &Generator, span_l: f64) -> Vec<litho_core::plates::Plate> {
+        let l = generator.params().block.l_blocks;
+        let mut plates = std::collections::BTreeMap::new();
+        let n = 24;
+        for i in 0..n {
+            for j in 0..n {
+                let x = (i as f64 / (n - 1) as f64 - 0.5) * span_l * l;
+                let z = (j as f64 / (n - 1) as f64 - 0.5) * span_l * l;
+                if let Some(sample) = generator.plate_sample(x, z) {
+                    plates.insert(sample.a.id, sample.a);
+                }
+            }
+        }
+        plates.into_values().collect()
+    }
+
+    /// Шаг 2 плана (T113): расход, ушедший через границу плиты, целиком
+    /// приходит в сеть соседа; русло соседа в точке передачи не уже.
+    #[test]
+    fn discharge_is_handed_across_plate_boundaries() {
+        use litho_core::channel::ReachEnd;
+        use litho_core::drainage::DrainageOutlet;
+        use litho_core::plates::plate_query;
+
+        let generator = Generator::new(7, Mode::Gameplay, GenVersion::V1Dev).unwrap();
+        let plates = plates_in_square(&generator, 60.0);
+        let nets: std::collections::HashMap<u64, _> = plates
+            .iter()
+            .map(|plate| (plate.id, generator.drainage_network(plate).unwrap()))
+            .collect();
+        let q_min = generator.params().channels.q_min_mm_l2;
+        // Узел у стыка трёх плит лежит в кольце двух соседей сразу, поэтому
+        // переданную воду складываем по клетке.
+        let mut handed: std::collections::HashMap<(i64, i64), f64> =
+            std::collections::HashMap::new();
+        let mut rivers = 0;
+        for net in nets.values() {
+            for (k, node) in net.nodes().iter().enumerate() {
+                if node.outlet == DrainageOutlet::Handoff {
+                    assert!(!node.in_plate);
+                    let q = net.runoff().nodes()[k].discharge_mm_l2;
+                    *handed.entry(node.cell).or_default() += q;
+                    rivers += usize::from(q >= q_min);
+                }
+            }
+        }
+        let mut complete = 0;
+        let mut received_total = 0.0;
+        for net in nets.values() {
+            net.check_invariants(generator.params().drainage.fill_epsilon_km)
+                .unwrap();
+            let all_neighbors_known = net
+                .routing()
+                .neighbors()
+                .iter()
+                .all(|plate| nets.contains_key(&plate.id));
+            complete += usize::from(all_neighbors_known);
+            for (k, node) in net.nodes().iter().enumerate() {
+                let got = net.runoff().nodes()[k].inflow_mm_l2;
+                if !node.in_plate {
+                    assert_eq!(got, 0.0, "приток приходит только в свои узлы");
+                    continue;
+                }
+                let sent = handed.get(&node.cell).copied().unwrap_or(0.0);
+                if all_neighbors_known {
+                    assert!(
+                        (got - sent).abs() <= 1e-9 * sent.max(1.0),
+                        "передано {sent}, принято {got} в {:?}",
+                        node.cell
+                    );
+                    received_total += got;
+                } else {
+                    assert!(got >= sent * (1.0 - 1e-9));
+                }
+                // Во впадине расход считается на весь резервуар, не по узлам.
+                if node.depression.is_none() {
+                    assert!(net.runoff().nodes()[k].discharge_mm_l2 >= got * (1.0 - 1e-12));
+                }
+            }
+            // Русло, ушедшее за границу, продолжается у соседа и не сужается.
+            for (r, reach) in net.channels().reaches().iter().enumerate() {
+                if reach.end != ReachEnd::Handoff {
+                    continue;
+                }
+                let last = net.channels().reach_segments(r).last().unwrap().b;
+                let owner = plate_query(last.point, generator.seed(), generator.params())
+                    .unwrap()
+                    .a;
+                let Some(other) = nets.get(&owner.id) else {
+                    continue;
+                };
+                let lake = other.lakes().query(last.point);
+                let hit = other.channels().query(last.point).nearest;
+                let in_lake = lake.water > 0.0 || lake.shore > 0.0;
+                let continued = hit.is_some_and(|hit| {
+                    hit.distance_l <= hit.core_l.max(last.core_l)
+                        && hit.core_l >= last.core_l * (1.0 - 1e-9)
+                });
+                assert!(
+                    in_lake || continued,
+                    "русло обрывается на границе плит в {:?}: {hit:?}",
+                    last.point
+                );
+            }
+        }
+        assert!(rivers >= 3, "в выборке нет рек через границу: {rivers}");
+        assert!(complete >= 3 && received_total > 0.0);
+    }
+
+    /// Шаг 2 плана (T113): сеть плиты не зависит от порядка запросов, а при
+    /// `handoff_max_hops = 0` притока от соседей нет.
+    #[test]
+    fn handoff_does_not_depend_on_query_order() {
+        let forward = Generator::new(7, Mode::Gameplay, GenVersion::V1Dev).unwrap();
+        let reverse = Generator::new(7, Mode::Gameplay, GenVersion::V1Dev).unwrap();
+        let plates = plates_in_square(&forward, 30.0);
+        assert!(plates.len() >= 3);
+        let a: Vec<_> = plates
+            .iter()
+            .map(|plate| forward.drainage_network(plate).unwrap())
+            .collect();
+        let mut b: Vec<_> = plates
+            .iter()
+            .rev()
+            .map(|plate| reverse.drainage_network(plate).unwrap())
+            .collect();
+        b.reverse();
+        let mut inflow = 0.0;
+        for (x, y) in a.iter().zip(&b) {
+            assert_eq!(**x, **y);
+            inflow += x.runoff().inflow_mm_l2();
+        }
+        assert!(inflow > 0.0, "в выборке нет притока между плитами");
+
+        let mut params = forward.params().clone();
+        params.drainage.handoff_max_hops = 0;
+        let isolated = Generator::with_params(7, params).unwrap();
+        for (plate, linked) in plates.iter().zip(&a) {
+            let net = isolated.drainage_network(plate).unwrap();
+            assert_eq!(net.nodes(), linked.nodes());
+            assert_eq!(net.runoff().inflow_mm_l2(), 0.0);
+        }
+    }
+
     #[test]
     fn channel_query_crosses_the_nearest_plate_boundary_in_fixed_order() {
         let generator = Generator::new(42, Mode::Gameplay, GenVersion::V1Dev).unwrap();

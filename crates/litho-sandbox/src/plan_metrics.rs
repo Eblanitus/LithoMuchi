@@ -433,7 +433,9 @@ pub fn reach_report(
                 out.ends_endorheic += 1;
                 out.ends_with_water += 1;
             }
-            "confluence" => {
+            // Шаг 2 плана (T113): русло, переданное сети соседней плиты,
+            // продолжается там с тем же расходом — это не обрыв.
+            "confluence" | "handoff" => {
                 out.ends_confluence += 1;
                 out.ends_with_water += 1;
             }

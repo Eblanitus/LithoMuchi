@@ -936,6 +936,7 @@ fn cmd_drainage(args: &[String]) -> Result<(), String> {
              узлы: всего {total}, своей плиты {plate_nodes}, кольцо {ring}; выходы: море {sea}, рифт {rift}, трансформ {transform}\n\
              впадины: заполненные {filled}, замкнутые без выхода {closed}, бессточные {endorheic}; max глубина {max_depth:.6} км\n\
              климат: {climate_nodes} узлов; max Q {max_q:.3} мм·L²/год; экспорт {export:.3}, испарение {evaporation:.3}, замкнутый избыток {storage:.3}\n\
+             передача T113: узлов-передач {handoff_nodes}, русел за границу {handoff_reaches}; принято от соседей {inflow:.3}, отдано соседям {handed:.3} мм·L²/год (входит в экспорт)\n\
              русла T112: {reaches} цепочек, {channel_segments} отрезков, {baskets} корзин, длина {channel_length:.3} L; незакрытых концов {unresolved} (граница плиты {channel_boundary}, ниже Q_min {channel_below_threshold}, замкнутый избыток {channel_closed_surplus}); медиана извилистости равнинных {median_sinuosity:.3}\n\
              дельты T114: вееров {delta_count}, рукавов {delta_arms}; озёра/котловины: поверхностей {lake_count} (озеро {lake_water}, внутр. море {lake_inland_sea}, болото {lake_swamp}, сухая {lake_dry}, замкнутый избыток {lake_closed}, морская связь {lake_sea_connected}), замёрзших {lake_frozen}, рифтовых {lake_rift}, высоких R2 {lake_high}, площадь воды {lake_water_area:.3} L², без уровня {lake_unresolved}\n\
              общий запрос T113/T114: сетей {query_networks}, радиус {query_radius:.3} L, ядро {query_core:.3}, долина {query_valley:.3}, дельта {query_delta:.3}; ближайшее русло плиты {query_plate}, расстояние {query_distance} L; озеро вода {lake_query_water:.3}, берег {lake_query_shore:.3}, котловина {lake_query_basin:.3}, тип {lake_query_kind}, уровень {lake_query_level} км; запрос {query_ms:.3} мс\n\
@@ -948,6 +949,15 @@ fn cmd_drainage(args: &[String]) -> Result<(), String> {
             plate = plate.id,
             total = nodes.len(),
             ring = nodes.len() - plate_nodes,
+            handoff_nodes = nodes
+                .iter()
+                .filter(|node| node.outlet == litho_core::drainage::DrainageOutlet::Handoff)
+                .count(),
+            handoff_reaches = net
+                .channels()
+                .end_count(litho_core::channel::ReachEnd::Handoff),
+            inflow = net.runoff().inflow_mm_l2(),
+            handed = net.runoff().handoff_mm_l2(),
             plan_rows = plan_rows,
         );
     }

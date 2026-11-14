@@ -13,7 +13,10 @@ use crate::cache::{CACHE_CAPACITY, ShardedCache};
 use crate::classify::{ClassSample, classify};
 use crate::climate::{ClimateSample, PrecipSample, SurfaceSample, TemperatureSample, dryness};
 use crate::crust::{CrustSample, crust_from_sample};
-use crate::drainage::{DrainageInput, DrainageOutlet, RiverNet, RiverNetCache, RiverNetError};
+use crate::drainage::{
+    DrainageInput, DrainageOutlet, PlateCache, PlateRouting, PlateTopo, RiverNet, RiverNetCache,
+    RiverNetError,
+};
 use crate::field::{Field, FullSample, to_f32};
 use crate::hydrology::{self, HydrologySample};
 use crate::lattice::{self, Nodes};
@@ -125,6 +128,13 @@ fn log_field_error_with(counter: &AtomicU64, message: impl FnOnce() -> String) {
     }
 }
 
+/// Узлов климатической решётки стока в памяти. На плиту приходится около
+/// четырёхсот; ёмкость на ответ не влияет.
+const RUNOFF_CLIMATE_CACHE_CAPACITY: usize = 65536;
+type RunoffClimateCache = ShardedCache<(u64, u64), Option<crate::runoff::RunoffClimate>>;
+/// Сколько топографий соседних плит строится одновременно.
+const TOPO_PREFETCH_THREADS: usize = 8;
+
 type CoarseTiles = ShardedCache<(i64, i64), Arc<Nodes<COARSE_N>>>;
 type LastCoarse = Option<(u64, u64, i64, i64, Arc<Nodes<COARSE_N>>)>;
 /// Д-061: тайл → плиты, чьи сети рек могут иметь узел рядом с запросом.
@@ -203,6 +213,13 @@ pub struct Generator {
     /// узлы привязаны к мировым блокам, эталон считает ту же решётку.
     morpho: Arc<crate::cache::ShardedCache<(i64, i64), MorphoWeights>>,
     drainage: Arc<RiverNetCache>,
+    /// Шаг 2 плана (T113): первая фаза сети плиты — топография без соседей.
+    drainage_topo: Arc<PlateCache<PlateTopo>>,
+    /// Шаг 2 плана (T113): вторая фаза — топография, связанная с соседями.
+    drainage_routing: Arc<PlateCache<PlateRouting>>,
+    /// Климат в узлах глобальной решётки стока. Чистая функция точки: приток
+    /// от соседа читает те же узлы, что и его собственная сеть.
+    runoff_climate: Arc<RunoffClimateCache>,
     /// Д-061: по тайлу — плиты, чьи сети могут иметь узел в радиусе запроса.
     net_owners: Arc<NetOwners>,
     /// T79: владельцы узлов решётки стока блоками, из них собирается список.
@@ -269,6 +286,12 @@ impl Generator {
                 shards,
                 crate::drainage::NET_CACHE_CAPACITY,
             )),
+            drainage_topo: Arc::new(PlateCache::new(shards, crate::drainage::NET_CACHE_CAPACITY)),
+            drainage_routing: Arc::new(PlateCache::new(
+                shards,
+                crate::drainage::NET_CACHE_CAPACITY,
+            )),
+            runoff_climate: Arc::new(ShardedCache::new(shards, RUNOFF_CLIMATE_CACHE_CAPACITY)),
             net_owners: Arc::new(crate::cache::ShardedCache::new(
                 shards,
                 NET_OWNER_CACHE_CAPACITY,
@@ -597,6 +620,14 @@ impl Generator {
     /// Сеть стока плиты с климатом, расходом и геометрией русел
     /// (T110–T115, только v1-dev). T115 переводит её в C/E/W и биомы;
     /// собственного PV и воды выше моря пока нет (T141/T143/T145).
+    ///
+    /// Шаг 2 плана (T113): сеть собирается в три фазы. Топография плиты
+    /// ([`PlateTopo`]) от соседей не зависит. Связанная топография
+    /// ([`PlateRouting`]) читает у соседей уровни ухода воды и решает, где
+    /// вода уходит через границу. Расход получает приток от соседних плит,
+    /// прослеженный вверх по течению не дальше `drainage.handoff_max_hops`
+    /// границ. Ни одна фаза не обращается к готовой сети другой плиты, поэтому
+    /// рекурсии между кэшами нет.
     pub fn drainage_network(&self, plate: &Plate) -> Result<Arc<RiverNet>, RiverNetError> {
         if !self.params.version.is_water_relief_dev() {
             return Err(RiverNetError::UnsupportedVersion(self.params.version));
@@ -609,12 +640,13 @@ impl Generator {
         })
     }
 
-    fn build_drainage_network(&self, plate: &Plate) -> Result<RiverNet, RiverNetError> {
-        RiverNet::build(
-            plate,
-            self.seed,
-            &self.params,
-            &|point| {
+    /// Первая фаза сети плиты: узлы, высоты, выходы и заливка по своим узлам.
+    pub fn drainage_topo(&self, plate: &Plate) -> Result<Arc<PlateTopo>, RiverNetError> {
+        if !self.params.version.is_water_relief_dev() {
+            return Err(RiverNetError::UnsupportedVersion(self.params.version));
+        }
+        self.drainage_topo.get_or_build(plate.id, || {
+            PlateTopo::build(plate, self.seed, &self.params, &|point| {
                 let surface = self.surface_at(point);
                 let outlet = if surface.e_km < 0.0 {
                     DrainageOutlet::Sea
@@ -635,8 +667,65 @@ impl Generator {
                     route_km: surface.e_km,
                     outlet,
                 }
-            },
-            &|point| {
+            })
+        })
+    }
+
+    /// Топографии нескольких плит; недостающие строятся в несколько потоков.
+    /// Порядок и число потоков на ответ не влияют: каждая топография —
+    /// чистая функция сида, параметров и плиты.
+    fn drainage_topos(&self, plates: &[Plate]) -> Result<Vec<Arc<PlateTopo>>, RiverNetError> {
+        let missing: Vec<&Plate> = plates
+            .iter()
+            .filter(|plate| !self.drainage_topo.is_ready(plate.id))
+            .collect();
+        let threads = std::thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(1)
+            .min(TOPO_PREFETCH_THREADS)
+            .min(missing.len());
+        if threads >= 2 {
+            let next = std::sync::atomic::AtomicUsize::new(0);
+            std::thread::scope(|scope| {
+                for _ in 0..threads {
+                    scope.spawn(|| {
+                        loop {
+                            let k = next.fetch_add(1, Ordering::Relaxed);
+                            let Some(plate) = missing.get(k) else {
+                                break;
+                            };
+                            // Ошибку вернёт обычный запрос ниже.
+                            let _ = self.drainage_topo(plate);
+                        }
+                    });
+                }
+            });
+        }
+        plates
+            .iter()
+            .map(|plate| self.drainage_topo(plate))
+            .collect()
+    }
+
+    /// Вторая фаза: топография плиты, связанная с уровнями соседей.
+    pub fn drainage_routing(&self, plate: &Plate) -> Result<Arc<PlateRouting>, RiverNetError> {
+        if !self.params.version.is_water_relief_dev() {
+            return Err(RiverNetError::UnsupportedVersion(self.params.version));
+        }
+        self.drainage_routing.get_or_build(plate.id, || {
+            let topo = self.drainage_topo(plate)?;
+            let around = self.drainage_topos(topo.neighbors())?;
+            PlateRouting::build(&topo, &self.params, &|owner, cell| {
+                let k = around.binary_search_by_key(&owner, |t| t.plate_id()).ok()?;
+                around[k].escape_level_km(cell)
+            })
+        })
+    }
+
+    /// Климат стока в узле решётки; значение запоминается по координатам узла.
+    fn runoff_climate_at(&self, point: Vec2) -> Option<crate::runoff::RunoffClimate> {
+        self.runoff_climate
+            .get_or_insert((point.x.to_bits(), point.z.to_bits()), || {
                 crate::climate::sample(point, self.seed, &self.params, &|q| self.surface_at(q)).map(
                     |sample| crate::runoff::RunoffClimate {
                         p_mm: sample.precip.p_mm,
@@ -644,8 +733,102 @@ impl Generator {
                         t_min_c: sample.temperature.t_min,
                     },
                 )
-            },
-        )
+            })
+    }
+
+    /// Приток в свои узлы сети `routing` от соседних плит, мм·L²/год.
+    /// `hops` — сколько ещё границ можно пройти вверх по течению; `wanted`
+    /// ограничивает узлы, приток в которые нужен вызывающему.
+    ///
+    /// Узел своей плиты лежит в кольце соседа; расход соседа в этом узле и
+    /// есть переданная вода. Сосед считается только в части, которая в эти
+    /// узлы стекает, поэтому работа пропорциональна настоящему водосбору.
+    fn handoff_inflow(
+        &self,
+        routing: &PlateRouting,
+        hops: i64,
+        wanted: Option<&[bool]>,
+    ) -> Result<Vec<f64>, RiverNetError> {
+        let mut inflow = vec![0.0; routing.nodes().len()];
+        if hops <= 0 || routing.neighbors().is_empty() {
+            return Ok(inflow);
+        }
+        let own = self.drainage_topo(routing.plate())?;
+        let around = self.drainage_topos(routing.neighbors())?;
+        let is_wanted = |cell: (i64, i64)| {
+            routing.node_index(cell).is_some_and(|k| {
+                let node = &routing.nodes()[k];
+                node.in_plate && !node.outlet.is_outlet() && wanted.is_none_or(|mask| mask[k])
+            })
+        };
+        for (neighbor, topo) in routing.neighbors().iter().zip(&around) {
+            if !topo.may_hand_to(&own, &is_wanted) {
+                continue;
+            }
+            let source = self.drainage_routing(neighbor)?;
+            // Узлы-передачи соседа, лежащие в нужных узлах этой плиты.
+            let mut targets = Vec::new();
+            let mut receivers = Vec::new();
+            for (k, node) in source.nodes().iter().enumerate() {
+                if node.outlet != DrainageOutlet::Handoff {
+                    continue;
+                }
+                let Some(here) = routing.node_index(node.cell) else {
+                    continue;
+                };
+                if is_wanted(node.cell) {
+                    targets.push(k);
+                    receivers.push(here);
+                }
+            }
+            if targets.is_empty() {
+                continue;
+            }
+            let mask =
+                crate::runoff::upstream_mask(source.nodes(), source.depressions(), &targets)?;
+            // Кроме самих узлов-передач в маске должен быть хоть один узел.
+            if mask.iter().filter(|m| **m).count() == targets.len() {
+                continue;
+            }
+            let upstream = self.handoff_inflow(&source, hops - 1, Some(&mask))?;
+            let points: Vec<Vec2> = source
+                .nodes()
+                .iter()
+                .zip(&mask)
+                .filter(|(_, m)| **m)
+                .map(|(node, _)| node.point)
+                .collect();
+            let grid = crate::runoff::ClimateGrid::build(
+                &points,
+                self.params.drainage.climate_step_l,
+                |point| self.runoff_climate_at(point),
+            )?;
+            let runoff = crate::runoff::Runoff::calculate_with(
+                source.nodes(),
+                source.depressions(),
+                &grid,
+                &self.params,
+                Some(&upstream),
+                Some(&mask),
+            )?;
+            for (&target, &here) in targets.iter().zip(&receivers) {
+                inflow[here] += runoff.nodes()[target].discharge_mm_l2;
+            }
+        }
+        Ok(inflow)
+    }
+
+    fn build_drainage_network(&self, plate: &Plate) -> Result<RiverNet, RiverNetError> {
+        let routing = self.drainage_routing(plate)?;
+        let inflow = self.handoff_inflow(&routing, self.params.drainage.handoff_max_hops, None)?;
+        let net = RiverNet::assemble(
+            routing,
+            self.seed,
+            &self.params,
+            &|point| self.runoff_climate_at(point),
+            &inflow,
+        )?;
+        Ok(net)
     }
 
     /// Общий запрос русел T113 в блочной точке. Обходим консервативное окно

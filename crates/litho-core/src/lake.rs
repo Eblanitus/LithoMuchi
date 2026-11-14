@@ -588,7 +588,14 @@ fn spill_level(
         if down >= nodes.len() || nodes[down].depression == Some(depression) {
             continue;
         }
-        let saddle = nodes[k].route_km.max(nodes[down].route_km);
+        // Узел-передача несёт уровень воды соседней плиты, а не свой рельеф:
+        // половина общего озера получает тот же порог, что и вторая.
+        let down_km = if nodes[down].outlet == DrainageOutlet::Handoff {
+            nodes[down].filled_km
+        } else {
+            nodes[down].route_km
+        };
+        let saddle = nodes[k].route_km.max(down_km);
         if best.is_none_or(|(level, old)| (saddle, k) < (level, old)) {
             best = Some((saddle, k));
         }
