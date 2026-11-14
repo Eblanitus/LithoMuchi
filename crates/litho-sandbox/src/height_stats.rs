@@ -196,17 +196,25 @@ impl PlateSizes {
     }
 }
 
-/// 12.4: асимметрия берегов в поясе пассатов 10–25° (Д-079). Береговая
-/// точка суши — суша (`C` не ниже порога океаничности) хотя бы с одним
-/// соседом-водой по 4-соседству. Восточный берег — вода только с востока
-/// (+x), западный — только с запада (−x); точки с водой с обеих сторон
-/// или только с севера/юга в сравнение не идут: у них нет однозначной
-/// восточности. Крайние строки и столбцы скана не оцениваются — у них
-/// нет полного соседства. Строки подаются потоково по три: оценивается
-/// средняя, поэтому сетку хранить не нужно.
+/// Ячейка строки асимметрии берегов: (суша, φ, осадки, east_x, east_z).
+/// Восток — локальный вектор полюса (`PoleSample.east`), а не ось x мира.
+type CoastCell = (bool, f64, f64, f64, f64);
+
+/// 12.4: асимметрия берегов в поясе пассатов 10–25° (Д-080, исправлено в
+/// Д-085). Береговая точка суши — суша (`C` не ниже порога океаничности)
+/// хотя бы с одним соседом-водой по 4-соседству. Восток берётся от полюса:
+/// полюса — точки, и «восток» свой в каждой точке (`PoleSample.east`),
+/// оси мира к восточности отношения не имеют. Сосед считается восточным,
+/// если `dir · east > 0`, западным — если < 0; сосед ровно поперёк
+/// (`e == 0`) не решает. Восточный берег — вода только с востока,
+/// западный — только с запада; точки с водой с обеих сторон или только
+/// поперёк в сравнение не идут: у них нет однозначной восточности.
+/// Крайние строки и столбцы скана не оцениваются — у них нет полного
+/// соседства. Строки подаются потоково по три: оценивается средняя,
+/// поэтому сетку хранить не нужно.
 #[derive(Clone, Debug, Default)]
 pub struct CoastAsymmetry {
-    rows: VecDeque<Vec<(bool, f64, f64)>>,
+    rows: VecDeque<Vec<CoastCell>>,
     pub east_sum: f64,
     pub east_count: usize,
     pub west_sum: f64,
@@ -214,7 +222,7 @@ pub struct CoastAsymmetry {
 }
 
 impl CoastAsymmetry {
-    pub fn push_row(&mut self, row: Vec<(bool, f64, f64)>) {
+    pub fn push_row(&mut self, row: Vec<CoastCell>) {
         self.rows.push_back(row);
         if self.rows.len() < 3 {
             return;
@@ -231,26 +239,47 @@ impl CoastAsymmetry {
     }
 
     fn score_row(
-        north: &[(bool, f64, f64)],
-        cur: &[(bool, f64, f64)],
-        south: &[(bool, f64, f64)],
+        north: &[CoastCell],
+        cur: &[CoastCell],
+        south: &[CoastCell],
     ) -> (f64, usize, f64, usize) {
         let mut out = (0.0, 0_usize, 0.0, 0_usize);
         if cur.len() < 3 || north.len() != cur.len() || south.len() != cur.len() {
             return out;
         }
         for i in 1..cur.len() - 1 {
-            let (land, phi, p) = cur[i];
+            let (land, phi, p, east_x, east_z) = cur[i];
             if !land || !p.is_finite() || !(10.0..=25.0).contains(&phi) {
                 continue;
             }
-            let east_ocean = !cur[i + 1].0;
-            let west_ocean = !cur[i - 1].0;
-            let coastal = east_ocean || west_ocean || !north[i].0 || !south[i].0;
+            // Направления к четырём соседям в координатах мира.
+            let neighbours = [
+                (&cur[i + 1], 1.0_f64, 0.0_f64),
+                (&cur[i - 1], -1.0_f64, 0.0_f64),
+                (&north[i], 0.0_f64, -1.0_f64),
+                (&south[i], 0.0_f64, 1.0_f64),
+            ];
+            let mut coastal = false;
+            let mut east = false;
+            let mut west = false;
+            for (cell, dir_x, dir_z) in neighbours {
+                if cell.0 {
+                    continue;
+                }
+                coastal = true;
+                let along_east = dir_x * east_x + dir_z * east_z;
+                if along_east > 0.0 {
+                    east = true;
+                } else if along_east < 0.0 {
+                    west = true;
+                }
+                // Сосед ровно поперёк востока (`along_east == 0`) не решает,
+                // как северо/южный сосед при мировом востоке в Д-080.
+            }
             if !coastal {
                 continue;
             }
-            match (east_ocean, west_ocean) {
+            match (east, west) {
                 (true, false) => {
                     out.0 += p;
                     out.1 += 1;
@@ -293,7 +322,7 @@ impl CoastAsymmetry {
     pub fn json(&self) -> String {
         let fmt = |v: Option<f64>| v.map_or_else(|| "null".to_string(), |x| format!("{x:.3}"));
         format!(
-            "\"coast_asymmetry\": {{\"band_deg\": [10, 25], \"east_mean_mm\": {}, \"west_mean_mm\": {}, \"ratio\": {}, \"east_samples\": {}, \"west_samples\": {}, \"in_target\": {}}}",
+            "\"coast_asymmetry\": {{\"band_deg\": [10, 25], \"east_mean_mm\": {}, \"west_mean_mm\": {}, \"ratio\": {}, \"east_samples\": {}, \"west_samples\": {}, \"in_target\": {}, \"east_basis\": \"pole\"}}",
             fmt(self.east_mean()),
             fmt(self.west_mean()),
             fmt(self.ratio()),
@@ -1200,7 +1229,7 @@ impl HeightStats {
         let plan_dev = base.version.is_water_relief_dev();
         let mut plan = PlanAccumulator::new();
         for j in 0..opts.size {
-            let mut coast_row: Vec<(bool, f64, f64)> = Vec::with_capacity(opts.size);
+            let mut coast_row: Vec<CoastCell> = Vec::with_capacity(opts.size);
             let mut shadow_row: Vec<(bool, f64, f64, f64, f64)> = Vec::with_capacity(opts.size);
             for i in 0..opts.size {
                 let x = base.center_x + (i as f64 - opts.size as f64 * 0.5) * step;
@@ -1236,12 +1265,15 @@ impl HeightStats {
                 };
                 let y = model.surface_y(input)?;
                 let c_land = v.c >= land_threshold;
-                // 12.4 (Д-079): строка для асимметрии берегов собирается
-                // до всех `continue` ниже, как зональный профиль.
+                // 12.4 (Д-080, исправлено в Д-085): строка для асимметрии
+                // берегов собирается до всех `continue` ниже, как зональный
+                // профиль. Восточность — по локальному востоку полюса.
                 coast_row.push((
                     c_land,
                     world.climate.pole.phi_deg,
                     world.climate.precip.p_mm,
+                    world.climate.pole.east.x,
+                    world.climate.pole.east.z,
                 ));
                 shadow_row.push((
                     c_land,
@@ -2356,9 +2388,20 @@ mod plate_tests {
 mod coast_tests {
     use super::*;
 
-    fn row(cells: &[(bool, f64)]) -> Vec<(bool, f64, f64)> {
-        // (суша, осадки) при φ = 15°: (land, phi, p)
-        cells.iter().map(|&(land, p)| (land, 15.0, p)).collect()
+    fn row(cells: &[(bool, f64)]) -> Vec<CoastCell> {
+        // (суша, осадки) при φ = 15°, восток модели = +x:
+        // (land, phi, p, east_x, east_z)
+        cells
+            .iter()
+            .map(|&(land, p)| (land, 15.0, p, 1.0, 0.0))
+            .collect()
+    }
+
+    fn row_east(cells: &[(bool, f64)], east: (f64, f64)) -> Vec<CoastCell> {
+        cells
+            .iter()
+            .map(|&(land, p)| (land, 15.0, p, east.0, east.1))
+            .collect()
     }
 
     #[test]
@@ -2433,11 +2476,54 @@ mod coast_tests {
     }
 
     #[test]
+    fn pole_east_decides_orientation() {
+        // Восток модели повёрнут от +x к +z: сосед по +z теперь восточный,
+        // сосед по −z — западный, а прежний «север/юг» стал влияющим.
+        let east = (0.0, 1.0);
+        let mk = |cells: &[(bool, f64)]| row_east(cells, east);
+        // (а) вода только с севера (dir (0, −1)) — теперь западный берег.
+        let mut north = mk(&[(true, 0.0); 5]);
+        north[2].0 = false;
+        let mut c = CoastAsymmetry::default();
+        c.push_row(north);
+        c.push_row(mk(&[(true, 500.0); 5]));
+        c.push_row(mk(&[(true, 0.0); 5]));
+        assert_eq!(c.west_count, 1);
+        assert_eq!(c.west_mean(), Some(500.0));
+        assert_eq!(c.east_count, 0);
+        // (б) вода только с юга (dir (0, +1)) — восточный берег.
+        let mut south = mk(&[(true, 0.0); 5]);
+        south[2].0 = false;
+        let mut c = CoastAsymmetry::default();
+        c.push_row(mk(&[(true, 0.0); 5]));
+        c.push_row(mk(&[(true, 300.0); 5]));
+        c.push_row(south);
+        assert_eq!(c.east_count, 1);
+        assert_eq!(c.east_mean(), Some(300.0));
+        assert_eq!(c.west_count, 0);
+        // (в) вода и с севера, и с юга — стороны с двух сторон, точка
+        // в сравнение не идёт, как и вода с двух сторон при мировом востоке.
+        let mut north = mk(&[(true, 0.0); 5]);
+        north[2].0 = false;
+        let mut south = mk(&[(true, 0.0); 5]);
+        south[2].0 = false;
+        let mut c = CoastAsymmetry::default();
+        c.push_row(north);
+        c.push_row(mk(&[(true, 700.0); 5]));
+        c.push_row(south);
+        assert_eq!(c.east_count + c.west_count, 0);
+    }
+
+    #[test]
     fn coast_json_is_parseable() {
         let value = crate::json::parse(&format!("{{{}}}", CoastAsymmetry::default().json()))
             .expect("берега — валидный JSON");
         let coast = value.get("coast_asymmetry").expect("ключ coast_asymmetry");
         assert_eq!(coast.get("in_target"), Some(&crate::json::Json::Null));
+        assert_eq!(
+            coast.get("east_basis"),
+            Some(&crate::json::Json::String("pole".to_string()))
+        );
         assert_eq!(
             coast.get("east_samples"),
             Some(&crate::json::Json::Number(0.0))

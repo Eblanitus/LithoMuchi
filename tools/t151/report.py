@@ -149,7 +149,21 @@ def _climate124_metrics(j):
         out["дождевая тень: снижение осадков, %"] = shadow.get("drop_pct")
     dust = c.get("island_dust")
     if isinstance(dust, dict):
-        out["островная пыль: клочков на 1000 L²"] = dust.get("per_1000_l2")
+        per = dust.get("per_1000_l2")
+        # Д-083: клетка не меньше порога клочка (0,01 L²) пыль не разрешает —
+        # это «НЕТ ДАННЫХ», а не ноль и не проход. У прогонов до Д-083 площади
+        # клетки в JSON нет: считаем её из `boundary` (span_l / size)².
+        # Ложный проход хуже отсутствия данных (Д-086).
+        cell = dust.get("cell_area_l2")
+        if not isinstance(cell, (int, float)):
+            boundary = j.get("boundary") or {}
+            span, size = boundary.get("span_l"), boundary.get("size")
+            if isinstance(span, (int, float)) and isinstance(size, (int, float)) and size > 0:
+                cell = (span / size) ** 2
+        if isinstance(cell, (int, float)) and cell < 0.01:
+            out["островная пыль: клочков на 1000 L²"] = per
+        else:
+            out["островная пыль: клочков на 1000 L²"] = None
     return out
 
 
@@ -246,6 +260,11 @@ def mode_table(rows, mi, keys):
         values = [(seed, m[key]) for seed, m, _ in rows]
         known = [v for _, v in values if v is not None]
         if not known:
+            if values:
+                # Все прогоны без данных (например, клетка не разрешает
+                # «островную пыль», Д-086): показать «нет данных», а не
+                # молчать или выдавать ноль.
+                out.append(f"| {key} | {goal(lo, hi)} | нет данных | — | — | — | |")
             continue  # метрики нет в этих прогонах (старый формат)
         bad = [(s, v) for s, v in values if not in_goal(v, lo, hi)]
         bad_text = ", ".join(
