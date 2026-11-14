@@ -34,9 +34,74 @@
 холодные пруды T114 входят в v1. Прежний вариант B из
 [../archive/T142-DECISION.md](../archive/T142-DECISION.md) («v1 без R2») этим отменён.
 
-Технически механизма пока нет: разведка 8–11 ноября проверила три очевидных способа, ни один
-не работает в Horizon (подробности в архиве: `T142-DECISION.md`,
-`HORIZON-WATER-SPIKE-2026-11-08.md`). Если механизм не найдётся, сообщить автору с замерами.
+**Разведка исходного кода Horizon 26.3 (Д-087, 2026-11-14), коммит `66f3981`
+(`tools/horizon-revisions.json`):** единственный механизм стоячей воды выше уровня
+моря в Horizon — фича `minecraft:lake` (`crates/horizon-world/src/worldgen/cave.rs`):
+декорация биомов (`decoration.rs`) прогоняет списки фич биомов по шагам, `heightmap`-
+модификаторы ставят начало туда, где рельеф, а `can_place_feature` (SOLID-кольцо,
+ряды жидкости ниже воздуха) требует обычного «горного» окружения котловины; в холодных
+биомах замораживает верхний ряд в лёд. Аквиферы (`aquifer/*`) водой выше моря быть не
+могут: `GlobalFluidPicker` — const fn с константой `sea_level`, без сида и без x/z;
+затопленные ячейки получают `global.level` (уровень моря); `skip_above_y` отключает
+заполнение выше максимального уровня поверхности; шум `surface_level` влияет только на
+«сухой/затопленный», а не на высоту столба воды. `minecraft:spring_feature` — одна
+блока жидкости в скальном теле, не водоёмы. Инъекция в игровой путь трансформатором
+невозможна (см. `HORIZON-WATER-SPIKE-2026-11-08.md`).
+
+Не проверено (зависит от данных, а не от движка): какие биомы 26.3 фактически ставят
+`minecraft:lake` и на какой `heightmap` — это живёт в mcmeta (`LITHO_26_3_DATA`,
+`data/minecraft/worldgen/placed_feature/lake.json` и списки `features` биомов);
+GitHub в момент разведки был недоступен, проверяется в CI или на следующей попытке.
+
+Вывод: механизм в движке есть, но «озеро нашей формы по нашему пику водосбора» он не
+даст — ванильная фича ставит фиксированное 16×16 пятно по сиду и heightmap, без привязки
+к нашей сети T110 и без T143/T145 (ступени без лавины обновлений). Для R2 нужны либо
+датаpack-подстановка ванильных озёр (дешёвая косметика, вне нашей гидрологии), либо
+вышестоящая правка Horizon (свой `configured_feature`, именованный параметр
+`position` в `GlobalFluidPicker::compute` (`horizon-rust/horizon#16388`) или хук
+декорации) — это вне текущих полномочий пака.
+
+## Разведка T142-бис: DW-хук на пине невозможен (Д-088, 2026-11-14)
+
+Попытка повесить cancellable HEAD на вердикт воды (`<GlobalFluidPicker as FluidPicker>::compute`,
+тестовый маркер `aquifer_marker`, «вода ≤ y=100 в квадрате 64×64») в CI
+(run [43587773951](https://github.com/Eblanitus/LithoMuchi/actions/runs/43587773951),
+commit `a62db01`) **отклонена**: упали job'ы `Мод · настоящий litospherity.hnmod`
+(шаг plan) и `Horizon · настоящие mixins и граф 26.3` (шаг apply). Текст диагностики
+из CI-лога недоступен (log-архив runner'а скачивается с `results-receiver...` → `EOF`);
+корневая причина восстановлена по закреплённому исходнику horizon-mixins `5a64af9`:
+
+1. Id трейт-impl метода в пине строится как `<Type as Trait>::function`
+   (`index.rs`: `format!("<{ty} as {}>")`; пример в docs/mixin-api.md). Маркер с путём
+   `…aquifer::GlobalFluidPicker::compute` целей не имел → `resolve()` →
+   E_TARGET_NOT_FOUND.
+2. Даже с исправленным id пинный валидатор (`parameters()` → `validate_helper`) безусловно
+   отклоняет **деструктурированный параметр** `compute(&self, [_, y, _]: [i32; 3])`
+   с E_INVALID_BINDING («destructured function parameters are unsupported») — при любых
+   биндингах, включая отсутствие биндинга позиции. Пин (2026-11-05) **старше**
+   [horizon-mixins #24](https://github.com/horizon-rust/horizon-mixins/pull/24)
+   («feat(plan): bind the names of destructured parameters», смёржен 2026-11-09),
+   который именованные части паттерна биндит — у нас это только `y`; `x`/`z`/целый
+   `position` остались бы недоступны и там.
+3. Типово-generic реализации отклоняются `validate_target` (E_UNSUPPORTED_SIGNATURE):
+   `NoiseBasedAquifer::compute_substance` (impl по `P,F,B`, aquifer/noise_based.rs:132,
+   486), `DisabledAquifer::compute_substance` (`impl<P: FluidPicker>`, aquifer.rs:79),
+   `TerrainAquifer` (terrain.rs), `fill_noise` (terrain.rs:724); `const fn`
+   (`FluidStatus::at` — aquifer.rs:18, `GlobalFluidPicker::new` — aquifer.rs:43) — тоже.
+   Хуки на методы generic impl'ов — открытая [horizon-mixins #16](https://github.com/horizon-rust/horizon-mixins/issues/16).
+
+Маркер не фичей не является и удалён (`dcd61b0`); CI [43589348842](https://github.com/Eblanitus/LithoMuchi/actions/runs/43589348842) — 7/7 зелёный; генератор не тронут.
+
+**Решение автора (Д-088, 2026-11-14):** R2 и строка приёмки «озёр на 100 L²» вынесены
+за релиз v1 — это последний шаг плана после всех остальных. По завершении проверяем,
+принял ли Horizon правку (issue `horizon-rust/horizon#16388` про именованный параметр
+`position: [i32; 3]` в `<GlobalFluidPicker as FluidPicker>::compute`, открыт; поведение
+не меняется; нужен пин ≥ #24). Если принял — обновляем пин и делаем R2 хуком;
+если нет — форк Horizon. Формулировка автора: «пропускаем озёра и эту шнягу с водой,
+делаем все что после нее, и после того как все сделаем смотрим — пофиксили ли игру,
+под нас. Если не пофиксили — делаем форк, если пофиксили просто добиваем игру».
+Холодные пруды T114 — только объём, не требующий R2; остальное вместе с R2.
+Игровой проверки по-прежнему не было.
 
 ## Что известно о качестве (замеры `acceptance-vol-*`, 16 сидов)
 

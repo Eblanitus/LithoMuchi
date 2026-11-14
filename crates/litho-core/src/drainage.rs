@@ -155,6 +155,18 @@ fn cell_bounds(nodes: &[DrainageNode]) -> Option<(Cell, Cell)> {
     Some((lo, hi))
 }
 
+/// Env-gated фаза-замер сборки сети (T79 вторая часть): печатает в stdout
+/// строку `drainage-фазы: <имя> <мс>` только при `LITHO_DRAINAGE_TIMINGS=1`.
+/// Математика не меняется; без переменной окружения — роспуск незаметен.
+fn log_phase(enabled: bool, label: &str, started: std::time::Instant) {
+    if enabled {
+        println!(
+            "drainage-фазы: {label} {:.3} мс",
+            started.elapsed().as_secs_f64() * 1e3
+        );
+    }
+}
+
 impl RiverNet {
     pub fn build(
         plate: &Plate,
@@ -166,16 +178,23 @@ impl RiverNet {
         if !params.version.is_water_relief_dev() {
             return Err(RiverNetError::UnsupportedVersion(params.version));
         }
+        let timings = std::env::var_os("LITHO_DRAINAGE_TIMINGS").is_some();
+        let t_total = std::time::Instant::now();
+        let mut t = std::time::Instant::now();
         validate_params(params)?;
         let p = &params.drainage;
         let anchor = find_anchor(plate, seed, params)?;
+        log_phase(timings, "якорь", t);
+        t = std::time::Instant::now();
         let (mut owned, ring) = collect_cells(anchor, plate.id, seed, params);
         owned.sort_unstable();
         let mut cells = owned.clone();
         cells.extend(ring);
         cells.sort_unstable();
+        log_phase(timings, "клетки", t);
         let mut index = HashMap::with_capacity(cells.len());
         let mut nodes = Vec::with_capacity(cells.len());
+        t = std::time::Instant::now();
         for (k, cell) in cells.into_iter().enumerate() {
             index.insert(cell, k);
             let point = jittered_point(cell, seed, params);
@@ -194,7 +213,11 @@ impl RiverNet {
                 depression: None,
             });
         }
+        log_phase(timings, "узлы", t);
+        t = std::time::Instant::now();
         let neighbors = grid_neighbors(&nodes, &index);
+        log_phase(timings, "соседи", t);
+        t = std::time::Instant::now();
         let depressions = route_nodes(
             &mut nodes,
             &neighbors,
@@ -202,11 +225,20 @@ impl RiverNet {
             p.depression_min_depth_km,
             p.lake_area_max_fraction,
         );
+        log_phase(timings, "flood", t);
+        t = std::time::Instant::now();
         let points: Vec<_> = nodes.iter().map(|node| node.point).collect();
         let grid = ClimateGrid::build(&points, p.climate_step_l, climate)?;
+        log_phase(timings, "климат", t);
+        t = std::time::Instant::now();
         let runoff = Runoff::calculate(&nodes, &depressions, &grid, params)?;
+        log_phase(timings, "сток", t);
+        t = std::time::Instant::now();
         let channels = ChannelNetwork::build(plate.id, seed, &nodes, &runoff, params)?;
+        log_phase(timings, "русла", t);
+        t = std::time::Instant::now();
         let lakes = LakeNetwork::build(plate.id, &nodes, &depressions, &runoff, params)?;
+        log_phase(timings, "озёра", t);
         let net = Self {
             plate_id: plate.id,
             step_l: p.step_l,
@@ -217,7 +249,10 @@ impl RiverNet {
             channels,
             lakes,
         };
+        t = std::time::Instant::now();
         net.check_invariants(p.fill_epsilon_km)?;
+        log_phase(timings, "инварианты", t);
+        log_phase(timings, "итого", t_total);
         Ok(net)
     }
 
