@@ -63,18 +63,12 @@ impl ClimateGrid {
         }
         let keys: Vec<Cell> = keys.into_iter().collect();
         let mut slots: Vec<Option<RunoffClimate>> = vec![None; keys.len()];
-        let threads = std::thread::available_parallelism()
-            .map(|n| n.get())
-            .unwrap_or(1)
-            .min(4);
+        let threads = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1).min(4);
         // T79: узлы решётки независимы; развеиваем только вычисление, порядок
         // сборки (BTreeSet) и проверка значений — прежние, вывод побайтово тот же.
         if threads <= 1 || keys.len() < 256 {
             for (key, slot) in keys.iter().zip(slots.iter_mut()) {
-                *slot = sample(Vec2::new(
-                    key.0 as f64 * step_l,
-                    key.1 as f64 * step_l,
-                ));
+                *slot = sample(Vec2::new(key.0 as f64 * step_l, key.1 as f64 * step_l));
             }
         } else {
             let chunk = keys.len().div_ceil(threads);
