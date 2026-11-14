@@ -54,21 +54,3 @@ value = "command"
 name = "ran"
 ty = "&mut bool"
 value = "&mut *ran"
-
-# T142-бис: тестовый маркер воды выше уровня моря (разведка, не фича).
-[[injection]]
-helper = "aquifer_marker.rs"
-id = "aquifer_marker"
-kind = "HEAD"
-cancellable = true
-target = "horizon_world::worldgen::aquifer::GlobalFluidPicker::compute"
-
-[[injection.bindings]]
-name = "this"
-ty = "&GlobalFluidPicker"
-value = "&*self"
-
-[[injection.bindings]]
-name = "position"
-ty = "[i32; 3]"
-value = "position"
