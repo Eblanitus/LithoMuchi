@@ -253,17 +253,6 @@ impl RiverNet {
         net.check_invariants(p.fill_epsilon_km)?;
         log_phase(timings, "инварианты", t);
         log_phase(timings, "итого", t_total);
-        let net = Self {
-            plate_id: plate.id,
-            step_l: p.step_l,
-            cell_bounds: cell_bounds(&nodes),
-            nodes,
-            depressions,
-            runoff,
-            channels,
-            lakes,
-        };
-        net.check_invariants(p.fill_epsilon_km)?;
         Ok(net)
     }
 
