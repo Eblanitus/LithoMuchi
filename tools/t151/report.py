@@ -66,6 +66,8 @@ TARGETS = {
     "берега пассатов: восток/запад, ×": ((2, None), (2, None)),
     # 12.4 (Д-081): дождевая тень. Ключа нет в прогонах до этой метрики.
     "дождевая тень: снижение осадков, %": ((40, None), (40, None)),
+    # 12.4 (Д-082): островная пыль. Ключа нет в прогонах до этой метрики.
+    "островная пыль: клочков на 1000 L²": ((None, 5), (None, 5)),
 }
 MODES = ("gameplay", "scientific")
 CAUSE_NAMES = {
@@ -145,6 +147,9 @@ def _climate124_metrics(j):
     shadow = c.get("rain_shadow")
     if isinstance(shadow, dict):
         out["дождевая тень: снижение осадков, %"] = shadow.get("drop_pct")
+    dust = c.get("island_dust")
+    if isinstance(dust, dict):
+        out["островная пыль: клочков на 1000 L²"] = dust.get("per_1000_l2")
     return out
 
 

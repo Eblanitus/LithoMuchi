@@ -429,6 +429,86 @@ impl RainShadow {
     }
 }
 
+/// 12.4: «островная пыль» (Д-082) — компоненты связности суши на сетке
+/// границ (шаг 32 блока, как объём приёмки 10.1 по шагу). Клочок —
+/// компонента из 4-соседних клеток суши площадью меньше 0,01 L², целиком
+/// внутри пятна: касающиеся края пятна обрезаны сканом и не считаются,
+/// как краевые плиты в Д-078. Нормировка — на просканированную площадь
+/// всех пятен; вердикт при площади не меньше 10 L², иначе объёма мало и
+/// это «НЕТ ДАННЫХ» (на обычном малом объёме границ так и будет).
+#[derive(Clone, Debug, Default)]
+pub struct IslandDust {
+    pub specks: usize,
+    pub area_l2: f64,
+}
+
+impl IslandDust {
+    pub fn add_patch(&mut self, land: &[bool], n: usize, cell_area_l2: f64) {
+        if n == 0 || land.len() != n * n || cell_area_l2 <= 0.0 {
+            return;
+        }
+        self.area_l2 += n as f64 * n as f64 * cell_area_l2;
+        let mut seen = vec![false; n * n];
+        let mut stack: Vec<usize> = Vec::new();
+        for start in 0..n * n {
+            if !land[start] || seen[start] {
+                continue;
+            }
+            let mut cells = 0_usize;
+            let mut touches_border = false;
+            stack.clear();
+            stack.push(start);
+            seen[start] = true;
+            while let Some(k) = stack.pop() {
+                cells += 1;
+                let (i, j) = (k % n, k / n);
+                touches_border |= i == 0 || j == 0 || i + 1 == n || j + 1 == n;
+                let neighbours = [
+                    (i > 0).then(|| k - 1),
+                    (i + 1 < n).then(|| k + 1),
+                    (j > 0).then(|| k - n),
+                    (j + 1 < n).then(|| k + n),
+                ];
+                for next in neighbours.into_iter().flatten() {
+                    if land[next] && !seen[next] {
+                        seen[next] = true;
+                        stack.push(next);
+                    }
+                }
+            }
+            if !touches_border && cells as f64 * cell_area_l2 < 0.01 {
+                self.specks += 1;
+            }
+        }
+    }
+
+    /// Клочков на 1000 L² просканированной площади.
+    pub fn per_1000_l2(&self) -> Option<f64> {
+        (self.area_l2 > 0.0).then(|| self.specks as f64 * 1000.0 / self.area_l2)
+    }
+
+    /// Ориентир 12.4: не больше 5 клочков на 1000 L².
+    pub fn in_target(&self) -> Option<bool> {
+        if self.area_l2 < 10.0 {
+            return None;
+        }
+        self.per_1000_l2().map(|rate| rate <= 5.0)
+    }
+
+    /// Фрагмент JSON для ключа `climate124`, как у `ZonalProfile::json`.
+    pub fn json(&self) -> String {
+        let fmt = |v: Option<f64>| v.map_or_else(|| "null".to_string(), |x| format!("{x:.3}"));
+        format!(
+            "\"island_dust\": {{\"specks\": {}, \"area_l2\": {}, \"per_1000_l2\": {}, \"in_target\": {}}}",
+            self.specks,
+            fmt(Some(self.area_l2)),
+            fmt(self.per_1000_l2()),
+            self.in_target()
+                .map_or_else(|| "null".to_string(), |v| v.to_string()),
+        )
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct StatsOptions {
     pub size: usize,
@@ -539,6 +619,8 @@ pub struct HeightStats {
     pub coast: CoastAsymmetry,
     /// 12.4: дождевая тень за хребтами по той же сетке (Д-081).
     pub shadow: RainShadow,
+    /// 12.4: островная пыль по сетке границ (Д-082).
+    pub dust: IslandDust,
     pub river_samples: usize,
     pub river_water: usize,
     pub water_samples: usize,
@@ -1032,6 +1114,7 @@ impl HeightStats {
             plate_area_l2: 0.0,
             coast: CoastAsymmetry::default(),
             shadow: RainShadow::default(),
+            dust: IslandDust::default(),
             river_samples: 0,
             river_water: 0,
             water_samples: 0,
@@ -1075,6 +1158,7 @@ impl HeightStats {
             plate_area_l2: 0.0,
             coast: CoastAsymmetry::default(),
             shadow: RainShadow::default(),
+            dust: IslandDust::default(),
             river_samples: 0,
             river_water: 0,
             water_samples: 0,
@@ -1421,6 +1505,9 @@ impl HeightStats {
                 .analyze_grid(&bclass, &bland, &bclimate, &mut bjump);
             out.boundary.count_jump_causes(&bclass, &bland, &bfeature);
             out.boundary.count_field_jumps(&bfield, &bland);
+            // 12.4 (Д-082): пыль — компоненты связности той же маски суши.
+            out.dust
+                .add_patch(&bland, bn, (bstep / base.mode.l_blocks()).powi(2));
         }
         // 10.1: у v0 нет ни морфозон, ни сети — строка остаётся `null`.
         if plan_dev {
@@ -1628,6 +1715,17 @@ impl HeightStats {
                 None => "НЕТ ДАННЫХ",
             },
         ));
+        out.push_str(&format!(
+            "12.4 островная пыль: {specks} клочков (<0.01 L²) на {area:.2} L² сетки границ, {rate} на 1000 L² (ориентир ≤ 5) — {verdict}\n",
+            specks = self.dust.specks,
+            area = self.dust.area_l2,
+            rate = fmt_ratio(self.dust.per_1000_l2()),
+            verdict = match self.dust.in_target() {
+                Some(true) => "в ориентире",
+                Some(false) => "ВНЕ ОРИЕНТИРА",
+                None => "НЕТ ДАННЫХ",
+            },
+        ));
         let b = &self.boundary;
         out.push_str(&format!(
             "T134 границы: сетка {bn}×{bn} ({bsamples} точек), шаг {bs:.3} блока, область {span:.3}×{span:.3} L, суша {bl}\n\
@@ -1757,11 +1855,12 @@ impl HeightStats {
     /// Есть у обеих версий: нужные поля (`mountain`, зона) есть и в v0.
     pub fn climate124_json(&self) -> String {
         let zonal_and_plates = format!(
-            "{}, {}, {}, {}",
+            "{}, {}, {}, {}, {}",
             self.zonal.json(),
             self.plates.json(self.plate_area_l2),
             self.coast.json(),
-            self.shadow.json()
+            self.shadow.json(),
+            self.dust.json()
         );
         format!(
             "{{\"land\": {}, \"land_pct\": {:.4}, \"mountains_pct\": {:.4}, \"deserts_pct\": {:.4}, \"forests_pct\": {:.4}, \"polar_pct\": {:.4}, \"spawn_good\": {}, \"spawn_shift_l\": [{:.4}, {:.4}], {}}}",
@@ -2417,5 +2516,62 @@ mod shadow_tests {
             shadow.get("ridge_samples"),
             Some(&crate::json::Json::Number(0.0))
         );
+    }
+}
+
+#[cfg(test)]
+mod dust_tests {
+    use super::*;
+
+    fn grid(n: usize, cells: &[(usize, usize)]) -> Vec<bool> {
+        let mut land = vec![false; n * n];
+        for &(i, j) in cells {
+            land[j * n + i] = true;
+        }
+        land
+    }
+
+    #[test]
+    fn small_island_counts_big_and_border_do_not() {
+        // Клетка 0.001 L²: порог клочка — меньше 10 клеток.
+        let mut d = IslandDust::default();
+        // Островок из 2 клеток внутри и большой блок 4×4 у края.
+        let mut cells = vec![(2, 2), (3, 2)];
+        for j in 0..4 {
+            for i in 0..4 {
+                cells.push((6 + i, j));
+            }
+        }
+        d.add_patch(&grid(12, &cells), 12, 0.001);
+        assert_eq!(d.specks, 1);
+        assert!((d.area_l2 - 0.144).abs() < 1e-12);
+    }
+
+    #[test]
+    fn diagonal_cells_are_two_specks() {
+        let mut d = IslandDust::default();
+        d.add_patch(&grid(8, &[(2, 2), (3, 3)]), 8, 0.001);
+        assert_eq!(d.specks, 2);
+    }
+
+    #[test]
+    fn verdict_needs_ten_square_l() {
+        let mut d = IslandDust::default();
+        d.add_patch(&grid(8, &[(2, 2)]), 8, 0.001);
+        assert_eq!(d.in_target(), None); // площади мало
+        assert_eq!(d.per_1000_l2(), Some(1000.0 / 0.064));
+
+        let mut big = IslandDust::default();
+        big.add_patch(&vec![false; 200 * 200], 200, 0.001);
+        assert_eq!(big.in_target(), Some(true)); // 40 L² без клочков
+    }
+
+    #[test]
+    fn dust_json_is_parseable() {
+        let value = crate::json::parse(&format!("{{{}}}", IslandDust::default().json()))
+            .expect("пыль — валидный JSON");
+        let dust = value.get("island_dust").expect("ключ island_dust");
+        assert_eq!(dust.get("in_target"), Some(&crate::json::Json::Null));
+        assert_eq!(dust.get("specks"), Some(&crate::json::Json::Number(0.0)));
     }
 }
