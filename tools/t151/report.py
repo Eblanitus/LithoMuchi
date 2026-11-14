@@ -61,6 +61,9 @@ TARGETS = {
     # строки пропустятся, как у зонального профиля.
     "медиана поперечника плиты, L": ((12, 25), (12, 25)),
     "самая маленькая плита, L": ((4, None), (4, None)),
+    # 12.4 (Д-080): асимметрия берегов. Ключа нет в прогонах до этой
+    # метрики — строка пропустится, как у плит и зонального профиля.
+    "берега пассатов: восток/запад, ×": ((2, None), (2, None)),
 }
 MODES = ("gameplay", "scientific")
 CAUSE_NAMES = {
@@ -134,6 +137,9 @@ def _climate124_metrics(j):
     if isinstance(plates, dict):
         out["медиана поперечника плиты, L"] = plates.get("median_diameter_l")
         out["самая маленькая плита, L"] = plates.get("min_diameter_l")
+    coast = c.get("coast_asymmetry")
+    if isinstance(coast, dict):
+        out["берега пассатов: восток/запад, ×"] = coast.get("ratio")
     return out
 
 
