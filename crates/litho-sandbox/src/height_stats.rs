@@ -340,7 +340,11 @@ impl RainShadow {
         self.leeward_sum += leeward;
     }
 
-    fn score_row(north: &[ShadowCell], cur: &[ShadowCell], south: &[ShadowCell]) -> (usize, f64, f64) {
+    fn score_row(
+        north: &[ShadowCell],
+        cur: &[ShadowCell],
+        south: &[ShadowCell],
+    ) -> (usize, f64, f64) {
         let mut out = (0_usize, 0.0, 0.0);
         if cur.len() < 3 || north.len() != cur.len() || south.len() != cur.len() {
             return out;
