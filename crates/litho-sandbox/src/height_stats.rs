@@ -440,6 +440,9 @@ impl RainShadow {
 pub struct IslandDust {
     pub specks: usize,
     pub area_l2: f64,
+    /// Площадь клетки сетки в L²: если она не меньше порога клочка,
+    /// пыль этой сеткой не разрешается (Д-083).
+    pub cell_area_l2: f64,
 }
 
 impl IslandDust {
@@ -448,6 +451,7 @@ impl IslandDust {
             return;
         }
         self.area_l2 += n as f64 * n as f64 * cell_area_l2;
+        self.cell_area_l2 = cell_area_l2;
         let mut seen = vec![false; n * n];
         let mut stack: Vec<usize> = Vec::new();
         for start in 0..n * n {
@@ -489,7 +493,7 @@ impl IslandDust {
 
     /// Ориентир 12.4: не больше 5 клочков на 1000 L².
     pub fn in_target(&self) -> Option<bool> {
-        if self.area_l2 < 10.0 {
+        if self.area_l2 < 10.0 || self.cell_area_l2 >= 0.01 {
             return None;
         }
         self.per_1000_l2().map(|rate| rate <= 5.0)
@@ -499,9 +503,10 @@ impl IslandDust {
     pub fn json(&self) -> String {
         let fmt = |v: Option<f64>| v.map_or_else(|| "null".to_string(), |x| format!("{x:.3}"));
         format!(
-            "\"island_dust\": {{\"specks\": {}, \"area_l2\": {}, \"per_1000_l2\": {}, \"in_target\": {}}}",
+            "\"island_dust\": {{\"specks\": {}, \"area_l2\": {}, \"cell_area_l2\": {}, \"per_1000_l2\": {}, \"in_target\": {}}}",
             self.specks,
             fmt(Some(self.area_l2)),
+            fmt(Some(self.cell_area_l2)),
             fmt(self.per_1000_l2()),
             self.in_target()
                 .map_or_else(|| "null".to_string(), |v| v.to_string()),
@@ -2573,5 +2578,20 @@ mod dust_tests {
         let dust = value.get("island_dust").expect("ключ island_dust");
         assert_eq!(dust.get("in_target"), Some(&crate::json::Json::Null));
         assert_eq!(dust.get("specks"), Some(&crate::json::Json::Number(0.0)));
+    }
+}
+
+#[cfg(test)]
+mod dust_resolution_tests {
+    use super::*;
+
+    #[test]
+    fn coarse_cell_is_no_data_not_a_pass() {
+        // Д-083: клетка 0.02 L² крупнее порога клочка 0.01 L² — даже
+        // пустая сетка не «в цели», а не измерена.
+        let mut d = IslandDust::default();
+        d.add_patch(&vec![false; 100 * 100], 100, 0.02);
+        assert_eq!(d.specks, 0);
+        assert_eq!(d.in_target(), None);
     }
 }
