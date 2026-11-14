@@ -2410,6 +2410,9 @@ mod shadow_tests {
             .expect("тень — валидный JSON");
         let shadow = value.get("rain_shadow").expect("ключ rain_shadow");
         assert_eq!(shadow.get("in_target"), Some(&crate::json::Json::Null));
-        assert_eq!(shadow.get("ridge_samples"), Some(&crate::json::Json::Number(0.0)));
+        assert_eq!(
+            shadow.get("ridge_samples"),
+            Some(&crate::json::Json::Number(0.0))
+        );
     }
 }
