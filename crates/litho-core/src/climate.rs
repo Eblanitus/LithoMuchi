@@ -82,6 +82,18 @@ fn pole_in_cell(seed: u64, i: i64, j: i64, params: &Params) -> Vec2 {
 /// Геометрия двух ближайших полюсов после искажения домена. Выделена отдельно,
 /// чтобы скаляр φ для конечных разностей T131 считался той же формулой, что и
 /// φ в `pole_sample`, без второго расхождения реализаций.
+// Д-089: список полюсов окна зависит только от (сид, клетка, радиус), а не от
+// точки. Луч влаги с веером делает до ~500 запросов `wind_at` на одну точку
+// замера, и при `cell_g_p_l` в сотни L все они попадают в одно и то же окно —
+// держать его в потоке как в Д-027 (`PLATE_CANDIDATES`). Порядок обхода
+// сохраняется, ответ побайтово тот же.
+type PoleCandidateCache = Option<(u64, u64, i64, i64, i64, std::rc::Rc<Vec<Vec2>>)>;
+
+thread_local! {
+    static POLE_CANDIDATES: std::cell::RefCell<PoleCandidateCache> =
+        const { std::cell::RefCell::new(None) };
+}
+
 fn pole_geometry(point: Vec2, seed: u64, params: &Params) -> Option<(Vec2, Vec2, f64, Vec2, f64)> {
     let pol = &params.poles;
     let shifted = warp2(
@@ -98,18 +110,39 @@ fn pole_geometry(point: Vec2, seed: u64, params: &Params) -> Option<(Vec2, Vec2,
     let ci = (q.x / g).floor() as i64;
     let cj = (q.z / g).floor() as i64;
     let radius = pol.query_radius_cells;
+    let candidates: std::rc::Rc<Vec<Vec2>> = POLE_CANDIDATES.with(|slot| {
+        let mut slot = slot.borrow_mut();
+        if let Some((s, key, i, j, r, candidates)) = slot.as_ref() {
+            if *s == seed && *key == params.config_key && *i == ci && *j == cj && *r == radius {
+                return std::rc::Rc::clone(candidates);
+            }
+        }
+        let mut candidates = Vec::with_capacity(((2 * radius + 1) * (2 * radius + 1)) as usize);
+        for dj in -radius..=radius {
+            for di in -radius..=radius {
+                candidates.push(pole_in_cell(seed, ci + di, cj + dj, params));
+            }
+        }
+        let candidates = std::rc::Rc::new(candidates);
+        *slot = Some((
+            seed,
+            params.config_key,
+            ci,
+            cj,
+            radius,
+            std::rc::Rc::clone(&candidates),
+        ));
+        candidates
+    });
     let mut best = (f64::INFINITY, Vec2::default());
     let mut second = (f64::INFINITY, Vec2::default());
-    for di in -radius..=radius {
-        for dj in -radius..=radius {
-            let candidate = pole_in_cell(seed, ci + di, cj + dj, params);
-            let d = q.sub(candidate).len();
-            if d < best.0 {
-                second = best;
-                best = (d, candidate);
-            } else if d < second.0 {
-                second = (d, candidate);
-            }
+    for &candidate in candidates.iter() {
+        let d = q.sub(candidate).len();
+        if d < best.0 {
+            second = best;
+            best = (d, candidate);
+        } else if d < second.0 {
+            second = (d, candidate);
         }
     }
     if !best.0.is_finite() || !second.0.is_finite() {
