@@ -1,0 +1,22 @@
+name: clippy-fix (временный)
+on:
+  push:
+    branches: [arena/265f4bd2-lithomuchi]
+    paths: [clippy-fix.trigger]
+permissions:
+  contents: write
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - run: |
+          cargo clippy -p litho-sandbox --all-targets --message-format=short -- -D warnings > clippy-out.txt 2>&1 || true
+      - run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add clippy-out.txt
+          if git diff --cached --quiet; then echo "изменений нет"; else git commit -m "clippy-fix: вывод clippy (временный workflow)"; git push; fi
