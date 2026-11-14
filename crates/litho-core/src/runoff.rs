@@ -30,12 +30,21 @@ pub struct ClimateGrid {
     cells: HashMap<Cell, RunoffClimate>,
 }
 
+/// T79, вторая часть: ниже этого числа узлов климатической решётки потоки
+/// дороже самой выборки. Ограничение сверху не даёт песочнице, которая уже
+/// рисует карты в несколько потоков, размножать потоки на каждый чанк.
+const CLIMATE_PARALLEL_MIN_KEYS: usize = 64;
+const CLIMATE_PARALLEL_MAX_THREADS: usize = 4;
+
 impl ClimateGrid {
-    pub fn build<'a>(
+    pub fn build<'a, F>(
         points: impl IntoIterator<Item = &'a Vec2>,
         step_l: f64,
-        sample: impl Fn(Vec2) -> Option<RunoffClimate>,
-    ) -> Result<Self, RiverNetError> {
+        sample: F,
+    ) -> Result<Self, RiverNetError>
+    where
+        F: Fn(Vec2) -> Option<RunoffClimate> + Sync,
+    {
         if !step_l.is_finite() || step_l <= 0.0 {
             return Err(RiverNetError::InvalidParameters(
                 "climate_step_l должен быть положительным",
@@ -61,18 +70,12 @@ impl ClimateGrid {
                 }
             }
         }
+        // BTreeSet задаёт порядок ключей; значения собираются в том же порядке,
+        // поэтому параллельная выборка побитово равна последовательной.
+        let keys: Vec<Cell> = keys.into_iter().collect();
+        let values = sample_climate_keys(&keys, step_l, &sample)?;
         let mut cells = HashMap::with_capacity(keys.len());
-        for key in keys {
-            let point = Vec2::new(key.0 as f64 * step_l, key.1 as f64 * step_l);
-            let value = sample(point).ok_or(RiverNetError::InvalidClimate { cell: key })?;
-            if !value.p_mm.is_finite()
-                || !value.pet_mm.is_finite()
-                || value.p_mm < 0.0
-                || value.pet_mm < 0.0
-                || !value.t_min_c.is_finite()
-            {
-                return Err(RiverNetError::InvalidClimate { cell: key });
-            }
+        for (key, value) in keys.into_iter().zip(values) {
             cells.insert(key, value);
         }
         Ok(Self { step_l, cells })
@@ -138,6 +141,84 @@ impl ClimateGrid {
     pub fn is_empty(&self) -> bool {
         self.cells.is_empty()
     }
+}
+
+/// Один узел климатической решётки. Вынесена, чтобы последовательный и
+/// параллельный пути считали ровно одну и ту же функцию точки.
+fn climate_key_value<F>(key: Cell, step_l: f64, sample: &F) -> Result<RunoffClimate, RiverNetError>
+where
+    F: Fn(Vec2) -> Option<RunoffClimate> + Sync,
+{
+    let point = Vec2::new(key.0 as f64 * step_l, key.1 as f64 * step_l);
+    let value = sample(point).ok_or(RiverNetError::InvalidClimate { cell: key })?;
+    if !value.p_mm.is_finite()
+        || !value.pet_mm.is_finite()
+        || value.p_mm < 0.0
+        || value.pet_mm < 0.0
+        || !value.t_min_c.is_finite()
+    {
+        return Err(RiverNetError::InvalidClimate { cell: key });
+    }
+    Ok(value)
+}
+
+/// T79, вторая часть: 400+ узлов климата — почти всё время сборки сети рек
+/// (180 мс из 212 на сиде 42 в gameplay). Узлы независимы, формула чистая,
+/// поэтому делим отсортированный список ключей на чанки и считаем их в
+/// `std::thread::scope`. Значения возвращаются в порядке ключей: ответ
+/// побитово тот же, что при последовательном обходе. `LITHO_CLIMATE_GRID_SERIAL=1`
+/// выключает параллелизм для диагностики и сверки.
+fn sample_climate_keys<F>(
+    keys: &[Cell],
+    step_l: f64,
+    sample: &F,
+) -> Result<Vec<RunoffClimate>, RiverNetError>
+where
+    F: Fn(Vec2) -> Option<RunoffClimate> + Sync,
+{
+    let serial = std::env::var_os("LITHO_CLIMATE_GRID_SERIAL").is_some();
+    let threads = if serial {
+        1
+    } else {
+        std::thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(1)
+            .min(CLIMATE_PARALLEL_MAX_THREADS)
+    };
+    if threads < 2 || keys.len() < CLIMATE_PARALLEL_MIN_KEYS {
+        return keys
+            .iter()
+            .copied()
+            .map(|key| climate_key_value(key, step_l, sample))
+            .collect();
+    }
+    let chunk = keys.len().div_ceil(threads);
+    std::thread::scope(|scope| {
+        let handles: Vec<_> = keys
+            .chunks(chunk)
+            .map(|part| {
+                scope.spawn(move || {
+                    part.iter()
+                        .copied()
+                        .map(|key| climate_key_value(key, step_l, sample))
+                        .collect::<Result<Vec<_>, _>>()
+                })
+            })
+            .collect();
+        let mut values = Vec::with_capacity(keys.len());
+        for handle in handles {
+            match handle.join() {
+                Ok(Ok(part)) => values.extend(part),
+                Ok(Err(err)) => return Err(err),
+                Err(_) => {
+                    return Err(RiverNetError::InvalidParameters(
+                        "поток выборки климатической решётки завершился с паникой",
+                    ));
+                }
+            }
+        }
+        Ok(values)
+    })
 }
 
 fn checked_cell(i: i64, j: i64, di: i64, dj: i64) -> Option<Cell> {
@@ -681,6 +762,31 @@ mod tests {
             })
         })
         .unwrap()
+    }
+
+    /// T79, вторая часть: попадаем в параллельную ветку (`>= 64` ключей) и
+    /// сверяем каждый узел с чистой функцией точки. Порядок обхода ключей и
+    /// ответ не должны зависеть от числа потоков.
+    #[test]
+    fn climate_grid_parallel_matches_pointwise_values() {
+        let points: Vec<Vec2> = (0..12)
+            .flat_map(|i| (0..12).map(move |j| Vec2::new(i as f64 * 1.7, j as f64 * 1.7)))
+            .collect();
+        let grid = ClimateGrid::build(&points, 1.0, |q| {
+            Some(RunoffClimate {
+                p_mm: 100.0 + 0.5 * q.x,
+                pet_mm: 20.0 + 0.25 * q.z,
+                t_min_c: 5.0 + q.x - q.z,
+            })
+        })
+        .unwrap();
+        assert!(grid.len() >= super::CLIMATE_PARALLEL_MIN_KEYS);
+        for (&key, value) in &grid.cells {
+            let q = Vec2::new(key.0 as f64, key.1 as f64);
+            assert_eq!(value.p_mm, 100.0 + 0.5 * q.x);
+            assert_eq!(value.pet_mm, 20.0 + 0.25 * q.z);
+            assert_eq!(value.t_min_c, 5.0 + q.x - q.z);
+        }
     }
 
     #[test]
