@@ -2,10 +2,10 @@
 
 > **Актуально на 2026-11-12, T79 (Д-064) и шаг 7 (Д-065).** Таблица и хеши
 > сгенерированы из `Params::defaults`; `v0` не менялась. Что изменилось —
-> [T79-LOD-2026-11-12.md](T79-LOD-2026-11-12.md) (дальний рельеф) и
+> [archive/T79-LOD-2026-11-12.md](archive/T79-LOD-2026-11-12.md) (дальний рельеф) и
 > `docs/t151/` (подбор по 16 сидам); прежние отчёты —
-> [STEP5-RELIEF-2026-11-11.md](STEP5-RELIEF-2026-11-11.md) и
-> [STEP6-SPEED-2026-11-11.md](STEP6-SPEED-2026-11-11.md), карта документов —
+> [archive/STEP5-RELIEF-2026-11-11.md](archive/STEP5-RELIEF-2026-11-11.md) и
+> [archive/STEP6-SPEED-2026-11-11.md](archive/STEP6-SPEED-2026-11-11.md), карта документов —
 > [docs/README.md](README.md).
 
 Сгенерировано `cargo run -p xtask -- params-doc --version v1-dev > docs/PARAMS-V1-DEV.md`.
