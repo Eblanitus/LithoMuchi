@@ -76,6 +76,7 @@ build_xtask() {
 }
 
 test_core() {
+  mkdir -p "$OUT"
   if stale "$OUT/t-core.wasm" "$CORE/src"; then
     echo "· тесты litho-core" >&2
     rustc "${TESTOPT[@]}" --test --crate-name litho_core "$CORE/src/lib.rs" -o "$OUT/t-core.wasm"

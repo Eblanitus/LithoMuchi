@@ -155,6 +155,56 @@ fn cell_bounds(nodes: &[DrainageNode]) -> Option<(Cell, Cell)> {
     Some((lo, hi))
 }
 
+// Диагностика включается только явно и пишет в stderr, чтобы не портить JSON
+// песочницы. Замеры локальны вызову и не влияют на результат построения.
+struct BuildTimings {
+    start: Option<std::time::Instant>,
+    last: Option<std::time::Instant>,
+    plate_id: u64,
+    phases: Vec<(&'static str, std::time::Duration)>,
+}
+
+impl BuildTimings {
+    fn new(plate_id: u64) -> Self {
+        let start = (std::env::var_os("LITHO_DRAINAGE_TIMINGS").as_deref()
+            == Some(std::ffi::OsStr::new("1")))
+        .then(std::time::Instant::now);
+        Self {
+            start,
+            last: start,
+            plate_id,
+            phases: Vec::new(),
+        }
+    }
+
+    fn phase(&mut self, name: &'static str) {
+        if let Some(last) = self.last {
+            let now = std::time::Instant::now();
+            self.phases.push((name, now.duration_since(last)));
+            self.last = Some(now);
+        }
+    }
+
+    fn total(&self) {
+        if let Some(start) = self.start {
+            // Снимаем общее время до печати, чтобы I/O не попадал в фазы.
+            let total = start.elapsed();
+            for (name, elapsed) in &self.phases {
+                eprintln!(
+                    "litho-core: drainage plate={} phase={name} ms={:.3}",
+                    self.plate_id,
+                    elapsed.as_secs_f64() * 1000.0
+                );
+            }
+            eprintln!(
+                "litho-core: drainage plate={} phase=total ms={:.3}",
+                self.plate_id,
+                total.as_secs_f64() * 1000.0
+            );
+        }
+    }
+}
+
 impl RiverNet {
     pub fn build(
         plate: &Plate,
@@ -166,14 +216,17 @@ impl RiverNet {
         if !params.version.is_water_relief_dev() {
             return Err(RiverNetError::UnsupportedVersion(params.version));
         }
+        let mut timings = BuildTimings::new(plate.id);
         validate_params(params)?;
         let p = &params.drainage;
         let anchor = find_anchor(plate, seed, params)?;
+        timings.phase("anchor");
         let (mut owned, ring) = collect_cells(anchor, plate.id, seed, params);
         owned.sort_unstable();
         let mut cells = owned.clone();
         cells.extend(ring);
         cells.sort_unstable();
+        timings.phase("cells");
         let mut index = HashMap::with_capacity(cells.len());
         let mut nodes = Vec::with_capacity(cells.len());
         for (k, cell) in cells.into_iter().enumerate() {
@@ -194,6 +247,7 @@ impl RiverNet {
                 depression: None,
             });
         }
+        timings.phase("nodes");
         let neighbors = grid_neighbors(&nodes, &index);
         let depressions = route_nodes(
             &mut nodes,
@@ -202,11 +256,16 @@ impl RiverNet {
             p.depression_min_depth_km,
             p.lake_area_max_fraction,
         );
+        timings.phase("routing");
         let points: Vec<_> = nodes.iter().map(|node| node.point).collect();
         let grid = ClimateGrid::build(&points, p.climate_step_l, climate)?;
+        timings.phase("climate");
         let runoff = Runoff::calculate(&nodes, &depressions, &grid, params)?;
+        timings.phase("runoff");
         let channels = ChannelNetwork::build(plate.id, seed, &nodes, &runoff, params)?;
+        timings.phase("channels");
         let lakes = LakeNetwork::build(plate.id, &nodes, &depressions, &runoff, params)?;
+        timings.phase("lakes");
         let net = Self {
             plate_id: plate.id,
             step_l: p.step_l,
@@ -218,6 +277,8 @@ impl RiverNet {
             lakes,
         };
         net.check_invariants(p.fill_epsilon_km)?;
+        timings.phase("invariants");
+        timings.total();
         Ok(net)
     }
 
