@@ -2391,11 +2391,17 @@ mod coast_tests {
     fn row(cells: &[(bool, f64)]) -> Vec<CoastCell> {
         // (суша, осадки) при φ = 15°, восток модели = +x:
         // (land, phi, p, east_x, east_z)
-        cells.iter().map(|&(land, p)| (land, 15.0, p, 1.0, 0.0)).collect()
+        cells
+            .iter()
+            .map(|&(land, p)| (land, 15.0, p, 1.0, 0.0))
+            .collect()
     }
 
     fn row_east(cells: &[(bool, f64)], east: (f64, f64)) -> Vec<CoastCell> {
-        cells.iter().map(|&(land, p)| (land, 15.0, p, east.0, east.1)).collect()
+        cells
+            .iter()
+            .map(|&(land, p)| (land, 15.0, p, east.0, east.1))
+            .collect()
     }
 
     #[test]
