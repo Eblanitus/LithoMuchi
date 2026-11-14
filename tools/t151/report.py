@@ -57,6 +57,17 @@ TARGETS = {
     # Д-074: профиль P(φ) по 18 поясам. Ключа нет в climate124-1 и старше,
     # поэтому в старых сводках строка пропускается, а не «0/16».
     "зональный профиль осадков": ((True, True), (True, True)),
+    # 12.4: поперечники плит. Ключа `plates` нет в прогонах до этой метрики —
+    # строки пропустятся, как у зонального профиля.
+    "медиана поперечника плиты, L": ((12, 25), (12, 25)),
+    "самая маленькая плита, L": ((4, None), (4, None)),
+    # 12.4 (Д-080): асимметрия берегов. Ключа нет в прогонах до этой
+    # метрики — строка пропустится, как у плит и зонального профиля.
+    "берега пассатов: восток/запад, ×": ((2, None), (2, None)),
+    # 12.4 (Д-081): дождевая тень. Ключа нет в прогонах до этой метрики.
+    "дождевая тень: снижение осадков, %": ((40, None), (40, None)),
+    # 12.4 (Д-082): островная пыль. Ключа нет в прогонах до этой метрики.
+    "островная пыль: клочков на 1000 L²": ((None, 5), (None, 5)),
 }
 MODES = ("gameplay", "scientific")
 CAUSE_NAMES = {
@@ -126,6 +137,19 @@ def _climate124_metrics(j):
     z = c.get("zonal_profile")
     if isinstance(z, dict):
         out["зональный профиль осадков"] = z.get("in_target")
+    plates = c.get("plates")
+    if isinstance(plates, dict):
+        out["медиана поперечника плиты, L"] = plates.get("median_diameter_l")
+        out["самая маленькая плита, L"] = plates.get("min_diameter_l")
+    coast = c.get("coast_asymmetry")
+    if isinstance(coast, dict):
+        out["берега пассатов: восток/запад, ×"] = coast.get("ratio")
+    shadow = c.get("rain_shadow")
+    if isinstance(shadow, dict):
+        out["дождевая тень: снижение осадков, %"] = shadow.get("drop_pct")
+    dust = c.get("island_dust")
+    if isinstance(dust, dict):
+        out["островная пыль: клочков на 1000 L²"] = dust.get("per_1000_l2")
     return out
 
 

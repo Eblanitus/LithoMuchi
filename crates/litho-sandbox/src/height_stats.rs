@@ -1,6 +1,8 @@
 //! Метрики T100 / раздела 10.1 пересмотра. Отдельная диагностика поверхности,
 //! не подмена существующих метрик 12.4 команды `stats` без новых флагов.
 
+use std::collections::{HashMap, HashSet, VecDeque};
+
 use litho_core::vanilla::peaks_valleys;
 use litho_core::{Mode, SurfaceKind};
 
@@ -131,6 +133,387 @@ impl ZonalProfile {
     }
 }
 
+/// 12.4: поперечники плит по основной сетке. Плита учитывается, только
+/// если она целиком попала в скан: плиты, касающиеся края области, обрезаны
+/// сканом, и их видимая площадь занижает поперечник. Поперечник —
+/// эквивалентный по площади: `2·sqrt(A/π)`, площадь — число точек плиты,
+/// умноженное на площадь точки сетки в L².
+#[derive(Clone, Debug, Default)]
+pub struct PlateSizes {
+    pub counts: HashMap<u64, usize>,
+    pub border: HashSet<u64>,
+}
+
+impl PlateSizes {
+    pub fn add(&mut self, plate_id: u64, on_border: bool) {
+        *self.counts.entry(plate_id).or_insert(0) += 1;
+        if on_border {
+            self.border.insert(plate_id);
+        }
+    }
+
+    /// Поперечники плит, целиком попавших в скан, по возрастанию.
+    pub fn diameters(&self, point_area_l2: f64) -> Vec<f64> {
+        if point_area_l2 <= 0.0 {
+            return Vec::new();
+        }
+        let mut out: Vec<f64> = self
+            .counts
+            .iter()
+            .filter(|(id, _)| !self.border.contains(id))
+            .map(|(_, count)| 2.0 * ((*count as f64 * point_area_l2) / std::f64::consts::PI).sqrt())
+            .collect();
+        out.sort_by(|a, b| a.total_cmp(b));
+        out
+    }
+
+    pub fn median_diameter(&self, point_area_l2: f64) -> Option<f64> {
+        let diameters = self.diameters(point_area_l2);
+        let n = diameters.len();
+        if n == 0 {
+            None
+        } else if n % 2 == 1 {
+            Some(diameters[n / 2])
+        } else {
+            Some((diameters[n / 2 - 1] + diameters[n / 2]) * 0.5)
+        }
+    }
+
+    pub fn min_diameter(&self, point_area_l2: f64) -> Option<f64> {
+        self.diameters(point_area_l2).first().copied()
+    }
+
+    /// Фрагмент JSON для ключа `climate124`, как у `ZonalProfile::json`.
+    pub fn json(&self, point_area_l2: f64) -> String {
+        let fmt = |v: Option<f64>| v.map_or_else(|| "null".to_string(), |x| format!("{x:.3}"));
+        format!(
+            "\"plates\": {{\"plates\": {}, \"counted\": {}, \"median_diameter_l\": {}, \"min_diameter_l\": {}}}",
+            self.counts.len(),
+            self.diameters(point_area_l2).len(),
+            fmt(self.median_diameter(point_area_l2)),
+            fmt(self.min_diameter(point_area_l2)),
+        )
+    }
+}
+
+/// 12.4: асимметрия берегов в поясе пассатов 10–25° (Д-079). Береговая
+/// точка суши — суша (`C` не ниже порога океаничности) хотя бы с одним
+/// соседом-водой по 4-соседству. Восточный берег — вода только с востока
+/// (+x), западный — только с запада (−x); точки с водой с обеих сторон
+/// или только с севера/юга в сравнение не идут: у них нет однозначной
+/// восточности. Крайние строки и столбцы скана не оцениваются — у них
+/// нет полного соседства. Строки подаются потоково по три: оценивается
+/// средняя, поэтому сетку хранить не нужно.
+#[derive(Clone, Debug, Default)]
+pub struct CoastAsymmetry {
+    rows: VecDeque<Vec<(bool, f64, f64)>>,
+    pub east_sum: f64,
+    pub east_count: usize,
+    pub west_sum: f64,
+    pub west_count: usize,
+}
+
+impl CoastAsymmetry {
+    pub fn push_row(&mut self, row: Vec<(bool, f64, f64)>) {
+        self.rows.push_back(row);
+        if self.rows.len() < 3 {
+            return;
+        }
+        let north = self.rows.pop_front().unwrap_or_default();
+        let (Some(cur), Some(south)) = (self.rows.front(), self.rows.back()) else {
+            return;
+        };
+        let (e_sum, e_count, w_sum, w_count) = Self::score_row(&north, cur, south);
+        self.east_sum += e_sum;
+        self.east_count += e_count;
+        self.west_sum += w_sum;
+        self.west_count += w_count;
+    }
+
+    fn score_row(
+        north: &[(bool, f64, f64)],
+        cur: &[(bool, f64, f64)],
+        south: &[(bool, f64, f64)],
+    ) -> (f64, usize, f64, usize) {
+        let mut out = (0.0, 0_usize, 0.0, 0_usize);
+        if cur.len() < 3 || north.len() != cur.len() || south.len() != cur.len() {
+            return out;
+        }
+        for i in 1..cur.len() - 1 {
+            let (land, phi, p) = cur[i];
+            if !land || !p.is_finite() || !(10.0..=25.0).contains(&phi) {
+                continue;
+            }
+            let east_ocean = !cur[i + 1].0;
+            let west_ocean = !cur[i - 1].0;
+            let coastal = east_ocean || west_ocean || !north[i].0 || !south[i].0;
+            if !coastal {
+                continue;
+            }
+            match (east_ocean, west_ocean) {
+                (true, false) => {
+                    out.0 += p;
+                    out.1 += 1;
+                }
+                (false, true) => {
+                    out.2 += p;
+                    out.3 += 1;
+                }
+                _ => {}
+            }
+        }
+        out
+    }
+
+    pub fn east_mean(&self) -> Option<f64> {
+        (self.east_count > 0).then(|| self.east_sum / self.east_count as f64)
+    }
+
+    pub fn west_mean(&self) -> Option<f64> {
+        (self.west_count > 0).then(|| self.west_sum / self.west_count as f64)
+    }
+
+    pub fn ratio(&self) -> Option<f64> {
+        match (self.east_mean(), self.west_mean()) {
+            (Some(east), Some(west)) if west > 0.0 => Some(east / west),
+            _ => None,
+        }
+    }
+
+    /// Ориентир 12.4: восточные берега в среднем не суше западных в 2 раза
+    /// и больше. `None` — точек мало: «НЕТ ДАННЫХ», а не провал.
+    pub fn in_target(&self) -> Option<bool> {
+        if self.east_count < ZONAL_MIN_SAMPLES || self.west_count < ZONAL_MIN_SAMPLES {
+            return None;
+        }
+        self.ratio().map(|ratio| ratio >= 2.0)
+    }
+
+    /// Фрагмент JSON для ключа `climate124`, как у `ZonalProfile::json`.
+    pub fn json(&self) -> String {
+        let fmt = |v: Option<f64>| v.map_or_else(|| "null".to_string(), |x| format!("{x:.3}"));
+        format!(
+            "\"coast_asymmetry\": {{\"band_deg\": [10, 25], \"east_mean_mm\": {}, \"west_mean_mm\": {}, \"ratio\": {}, \"east_samples\": {}, \"west_samples\": {}, \"in_target\": {}}}",
+            fmt(self.east_mean()),
+            fmt(self.west_mean()),
+            fmt(self.ratio()),
+            self.east_count,
+            self.west_count,
+            self.in_target()
+                .map_or_else(|| "null".to_string(), |v| v.to_string()),
+        )
+    }
+}
+
+/// 12.4: дождевая тень за хребтами (Д-081). Хребтовая точка — суша с
+/// `M > 0,6`. По направлению ветра (`climate.wind` дует по ветру, луч
+/// влаги идёт против него) берутся соседние точки сетки: наветренная —
+/// шаг против ветра, подветренная — шаг по ветру; направление квантуется
+/// к ближайшему из 8 соседей. Шаг основной сетки при обычном замере —
+/// 1,25 L, это ближайшая дискретизация «в пределах 1 L» из 12.4.
+/// Снижение — по средним: `1 − P_подветр / P_наветр`; обе стороны берутся
+/// как есть, включая океан: осадки атмосферные. Край скана не оценивается.
+/// Ячейка строки дождевой тени: (суша, осадки мм/год, `M`, ветер x, ветер z).
+type ShadowCell = (bool, f64, f64, f64, f64);
+
+#[derive(Clone, Debug, Default)]
+pub struct RainShadow {
+    rows: VecDeque<Vec<ShadowCell>>,
+    pub ridge_count: usize,
+    pub windward_sum: f64,
+    pub leeward_sum: f64,
+}
+
+impl RainShadow {
+    pub fn push_row(&mut self, row: Vec<ShadowCell>) {
+        self.rows.push_back(row);
+        if self.rows.len() < 3 {
+            return;
+        }
+        let north = self.rows.pop_front().unwrap_or_default();
+        let (Some(cur), Some(south)) = (self.rows.front(), self.rows.back()) else {
+            return;
+        };
+        let (count, windward, leeward) = Self::score_row(&north, cur, south);
+        self.ridge_count += count;
+        self.windward_sum += windward;
+        self.leeward_sum += leeward;
+    }
+
+    fn score_row(
+        north: &[ShadowCell],
+        cur: &[ShadowCell],
+        south: &[ShadowCell],
+    ) -> (usize, f64, f64) {
+        let mut out = (0_usize, 0.0, 0.0);
+        if cur.len() < 3 || north.len() != cur.len() || south.len() != cur.len() {
+            return out;
+        }
+        let rows = [north, cur, south];
+        for i in 1..cur.len() - 1 {
+            let (land, _, mountain, wind_x, wind_z) = cur[i];
+            if !land || mountain <= 0.6 || !wind_x.is_finite() || !wind_z.is_finite() {
+                continue;
+            }
+            let norm = (wind_x * wind_x + wind_z * wind_z).sqrt();
+            if norm <= 0.0 {
+                continue;
+            }
+            // Ближайший из 8 соседей к направлению ветра.
+            let mut best = (0_i64, 0_i64, f64::NEG_INFINITY);
+            for dz in -1_i64..=1 {
+                for dx in -1_i64..=1 {
+                    if dx == 0 && dz == 0 {
+                        continue;
+                    }
+                    let len = ((dx * dx + dz * dz) as f64).sqrt();
+                    let dot = (wind_x * dx as f64 + wind_z * dz as f64) / (norm * len);
+                    if dot > best.2 {
+                        best = (dx, dz, dot);
+                    }
+                }
+            }
+            let (dx, dz) = (best.0, best.1);
+            let at = |ox: i64, oz: i64| rows[(oz + 1) as usize][(i as i64 + ox) as usize].1;
+            let windward = at(-dx, -dz);
+            let leeward = at(dx, dz);
+            if !windward.is_finite() || !leeward.is_finite() {
+                continue;
+            }
+            out.0 += 1;
+            out.1 += windward;
+            out.2 += leeward;
+        }
+        out
+    }
+
+    pub fn windward_mean(&self) -> Option<f64> {
+        (self.ridge_count > 0).then(|| self.windward_sum / self.ridge_count as f64)
+    }
+
+    pub fn leeward_mean(&self) -> Option<f64> {
+        (self.ridge_count > 0).then(|| self.leeward_sum / self.ridge_count as f64)
+    }
+
+    /// Снижение осадков за хребтами в процентах от наветренной стороны.
+    pub fn drop_pct(&self) -> Option<f64> {
+        match (self.windward_mean(), self.leeward_mean()) {
+            (Some(windward), Some(leeward)) if windward > 0.0 => {
+                Some(100.0 * (1.0 - leeward / windward))
+            }
+            _ => None,
+        }
+    }
+
+    /// Ориентир 12.4: снижение не меньше 40 %. `None` — хребтовых точек
+    /// мало: «НЕТ ДАННЫХ», а не провал.
+    pub fn in_target(&self) -> Option<bool> {
+        if self.ridge_count < ZONAL_MIN_SAMPLES {
+            return None;
+        }
+        self.drop_pct().map(|drop| drop >= 40.0)
+    }
+
+    /// Фрагмент JSON для ключа `climate124`, как у `ZonalProfile::json`.
+    pub fn json(&self) -> String {
+        let fmt = |v: Option<f64>| v.map_or_else(|| "null".to_string(), |x| format!("{x:.3}"));
+        format!(
+            "\"rain_shadow\": {{\"ridge_samples\": {}, \"windward_mean_mm\": {}, \"leeward_mean_mm\": {}, \"drop_pct\": {}, \"in_target\": {}}}",
+            self.ridge_count,
+            fmt(self.windward_mean()),
+            fmt(self.leeward_mean()),
+            fmt(self.drop_pct()),
+            self.in_target()
+                .map_or_else(|| "null".to_string(), |v| v.to_string()),
+        )
+    }
+}
+
+/// 12.4: «островная пыль» (Д-082) — компоненты связности суши на сетке
+/// границ (шаг 32 блока, как объём приёмки 10.1 по шагу). Клочок —
+/// компонента из 4-соседних клеток суши площадью меньше 0,01 L², целиком
+/// внутри пятна: касающиеся края пятна обрезаны сканом и не считаются,
+/// как краевые плиты в Д-078. Нормировка — на просканированную площадь
+/// всех пятен; вердикт при площади не меньше 10 L², иначе объёма мало и
+/// это «НЕТ ДАННЫХ» (на обычном малом объёме границ так и будет).
+#[derive(Clone, Debug, Default)]
+pub struct IslandDust {
+    pub specks: usize,
+    pub area_l2: f64,
+    /// Площадь клетки сетки в L²: если она не меньше порога клочка,
+    /// пыль этой сеткой не разрешается (Д-083).
+    pub cell_area_l2: f64,
+}
+
+impl IslandDust {
+    pub fn add_patch(&mut self, land: &[bool], n: usize, cell_area_l2: f64) {
+        if n == 0 || land.len() != n * n || cell_area_l2 <= 0.0 {
+            return;
+        }
+        self.area_l2 += n as f64 * n as f64 * cell_area_l2;
+        self.cell_area_l2 = cell_area_l2;
+        let mut seen = vec![false; n * n];
+        let mut stack: Vec<usize> = Vec::new();
+        for start in 0..n * n {
+            if !land[start] || seen[start] {
+                continue;
+            }
+            let mut cells = 0_usize;
+            let mut touches_border = false;
+            stack.clear();
+            stack.push(start);
+            seen[start] = true;
+            while let Some(k) = stack.pop() {
+                cells += 1;
+                let (i, j) = (k % n, k / n);
+                touches_border |= i == 0 || j == 0 || i + 1 == n || j + 1 == n;
+                let neighbours = [
+                    (i > 0).then(|| k - 1),
+                    (i + 1 < n).then(|| k + 1),
+                    (j > 0).then(|| k - n),
+                    (j + 1 < n).then(|| k + n),
+                ];
+                for next in neighbours.into_iter().flatten() {
+                    if land[next] && !seen[next] {
+                        seen[next] = true;
+                        stack.push(next);
+                    }
+                }
+            }
+            if !touches_border && cells as f64 * cell_area_l2 < 0.01 {
+                self.specks += 1;
+            }
+        }
+    }
+
+    /// Клочков на 1000 L² просканированной площади.
+    pub fn per_1000_l2(&self) -> Option<f64> {
+        (self.area_l2 > 0.0).then(|| self.specks as f64 * 1000.0 / self.area_l2)
+    }
+
+    /// Ориентир 12.4: не больше 5 клочков на 1000 L².
+    pub fn in_target(&self) -> Option<bool> {
+        if self.area_l2 < 10.0 || self.cell_area_l2 >= 0.01 {
+            return None;
+        }
+        self.per_1000_l2().map(|rate| rate <= 5.0)
+    }
+
+    /// Фрагмент JSON для ключа `climate124`, как у `ZonalProfile::json`.
+    pub fn json(&self) -> String {
+        let fmt = |v: Option<f64>| v.map_or_else(|| "null".to_string(), |x| format!("{x:.3}"));
+        format!(
+            "\"island_dust\": {{\"specks\": {}, \"area_l2\": {}, \"cell_area_l2\": {}, \"per_1000_l2\": {}, \"in_target\": {}}}",
+            self.specks,
+            fmt(Some(self.area_l2)),
+            fmt(Some(self.cell_area_l2)),
+            fmt(self.per_1000_l2()),
+            self.in_target()
+                .map_or_else(|| "null".to_string(), |v| v.to_string()),
+        )
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct StatsOptions {
     pub size: usize,
@@ -232,6 +615,17 @@ pub struct HeightStats {
     /// 12.4: профиль осадков по 18 поясам псевдошироты. Считается по всей
     /// основной сетке T100, включая океан, до всех `continue` в цикле.
     pub zonal: ZonalProfile,
+    /// 12.4: поперечники плит по той же сетке (все точки, океан включён:
+    /// плита не кончается на берегу). `plate_area_l2` — площадь одной
+    /// точки сетки в L², нужна, чтобы из счётчиков получить поперечники.
+    pub plates: PlateSizes,
+    pub plate_area_l2: f64,
+    /// 12.4: асимметрия берегов пассатов по той же сетке (Д-079).
+    pub coast: CoastAsymmetry,
+    /// 12.4: дождевая тень за хребтами по той же сетке (Д-081).
+    pub shadow: RainShadow,
+    /// 12.4: островная пыль по сетке границ (Д-082).
+    pub dust: IslandDust,
     pub river_samples: usize,
     pub river_water: usize,
     pub water_samples: usize,
@@ -721,6 +1115,11 @@ impl HeightStats {
             spawn_good: false,
             spawn_shift_l: (0.0, 0.0),
             zonal: ZonalProfile::default(),
+            plates: PlateSizes::default(),
+            plate_area_l2: 0.0,
+            coast: CoastAsymmetry::default(),
+            shadow: RainShadow::default(),
+            dust: IslandDust::default(),
             river_samples: 0,
             river_water: 0,
             water_samples: 0,
@@ -760,6 +1159,11 @@ impl HeightStats {
             spawn_good: false,
             spawn_shift_l: (0.0, 0.0),
             zonal: ZonalProfile::default(),
+            plates: PlateSizes::default(),
+            plate_area_l2: 0.0,
+            coast: CoastAsymmetry::default(),
+            shadow: RainShadow::default(),
+            dust: IslandDust::default(),
             river_samples: 0,
             river_water: 0,
             water_samples: 0,
@@ -782,6 +1186,7 @@ impl HeightStats {
             ),
             plan: None,
         };
+        out.plate_area_l2 = (opts.span_l / opts.size as f64).powi(2);
         let land_threshold = generator.params().climate.ocean_c_threshold;
         // 12.4: точка появления. Поиск уже выполнен в `Generator::new`,
         // здесь одна проверка критериев 7.12 на эффективных параметрах
@@ -795,6 +1200,8 @@ impl HeightStats {
         let plan_dev = base.version.is_water_relief_dev();
         let mut plan = PlanAccumulator::new();
         for j in 0..opts.size {
+            let mut coast_row: Vec<(bool, f64, f64)> = Vec::with_capacity(opts.size);
+            let mut shadow_row: Vec<(bool, f64, f64, f64, f64)> = Vec::with_capacity(opts.size);
             for i in 0..opts.size {
                 let x = base.center_x + (i as f64 - opts.size as f64 * 0.5) * step;
                 let z = base.center_z + (j as f64 - opts.size as f64 * 0.5) * step;
@@ -810,6 +1217,12 @@ impl HeightStats {
                 // `continue` ниже (вода, русло, не-суша).
                 out.zonal
                     .add(world.climate.pole.phi_deg, world.climate.precip.p_mm);
+                // 12.4: поперечники плит. Отдельный plate_sample на точку:
+                // WorldSample владельца плиты не отдаёт.
+                if let Some(plate) = generator.plate_sample(x, z) {
+                    let on_border = i == 0 || j == 0 || i + 1 == opts.size || j + 1 == opts.size;
+                    out.plates.add(plate.plate_id(), on_border);
+                }
                 let input = HeightInput::from_fields(v.c, v.e, v.w);
                 let input = if base.pv {
                     input.with_pv(world.pv)
@@ -823,6 +1236,20 @@ impl HeightStats {
                 };
                 let y = model.surface_y(input)?;
                 let c_land = v.c >= land_threshold;
+                // 12.4 (Д-079): строка для асимметрии берегов собирается
+                // до всех `continue` ниже, как зональный профиль.
+                coast_row.push((
+                    c_land,
+                    world.climate.pole.phi_deg,
+                    world.climate.precip.p_mm,
+                ));
+                shadow_row.push((
+                    c_land,
+                    world.climate.precip.p_mm,
+                    world.climate.surface.mountain,
+                    world.climate.wind.x,
+                    world.climate.wind.z,
+                ));
                 // 12.4: доли климата на всей суше, включая реки и озёра.
                 // Зона климатическая и под руслами (Д-066 касается только
                 // ванильной ячейки), отдельного прохода не нужно.
@@ -907,6 +1334,8 @@ impl HeightStats {
                     out.valley += 1;
                 }
             }
+            out.coast.push_row(coast_row);
+            out.shadow.push_row(shadow_row);
         }
         // Окна 128×128 при шаге 32 считаются отдельной мелкой сеткой: грубая
         // сетка 200 L не должна изображать мелкие холмы средним значением.
@@ -1081,6 +1510,9 @@ impl HeightStats {
                 .analyze_grid(&bclass, &bland, &bclimate, &mut bjump);
             out.boundary.count_jump_causes(&bclass, &bland, &bfeature);
             out.boundary.count_field_jumps(&bfield, &bland);
+            // 12.4 (Д-082): пыль — компоненты связности той же маски суши.
+            out.dust
+                .add_patch(&bland, bn, (bstep / base.mode.l_blocks()).powi(2));
         }
         // 10.1: у v0 нет ни морфозон, ни сети — строка остаётся `null`.
         if plan_dev {
@@ -1252,6 +1684,53 @@ impl HeightStats {
             front = fmt_deg(self.zonal.front_band()),
             verdict = self.zonal.verdict_text(),
         ));
+        let fmt_l = |v: Option<f64>| v.map_or_else(|| "нет".to_string(), |x| format!("{x:.1}"));
+        out.push_str(&format!(
+            "12.4 плиты: медиана поперечника {median} L (ориентир 12–25), наименьшая {min} L (ориентир ≥ 4), плит в скане {all}, целиком {counted}\n",
+            median = fmt_l(self.plates.median_diameter(self.plate_area_l2)),
+            min = fmt_l(self.plates.min_diameter(self.plate_area_l2)),
+            all = self.plates.counts.len(),
+            counted = self.plates.diameters(self.plate_area_l2).len(),
+        ));
+        let fmt_mm = |v: Option<f64>| v.map_or_else(|| "нет".to_string(), |x| format!("{x:.0}"));
+        let fmt_ratio = |v: Option<f64>| v.map_or_else(|| "нет".to_string(), |x| format!("{x:.2}"));
+        out.push_str(&format!(
+            "12.4 берега пассатов 10–25°: восток {east} мм/год ({en} точек), запад {west} мм/год ({wn} точек), отношение {ratio} — {verdict}\n",
+            east = fmt_mm(self.coast.east_mean()),
+            en = self.coast.east_count,
+            west = fmt_mm(self.coast.west_mean()),
+            wn = self.coast.west_count,
+            ratio = fmt_ratio(self.coast.ratio()),
+            verdict = match self.coast.in_target() {
+                Some(true) => "в ориентире",
+                Some(false) => "ВНЕ ОРИЕНТИРА",
+                None => "НЕТ ДАННЫХ",
+            },
+        ));
+        let fmt_pct = |v: Option<f64>| v.map_or_else(|| "нет".to_string(), |x| format!("{x:.1}"));
+        out.push_str(&format!(
+            "12.4 дождевая тень (M>0.6): наветренная {windward} мм/год, подветренная {leeward} мм/год, снижение {drop}% по {n} хребтовым точкам — {verdict}\n",
+            windward = fmt_mm(self.shadow.windward_mean()),
+            leeward = fmt_mm(self.shadow.leeward_mean()),
+            drop = fmt_pct(self.shadow.drop_pct()),
+            n = self.shadow.ridge_count,
+            verdict = match self.shadow.in_target() {
+                Some(true) => "в ориентире",
+                Some(false) => "ВНЕ ОРИЕНТИРА",
+                None => "НЕТ ДАННЫХ",
+            },
+        ));
+        out.push_str(&format!(
+            "12.4 островная пыль: {specks} клочков (<0.01 L²) на {area:.2} L² сетки границ, {rate} на 1000 L² (ориентир ≤ 5) — {verdict}\n",
+            specks = self.dust.specks,
+            area = self.dust.area_l2,
+            rate = fmt_ratio(self.dust.per_1000_l2()),
+            verdict = match self.dust.in_target() {
+                Some(true) => "в ориентире",
+                Some(false) => "ВНЕ ОРИЕНТИРА",
+                None => "НЕТ ДАННЫХ",
+            },
+        ));
         let b = &self.boundary;
         out.push_str(&format!(
             "T134 границы: сетка {bn}×{bn} ({bsamples} точек), шаг {bs:.3} блока, область {span:.3}×{span:.3} L, суша {bl}\n\
@@ -1380,6 +1859,14 @@ impl HeightStats {
     /// 12.4: доли климата и точка появления отдельным ключом.
     /// Есть у обеих версий: нужные поля (`mountain`, зона) есть и в v0.
     pub fn climate124_json(&self) -> String {
+        let zonal_and_plates = format!(
+            "{}, {}, {}, {}, {}",
+            self.zonal.json(),
+            self.plates.json(self.plate_area_l2),
+            self.coast.json(),
+            self.shadow.json(),
+            self.dust.json()
+        );
         format!(
             "{{\"land\": {}, \"land_pct\": {:.4}, \"mountains_pct\": {:.4}, \"deserts_pct\": {:.4}, \"forests_pct\": {:.4}, \"polar_pct\": {:.4}, \"spawn_good\": {}, \"spawn_shift_l\": [{:.4}, {:.4}], {}}}",
             self.land_c,
@@ -1391,7 +1878,7 @@ impl HeightStats {
             self.spawn_good,
             self.spawn_shift_l.0,
             self.spawn_shift_l.1,
-            self.zonal.json()
+            zonal_and_plates
         )
     }
 
@@ -1802,5 +2289,309 @@ mod zonal_tests {
             value.get("zonal_profile").unwrap().get("in_target"),
             Some(&crate::json::Json::Bool(true))
         );
+    }
+}
+
+#[cfg(test)]
+mod plate_tests {
+    use super::*;
+
+    fn sizes() -> PlateSizes {
+        let mut p = PlateSizes::default();
+        // Плита 1: 100 точек целиком в скане; плита 2: 25 точек целиком;
+        // плита 3: 400 точек, но касается края и в поперечники не идёт.
+        for _ in 0..100 {
+            p.add(1, false);
+        }
+        for _ in 0..25 {
+            p.add(2, false);
+        }
+        for _ in 0..400 {
+            p.add(3, true);
+        }
+        p
+    }
+
+    #[test]
+    fn border_plates_are_excluded_from_diameters() {
+        let p = sizes();
+        assert_eq!(p.counts.len(), 3);
+        // Площадь точки 1 L²: поперечники 2·sqrt(100/π) и 2·sqrt(25/π).
+        let d = p.diameters(1.0);
+        assert_eq!(d.len(), 2);
+        assert!((d[0] - 5.6419).abs() < 0.001);
+        assert!((d[1] - 11.2838).abs() < 0.001);
+        assert!((p.min_diameter(1.0).unwrap() - 5.6419).abs() < 0.001);
+        assert!((p.median_diameter(1.0).unwrap() - 8.4629).abs() < 0.001);
+    }
+
+    #[test]
+    fn median_of_single_plate_and_empty_is_none() {
+        let mut p = PlateSizes::default();
+        assert_eq!(p.median_diameter(1.0), None);
+        assert_eq!(p.min_diameter(1.0), None);
+        assert!(p.diameters(0.0).is_empty());
+        p.add(7, false);
+        // Одна точка площадью 4 L²: 2·sqrt(4/π).
+        assert!((p.median_diameter(4.0).unwrap() - 2.2568).abs() < 0.001);
+    }
+
+    #[test]
+    fn plate_json_is_parseable() {
+        let value = crate::json::parse(&format!("{{{}}}", sizes().json(1.0)))
+            .expect("плиты — валидный JSON");
+        let plates = value.get("plates").expect("ключ plates");
+        assert_eq!(plates.get("plates"), Some(&crate::json::Json::Number(3.0)));
+        assert_eq!(plates.get("counted"), Some(&crate::json::Json::Number(2.0)));
+        let empty = crate::json::parse(&format!("{{{}}}", PlateSizes::default().json(1.0)))
+            .expect("пустые плиты — валидный JSON");
+        assert_eq!(
+            empty.get("plates").unwrap().get("median_diameter_l"),
+            Some(&crate::json::Json::Null)
+        );
+    }
+}
+
+#[cfg(test)]
+mod coast_tests {
+    use super::*;
+
+    fn row(cells: &[(bool, f64)]) -> Vec<(bool, f64, f64)> {
+        // (суша, осадки) при φ = 15°: (land, phi, p)
+        cells.iter().map(|&(land, p)| (land, 15.0, p)).collect()
+    }
+
+    #[test]
+    fn east_and_west_coasts_are_separated() {
+        let mut c = CoastAsymmetry::default();
+        c.push_row(row(&[(true, 0.0); 5]));
+        c.push_row(row(&[
+            (false, 0.0),
+            (true, 100.0),
+            (true, 50.0),
+            (true, 200.0),
+            (false, 0.0),
+        ]));
+        c.push_row(row(&[(true, 0.0); 5]));
+        // Западная точка — 100 мм, восточная — 200 мм; средняя суша внутри.
+        assert_eq!(c.east_count, 1);
+        assert_eq!(c.west_count, 1);
+        assert_eq!(c.east_mean(), Some(200.0));
+        assert_eq!(c.west_mean(), Some(100.0));
+        assert_eq!(c.ratio(), Some(2.0));
+        // Точек мало для вердикта: «нет данных», а не провал.
+        assert_eq!(c.in_target(), None);
+    }
+
+    #[test]
+    fn north_only_coast_and_out_of_band_are_ignored() {
+        let mut c = CoastAsymmetry::default();
+        let mut north = row(&[(true, 0.0); 5]);
+        north[2].0 = false; // вода только с севера у средней точки
+        c.push_row(north);
+        c.push_row(row(&[(true, 500.0); 5]));
+        c.push_row(row(&[(true, 0.0); 5]));
+        assert_eq!(c.east_count + c.west_count, 0);
+
+        let mut c = CoastAsymmetry::default();
+        let mut mid = row(&[
+            (false, 0.0),
+            (true, 100.0),
+            (true, 50.0),
+            (true, 200.0),
+            (false, 0.0),
+        ]);
+        for cell in &mut mid {
+            cell.1 = 30.0; // вне пояса пассатов 10–25°
+        }
+        c.push_row(row(&[(true, 0.0); 5]));
+        c.push_row(mid);
+        c.push_row(row(&[(true, 0.0); 5]));
+        assert_eq!(c.east_count + c.west_count, 0);
+        assert_eq!(c.ratio(), None);
+    }
+
+    #[test]
+    fn verdict_needs_min_samples_on_both_sides() {
+        let land = row(&[(true, 0.0); 5]);
+        let coast = row(&[
+            (false, 0.0),
+            (true, 100.0),
+            (true, 50.0),
+            (true, 200.0),
+            (false, 0.0),
+        ]);
+        let mut c = CoastAsymmetry::default();
+        c.push_row(land.clone());
+        for _ in 0..ZONAL_MIN_SAMPLES {
+            c.push_row(coast.clone());
+            c.push_row(land.clone());
+        }
+        assert!(c.east_count >= ZONAL_MIN_SAMPLES);
+        assert!(c.west_count >= ZONAL_MIN_SAMPLES);
+        assert_eq!(c.in_target(), Some(true));
+    }
+
+    #[test]
+    fn coast_json_is_parseable() {
+        let value = crate::json::parse(&format!("{{{}}}", CoastAsymmetry::default().json()))
+            .expect("берега — валидный JSON");
+        let coast = value.get("coast_asymmetry").expect("ключ coast_asymmetry");
+        assert_eq!(coast.get("in_target"), Some(&crate::json::Json::Null));
+        assert_eq!(
+            coast.get("east_samples"),
+            Some(&crate::json::Json::Number(0.0))
+        );
+    }
+}
+
+#[cfg(test)]
+mod shadow_tests {
+    use super::*;
+
+    // Ячейка строки тени: (суша, осадки, M, ветер x, ветер z).
+    fn cell(land: bool, p: f64, mountain: f64, wind: (f64, f64)) -> (bool, f64, f64, f64, f64) {
+        (land, p, mountain, wind.0, wind.1)
+    }
+
+    #[test]
+    fn lee_side_is_drier_downwind() {
+        let plain = |p: f64| cell(true, p, 0.0, (1.0, 0.0));
+        let mut s = RainShadow::default();
+        s.push_row(vec![plain(900.0); 5]);
+        s.push_row(vec![
+            plain(900.0),
+            plain(1000.0),
+            cell(true, 800.0, 0.8, (1.0, 0.0)),
+            plain(500.0),
+            plain(900.0),
+        ]);
+        s.push_row(vec![plain(900.0); 5]);
+        assert_eq!(s.ridge_count, 1);
+        assert_eq!(s.windward_mean(), Some(1000.0));
+        assert_eq!(s.leeward_mean(), Some(500.0));
+        assert_eq!(s.drop_pct(), Some(50.0));
+        assert_eq!(s.in_target(), None); // точек мало для вердикта
+    }
+
+    #[test]
+    fn low_mountains_and_calm_are_ignored() {
+        let plain = |p: f64| cell(true, p, 0.0, (1.0, 0.0));
+        let mut s = RainShadow::default();
+        s.push_row(vec![plain(900.0); 5]);
+        s.push_row(vec![
+            plain(900.0),
+            plain(1000.0),
+            cell(true, 800.0, 0.6, (1.0, 0.0)), // M не выше 0.6
+            cell(true, 800.0, 0.9, (0.0, 0.0)), // хребет без ветра
+            plain(900.0),
+        ]);
+        s.push_row(vec![plain(900.0); 5]);
+        assert_eq!(s.ridge_count, 0);
+        assert_eq!(s.drop_pct(), None);
+    }
+
+    #[test]
+    fn verdict_needs_min_ridge_samples() {
+        let plain = |p: f64| cell(true, p, 0.0, (1.0, 0.0));
+        let ridge = vec![
+            plain(900.0),
+            plain(1000.0),
+            cell(true, 800.0, 0.8, (1.0, 0.0)),
+            plain(500.0),
+            plain(900.0),
+        ];
+        let mut s = RainShadow::default();
+        s.push_row(vec![plain(900.0); 5]);
+        for _ in 0..ZONAL_MIN_SAMPLES {
+            s.push_row(ridge.clone());
+            s.push_row(vec![plain(900.0); 5]);
+        }
+        assert!(s.ridge_count >= ZONAL_MIN_SAMPLES);
+        assert_eq!(s.in_target(), Some(true));
+    }
+
+    #[test]
+    fn shadow_json_is_parseable() {
+        let value = crate::json::parse(&format!("{{{}}}", RainShadow::default().json()))
+            .expect("тень — валидный JSON");
+        let shadow = value.get("rain_shadow").expect("ключ rain_shadow");
+        assert_eq!(shadow.get("in_target"), Some(&crate::json::Json::Null));
+        assert_eq!(
+            shadow.get("ridge_samples"),
+            Some(&crate::json::Json::Number(0.0))
+        );
+    }
+}
+
+#[cfg(test)]
+mod dust_tests {
+    use super::*;
+
+    fn grid(n: usize, cells: &[(usize, usize)]) -> Vec<bool> {
+        let mut land = vec![false; n * n];
+        for &(i, j) in cells {
+            land[j * n + i] = true;
+        }
+        land
+    }
+
+    #[test]
+    fn small_island_counts_big_and_border_do_not() {
+        // Клетка 0.001 L²: порог клочка — меньше 10 клеток.
+        let mut d = IslandDust::default();
+        // Островок из 2 клеток внутри и большой блок 4×4 у края.
+        let mut cells = vec![(2, 2), (3, 2)];
+        for j in 0..4 {
+            for i in 0..4 {
+                cells.push((6 + i, j));
+            }
+        }
+        d.add_patch(&grid(12, &cells), 12, 0.001);
+        assert_eq!(d.specks, 1);
+        assert!((d.area_l2 - 0.144).abs() < 1e-12);
+    }
+
+    #[test]
+    fn diagonal_cells_are_two_specks() {
+        let mut d = IslandDust::default();
+        d.add_patch(&grid(8, &[(2, 2), (3, 3)]), 8, 0.001);
+        assert_eq!(d.specks, 2);
+    }
+
+    #[test]
+    fn verdict_needs_ten_square_l() {
+        let mut d = IslandDust::default();
+        d.add_patch(&grid(8, &[(2, 2)]), 8, 0.001);
+        assert_eq!(d.in_target(), None); // площади мало
+        assert_eq!(d.per_1000_l2(), Some(1000.0 / 0.064));
+
+        let mut big = IslandDust::default();
+        big.add_patch(&vec![false; 200 * 200], 200, 0.001);
+        assert_eq!(big.in_target(), Some(true)); // 40 L² без клочков
+    }
+
+    #[test]
+    fn dust_json_is_parseable() {
+        let value = crate::json::parse(&format!("{{{}}}", IslandDust::default().json()))
+            .expect("пыль — валидный JSON");
+        let dust = value.get("island_dust").expect("ключ island_dust");
+        assert_eq!(dust.get("in_target"), Some(&crate::json::Json::Null));
+        assert_eq!(dust.get("specks"), Some(&crate::json::Json::Number(0.0)));
+    }
+}
+
+#[cfg(test)]
+mod dust_resolution_tests {
+    use super::*;
+
+    #[test]
+    fn coarse_cell_is_no_data_not_a_pass() {
+        // Д-083: клетка 0.02 L² крупнее порога клочка 0.01 L² — даже
+        // пустая сетка не «в цели», а не измерена.
+        let mut d = IslandDust::default();
+        d.add_patch(&vec![false; 100 * 100], 100, 0.02);
+        assert_eq!(d.specks, 0);
+        assert_eq!(d.in_target(), None);
     }
 }
