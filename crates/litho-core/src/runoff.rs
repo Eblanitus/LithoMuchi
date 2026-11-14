@@ -34,7 +34,7 @@ impl ClimateGrid {
     pub fn build<'a>(
         points: impl IntoIterator<Item = &'a Vec2>,
         step_l: f64,
-        sample: impl Fn(Vec2) -> Option<RunoffClimate>,
+        sample: impl Fn(Vec2) -> Option<RunoffClimate> + Sync,
     ) -> Result<Self, RiverNetError> {
         if !step_l.is_finite() || step_l <= 0.0 {
             return Err(RiverNetError::InvalidParameters(
@@ -71,7 +71,10 @@ impl ClimateGrid {
         // сборки (BTreeSet) и проверка значений — прежние, вывод побайтово тот же.
         if threads <= 1 || keys.len() < 256 {
             for (key, slot) in keys.iter().zip(slots.iter_mut()) {
-                *slot = sample(Vec2::new(key.0 as f64 * step_l, key.1 as f64 * step_l));
+                *slot = sample(Vec2::new(
+                    key.0 as f64 * step_l,
+                    key.1 as f64 * step_l,
+                ));
             }
         } else {
             let chunk = keys.len().div_ceil(threads);
