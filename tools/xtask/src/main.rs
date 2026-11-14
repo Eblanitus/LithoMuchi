@@ -327,7 +327,7 @@ fn cmd_bundle(out: &Path) -> Result<(), String> {
          Команда на Windows: horizon-launcher native-build <эта папка> --instance <имя> --trust-native-code\n\
          Smoke: включите только litospherity_smoke, мир должен быть всюду сушей.\n\
          Тест №2: включите только litospherity_v1-dev_gameplay, запишите сид и номер сборки.\n\
-         Актуальное состояние: docs/PLAN-STATUS-2026-11-11.md в репозитории.\n",
+         Актуальное состояние: docs/PLAN.md в репозитории.\n",
     )?;
     println!("бандл: {} (исходников ядра: {n})", out.display());
     Ok(())

@@ -17,7 +17,7 @@ import os
 import statistics
 import sys
 
-# метрика: (gameplay lo, hi), (scientific lo, hi) — PLAN-REVISION-2026-11-08, 10.1
+# метрика: (gameplay lo, hi), (scientific lo, hi) — docs/spec/PLAN-REVISION-2026-11-08.md, 10.1
 TARGETS = {
     "затопленная суша, %": ((None, 5), (None, 5)),
     "y 63–70, %": ((20, 35), (30, 45)),

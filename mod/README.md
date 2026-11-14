@@ -5,8 +5,8 @@
 применяет его к закреплённым исходникам Horizon через реальный
 `horizon-mixins plan` и проверяет density graph 26.3 (`depth(80) = 0.375 +
 offset`). Тест №2 в игре подтвердил К2; полная приёмка v1, T142/T143 и релиз
-ещё не сделаны. Актуальный отчёт — `docs/PLAN-STATUS-2026-11-11.md`, карта
-документов — `docs/README.md`, исторический чек-лист разведки — `docs/HORIZON.md`.
+ещё не сделаны. Актуальное состояние — `docs/PLAN.md`, карта
+документов — `docs/README.md`, справка по Horizon — `docs/wiki/horizon.md`.
 
 Пины: `tools/horizon-revisions.json` — Horizon `66f3981`, mixins `5a64af9`,
 данные 26.3 `5f312935`, libm `0.2.16`. Сверка копий — `tools/check_horizon_pins.py`.
