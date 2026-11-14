@@ -64,6 +64,8 @@ TARGETS = {
     # 12.4 (Д-080): асимметрия берегов. Ключа нет в прогонах до этой
     # метрики — строка пропустится, как у плит и зонального профиля.
     "берега пассатов: восток/запад, ×": ((2, None), (2, None)),
+    # 12.4 (Д-081): дождевая тень. Ключа нет в прогонах до этой метрики.
+    "дождевая тень: снижение осадков, %": ((40, None), (40, None)),
 }
 MODES = ("gameplay", "scientific")
 CAUSE_NAMES = {
@@ -140,6 +142,9 @@ def _climate124_metrics(j):
     coast = c.get("coast_asymmetry")
     if isinstance(coast, dict):
         out["берега пассатов: восток/запад, ×"] = coast.get("ratio")
+    shadow = c.get("rain_shadow")
+    if isinstance(shadow, dict):
+        out["дождевая тень: снижение осадков, %"] = shadow.get("drop_pct")
     return out
 
 

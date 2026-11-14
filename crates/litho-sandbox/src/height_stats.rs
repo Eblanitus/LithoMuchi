@@ -305,6 +305,127 @@ impl CoastAsymmetry {
     }
 }
 
+/// 12.4: дождевая тень за хребтами (Д-081). Хребтовая точка — суша с
+/// `M > 0,6`. По направлению ветра (`climate.wind` дует по ветру, луч
+/// влаги идёт против него) берутся соседние точки сетки: наветренная —
+/// шаг против ветра, подветренная — шаг по ветру; направление квантуется
+/// к ближайшему из 8 соседей. Шаг основной сетки при обычном замере —
+/// 1,25 L, это ближайшая дискретизация «в пределах 1 L» из 12.4.
+/// Снижение — по средним: `1 − P_подветр / P_наветр`; обе стороны берутся
+/// как есть, включая океан: осадки атмосферные. Край скана не оценивается.
+#[derive(Clone, Debug, Default)]
+pub struct RainShadow {
+    rows: VecDeque<Vec<(bool, f64, f64, f64, f64)>>,
+    pub ridge_count: usize,
+    pub windward_sum: f64,
+    pub leeward_sum: f64,
+}
+
+impl RainShadow {
+    pub fn push_row(&mut self, row: Vec<(bool, f64, f64, f64, f64)>) {
+        self.rows.push_back(row);
+        if self.rows.len() < 3 {
+            return;
+        }
+        let north = self.rows.pop_front().unwrap_or_default();
+        let (Some(cur), Some(south)) = (self.rows.front(), self.rows.back()) else {
+            return;
+        };
+        let (count, windward, leeward) = Self::score_row(&north, cur, south);
+        self.ridge_count += count;
+        self.windward_sum += windward;
+        self.leeward_sum += leeward;
+    }
+
+    fn score_row(
+        north: &[(bool, f64, f64, f64, f64)],
+        cur: &[(bool, f64, f64, f64, f64)],
+        south: &[(bool, f64, f64, f64, f64)],
+    ) -> (usize, f64, f64) {
+        let mut out = (0_usize, 0.0, 0.0);
+        if cur.len() < 3 || north.len() != cur.len() || south.len() != cur.len() {
+            return out;
+        }
+        let rows = [north, cur, south];
+        for i in 1..cur.len() - 1 {
+            let (land, _, mountain, wind_x, wind_z) = cur[i];
+            if !land || mountain <= 0.6 || !wind_x.is_finite() || !wind_z.is_finite() {
+                continue;
+            }
+            let norm = (wind_x * wind_x + wind_z * wind_z).sqrt();
+            if norm <= 0.0 {
+                continue;
+            }
+            // Ближайший из 8 соседей к направлению ветра.
+            let mut best = (0_i64, 0_i64, f64::NEG_INFINITY);
+            for dz in -1_i64..=1 {
+                for dx in -1_i64..=1 {
+                    if dx == 0 && dz == 0 {
+                        continue;
+                    }
+                    let len = ((dx * dx + dz * dz) as f64).sqrt();
+                    let dot = (wind_x * dx as f64 + wind_z * dz as f64) / (norm * len);
+                    if dot > best.2 {
+                        best = (dx, dz, dot);
+                    }
+                }
+            }
+            let (dx, dz) = (best.0, best.1);
+            let at = |ox: i64, oz: i64| rows[(oz + 1) as usize][(i as i64 + ox) as usize].1;
+            let windward = at(-dx, -dz);
+            let leeward = at(dx, dz);
+            if !windward.is_finite() || !leeward.is_finite() {
+                continue;
+            }
+            out.0 += 1;
+            out.1 += windward;
+            out.2 += leeward;
+        }
+        out
+    }
+
+    pub fn windward_mean(&self) -> Option<f64> {
+        (self.ridge_count > 0).then(|| self.windward_sum / self.ridge_count as f64)
+    }
+
+    pub fn leeward_mean(&self) -> Option<f64> {
+        (self.ridge_count > 0).then(|| self.leeward_sum / self.ridge_count as f64)
+    }
+
+    /// Снижение осадков за хребтами в процентах от наветренной стороны.
+    pub fn drop_pct(&self) -> Option<f64> {
+        match (self.windward_mean(), self.leeward_mean()) {
+            (Some(windward), Some(leeward)) if windward > 0.0 => {
+                Some(100.0 * (1.0 - leeward / windward))
+            }
+            _ => None,
+        }
+    }
+
+    /// Ориентир 12.4: снижение не меньше 40 %. `None` — хребтовых точек
+    /// мало: «НЕТ ДАННЫХ», а не провал.
+    pub fn in_target(&self) -> Option<bool> {
+        if self.ridge_count < ZONAL_MIN_SAMPLES {
+            return None;
+        }
+        self.drop_pct().map(|drop| drop >= 40.0)
+    }
+
+    /// Фрагмент JSON для ключа `climate124`, как у `ZonalProfile::json`.
+    pub fn json(&self) -> String {
+        let fmt = |v: Option<f64>| v.map_or_else(|| "null".to_string(), |x| format!("{x:.3}"));
+        format!(
+            "\"rain_shadow\": {{\"ridge_samples\": {}, \"windward_mean_mm\": {}, \"leeward_mean_mm\": {}, \"drop_pct\": {}, \"in_target\": {}}}",
+            self.ridge_count,
+            fmt(self.windward_mean()),
+            fmt(self.leeward_mean()),
+            fmt(self.drop_pct()),
+            self.in_target()
+                .map_or_else(|| "null".to_string(), |v| v.to_string()),
+        )
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct StatsOptions {
     pub size: usize,
@@ -413,6 +534,8 @@ pub struct HeightStats {
     pub plate_area_l2: f64,
     /// 12.4: асимметрия берегов пассатов по той же сетке (Д-079).
     pub coast: CoastAsymmetry,
+    /// 12.4: дождевая тень за хребтами по той же сетке (Д-081).
+    pub shadow: RainShadow,
     pub river_samples: usize,
     pub river_water: usize,
     pub water_samples: usize,
@@ -905,6 +1028,7 @@ impl HeightStats {
             plates: PlateSizes::default(),
             plate_area_l2: 0.0,
             coast: CoastAsymmetry::default(),
+            shadow: RainShadow::default(),
             river_samples: 0,
             river_water: 0,
             water_samples: 0,
@@ -947,6 +1071,7 @@ impl HeightStats {
             plates: PlateSizes::default(),
             plate_area_l2: 0.0,
             coast: CoastAsymmetry::default(),
+            shadow: RainShadow::default(),
             river_samples: 0,
             river_water: 0,
             water_samples: 0,
@@ -984,6 +1109,7 @@ impl HeightStats {
         let mut plan = PlanAccumulator::new();
         for j in 0..opts.size {
             let mut coast_row: Vec<(bool, f64, f64)> = Vec::with_capacity(opts.size);
+            let mut shadow_row: Vec<(bool, f64, f64, f64, f64)> = Vec::with_capacity(opts.size);
             for i in 0..opts.size {
                 let x = base.center_x + (i as f64 - opts.size as f64 * 0.5) * step;
                 let z = base.center_z + (j as f64 - opts.size as f64 * 0.5) * step;
@@ -1024,6 +1150,13 @@ impl HeightStats {
                     c_land,
                     world.climate.pole.phi_deg,
                     world.climate.precip.p_mm,
+                ));
+                shadow_row.push((
+                    c_land,
+                    world.climate.precip.p_mm,
+                    world.climate.surface.mountain,
+                    world.climate.wind.x,
+                    world.climate.wind.z,
                 ));
                 // 12.4: доли климата на всей суше, включая реки и озёра.
                 // Зона климатическая и под руслами (Д-066 касается только
@@ -1110,6 +1243,7 @@ impl HeightStats {
                 }
             }
             out.coast.push_row(coast_row);
+            out.shadow.push_row(shadow_row);
         }
         // Окна 128×128 при шаге 32 считаются отдельной мелкой сеткой: грубая
         // сетка 200 L не должна изображать мелкие холмы средним значением.
@@ -1478,6 +1612,19 @@ impl HeightStats {
                 None => "НЕТ ДАННЫХ",
             },
         ));
+        let fmt_pct = |v: Option<f64>| v.map_or_else(|| "нет".to_string(), |x| format!("{x:.1}"));
+        out.push_str(&format!(
+            "12.4 дождевая тень (M>0.6): наветренная {windward} мм/год, подветренная {leeward} мм/год, снижение {drop}% по {n} хребтовым точкам — {verdict}\n",
+            windward = fmt_mm(self.shadow.windward_mean()),
+            leeward = fmt_mm(self.shadow.leeward_mean()),
+            drop = fmt_pct(self.shadow.drop_pct()),
+            n = self.shadow.ridge_count,
+            verdict = match self.shadow.in_target() {
+                Some(true) => "в ориентире",
+                Some(false) => "ВНЕ ОРИЕНТИРА",
+                None => "НЕТ ДАННЫХ",
+            },
+        ));
         let b = &self.boundary;
         out.push_str(&format!(
             "T134 границы: сетка {bn}×{bn} ({bsamples} точек), шаг {bs:.3} блока, область {span:.3}×{span:.3} L, суша {bl}\n\
@@ -1607,10 +1754,11 @@ impl HeightStats {
     /// Есть у обеих версий: нужные поля (`mountain`, зона) есть и в v0.
     pub fn climate124_json(&self) -> String {
         let zonal_and_plates = format!(
-            "{}, {}, {}",
+            "{}, {}, {}, {}",
             self.zonal.json(),
             self.plates.json(self.plate_area_l2),
-            self.coast.json()
+            self.coast.json(),
+            self.shadow.json()
         );
         format!(
             "{{\"land\": {}, \"land_pct\": {:.4}, \"mountains_pct\": {:.4}, \"deserts_pct\": {:.4}, \"forests_pct\": {:.4}, \"polar_pct\": {:.4}, \"spawn_good\": {}, \"spawn_shift_l\": [{:.4}, {:.4}], {}}}",
@@ -2187,5 +2335,81 @@ mod coast_tests {
             coast.get("east_samples"),
             Some(&crate::json::Json::Number(0.0))
         );
+    }
+}
+
+#[cfg(test)]
+mod shadow_tests {
+    use super::*;
+
+    // Ячейка строки тени: (суша, осадки, M, ветер x, ветер z).
+    fn cell(land: bool, p: f64, mountain: f64, wind: (f64, f64)) -> (bool, f64, f64, f64, f64) {
+        (land, p, mountain, wind.0, wind.1)
+    }
+
+    #[test]
+    fn lee_side_is_drier_downwind() {
+        let plain = |p: f64| cell(true, p, 0.0, (1.0, 0.0));
+        let mut s = RainShadow::default();
+        s.push_row(vec![plain(900.0); 5]);
+        s.push_row(vec![
+            plain(900.0),
+            plain(1000.0),
+            cell(true, 800.0, 0.8, (1.0, 0.0)),
+            plain(500.0),
+            plain(900.0),
+        ]);
+        s.push_row(vec![plain(900.0); 5]);
+        assert_eq!(s.ridge_count, 1);
+        assert_eq!(s.windward_mean(), Some(1000.0));
+        assert_eq!(s.leeward_mean(), Some(500.0));
+        assert_eq!(s.drop_pct(), Some(50.0));
+        assert_eq!(s.in_target(), None); // точек мало для вердикта
+    }
+
+    #[test]
+    fn low_mountains_and_calm_are_ignored() {
+        let plain = |p: f64| cell(true, p, 0.0, (1.0, 0.0));
+        let mut s = RainShadow::default();
+        s.push_row(vec![plain(900.0); 5]);
+        s.push_row(vec![
+            plain(900.0),
+            plain(1000.0),
+            cell(true, 800.0, 0.6, (1.0, 0.0)), // M не выше 0.6
+            cell(true, 800.0, 0.9, (0.0, 0.0)), // хребет без ветра
+            plain(900.0),
+        ]);
+        s.push_row(vec![plain(900.0); 5]);
+        assert_eq!(s.ridge_count, 0);
+        assert_eq!(s.drop_pct(), None);
+    }
+
+    #[test]
+    fn verdict_needs_min_ridge_samples() {
+        let plain = |p: f64| cell(true, p, 0.0, (1.0, 0.0));
+        let ridge = vec![
+            plain(900.0),
+            plain(1000.0),
+            cell(true, 800.0, 0.8, (1.0, 0.0)),
+            plain(500.0),
+            plain(900.0),
+        ];
+        let mut s = RainShadow::default();
+        s.push_row(vec![plain(900.0); 5]);
+        for _ in 0..ZONAL_MIN_SAMPLES {
+            s.push_row(ridge.clone());
+            s.push_row(vec![plain(900.0); 5]);
+        }
+        assert!(s.ridge_count >= ZONAL_MIN_SAMPLES);
+        assert_eq!(s.in_target(), Some(true));
+    }
+
+    #[test]
+    fn shadow_json_is_parseable() {
+        let value = crate::json::parse(&format!("{{{}}}", RainShadow::default().json()))
+            .expect("тень — валидный JSON");
+        let shadow = value.get("rain_shadow").expect("ключ rain_shadow");
+        assert_eq!(shadow.get("in_target"), Some(&crate::json::Json::Null));
+        assert_eq!(shadow.get("ridge_samples"), Some(&crate::json::Json::Number(0.0)));
     }
 }
