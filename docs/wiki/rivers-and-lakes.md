@@ -57,8 +57,51 @@ GitHub в момент разведки был недоступен, прове�
 даст — ванильная фича ставит фиксированное 16×16 пятно по сиду и heightmap, без привязки
 к нашей сети T110 и без T143/T145 (ступени без лавины обновлений). Для R2 нужны либо
 датаpack-подстановка ванильных озёр (дешёвая косметика, вне нашей гидрологии), либо
-вышестоящая правка Horizon (свой `configured_feature` или хук декорации) — это вне
-текущих полномочий пака. Решение по пути — за автором; игровой проверки ещё не было.
+вышестоящая правка Horizon (свой `configured_feature`, именованный параметр
+`position` в `GlobalFluidPicker::compute` (`horizon-rust/horizon#16388`) или хук
+декорации) — это вне текущих полномочий пака.
+
+## Разведка T142-бис: DW-хук на пине невозможен (Д-088, 2026-11-14)
+
+Попытка повесить cancellable HEAD на вердикт воды (`<GlobalFluidPicker as FluidPicker>::compute`,
+тестовый маркер `aquifer_marker`, «вода ≤ y=100 в квадрате 64×64») в CI
+(run [43587773951](https://github.com/Eblanitus/LithoMuchi/actions/runs/43587773951),
+commit `a62db01`) **отклонена**: упали job'ы `Мод · настоящий litospherity.hnmod`
+(шаг plan) и `Horizon · настоящие mixins и граф 26.3` (шаг apply). Текст диагностики
+из CI-лога недоступен (log-архив runner'а скачивается с `results-receiver...` → `EOF`);
+корневая причина восстановлена по закреплённому исходнику horizon-mixins `5a64af9`:
+
+1. Id трейт-impl метода в пине строится как `<Type as Trait>::function`
+   (`index.rs`: `format!("<{ty} as {}>")`; пример в docs/mixin-api.md). Маркер с путём
+   `…aquifer::GlobalFluidPicker::compute` целей не имел → `resolve()` →
+   E_TARGET_NOT_FOUND.
+2. Даже с исправленным id пинный валидатор (`parameters()` → `validate_helper`) безусловно
+   отклоняет **деструктурированный параметр** `compute(&self, [_, y, _]: [i32; 3])`
+   с E_INVALID_BINDING («destructured function parameters are unsupported») — при любых
+   биндингах, включая отсутствие биндинга позиции. Пин (2026-11-05) **старше**
+   [horizon-mixins #24](https://github.com/horizon-rust/horizon-mixins/pull/24)
+   («feat(plan): bind the names of destructured parameters», смёржен 2026-11-09),
+   который именованные части паттерна биндит — у нас это только `y`; `x`/`z`/целый
+   `position` остались бы недоступны и там.
+3. Типово-generic реализации отклоняются `validate_target` (E_UNSUPPORTED_SIGNATURE):
+   `NoiseBasedAquifer::compute_substance` (impl по `P,F,B`, aquifer/noise_based.rs:132,
+   486), `DisabledAquifer::compute_substance` (`impl<P: FluidPicker>`, aquifer.rs:79),
+   `TerrainAquifer` (terrain.rs), `fill_noise` (terrain.rs:724); `const fn`
+   (`FluidStatus::at` — aquifer.rs:18, `GlobalFluidPicker::new` — aquifer.rs:43) — тоже.
+   Хуки на методы generic impl'ов — открытая [horizon-mixins #16](https://github.com/horizon-rust/horizon-mixins/issues/16).
+
+Маркер не фичей не является и удалён (`dcd61b0`); CI [43589348842](https://github.com/Eblanitus/LithoMuchi/actions/runs/43589348842) — 7/7 зелёный; генератор не тронут.
+
+**Решение автора (Д-088, 2026-11-14):** R2 и строка приёмки «озёр на 100 L²» вынесены
+за релиз v1 — это последний шаг плана после всех остальных. По завершении проверяем,
+принял ли Horizon правку (issue `horizon-rust/horizon#16388` про именованный параметр
+`position: [i32; 3]` в `<GlobalFluidPicker as FluidPicker>::compute`, открыт; поведение
+не меняется; нужен пин ≥ #24). Если принял — обновляем пин и делаем R2 хуком;
+если нет — форк Horizon. Формулировка автора: «пропускаем озёра и эту шнягу с водой,
+делаем все что после нее, и после того как все сделаем смотрим — пофиксили ли игру,
+под нас. Если не пофиксили — делаем форк, если пофиксили просто добиваем игру».
+Холодные пруды T114 — только объём, не требующий R2; остальное вместе с R2.
+Игровой проверки по-прежнему не было.
 
 ## Что известно о качестве (замеры `acceptance-vol-*`, 16 сидов)
 
