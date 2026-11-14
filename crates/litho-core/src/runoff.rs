@@ -34,7 +34,7 @@ impl ClimateGrid {
     pub fn build<'a>(
         points: impl IntoIterator<Item = &'a Vec2>,
         step_l: f64,
-        sample: impl Fn(Vec2) -> Option<RunoffClimate> + Sync,
+        sample: impl Fn(Vec2) -> Option<RunoffClimate>,
     ) -> Result<Self, RiverNetError> {
         if !step_l.is_finite() || step_l <= 0.0 {
             return Err(RiverNetError::InvalidParameters(
@@ -61,34 +61,10 @@ impl ClimateGrid {
                 }
             }
         }
-        let keys: Vec<Cell> = keys.into_iter().collect();
-        let mut slots: Vec<Option<RunoffClimate>> = vec![None; keys.len()];
-        let threads = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1).min(4);
-        // T79: узлы решётки независимы; развеиваем только вычисление, порядок
-        // сборки (BTreeSet) и проверка значений — прежние, вывод побайтово тот же.
-        if threads <= 1 || keys.len() < 256 {
-            for (key, slot) in keys.iter().zip(slots.iter_mut()) {
-                *slot = sample(Vec2::new(key.0 as f64 * step_l, key.1 as f64 * step_l));
-            }
-        } else {
-            let chunk = keys.len().div_ceil(threads);
-            let sample_ref = &sample;
-            std::thread::scope(|scope| {
-                for (slice, slice_slots) in keys.chunks(chunk).zip(slots.chunks_mut(chunk)) {
-                    scope.spawn(move || {
-                        for (key, slot) in slice.iter().zip(slice_slots.iter_mut()) {
-                            *slot = sample_ref(Vec2::new(
-                                key.0 as f64 * step_l,
-                                key.1 as f64 * step_l,
-                            ));
-                        }
-                    });
-                }
-            });
-        }
         let mut cells = HashMap::with_capacity(keys.len());
-        for (key, slot) in keys.into_iter().zip(slots.into_iter()) {
-            let value = slot.ok_or(RiverNetError::InvalidClimate { cell: key })?;
+        for key in keys {
+            let point = Vec2::new(key.0 as f64 * step_l, key.1 as f64 * step_l);
+            let value = sample(point).ok_or(RiverNetError::InvalidClimate { cell: key })?;
             if !value.p_mm.is_finite()
                 || !value.pet_mm.is_finite()
                 || value.p_mm < 0.0
