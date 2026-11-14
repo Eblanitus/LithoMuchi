@@ -313,16 +313,19 @@ impl CoastAsymmetry {
 /// 1,25 L, это ближайшая дискретизация «в пределах 1 L» из 12.4.
 /// Снижение — по средним: `1 − P_подветр / P_наветр`; обе стороны берутся
 /// как есть, включая океан: осадки атмосферные. Край скана не оценивается.
+/// Ячейка строки дождевой тени: (суша, осадки мм/год, `M`, ветер x, ветер z).
+type ShadowCell = (bool, f64, f64, f64, f64);
+
 #[derive(Clone, Debug, Default)]
 pub struct RainShadow {
-    rows: VecDeque<Vec<(bool, f64, f64, f64, f64)>>,
+    rows: VecDeque<Vec<ShadowCell>>,
     pub ridge_count: usize,
     pub windward_sum: f64,
     pub leeward_sum: f64,
 }
 
 impl RainShadow {
-    pub fn push_row(&mut self, row: Vec<(bool, f64, f64, f64, f64)>) {
+    pub fn push_row(&mut self, row: Vec<ShadowCell>) {
         self.rows.push_back(row);
         if self.rows.len() < 3 {
             return;
@@ -337,11 +340,7 @@ impl RainShadow {
         self.leeward_sum += leeward;
     }
 
-    fn score_row(
-        north: &[(bool, f64, f64, f64, f64)],
-        cur: &[(bool, f64, f64, f64, f64)],
-        south: &[(bool, f64, f64, f64, f64)],
-    ) -> (usize, f64, f64) {
+    fn score_row(north: &[ShadowCell], cur: &[ShadowCell], south: &[ShadowCell]) -> (usize, f64, f64) {
         let mut out = (0_usize, 0.0, 0.0);
         if cur.len() < 3 || north.len() != cur.len() || south.len() != cur.len() {
             return out;
