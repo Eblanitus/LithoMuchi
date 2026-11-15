@@ -36,6 +36,8 @@ pub struct HeightSample {
     pub bed_y: f64,
     /// T145: сила выреза русла/озера, 0…1.
     pub water_strength: f64,
+    /// К3: поверхность суши до выреза под воду, блоки.
+    pub land_y: f64,
 }
 
 impl Default for HeightSample {
@@ -48,6 +50,7 @@ impl Default for HeightSample {
             water_y: SEA_LEVEL,
             bed_y: SEA_LEVEL,
             water_strength: 0.0,
+            land_y: SEA_LEVEL,
         }
     }
 }
@@ -144,12 +147,16 @@ pub fn sample_micro(
         water_y: SEA_LEVEL,
         bed_y: y,
         water_strength: 0.0,
+        land_y: y,
     }
 }
 
 /// T145: вырез русел/котловин под зеркало воды (§5.9). Река берёт монотонное
 /// зеркало T145 из ChannelHit и не поднимается выше локального берега −1.
-/// Озеро стоит плоским зеркалом на уровне перелива; дно = зеркало − глубина.
+/// Озеро стоит зеркалом на уровне перелива, но не выше локального берега −1
+/// (К3, Д-105): дно = зеркало − глубина, вырез только опускает поверхность.
+/// Озеро выше `hydrology.r1_max_level_km` ждёт воду R2: рельеф под ним не
+/// трогаем, иначе в игре остаётся сухой стол со стеной.
 /// Это своя высота для предпросмотра/будущего R2; игра ставит воду через T143.
 pub fn with_water(
     mut height: HeightSample,
@@ -179,12 +186,19 @@ pub fn with_water(
         }
     }
     if let Some(hit) = hydrology.lakes.water_hit.filter(|hit| hit.inside) {
-        if let Some(level) = hit.level_km {
+        // К3: вода выше порога R1 отложена до R2 — без выреза и без подъёма.
+        let level = hit
+            .level_km
+            .filter(|level| *level <= params.hydrology.r1_max_level_km);
+        if let Some(level) = level {
             let cut = clamp01(hit.water_strength);
             if cut > 0.0 {
+                // К3: как у реки, зеркало не выше локального берега −1. Суша
+                // игры может лежать ниже уровня перелива грубого рельефа.
                 let mirror = (SEA_LEVEL + level.max(0.0) * h.water_km_to_blocks)
                     .round()
-                    .min(h.max_y - 1.0);
+                    .min(h.max_y - 1.0)
+                    .min(land_y - 1.0);
                 let depth = clamp(
                     hit.max_depth_km * h.water_km_to_blocks,
                     1.0,
@@ -377,6 +391,7 @@ mod tests {
     fn base_at(y: f64) -> HeightSample {
         HeightSample {
             surface_y: y,
+            land_y: y,
             offset: (y - SURFACE_BASE) / OFFSET_SCALE,
             bed_y: y,
             ..HeightSample::default()
@@ -444,5 +459,66 @@ mod tests {
         assert!((cut.bed_y - 65.8).abs() < 1e-9);
         assert_eq!(cut.surface_y, cut.bed_y);
         assert_eq!(cut.water_strength, 1.0);
+        assert_eq!(cut.land_y, 80.0);
+    }
+
+    fn lake_hit(level_km: f64, water_strength: f64) -> crate::lake::LakeHit {
+        crate::lake::LakeHit {
+            plate_id: 1,
+            lake: 0,
+            depression: 0,
+            kind: crate::lake::LakeKind::Lake,
+            distance_l: 0.0,
+            inside: true,
+            level_km: Some(level_km),
+            max_depth_km: 0.05,
+            frozen: false,
+            rift: false,
+            high: true,
+            water_strength,
+            shore_strength: 1.0,
+        }
+    }
+
+    /// К3 (Д-105): суша игры ниже уровня перелива — дно не поднимается над
+    /// ней стеной, зеркало садится на берег −1, как у реки.
+    #[test]
+    fn lake_bed_never_rises_above_the_local_land() {
+        let p = params(Mode::Gameplay);
+        for strength in [0.25, 0.5, 1.0] {
+            for land in [50.0, 64.0, 66.0, 69.0, 70.0, 75.0, 120.0] {
+                let mut hydro = HydrologySample::default();
+                hydro.lakes.water_hit = Some(lake_hit(0.1, strength));
+                let cut = with_water(base_at(land), &hydro, &p);
+                assert!(cut.surface_y <= land, "подъём: суша {land}, {cut:?}");
+                assert!(cut.water_y <= land - 1.0, "зеркало над берегом: {cut:?}");
+                assert!(cut.bed_y < cut.water_y);
+                assert_eq!(cut.land_y, land);
+            }
+        }
+        // Раньше здесь был стол: суша 66, зеркало 69, дно 65.8 при силе 1,
+        // а при суше 60 дно 65.8 стояло на 5.8 блока выше земли.
+        let mut hydro = HydrologySample::default();
+        hydro.lakes.water_hit = Some(lake_hit(0.1, 1.0));
+        let low = with_water(base_at(60.0), &hydro, &p);
+        assert_eq!(low.water_y, 59.0);
+        assert!((low.surface_y - 55.8).abs() < 1e-9);
+    }
+
+    /// К3 (Д-105): озеро выше порога R1 ждёт воду R2 — рельеф не меняется.
+    #[test]
+    fn deferred_lake_leaves_the_terrain_untouched() {
+        let p = params(Mode::Gameplay);
+        let above = p.hydrology.r1_max_level_km + 0.25;
+        for land in [60.0, 67.8, 98.0, 140.0] {
+            let mut hydro = HydrologySample::default();
+            hydro.lakes.water_hit = Some(lake_hit(above, 1.0));
+            let base = base_at(land);
+            assert_eq!(with_water(base, &hydro, &p), base);
+        }
+        // На самом пороге вода ещё наша (R1): вырез остаётся.
+        let mut hydro = HydrologySample::default();
+        hydro.lakes.water_hit = Some(lake_hit(p.hydrology.r1_max_level_km, 1.0));
+        assert!(with_water(base_at(140.0), &hydro, &p).water_strength > 0.0);
     }
 }

@@ -10,6 +10,7 @@ mod plan_metrics;
 mod png;
 mod render;
 mod tune;
+mod water_walls;
 
 use std::path::Path;
 use std::time::Instant;
@@ -436,6 +437,16 @@ fn cmd_biomes(args: &[String]) -> Result<(), String> {
     let opts = options_from(args)?;
     let generator = generator(&opts)?;
     biome_lines::run(&generator, (opts.center_x, opts.center_z))
+}
+
+fn cmd_walls(args: &[String]) -> Result<(), String> {
+    let opts = options_from(args)?;
+    let generator = generator(&opts)?;
+    if let Some(text) = value(args, "--at") {
+        water_walls::profile(&generator, parse_pair(&text)?);
+        return Ok(());
+    }
+    water_walls::run(&generator, (opts.center_x, opts.center_z))
 }
 
 fn cmd_lava(args: &[String]) -> Result<(), String> {
@@ -1761,6 +1772,7 @@ fn usage() -> &'static str {
        profile      разбивка времени по слоям\n\
        hash         хеши параметров для замка v0\n\
        biomes       как часто меняется биом вдоль линий и размер пятен (К1)\n\
+       walls        обрывы и «столы» у выреза под воду (К3); --at x,z — профиль\n\
        checkpoints  10 точек вокруг точки появления\n\
        sweep        16 сидов × 2 режима + HTML-атлас\n\
        atlas        пересобрать только HTML-атлас\n\
@@ -1799,6 +1811,7 @@ fn main() -> Result<(), String> {
         "seams" => cmd_seams(&args[1..]),
         "lava" => cmd_lava(&args[1..]),
         "biomes" => cmd_biomes(&args[1..]),
+        "walls" => cmd_walls(&args[1..]),
         "paths" => cmd_paths(&args[1..]),
         "drainage" => cmd_drainage(&args[1..]),
         "bench" => cmd_bench(&args[1..]),
