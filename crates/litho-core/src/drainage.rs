@@ -5,7 +5,7 @@
 //! C/E/W/PV — T115. Модуль не меняет v0 и не вызывается из `field`.
 
 use std::cmp::Ordering;
-use std::collections::{BinaryHeap, HashMap, VecDeque};
+use std::collections::{BinaryHeap, HashMap, HashSet, VecDeque};
 use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 use std::sync::{Arc, Mutex, OnceLock};
 
@@ -14,7 +14,7 @@ use crate::hash::unit;
 use crate::lake::LakeNetwork;
 use crate::math::{Vec2, smoothstep};
 use crate::params::Params;
-use crate::plates::{Plate, plate_query};
+use crate::plates::{Plate, PlateSample, plate_query};
 use crate::runoff::{ClimateGrid, Runoff, RunoffClimate};
 use crate::seed::{SALT_RIVERS_DRAINAGE, cell_hash, subseed};
 use crate::version::GenVersion;
@@ -132,6 +132,9 @@ pub struct DrainageNode {
     pub depression: Option<usize>,
 }
 
+/// Меньше этого числа узлов на поток высоты считать параллельно невыгодно.
+const TOPO_PARALLEL_MIN_CHUNK: usize = 512;
+
 /// Узел топографии плиты до связывания с соседями (шаг 2 плана, T113).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct TopoNode {
@@ -164,7 +167,8 @@ impl PlateTopo {
         plate: &Plate,
         seed: u64,
         params: &Params,
-        input: &impl Fn(Vec2) -> DrainageInput,
+        input: &(impl Fn(Vec2, Option<&PlateSample>) -> DrainageInput + Sync),
+        threads: usize,
     ) -> Result<Self, RiverNetError> {
         if !params.version.is_water_relief_dev() {
             return Err(RiverNetError::UnsupportedVersion(params.version));
@@ -174,47 +178,73 @@ impl PlateTopo {
         validate_params(params)?;
         let p = &params.drainage;
         let anchor = find_anchor(plate, seed, params)?;
+        let mut neighbors: Vec<Plate> = Vec::new();
         log_phase(timings, "якорь", t);
         t = std::time::Instant::now();
-        let (owned, ring) = collect_cells(anchor, plate.id, seed, params);
-        let mut cells: Vec<(Cell, Option<Plate>)> = owned
-            .into_iter()
-            .map(|cell| (cell, Some(*plate)))
-            .chain(ring)
-            .collect();
+        // Запрос плиты в узле делается один раз: его результат нужен и для
+        // владельца клетки, и для высоты (Д-093).
+        let mut cells = collect_cells(anchor, plate.id, seed, params);
         cells.sort_unstable_by_key(|(cell, _)| *cell);
-        let mut neighbors: Vec<Plate> = Vec::new();
-        for (_, owner) in &cells {
+        log_phase(timings, "клетки", t);
+        t = std::time::Instant::now();
+        // Высоты узлов независимы друг от друга: считаем их кусками в
+        // нескольких потоках. Порядок результата — порядок клеток.
+        let sample_chunk = |chunk: &[(Cell, Option<PlateSample>)]| -> Vec<(Vec2, DrainageInput)> {
+            chunk
+                .iter()
+                .map(|(cell, sample)| {
+                    let point = jittered_point(*cell, seed, params);
+                    (point, input(point, sample.as_ref()))
+                })
+                .collect()
+        };
+        let threads = threads.clamp(1, (cells.len() / TOPO_PARALLEL_MIN_CHUNK).max(1));
+        let inputs: Vec<(Vec2, DrainageInput)> = if threads >= 2 {
+            let size = cells.len().div_ceil(threads);
+            std::thread::scope(|scope| {
+                let handles: Vec<_> = cells
+                    .chunks(size)
+                    .map(|chunk| scope.spawn(|| sample_chunk(chunk)))
+                    .collect();
+                handles
+                    .into_iter()
+                    .flat_map(|handle| handle.join().expect("поток высот узлов не паникует"))
+                    .collect()
+            })
+        } else {
+            sample_chunk(&cells)
+        };
+        let mut nodes = Vec::with_capacity(cells.len());
+        for ((cell, sample), (point, input)) in cells.into_iter().zip(inputs) {
+            if !input.route_km.is_finite() {
+                return Err(RiverNetError::InvalidInput { cell });
+            }
+            if input.outlet == DrainageOutlet::Handoff {
+                return Err(RiverNetError::InvalidInput { cell });
+            }
+            let owner = sample.map(|s| s.a);
+            nodes.push(TopoNode {
+                cell,
+                point,
+                in_plate: owner.is_some_and(|o| o.id == plate.id),
+                owner: owner.map(|o| o.id),
+                route_km: input.route_km,
+                outlet: input.outlet,
+                escape_km: f64::INFINITY,
+            });
+            // Сосед нужен только там, где узел кольца — суша без выхода:
+            // через море, рифт и трансформ вода между плитами не идёт, и
+            // топография такого соседа не запрашивается.
             if let Some(owner) = owner {
-                if owner.id != plate.id && !neighbors.iter().any(|n| n.id == owner.id) {
-                    neighbors.push(*owner);
+                if owner.id != plate.id
+                    && !input.outlet.is_outlet()
+                    && !neighbors.iter().any(|n: &Plate| n.id == owner.id)
+                {
+                    neighbors.push(owner);
                 }
             }
         }
         neighbors.sort_unstable_by_key(|n| n.id);
-        log_phase(timings, "клетки", t);
-        t = std::time::Instant::now();
-        let mut nodes = Vec::with_capacity(cells.len());
-        for (cell, owner) in cells {
-            let point = jittered_point(cell, seed, params);
-            let sample = input(point);
-            if !sample.route_km.is_finite() {
-                return Err(RiverNetError::InvalidInput { cell });
-            }
-            if sample.outlet == DrainageOutlet::Handoff {
-                return Err(RiverNetError::InvalidInput { cell });
-            }
-            let in_plate = owner.is_some_and(|o| o.id == plate.id);
-            nodes.push(TopoNode {
-                cell,
-                point,
-                in_plate,
-                owner: owner.map(|o| o.id),
-                route_km: sample.route_km,
-                outlet: sample.outlet,
-                escape_km: f64::INFINITY,
-            });
-        }
         log_phase(timings, "узлы", t);
         t = std::time::Instant::now();
         // Заливка только по своим узлам и настоящим выходам: чужой узел без
@@ -265,7 +295,8 @@ impl PlateTopo {
         &self.nodes
     }
 
-    /// Плиты-владельцы узлов кольца, по возрастанию id.
+    /// Плиты-владельцы узлов кольца без выхода (суша), по возрастанию id.
+    /// Только с ними возможен обмен водой.
     pub fn neighbors(&self) -> &[Plate] {
         &self.neighbors
     }
@@ -812,35 +843,30 @@ fn collect_cells(
     plate_id: u64,
     seed: u64,
     params: &Params,
-) -> (Vec<Cell>, Vec<(Cell, Option<Plate>)>) {
-    let mut status = HashMap::<Cell, bool>::new();
+) -> Vec<(Cell, Option<PlateSample>)> {
+    let query = |cell: Cell| plate_query(jittered_point(cell, seed, params), seed, params);
+    let mut seen = HashSet::<Cell>::new();
     let mut queue = VecDeque::new();
-    let mut owned = Vec::new();
-    let mut ring = Vec::new();
-    status.insert(anchor, true);
+    let mut cells = Vec::new();
+    seen.insert(anchor);
     queue.push_back(anchor);
-    owned.push(anchor);
+    cells.push((anchor, query(anchor)));
     while let Some(cell) = queue.pop_front() {
         for (di, dj) in [(1, 0), (-1, 0), (0, 1), (0, -1)] {
             let Some(next) = neighbor_cell(cell, di, dj) else {
                 continue;
             };
-            if status.contains_key(&next) {
+            if !seen.insert(next) {
                 continue;
             }
-            let point = jittered_point(next, seed, params);
-            let owner = plate_query(point, seed, params).map(|s| s.a);
-            let is_owned = owner.is_some_and(|o| o.id == plate_id);
-            status.insert(next, is_owned);
-            if is_owned {
-                owned.push(next);
+            let sample = query(next);
+            if sample.is_some_and(|s| s.a.id == plate_id) {
                 queue.push_back(next);
-            } else {
-                ring.push((next, owner));
             }
+            cells.push((next, sample));
         }
     }
-    (owned, ring)
+    cells
 }
 
 /// Восемь соседей по решётке для отсортированного списка клеток.

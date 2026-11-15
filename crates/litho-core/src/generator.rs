@@ -135,6 +135,12 @@ type RunoffClimateCache = ShardedCache<(u64, u64), Option<crate::runoff::RunoffC
 /// Сколько топографий соседних плит строится одновременно.
 const TOPO_PREFETCH_THREADS: usize = 8;
 
+fn worker_threads() -> usize {
+    std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(1)
+}
+
 type CoarseTiles = ShardedCache<(i64, i64), Arc<Nodes<COARSE_N>>>;
 type LastCoarse = Option<(u64, u64, i64, i64, Arc<Nodes<COARSE_N>>)>;
 /// Д-061: тайл → плиты, чьи сети рек могут иметь узел рядом с запросом.
@@ -525,18 +531,24 @@ impl Generator {
     /// Поверхность в произвольной macro-точке: нужно линии тока влаги (7.7).
     fn surface_at(&self, point: Vec2) -> SurfaceSample {
         match plate_query(point, self.seed, &self.params) {
-            Some(sample) => {
-                let crust = crust_from_sample(point, &sample, self.seed, &self.params);
-                SurfaceSample {
-                    e_km: crust.e_km,
-                    iota_l: crust.iota_l,
-                    mountain: crust.mountain,
-                    plateau: crust.plateau,
-                    boundary_weights: crust.boundary_weights,
-                    sigma_l: sample.d_ab_l,
-                }
-            }
+            Some(sample) => self.surface_from_sample(point, &sample),
             None => SurfaceSample::default(),
+        }
+    }
+
+    fn surface_from_sample(
+        &self,
+        point: Vec2,
+        sample: &crate::plates::PlateSample,
+    ) -> SurfaceSample {
+        let crust = crust_from_sample(point, sample, self.seed, &self.params);
+        SurfaceSample {
+            e_km: crust.e_km,
+            iota_l: crust.iota_l,
+            mountain: crust.mountain,
+            plateau: crust.plateau,
+            boundary_weights: crust.boundary_weights,
+            sigma_l: sample.d_ab_l,
         }
     }
 
@@ -642,32 +654,51 @@ impl Generator {
 
     /// Первая фаза сети плиты: узлы, высоты, выходы и заливка по своим узлам.
     pub fn drainage_topo(&self, plate: &Plate) -> Result<Arc<PlateTopo>, RiverNetError> {
+        self.drainage_topo_with(plate, worker_threads())
+    }
+
+    /// `threads` — потоки на высоты узлов одной топографии; на ответ не влияет.
+    fn drainage_topo_with(
+        &self,
+        plate: &Plate,
+        threads: usize,
+    ) -> Result<Arc<PlateTopo>, RiverNetError> {
         if !self.params.version.is_water_relief_dev() {
             return Err(RiverNetError::UnsupportedVersion(self.params.version));
         }
         self.drainage_topo.get_or_build(plate.id, || {
-            PlateTopo::build(plate, self.seed, &self.params, &|point| {
-                let surface = self.surface_at(point);
-                let outlet = if surface.e_km < 0.0 {
-                    DrainageOutlet::Sea
-                } else if surface.sigma_l.abs() < self.params.drainage.step_l {
-                    let k = surface.boundary_weights;
-                    let min = self.params.drainage.outlet_min_weight;
-                    if k[4] > min {
-                        DrainageOutlet::Rift
-                    } else if k[6] > min {
-                        DrainageOutlet::Transform
+            PlateTopo::build(
+                plate,
+                self.seed,
+                &self.params,
+                &|point, sample| {
+                    // Тот же ответ, что у `surface_at(point)`, без второго
+                    // запроса плиты.
+                    let surface = sample.map_or_else(SurfaceSample::default, |sample| {
+                        self.surface_from_sample(point, sample)
+                    });
+                    let outlet = if surface.e_km < 0.0 {
+                        DrainageOutlet::Sea
+                    } else if surface.sigma_l.abs() < self.params.drainage.step_l {
+                        let k = surface.boundary_weights;
+                        let min = self.params.drainage.outlet_min_weight;
+                        if k[4] > min {
+                            DrainageOutlet::Rift
+                        } else if k[6] > min {
+                            DrainageOutlet::Transform
+                        } else {
+                            DrainageOutlet::None
+                        }
                     } else {
                         DrainageOutlet::None
+                    };
+                    DrainageInput {
+                        route_km: surface.e_km,
+                        outlet,
                     }
-                } else {
-                    DrainageOutlet::None
-                };
-                DrainageInput {
-                    route_km: surface.e_km,
-                    outlet,
-                }
-            })
+                },
+                threads,
+            )
         })
     }
 
@@ -679,11 +710,10 @@ impl Generator {
             .iter()
             .filter(|plate| !self.drainage_topo.is_ready(plate.id))
             .collect();
-        let threads = std::thread::available_parallelism()
-            .map(|n| n.get())
-            .unwrap_or(1)
-            .min(TOPO_PREFETCH_THREADS)
-            .min(missing.len());
+        let workers = worker_threads();
+        let threads = workers.min(TOPO_PREFETCH_THREADS).min(missing.len());
+        // Потоки, оставшиеся свободными, делятся между топографиями.
+        let inner = (workers / threads.max(1)).max(1);
         if threads >= 2 {
             let next = std::sync::atomic::AtomicUsize::new(0);
             std::thread::scope(|scope| {
@@ -695,7 +725,7 @@ impl Generator {
                                 break;
                             };
                             // Ошибку вернёт обычный запрос ниже.
-                            let _ = self.drainage_topo(plate);
+                            let _ = self.drainage_topo_with(plate, inner);
                         }
                     });
                 }
@@ -761,10 +791,28 @@ impl Generator {
                 node.in_plate && !node.outlet.is_outlet() && wanted.is_none_or(|mask| mask[k])
             })
         };
+        let sources: Vec<&Plate> = routing
+            .neighbors()
+            .iter()
+            .zip(&around)
+            .filter(|(_, topo)| topo.may_hand_to(&own, &is_wanted))
+            .map(|(neighbor, _)| neighbor)
+            .collect();
+        // Связанной сети соседа нужны топографии его соседей: недостающие
+        // строим одной пачкой, а не по две-три на каждого соседа.
+        let mut second_ring: Vec<Plate> = Vec::new();
         for (neighbor, topo) in routing.neighbors().iter().zip(&around) {
-            if !topo.may_hand_to(&own, &is_wanted) {
-                continue;
+            if sources.iter().any(|s| s.id == neighbor.id) {
+                for plate in topo.neighbors() {
+                    if !second_ring.iter().any(|p| p.id == plate.id) {
+                        second_ring.push(*plate);
+                    }
+                }
             }
+        }
+        self.drainage_topos(&second_ring)?;
+        // Вклад одного соседа: (свой узел, расход). Соседи независимы.
+        let contribution = |neighbor: &Plate| -> Result<Vec<(usize, f64)>, RiverNetError> {
             let source = self.drainage_routing(neighbor)?;
             // Узлы-передачи соседа, лежащие в нужных узлах этой плиты.
             let mut targets = Vec::new();
@@ -782,13 +830,13 @@ impl Generator {
                 }
             }
             if targets.is_empty() {
-                continue;
+                return Ok(Vec::new());
             }
             let mask =
                 crate::runoff::upstream_mask(source.nodes(), source.depressions(), &targets)?;
             // Кроме самих узлов-передач в маске должен быть хоть один узел.
             if mask.iter().filter(|m| **m).count() == targets.len() {
-                continue;
+                return Ok(Vec::new());
             }
             let upstream = self.handoff_inflow(&source, hops - 1, Some(&mask))?;
             let points: Vec<Vec2> = source
@@ -811,8 +859,36 @@ impl Generator {
                 Some(&upstream),
                 Some(&mask),
             )?;
-            for (&target, &here) in targets.iter().zip(&receivers) {
-                inflow[here] += runoff.nodes()[target].discharge_mm_l2;
+            Ok(targets
+                .iter()
+                .zip(&receivers)
+                .map(|(&target, &here)| (here, runoff.nodes()[target].discharge_mm_l2))
+                .collect())
+        };
+        // Верхний уровень считает соседей одновременно; вложенные вызовы —
+        // по очереди, чтобы число потоков не росло с глубиной. Вклады
+        // складываются в порядке id соседей, от потоков сумма не зависит.
+        let parts: Vec<Result<Vec<(usize, f64)>, RiverNetError>> =
+            if wanted.is_none() && sources.len() >= 2 && worker_threads() >= 2 {
+                std::thread::scope(|scope| {
+                    let handles: Vec<_> = sources
+                        .iter()
+                        .map(|neighbor| scope.spawn(|| contribution(neighbor)))
+                        .collect();
+                    handles
+                        .into_iter()
+                        .map(|handle| handle.join().expect("поток притока не паникует"))
+                        .collect()
+                })
+            } else {
+                sources
+                    .iter()
+                    .map(|neighbor| contribution(neighbor))
+                    .collect()
+            };
+        for part in parts {
+            for (here, q) in part? {
+                inflow[here] += q;
             }
         }
         Ok(inflow)
