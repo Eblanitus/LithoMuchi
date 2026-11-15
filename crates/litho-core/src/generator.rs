@@ -252,8 +252,15 @@ pub struct Generator {
     /// К4: континентальность в центрах ячеек 4×4 блока. Пробы берега соседних
     /// колонок попадают в одни ячейки, чанк платит одну кору на ячейку.
     shore_c: Arc<ShardedCache<(i64, i64), f64>>,
+    /// К4а/часть 2 (Д-110): ячейки кромки океана по квадратам `SHORE_BLOCK`.
+    shore_edges: Arc<ShardedCache<(i64, i64), Arc<Vec<[u8; 2]>>>>,
     spawn_shift: Vec2,
 }
+
+/// К4: сторона ячейки, в центре которой берётся континентальность берега.
+const SHORE_CELL: f64 = 4.0;
+/// К4а/часть 2 (Д-110): сторона квадрата, по которому кэшируется кромка океана.
+const SHORE_BLOCK: f64 = 32.0;
 
 impl Generator {
     /// Создаётся один раз на мир. Пока дёшево; после T54 здесь появится поиск
@@ -328,6 +335,7 @@ impl Generator {
             lava_cells: Arc::new(ShardedCache::new(shards, LAVA_CELL_CACHE_CAPACITY)),
             lava_land: Arc::new(ShardedCache::new(shards, LAVA_CELL_CACHE_CAPACITY)),
             shore_c: Arc::new(ShardedCache::new(shards, LAVA_CELL_CACHE_CAPACITY)),
+            shore_edges: Arc::new(ShardedCache::new(shards, LAVA_CELL_CACHE_CAPACITY)),
             spawn_shift: shift,
         })
     }
@@ -376,10 +384,12 @@ impl Generator {
         };
         let crust = crust_from_sample(point, &plate, self.seed, &self.params);
         let depth = self.relief_basin_depth(point, &plate)?;
-        Ok(Some(relief::sample(
+        let shore_fade = self.shore_relief_fade(x, z, &crust);
+        Ok(Some(relief::sample_near_shore(
             &plate,
             &crust,
             depth,
+            shore_fade,
             self.seed,
             &self.params,
         )))
@@ -1152,7 +1162,14 @@ impl Generator {
             }
         };
         let depth = self.relief_basin_depth(point, &plate)?;
-        let relief_sample = relief::sample(&plate, &crust, depth, self.seed, &self.params);
+        let shore_dist = self.shore_distance_blocks(
+            x,
+            z,
+            continentalness(crust.e_km, crust.iota_l, &self.params),
+        );
+        let shore_fade = self.shore_fade_from(shore_dist);
+        let relief_sample =
+            relief::sample_near_shore(&plate, &crust, depth, shore_fade, self.seed, &self.params);
         let morpho = self
             .morpho_weights(x, z)
             .ok_or(RiverNetError::InvalidInput { cell: (0, 0) })?;
@@ -1192,7 +1209,11 @@ impl Generator {
         } else {
             0.0
         };
-        let shore_dist = self.shore_distance_blocks(x, z, vanilla.c);
+        let shore_dist = if vanilla.c <= self.params.climate.ocean_c_threshold {
+            0.0
+        } else {
+            shore_dist
+        };
         let height = crate::height::with_water(
             crate::height::sample_micro(
                 vanilla.c,
@@ -1238,7 +1259,6 @@ impl Generator {
     /// Квантование нужно для кэша: пробы берега соседних колонок попадают
     /// в одни ячейки. Ответ зависит только от ячейки, не от запроса.
     fn shore_c_at(&self, x: f64, z: f64) -> f64 {
-        const SHORE_CELL: f64 = 4.0;
         let cx = (x / SHORE_CELL).floor() as i64;
         let cz = (z / SHORE_CELL).floor() as i64;
         self.shore_c.get_or_insert((cx, cz), || {
@@ -1248,63 +1268,115 @@ impl Generator {
         })
     }
 
-    /// К4: расстояние до берега океана в блоках — до изолинии
-    /// `c = ocean_c_threshold`. Направление к морю — по градиенту
-    /// континентальности на пробах ±`shore_probe_blocks`, дальше марш
-    /// шагами по 4 блока с ранним выходом: у крутого шельфа c меняется
-    /// ступенькой за несколько блоков, и конечная разность на большом
-    /// шаге размазывает её по плато за ступенькой (замер на сиде 42,
-    /// берег у (−2000, 3630): оценка ±48 давала 98 блоков вместо ~4).
-    /// Океан даёт 0; дальше ширины спуска марш не идёт — рампа там
-    /// всё равно выключена.
-    /// К4: расстояние до берега океана в блоках; публично для диагностики
-    /// песочницы (К4а).
+    /// К4а/часть 2 (Д-110): множитель потенциала рельефа у берега океана —
+    /// 0 у воды, 1 дальше `relief.land_fade_blocks` блоков.
+    fn shore_fade_from(&self, shore_dist: f64) -> f64 {
+        crate::math::smoothstep(0.0, self.params.relief.land_fade_blocks, shore_dist)
+    }
+
+    /// То же для точки, где известна только кора (диагностика рельефа).
+    fn shore_relief_fade(&self, x: f64, z: f64, crust: &crate::crust::CrustSample) -> f64 {
+        let c = continentalness(crust.e_km, crust.iota_l, &self.params);
+        self.shore_fade_from(self.shore_distance_blocks(x, z, c))
+    }
+
+    /// К4: расстояние до берега океана в блоках; океан даёт 0. Публично
+    /// для диагностики песочницы (К4а). Считается по ячейкам кромки, см.
+    /// `shore_distance_cells`.
     pub fn shore_distance_blocks(&self, x: f64, z: f64, c: f64) -> f64 {
-        let threshold = self.params.climate.ocean_c_threshold;
-        if c <= threshold {
+        if c <= self.params.climate.ocean_c_threshold {
             return 0.0;
         }
-        let h = &self.params.height;
-        let width = h.shore_width_blocks;
-        let probe = h.shore_probe_blocks;
-        let cx_pos = self.shore_c_at(x + probe, z);
-        let cx_neg = self.shore_c_at(x - probe, z);
-        let cz_pos = self.shore_c_at(x, z + probe);
-        let cz_neg = self.shore_c_at(x, z - probe);
-        // Все пробы заметно выше изолинии: берег дальше пробы в любую
-        // сторону, марш не нужен. Ступенька в пределах пробы дала бы
-        // хотя бы одну пробу у порога.
-        let margin = c - threshold;
-        if cx_pos > c
-            && cx_neg > c
-            && cz_pos > c
-            && cz_neg > c
-            && (cx_pos - threshold)
-                .min(cx_neg - threshold)
-                .min(cz_pos - threshold)
-                .min(cz_neg - threshold)
-                > margin * 0.5 + 0.05
-        {
-            return width * 2.0;
-        }
-        let dx = (cx_pos - cx_neg) / (2.0 * probe);
-        let dz = (cz_pos - cz_neg) / (2.0 * probe);
-        let grad = (dx * dx + dz * dz).sqrt();
-        if grad <= 1e-9 {
-            return width * 2.0;
-        }
-        // Марш против градиента (к морю) с шагом 4 блока.
-        let step = 4.0;
-        let (ux, uz) = (-dx / grad, -dz / grad);
-        let mut r = step;
-        while r <= width {
-            let sample = self.shore_c_at(x + ux * r, z + uz * r);
-            if sample < threshold {
-                return r - step * 0.5;
+        self.shore_distance_cells(x, z)
+    }
+
+    /// К4а/часть 2 (Д-110): кромка океана в квадрате `SHORE_BLOCK` блоков —
+    /// ячейки 4×4 с океаном (номера внутри квадрата), у которых среди восьми соседей есть суша.
+    /// Квадрат, где четыре угла и центр по одну сторону порога, считается
+    /// однородным и даёт пустой список: глубь материка и открытый океан не
+    /// платят за разбор по ячейкам (залив или островок уже квадрата может
+    /// выпасть — тогда у него остаётся прежний берег по окну C).
+    fn shore_edge_cells(&self, bx: i64, bz: i64) -> Arc<Vec<[u8; 2]>> {
+        self.shore_edges.get_or_insert((bx, bz), || {
+            let threshold = self.params.climate.ocean_c_threshold;
+            let (x0, z0) = (bx as f64 * SHORE_BLOCK, bz as f64 * SHORE_BLOCK);
+            let ocean = |x: f64, z: f64| self.shore_c_at(x, z) < threshold;
+            let probes = [
+                (0.0, 0.0),
+                (SHORE_BLOCK, 0.0),
+                (0.0, SHORE_BLOCK),
+                (SHORE_BLOCK, SHORE_BLOCK),
+                (0.5 * SHORE_BLOCK, 0.5 * SHORE_BLOCK),
+            ];
+            let first = ocean(x0, z0);
+            if probes
+                .iter()
+                .all(|(dx, dz)| ocean(x0 + dx, z0 + dz) == first)
+            {
+                return Arc::new(Vec::new());
             }
-            r += step;
+            let n = (SHORE_BLOCK / SHORE_CELL) as i64;
+            let centre = |i: i64, j: i64| {
+                (
+                    x0 + (i as f64 + 0.5) * SHORE_CELL,
+                    z0 + (j as f64 + 0.5) * SHORE_CELL,
+                )
+            };
+            let mut cells = Vec::new();
+            for j in 0..n {
+                for i in 0..n {
+                    let (px, pz) = centre(i, j);
+                    if !ocean(px, pz) {
+                        continue;
+                    }
+                    let edge = (-1..=1).any(|dj| {
+                        (-1..=1).any(|di| {
+                            let (qx, qz) = centre(i + di, j + dj);
+                            (di != 0 || dj != 0) && !ocean(qx, qz)
+                        })
+                    });
+                    if edge {
+                        cells.push([i as u8, j as u8]);
+                    }
+                }
+            }
+            Arc::new(cells)
+        })
+    }
+
+    /// К4а/часть 2 (Д-110): расстояние до берега океана — до ближайшей
+    /// ячейки кромки, минус полъячейки. Это настоящее расстояние до одного и
+    /// того же набора точек для всех колонок, поэтому оно непрерывно и
+    /// меняется не быстрее блока на блок. Прежний марш вдоль градиента давал
+    /// его ступенями по 4 блока и терял берег на изгибах — спуск к воде
+    /// выходил лестницей. Дальше `reach` блоков берега «нет»: и спуск к
+    /// воде, и затухание рельефа там уже выключены.
+    fn shore_distance_cells(&self, x: f64, z: f64) -> f64 {
+        let reach = self
+            .params
+            .height
+            .shore_width_blocks
+            .max(self.params.relief.land_fade_blocks)
+            + 0.5 * SHORE_CELL;
+        let block = |v: f64| (v / SHORE_BLOCK).floor() as i64;
+        let mut best = reach * reach;
+        for bz in block(z - reach)..=block(z + reach) {
+            for bx in block(x - reach)..=block(x + reach) {
+                let (x0, z0) = (bx as f64 * SHORE_BLOCK, bz as f64 * SHORE_BLOCK);
+                // Квадрат целиком дальше `reach` — его кромка не нужна.
+                let gap_x = (x0 - x).max(x - x0 - SHORE_BLOCK).max(0.0);
+                let gap_z = (z0 - z).max(z - z0 - SHORE_BLOCK).max(0.0);
+                if gap_x * gap_x + gap_z * gap_z >= best {
+                    continue;
+                }
+                for cell in self.shore_edge_cells(bx, bz).iter() {
+                    let dx = x0 + (f64::from(cell[0]) + 0.5) * SHORE_CELL - x;
+                    let dz = z0 + (f64::from(cell[1]) + 0.5) * SHORE_CELL - z;
+                    best = best.min(dx * dx + dz * dz);
+                }
+            }
         }
-        width * 2.0
+        (best.sqrt() - 0.5 * SHORE_CELL).max(0.0)
     }
 
     /// Поле глубинной лавы λ (слой `lava`, T53).

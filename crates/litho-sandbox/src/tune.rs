@@ -119,7 +119,6 @@ fn set(p: &mut Params, key: &str, value: f64) -> Result<(), String> {
         "height.e_gain_blocks_per_km" => Some(&mut p.height.e_gain_blocks_per_km),
         "height.shore_width_blocks" => Some(&mut p.height.shore_width_blocks),
         "height.shore_cliff_e" => Some(&mut p.height.shore_cliff_e),
-        "height.shore_probe_blocks" => Some(&mut p.height.shore_probe_blocks),
         "relief.land_fade_blocks" => Some(&mut p.relief.land_fade_blocks),
         "relief.land_e_gradient_km_per_block" => Some(&mut p.relief.land_e_gradient_km_per_block),
         _ => None,

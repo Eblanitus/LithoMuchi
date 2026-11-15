@@ -24,6 +24,8 @@ const LENGTH: i64 = 16_384;
 const OFFSETS: [i64; 4] = [-6000, -2000, 2000, 6000];
 /// Порог ступени: перепад больше 3 блоков на блок.
 const STEEP_PER_BLOCK: f64 = 3.0;
+/// Разрыв коры: скачок `e_km` между соседними пробами, км (Д-110).
+const CRUST_JUMP_KM: f64 = 0.1;
 /// Доля вклада, с которой ступень приписывается одному полю.
 const MAIN_SHARE: f64 = 0.6;
 
@@ -125,6 +127,13 @@ struct Tally {
     /// Из них «стол со стеной»: вырезанная точка выше суши рядом.
     raised: u64,
     river: u64,
+    /// Из них у горного русла (E ниже `shore_cliff_e`).
+    river_mountain: u64,
+    /// Разрывы коры: `e_km` меняется больше чем на `CRUST_JUMP_KM` между
+    /// соседними пробами (любая пара точек мира, не только суша).
+    crust_jumps: u64,
+    /// Самый большой разрыв коры: скачок e_km, x, z.
+    worst_crust: (f64, f64, f64),
     dry: DryTally,
     /// Самая крутая не-горная ступень: перепад, x, z, категория.
     worst_dry: (f64, f64, f64, &'static str),
@@ -171,7 +180,14 @@ fn line(generator: &Generator, tally: &mut Tally, at: impl Fn(i64) -> (f64, f64)
                 continue;
             }
         };
-        if let Some((a, ax, az)) = previous {
+        if let Some((a, _, _)) = previous {
+            let jump = (b.e_km - a.e_km).abs();
+            if jump > CRUST_JUMP_KM {
+                tally.crust_jumps += 1;
+                if jump > tally.worst_crust.0 {
+                    tally.worst_crust = (jump, bx, bz);
+                }
+            }
             if a.land && b.land {
                 tally.pairs += 1;
                 let dy = (b.y - a.y).abs();
@@ -189,6 +205,10 @@ fn line(generator: &Generator, tally: &mut Tally, at: impl Fn(i64) -> (f64, f64)
                         }
                     } else if a.river > 0.0 || b.river > 0.0 {
                         tally.river += 1;
+                        // Каньон в горах задуман; считаем его отдельно.
+                        if a.e.min(b.e) < generator.params().height.shore_cliff_e {
+                            tally.river_mountain += 1;
+                        }
                     } else if !a.near_water() && !b.near_water() {
                         classify_dry(generator, tally, &a, &b, bx, bz, dy);
                     }
@@ -210,8 +230,10 @@ fn classify_dry(
     dy: f64,
 ) {
     let category = if a.e.min(b.e) < generator.params().height.shore_cliff_e {
+        tally.dry.mountain += 1;
         "горы"
     } else if (a.mountain - b.mountain).abs() > 0.5 || (a.plateau - b.plateau).abs() > 0.5 {
+        tally.dry.crust_seam += 1;
         "шов коры"
     } else {
         // Разложение по таблице: чьё поле двинуло высоту сильнее.
@@ -310,7 +332,10 @@ pub fn run(generator: &Generator, center: (f64, f64)) -> Result<(), String> {
         "  у выреза воды: {} (из них «стол со стеной»: {})",
         tally.water_edge, tally.raised
     );
-    println!("  у реки: {}", tally.river);
+    println!(
+        "  у реки: {} (из них в горах, каньоны: {})",
+        tally.river, tally.river_mountain
+    );
     println!(
         "  суша вдали от воды: {} — горы {}, шов коры {}, таблица E {}, PV {}, смешанные {} (из них в полосе затухания: {})",
         tally.dry.mountain
@@ -324,6 +349,10 @@ pub fn run(generator: &Generator, center: (f64, f64)) -> Result<(), String> {
         tally.dry.pv,
         tally.dry.mixed,
         tally.dry.fade_strip
+    );
+    println!(
+        "  разрывы коры (e_km больше {CRUST_JUMP_KM} км на {STEP} блока): {}; самый большой {:.2} км у ({:.0}, {:.0})",
+        tally.crust_jumps, tally.worst_crust.0, tally.worst_crust.1, tally.worst_crust.2
     );
     println!(
         "  суша вне гор: {inland} ступеней; самая крутая {:.0} блоков на {STEP} у ({:.0}, {:.0}), категория {}",
@@ -343,13 +372,13 @@ pub fn run(generator: &Generator, center: (f64, f64)) -> Result<(), String> {
             step.7,
             step.8,
             step.15,
-            step.16,
+            step.17,
             step.10,
             step.11,
             step.14,
             step.12,
             step.13,
-            step.17,
+            step.16,
             step.18,
             step.19,
             step.20
