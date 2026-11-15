@@ -5,7 +5,7 @@ use crate::climate::ClimateSample;
 use crate::math::{LN_2, clamp, clamp01, dexp, dln, smoothstep};
 use crate::noise::{fbm2, fbm2_unit};
 use crate::params::Params;
-use crate::seed::{SALT_CLASS_JITTER, SALT_CLASS_JITTER_COARSE, SALT_ECOTONE, subseed};
+use crate::seed::{SALT_CLASS_JITTER, SALT_ECOTONE, subseed};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct LifeZone {
@@ -270,47 +270,17 @@ pub fn classify(
     let sub = subseed(seed, SALT_CLASS_JITTER);
     let u = x / c.jitter_lambda_blocks;
     let v = z / c.jitter_lambda_blocks;
-    let (jitter_t, jitter_r) = if params.version.is_water_relief_dev() {
-        // T101/T133: амплитуды в σ. Мелкий масштаб λ240 остаётся прежним;
-        // крупный λ1000 добавляет независимое дрожание с σ в factor раз больше
-        // (стартовый factor 4 ≈ смещение границ ±200 против ±50 блоков).
-        let b = &params.boundaries;
-        let coarse = subseed(seed, SALT_CLASS_JITTER_COARSE);
-        let cu = x / b.jitter_coarse_lambda_blocks;
-        let cv = z / b.jitter_coarse_lambda_blocks;
-        let f = b.jitter_coarse_sigma_factor;
-        (
-            fbm2_unit(sub, u, v, 1.0, c.jitter_octaves, c.jitter_gain)
-                + f * fbm2_unit(coarse, cu, cv, 1.0, c.jitter_octaves, c.jitter_gain),
-            fbm2_unit(
-                sub.wrapping_add(1),
-                u,
-                v,
-                1.0,
-                c.jitter_octaves,
-                c.jitter_gain,
-            ) + f * fbm2_unit(
-                coarse.wrapping_add(1),
-                cu,
-                cv,
-                1.0,
-                c.jitter_octaves,
-                c.jitter_gain,
-            ),
-        )
-    } else {
-        (
-            fbm2(sub, u, v, 1.0, c.jitter_octaves, c.jitter_gain),
-            fbm2(
-                sub.wrapping_add(1),
-                u,
-                v,
-                1.0,
-                c.jitter_octaves,
-                c.jitter_gain,
-            ),
-        )
-    };
+    // К1 / Д-103: одно дрожание для всех версий, как в v0. Единичный fBm
+    // и крупный слой T101/T133 убраны: они дробили биомы на пятна.
+    let jitter_t = fbm2(sub, u, v, 1.0, c.jitter_octaves, c.jitter_gain);
+    let jitter_r = fbm2(
+        sub.wrapping_add(1),
+        u,
+        v,
+        1.0,
+        c.jitter_octaves,
+        c.jitter_gain,
+    );
     let t_bio = climate.temperature.t_bio + params.block.jitter_t_c * jitter_t;
     let log2_r = clamp(
         dln(climate.precip.ratio.max(1e-9)) / LN_2 + params.block.jitter_r_log2 * jitter_r,
@@ -555,35 +525,22 @@ mod t133_tests {
     }
 
     #[test]
-    fn coarse_jitter_moves_classes_more_than_fine_and_v0_is_bitwise_unchanged() {
-        let dev = Params::defaults(GenVersion::V1Dev, Mode::Gameplay);
-        let mut fine_only = dev.clone();
-        fine_only.boundaries.jitter_coarse_sigma_factor = 1.0;
+    fn jitter_of_v1_dev_is_the_v0_jitter() {
+        // К1 / Д-103: при одинаковых амплитудах дрожание v1-dev побитно
+        // равно v0 (экотоны выключены, климат один и тот же).
         let old = Params::defaults(GenVersion::V0, Mode::Gameplay);
-        let mut changed_old = old.clone();
-        changed_old.boundaries.jitter_coarse_sigma_factor = 8.0;
-        changed_old.boundaries.ecotone_max_fraction = 0.5;
+        let dev = Params::defaults(GenVersion::V1Dev, Mode::Gameplay);
+        assert_eq!(dev.block.jitter_t_c, old.block.jitter_t_c);
+        assert_eq!(dev.block.jitter_r_log2, old.block.jitter_r_log2);
         let c = climate(15.0, 1.0);
-        let mut dev_moves = 0;
-        let mut fine_moves = 0;
         for k in 0..400 {
             let x = k as f64 * 37.0 - 7000.0;
             let z = k as f64 * -23.0 + 3000.0;
-            let base = classify_inputs(15.0, 1.0, 5.0, &dev);
-            let d = classify(&c, false, x, z, 42, &dev);
-            let f = classify(&c, false, x, z, 42, &fine_only);
-            dev_moves += usize::from(d.cell != base.cell);
-            fine_moves += usize::from(f.cell != base.cell);
-            let a = classify(&c, false, x, z, 42, &old);
-            let b = classify(&c, false, x, z, 42, &changed_old);
-            assert_eq!(a.cell, b.cell);
+            let a = classify(&c, true, x, z, 42, &old);
+            let b = classify(&c, true, x, z, 42, &dev);
             assert_eq!(a.t_bio.to_bits(), b.t_bio.to_bits());
             assert_eq!(a.ratio.to_bits(), b.ratio.to_bits());
         }
-        assert!(
-            dev_moves > fine_moves,
-            "крупный масштаб должен двигать границы сильнее: {dev_moves} vs {fine_moves}"
-        );
     }
 
     #[test]
