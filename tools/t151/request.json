@@ -1,6 +1,6 @@
 {
-  "name": "t123-remap-3",
-  "note": "Д-095, круг 4: gameplay — перекладка E с растяжением отрезков не больше 2, вокруг лучшего варианта круга 3 (g-mix); scientific — значения круга 1 (крутые отрезки, шов с запасом) с усиленной тропической зоной. base — значения по умолчанию этого коммита, остальные варианты — подбор через --set, не приёмка.",
+  "name": "t123-remap-final",
+  "note": "Д-095, итоговый замер шага 3 без --set: значения по умолчанию этого коммита, 16 сидов × 2 режима.",
   "version": "v1-dev",
   "modes": [
     "gameplay",
@@ -24,119 +24,5 @@
     99999,
     987654321
   ],
-  "args": "--size 160 --patches 5 --relief-size 16 --boundary-size 32",
-  "variants": [
-    {
-      "name": "g-base",
-      "set": "",
-      "modes": [
-        "gameplay"
-      ]
-    },
-    {
-      "name": "g-cold15",
-      "set": "morpho.e_remap_hi[0]=-0.15,morpho.e_remap_hi[1]=-0.15",
-      "modes": [
-        "gameplay"
-      ]
-    },
-    {
-      "name": "g-cold15-trop15",
-      "set": "morpho.e_remap_hi[0]=-0.15,morpho.e_remap_hi[1]=-0.15,morpho.e_remap_hi[5]=-0.15",
-      "modes": [
-        "gameplay"
-      ]
-    },
-    {
-      "name": "g-temp03",
-      "set": "morpho.e_remap_hi[2]=-0.03",
-      "modes": [
-        "gameplay"
-      ]
-    },
-    {
-      "name": "g-arid20",
-      "set": "morpho.e_remap_hi[4]=0.2",
-      "modes": [
-        "gameplay"
-      ]
-    },
-    {
-      "name": "g-cold15-arid20",
-      "set": "morpho.e_remap_hi[0]=-0.15,morpho.e_remap_hi[1]=-0.15,morpho.e_remap_hi[4]=0.2",
-      "modes": [
-        "gameplay"
-      ]
-    },
-    {
-      "name": "g-arid-lo10",
-      "set": "morpho.e_remap_lo[4]=-0.1",
-      "modes": [
-        "gameplay"
-      ]
-    },
-    {
-      "name": "g-cold15-temp03",
-      "set": "morpho.e_remap_hi[0]=-0.15,morpho.e_remap_hi[1]=-0.15,morpho.e_remap_hi[2]=-0.03",
-      "modes": [
-        "gameplay"
-      ]
-    },
-    {
-      "name": "s-base",
-      "set": "",
-      "modes": [
-        "scientific"
-      ]
-    },
-    {
-      "name": "s-trop-hi05",
-      "set": "morpho.e_remap_hi[5]=0.05",
-      "modes": [
-        "scientific"
-      ]
-    },
-    {
-      "name": "s-trop-hi16",
-      "set": "morpho.e_remap_hi[5]=0.16",
-      "modes": [
-        "scientific"
-      ]
-    },
-    {
-      "name": "s-cold15",
-      "set": "morpho.e_remap_hi[0]=-0.15,morpho.e_remap_hi[1]=-0.15",
-      "modes": [
-        "scientific"
-      ]
-    },
-    {
-      "name": "s-cold15-trop16",
-      "set": "morpho.e_remap_hi[0]=-0.15,morpho.e_remap_hi[1]=-0.15,morpho.e_remap_hi[5]=0.16",
-      "modes": [
-        "scientific"
-      ]
-    },
-    {
-      "name": "s-trop-flat",
-      "set": "morpho.e_remap_hi[5]=-0.12",
-      "modes": [
-        "scientific"
-      ]
-    },
-    {
-      "name": "s-temp12",
-      "set": "morpho.e_remap_hi[2]=0.12",
-      "modes": [
-        "scientific"
-      ]
-    },
-    {
-      "name": "s-cold10",
-      "set": "morpho.e_remap_hi[0]=-0.1,morpho.e_remap_hi[1]=-0.1",
-      "modes": [
-        "scientific"
-      ]
-    }
-  ]
+  "args": "--size 160 --patches 5 --relief-size 16 --boundary-size 32"
 }
