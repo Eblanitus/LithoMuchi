@@ -41,6 +41,8 @@ const COARSE_N: usize = 4;
 /// колонке. Ёмкость инфраструктурная, в хеш мира не входит; вытеснение меняет
 /// только скорость, не ответ.
 const COLUMN_CACHE_CAPACITY: usize = 4096;
+/// Д-098: ячейки лавы 64×64; ёмкость на ответ не влияет.
+const LAVA_CELL_CACHE_CAPACITY: usize = 4096;
 /// Д-059: кэш лучей влаги в узлах решётки быстрого пути. Узел — два десятка
 /// чисел; при шаге 32 блока ёмкости хватает на область 4096×4096 блоков.
 /// В хеш мира не входит: вытеснение меняет только скорость, не ответ.
@@ -243,6 +245,10 @@ pub struct Generator {
     ray_field_id: u64,
     /// T79: сколько узлов решётки высот посчитано, только для диагностики.
     ray_field_nodes: Arc<std::sync::atomic::AtomicU64>,
+    /// Д-098: λ в центрах ячеек 64×64 и признак суши там же. Аквифер игры
+    /// спрашивает одну ячейку сотни раз; кэш ответ не меняет.
+    lava_cells: Arc<ShardedCache<(i64, i64), f64>>,
+    lava_land: Arc<ShardedCache<(i64, i64), bool>>,
     spawn_shift: Vec2,
 }
 
@@ -316,6 +322,8 @@ impl Generator {
             )),
             ray_field_id: RAY_FIELD_IDS.fetch_add(1, Ordering::Relaxed),
             ray_field_nodes: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            lava_cells: Arc::new(ShardedCache::new(shards, LAVA_CELL_CACHE_CAPACITY)),
+            lava_land: Arc::new(ShardedCache::new(shards, LAVA_CELL_CACHE_CAPACITY)),
             spawn_shift: shift,
         })
     }
@@ -1218,15 +1226,144 @@ impl Generator {
     /// T77: значение поля лавы аквиферов для ячейки игры
     /// `(x div 64, y div 40, z div 64)`. λ берётся в центре ячейки.
     pub fn lava_aquifer(&self, cell_x: i64, cell_y: i64, cell_z: i64) -> f64 {
-        let half = crate::lava::AQUIFER_CELL_XZ as f64 * 0.5;
-        let x = (cell_x * crate::lava::AQUIFER_CELL_XZ) as f64 + half;
-        let z = (cell_z * crate::lava::AQUIFER_CELL_XZ) as f64 + half;
-        crate::lava::aquifer_value(
-            self.lava_sample(x, z),
-            [cell_x, cell_y, cell_z],
-            self.seed,
-            &self.params,
-        )
+        let lambda = self.lava_cell(cell_x, cell_z);
+        // Д-098: в глубинном слое у стыка лава всегда, без жребия.
+        if cell_y * crate::lava::AQUIFER_CELL_Y + crate::lava::AQUIFER_CELL_Y - 1
+            <= crate::lava::DEEP_CELL_TOP
+            && lambda >= crate::lava::DEEP_LAVA_MIN
+        {
+            return crate::lava::AQUIFER_LAVA_ON;
+        }
+        crate::lava::aquifer_value(lambda, [cell_x, cell_y, cell_z], self.seed, &self.params)
+    }
+
+    /// Д-098: ячейка 64×64 лежит у стыка плит (λ в её центре не ниже 0,5).
+    /// Только здесь остаётся сплошная лава ниже −54.
+    pub fn lava_deep(&self, cell_x: i64, cell_z: i64) -> bool {
+        self.lava_cell(cell_x, cell_z) >= crate::lava::DEEP_LAVA_MIN
+    }
+
+    /// λ в центре ячейки аквифера 64×64 (с кэшем).
+    pub fn lava_cell(&self, cell_x: i64, cell_z: i64) -> f64 {
+        self.lava_cells.get_or_insert((cell_x, cell_z), || {
+            let half = crate::lava::AQUIFER_CELL_XZ as f64 * 0.5;
+            let x = (cell_x * crate::lava::AQUIFER_CELL_XZ) as f64 + half;
+            let z = (cell_z * crate::lava::AQUIFER_CELL_XZ) as f64 + half;
+            self.lava_sample(x, z)
+        })
+    }
+
+    /// Д-098: в центре ячейки 64×64 суша (поверхность не ниже 60).
+    pub fn lava_deep_land(&self, cell_x: i64, cell_z: i64) -> bool {
+        self.lava_land.get_or_insert((cell_x, cell_z), || {
+            let half = crate::lava::AQUIFER_CELL_XZ as f64 * 0.5;
+            let x = (cell_x * crate::lava::AQUIFER_CELL_XZ) as f64 + half;
+            let z = (cell_z * crate::lava::AQUIFER_CELL_XZ) as f64 + half;
+            let surface = 128.0 * (1.0 + self.field_column(Field::Offset, x, z));
+            surface >= crate::lava::DEEP_LAND_MIN_Y
+        })
+    }
+
+    /// Д-098: затопленность ячейки аквифера с центром в блоке `(x, y, z)`.
+    /// `None` — оставить ванильное значение. Ниже −54: у стыка залито до
+    /// общего уровня (лава до −54), вдали сухо. От −54 до −41 у стыка на
+    /// суше — свой уровень ячейки, который разброс ставит на −54.
+    pub fn aquifer_floodedness(&self, x: i64, y: i64, z: i64) -> Option<f64> {
+        use crate::lava::{
+            AQUIFER_CELL_XZ, DEEP_CELL_TOP, DEEP_LAVA_LEVEL, FLOOD_DRY, FLOOD_FULL, FLOOD_POCKET,
+        };
+        if y > DEEP_CELL_TOP {
+            return None;
+        }
+        let cell_x = x.div_euclid(AQUIFER_CELL_XZ);
+        let cell_z = z.div_euclid(AQUIFER_CELL_XZ);
+        let deep = self.lava_deep(cell_x, cell_z);
+        if y < DEEP_LAVA_LEVEL {
+            return Some(if deep { FLOOD_FULL } else { FLOOD_DRY });
+        }
+        (deep && self.lava_deep_land(cell_x, cell_z)).then_some(FLOOD_POCKET)
+    }
+
+    /// Д-098: исключение аквифера (глубинная тьма) у стыка снимается,
+    /// иначе под горами стыка лава пропала бы совсем. `None` — ваниль.
+    pub fn aquifer_exclusion(&self, x: i64, y: i64, z: i64) -> Option<f64> {
+        use crate::lava::{AQUIFER_CELL_XZ, DEEP_CELL_TOP, EXCLUSION_OFF};
+        (y <= DEEP_CELL_TOP
+            && self.lava_deep(x.div_euclid(AQUIFER_CELL_XZ), z.div_euclid(AQUIFER_CELL_XZ)))
+        .then_some(EXCLUSION_OFF)
+    }
+
+    /// Д-098: разброс уровня. Игра спрашивает его в `(x div 16, y div 40,
+    /// z div 16)`. В глубинном слое у стыка уровень ровно −54; в остальных
+    /// лавовых ячейках ванильный уровень сдвинут на один шаг.
+    pub fn aquifer_spread(&self, quad_x: i64, cell_y: i64, quad_z: i64, vanilla: f64) -> f64 {
+        use crate::lava::{
+            AQUIFER_CELL_Y, AQUIFER_LAVA_OFF, DEEP_CELL_TOP, SPREAD_DEEP, SPREAD_LAVA_SHIFT,
+        };
+        let cell_x = quad_x.div_euclid(4);
+        let cell_z = quad_z.div_euclid(4);
+        let top = cell_y * AQUIFER_CELL_Y + AQUIFER_CELL_Y - 1;
+        if top <= DEEP_CELL_TOP && self.lava_deep(cell_x, cell_z) {
+            return SPREAD_DEEP;
+        }
+        if top < 0 && self.lava_aquifer(cell_x, cell_y, cell_z) != AQUIFER_LAVA_OFF {
+            return vanilla + SPREAD_LAVA_SHIFT;
+        }
+        vanilla
+    }
+
+    /// Д-098: барьер аквифера в блоке `(x, y, z)`. У границы лавовой и
+    /// водяной ячеек ставится стенка (в ванили её ставит правило «лава
+    /// рядом с водой», которое в наших мирах отключено вместе с общей лавой).
+    pub fn aquifer_barrier(&self, x: i64, y: i64, z: i64, vanilla: f64) -> f64 {
+        use crate::lava::{
+            AQUIFER_CELL_XZ, AQUIFER_CELL_Y, AQUIFER_LAVA_OFF, BARRIER_MARGIN_XZ, BARRIER_MARGIN_Y,
+            BARRIER_WALL,
+        };
+        if y >= 0 {
+            return vanilla;
+        }
+        let side = |v: i64, size: i64, margin: i64| -> i64 {
+            let local = v.rem_euclid(size);
+            if local < margin {
+                -1
+            } else if local >= size - margin {
+                1
+            } else {
+                0
+            }
+        };
+        let cell = [
+            x.div_euclid(AQUIFER_CELL_XZ),
+            y.div_euclid(AQUIFER_CELL_Y),
+            z.div_euclid(AQUIFER_CELL_XZ),
+        ];
+        let step = [
+            side(x, AQUIFER_CELL_XZ, BARRIER_MARGIN_XZ),
+            side(y, AQUIFER_CELL_Y, BARRIER_MARGIN_Y),
+            side(z, AQUIFER_CELL_XZ, BARRIER_MARGIN_XZ),
+        ];
+        if step == [0, 0, 0] {
+            return vanilla;
+        }
+        // Выше нуля лавы аквиферов нет: соседний слой сверху считается водой.
+        let lava =
+            |c: [i64; 3]| c[1] < 0 && self.lava_aquifer(c[0], c[1], c[2]) != AQUIFER_LAVA_OFF;
+        let own = lava(cell);
+        for mask in 1..8_u8 {
+            let mut other = cell;
+            let mut moved = false;
+            for (axis, delta) in step.iter().enumerate() {
+                if mask & (1 << axis) != 0 && *delta != 0 {
+                    other[axis] += delta;
+                    moved = true;
+                }
+            }
+            if moved && lava(other) != own {
+                return vanilla.max(BARRIER_WALL);
+            }
+        }
+        vanilla
     }
 
     /// Насколько точка подходит для появления (слой `spawn`, T54).
@@ -1485,6 +1622,11 @@ impl Generator {
             COLUMN_CACHE_CAPACITY,
         ));
         self.ray_traces = Arc::new(std::sync::atomic::AtomicU64::new(0));
+        // Д-098: признак суши ячеек лавы считается по высоте колонки.
+        self.lava_land = Arc::new(ShardedCache::new(
+            self.params.lattice.cache_shards.max(1),
+            LAVA_CELL_CACHE_CAPACITY,
+        ));
         // T79: вместе с лучами сбрасывается и решётка высот; новый номер
         // отвязывает генератор от потоковой памяти тайлов.
         self.ray_field = Arc::new(ShardedCache::new(

@@ -308,6 +308,12 @@ fn cmd_bundle(out: &Path) -> Result<(), String> {
     )?;
     for (src, dst) in [
         ("glue/noise_hook.rs.in", "glue/noise_hook.rs"),
+        ("glue/aquifer_hook.rs.in", "glue/aquifer_hook.rs"),
+        (
+            "glue/aquifer_reset_hook.rs.in",
+            "glue/aquifer_reset_hook.rs",
+        ),
+        ("glue/is_lava_hook.rs.in", "glue/is_lava_hook.rs"),
         ("glue/litospherity_glue.rs.in", "glue/litospherity_glue.rs"),
     ] {
         let text = read_template(src)?;
@@ -379,6 +385,9 @@ fn cmd_bundle_check(out: &Path) -> Result<(), String> {
     }
     for rel in [
         "glue/noise_hook.rs",
+        "glue/aquifer_hook.rs",
+        "glue/aquifer_reset_hook.rs",
+        "glue/is_lava_hook.rs",
         "glue/litospherity_glue.rs",
         "crates/litho-core/Cargo.toml",
         "crates/litho-core/src/lib.rs",

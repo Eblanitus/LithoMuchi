@@ -300,6 +300,16 @@ jobs:
             exit 1
           fi
           cat /tmp/litho-mixin-test.log
+      - name: "Д-098 — настоящий аквифер: лава ниже −54 только у стыков плит"
+        run: |
+          mkdir -p /tmp/litho-horizon-staged-ci/crates/horizon-world/tests
+          cp tools/horizon-core-check/deep_lava.rs /tmp/litho-horizon-staged-ci/crates/horizon-world/tests/litho_deep_lava.rs
+          if ! cargo test --locked --offline --manifest-path /tmp/litho-horizon-staged-ci/Cargo.toml \
+            -p horizon-world --test litho_deep_lava -- --nocapture > /tmp/litho-deep-lava.log 2>&1; then
+            cat /tmp/litho-deep-lava.log
+            exit 1
+          fi
+          cat /tmp/litho-deep-lava.log
       - name: "К2 — настоящие данные 26.3: depth = 0.375 + offset"
         run: |
           mkdir -p /tmp/litho-horizon-staged-ci/crates/horizon-world/tests
