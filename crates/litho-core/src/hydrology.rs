@@ -6,7 +6,7 @@
 //! сохраняется честно помеченный запасной путь «сухая котловина / болото».
 
 use crate::channel::{ChannelQuery, ReachEnd};
-use crate::classify::{ClassSample, VanillaCell, biome_cell, ocean_cell};
+use crate::classify::{ClassSample, VanillaCell, ocean_cell, step_toward};
 use crate::climate::ClimateSample;
 use crate::drainage::RiverNetError;
 use crate::lake::{LakeKind, LakeQuery};
@@ -218,18 +218,25 @@ pub fn classify_surface(
         {
             // Сильный коридор получает лесную ячейку; слабая кромка только
             // плавно поднимает H (и опускает t4 к t3 ниже, в apply_fields).
+            // К2 / Д-104: не дальше одной ступени от биома вокруг.
             Some(match base.zone.belt {
                 0..=1 => base.cell,
-                2 => VanillaCell {
-                    t: 1,
-                    h: 3,
-                    biome: "taiga",
-                },
-                _ => VanillaCell {
-                    t: base.cell.t.saturating_sub(1).max(2),
-                    h: 2,
-                    biome: "forest",
-                },
+                2 => step_toward(
+                    base.cell,
+                    VanillaCell {
+                        t: 1,
+                        h: 3,
+                        biome: "taiga",
+                    },
+                ),
+                _ => step_toward(
+                    base.cell,
+                    VanillaCell {
+                        t: base.cell.t.saturating_sub(1).max(2),
+                        h: 2,
+                        biome: "forest",
+                    },
+                ),
             })
         }
         SurfaceKind::Land
@@ -256,30 +263,34 @@ pub fn classify_surface(
             )
         }
         SurfaceKind::Swamp | SurfaceKind::DeferredWater if hydrology.swamp > 0.0 => {
+            // К2 / Д-104: болото в ванили выбирается эрозией и температурой
+            // при любой влажности, поэтому H остаётся как у биома вокруг.
             Some(if base.cell.t >= 3 {
                 VanillaCell {
                     t: base.cell.t,
-                    h: 4,
+                    h: base.cell.h,
                     biome: "mangrove_swamp",
                 }
             } else {
                 VanillaCell {
                     t: base.cell.t.clamp(1, 2),
-                    h: 4,
+                    h: base.cell.h,
                     biome: "swamp",
                 }
             })
         }
-        SurfaceKind::DryBasin | SurfaceKind::DeferredWater if hydrology.dry_basin > 0.0 => {
-            let belt = base.zone.belt;
-            // Солончака в ванили нет: тёплая котловина — саванна, остальные —
-            // пустыня; правило холодной зимы сохраняет сухие равнины.
-            Some(biome_cell(
-                belt.max(3),
-                if belt >= 4 { 3 } else { 1 },
-                base.ratio.max(2.0),
-                climate.temperature.t_min,
-                params,
+        SurfaceKind::DryBasin if hydrology.dry_basin > 0.0 => {
+            // К2 / Д-104: сухая котловина на одну ступень суше биома вокруг,
+            // температура та же. Прежняя цель (пустыня или саванна) ставила
+            // равнину посреди тайги. Котловина, где вода отложена до R2
+            // (`DeferredWater`), остаётся обычной сушей со своим биомом.
+            Some(step_toward(
+                base.cell,
+                VanillaCell {
+                    t: base.cell.t,
+                    h: 0,
+                    biome: base.cell.biome,
+                },
             ))
         }
         _ => None,
@@ -589,11 +600,19 @@ mod tests {
         };
         let h = resolve(corridor, LakeQuery::default(), &c, &p);
         assert_eq!(h.gallery, 1.0);
-        let dry = classify_inputs(30.0, 5.0, 12.0, &p);
+        // R = 8: глубже каймы пустыни (Д-104), ячейка — песок t4/h0.
+        let dry = classify_inputs(30.0, 8.0, 12.0, &p);
         assert_eq!(dry.cell.biome, "desert");
+        // К2 / Д-104: коридор в пустыне — одна ступень к лесу, то есть
+        // саванна t3/h1; лес t3/h2 встал бы к песку через ступень.
         let forest = classify_surface(dry, &h, &c, &p);
+        assert_eq!(forest.cell.biome, "savanna");
+        assert_eq!((forest.cell.t, forest.cell.h), (3, 1));
+        let savanna = classify_inputs(30.0, 3.0, 12.0, &p);
+        assert_eq!((savanna.cell.t, savanna.cell.h), (3, 1));
+        let forest = classify_surface(savanna, &h, &c, &p);
         assert_eq!(forest.cell.biome, "forest");
-        assert_eq!(forest.cell.t, 3);
+        assert_eq!((forest.cell.t, forest.cell.h), (2, 2));
         let mut numbers = base();
         numbers.t = p.climate.t_centers[4];
         numbers.h = p.climate.h_centers[0];

@@ -79,10 +79,94 @@ fn severe_winter(belt: u8, t_min: f64, params: &Params) -> bool {
     }
 }
 
-/// Таблица 7.8.2: пояс × провинция → ванильная ячейка `(t, h)`.
+/// К2 / Д-104: кайма пустыни в `v1-dev`. Песок — ванильная ступень t4, а его
+/// соседи в таблице стоят на t1…t3, поэтому пустыня набирает ступени по одной:
+/// у холодного края (низ пояса П3), у порога сухости и у порога морозной зимы
+/// идут сухие равнины (t2), затем саванна (t3), и только потом песок (t4).
+/// Ширина одной ступени каймы по биотемпературе, °C.
+const DESERT_RIM_T_C: f64 = 2.0;
+/// Ширина одной ступени каймы по сухости, log2 R.
+const DESERT_RIM_LOG2_R: f64 = 0.5;
+/// Ширина одной ступени каймы по температуре холодного месяца, °C.
+const DESERT_RIM_WINTER_C: f64 = 2.0;
+
+fn desert_with_rim(belt: u8, t_bio: f64, ratio: f64, t_min: f64, params: &Params) -> VanillaCell {
+    let c = &params.climate;
+    if !c.cold_desert_sand || t_min < c.cold_desert_winter_c {
+        // Морозная зима: сухие равнины, на ступень холоднее соседней по
+        // сухости клетки K3 того же пояса (t2 в П3, t3 или t2 в П4, t3 выше).
+        let warm = match belt {
+            0..=3 => false,
+            4 => t_min >= c.winter_temperate_c,
+            _ => true,
+        };
+        return if warm {
+            cell(2, 1, "plains")
+        } else {
+            cell(1, 0, "plains")
+        };
+    }
+    // Каждая «высота» непрерывна по своему входу, поэтому ступень t меняется
+    // по одной. На краях значения подобраны под соседей таблицы: П2 сухой —
+    // t1, K3 в П3 — t2, K3 в П4+ — t3, морозная сторона — t1.
+    let by_belt = if belt <= 3 {
+        2.0 + (t_bio - c.belt_edges_c[2]) / DESERT_RIM_T_C
+    } else {
+        4.0
+    };
+    // Порог K3/K2: суше него таблица ставит пустыню.
+    let dry_edge = dln(c.province_edges_r[3].max(1e-9)) / LN_2;
+    let by_dryness = 3.0 + (dln(ratio.max(1e-9)) / LN_2 - dry_edge).max(0.0) / DESERT_RIM_LOG2_R;
+    let by_winter = 2.0 + (t_min - c.cold_desert_winter_c) / DESERT_RIM_WINTER_C;
+    match by_belt
+        .min(by_dryness)
+        .min(by_winter)
+        .clamp(2.0, 4.0)
+        .floor() as u8
+    {
+        2 => cell(2, 1, "plains"),
+        3 => cell(3, 0, "savanna"),
+        _ => cell(4, 0, "desert"),
+    }
+}
+
+/// К2 / Д-104: шаг от ячейки `base` к ячейке `target` не больше чем на одну
+/// ступень по T и по H. Так накладки (сухая котловина, галерейный лес,
+/// болото) не ставят рядом ячейки через ступень.
+pub(crate) fn step_toward(base: VanillaCell, target: VanillaCell) -> VanillaCell {
+    let step = |from: u8, to: u8| match to.cmp(&from) {
+        std::cmp::Ordering::Greater => from + 1,
+        std::cmp::Ordering::Less => from - 1,
+        std::cmp::Ordering::Equal => from,
+    };
+    let (t, h) = (step(base.t, target.t), step(base.h, target.h));
+    if (t, h) == (target.t, target.h) {
+        target
+    } else if (t, h) == (base.t, base.h) {
+        base
+    } else {
+        middle_cell(t, h)
+    }
+}
+
+/// Таблица 7.8.2 без каймы пустыни по поясу: для контрольных точек и тестов,
+/// где биотемпература внутри пояса не задана.
 pub fn biome_cell(belt: u8, province: u8, ratio: f64, t_min: f64, params: &Params) -> VanillaCell {
+    biome_cell_at(belt, province, f64::INFINITY, ratio, t_min, params)
+}
+
+/// Таблица 7.8.2: пояс × провинция → ванильная ячейка `(t, h)`.
+/// `t_bio` нужен только кайме пустыни `v1-dev`; `v0` его не читает.
+pub fn biome_cell_at(
+    belt: u8,
+    province: u8,
+    t_bio: f64,
+    ratio: f64,
+    t_min: f64,
+    params: &Params,
+) -> VanillaCell {
     if params.version.is_water_relief_dev() {
-        return biome_cell_ladder(belt, province, t_min, params);
+        return biome_cell_ladder(belt, province, t_bio, ratio, t_min, params);
     }
     let cold = severe_winter(belt, t_min, params);
     match (belt, province) {
@@ -172,7 +256,14 @@ pub fn biome_cell(belt: u8, province: u8, ratio: f64, t_min: f64, params: &Param
 /// ветки v0 по R (flower_forest при R≈1, birch при R≤0.75, dark_forest при
 /// R≥0.35) убраны: они создавали скачки h внутри одной провинции. Имя биома
 /// берётся из средней таблицы A.2 по итовым `(t,h)`.
-fn biome_cell_ladder(belt: u8, province: u8, t_min: f64, params: &Params) -> VanillaCell {
+fn biome_cell_ladder(
+    belt: u8,
+    province: u8,
+    t_bio: f64,
+    ratio: f64,
+    t_min: f64,
+    params: &Params,
+) -> VanillaCell {
     let belt = belt.min(6);
     let province = province.clamp(1, 6);
     // Влажность: K1/K2 сухо, дальше по одной ступени на провинцию.
@@ -203,21 +294,27 @@ fn biome_cell_ladder(belt: u8, province: u8, t_min: f64, params: &Params) -> Van
         }
         3 => {
             if province <= 2 {
-                // Правило ⚑ холодной пустыни сохранено как в v0.
-                return desert(t_min, params);
+                // Правило ⚑ холодной пустыни как в v0, плюс кайма (Д-104).
+                return desert_with_rim(belt, t_bio, ratio, t_min, params);
             }
             if cold { 1 } else { 2 }
         }
         4 => {
             if province <= 2 {
-                return desert(t_min, params);
+                return desert_with_rim(belt, t_bio, ratio, t_min, params);
             }
             // Тёплый умеренный: сухо — саванна, влажно — лиственный лес.
-            if province >= 5 { 2 } else { 3 }
+            // К2 / Д-104: при суровой зиме саванны нет (t2): иначе холодный
+            // П3 (t1) вставал к ней через ступень.
+            if province >= 5 || t_min < params.climate.winter_temperate_c {
+                2
+            } else {
+                3
+            }
         }
         _ => {
             if province <= 2 {
-                return desert(t_min, params);
+                return desert_with_rim(belt, t_bio, ratio, t_min, params);
             }
             3
         }
@@ -249,7 +346,7 @@ pub fn classify_inputs(t_bio: f64, ratio: f64, t_min: f64, params: &Params) -> C
     };
     ClassSample {
         zone,
-        cell: biome_cell(zone.belt, zone.province, ratio, t_min, params),
+        cell: biome_cell_at(zone.belt, zone.province, t_bio, ratio, t_min, params),
         is_ocean: false,
         t_bio,
         ratio,
@@ -370,9 +467,10 @@ fn ecotone_cell(
                 -0.5
             }),
     );
-    let neighbor = biome_cell(
+    let neighbor = biome_cell_at(
         base.zone.belt,
         neighbor_province,
+        base.t_bio,
         neighbor_ratio,
         t_min,
         params,
@@ -522,6 +620,51 @@ mod t133_tests {
                 slope: 0.0,
             },
         }
+    }
+
+    #[test]
+    fn v1_dev_table_and_desert_rim_never_jump_a_step() {
+        // К2 / Д-104: по сетке непрерывных входов соседние точки дают
+        // ванильные ступени T и H, отличающиеся не больше чем на одну.
+        let p = Params::defaults(GenVersion::V1Dev, Mode::Gameplay);
+        let cell_at = |t_bio: f64, log2_r: f64, winter: f64| {
+            classify_inputs(t_bio, dexp(LN_2 * log2_r), winter, &p).cell
+        };
+        // Каждый вход меняется отдельно: в мире два порога пересекаются
+        // только в точке, и такая «диагональ» в счёт не идёт.
+        let mut checked = 0_u32;
+        for wi in -40..=30 {
+            let winter = wi as f64;
+            for ti in 0..=300 {
+                let t_bio = ti as f64 * 0.1;
+                for ri in -80..=80 {
+                    let log2_r = ri as f64 * 0.05;
+                    let here = cell_at(t_bio, log2_r, winter);
+                    for next in [
+                        cell_at(t_bio + 0.1, log2_r, winter),
+                        cell_at(t_bio, log2_r + 0.05, winter),
+                        cell_at(t_bio, log2_r, winter + 1.0),
+                    ] {
+                        assert!(
+                            here.t.abs_diff(next.t) <= 1 && here.h.abs_diff(next.h) <= 1,
+                            "T_bio {t_bio}, log2 R {log2_r}, зима {winter}: {here:?} → {next:?}"
+                        );
+                        checked += 1;
+                    }
+                }
+            }
+        }
+        assert!(checked > 100_000);
+    }
+
+    #[test]
+    fn step_toward_moves_one_step_and_keeps_reached_target() {
+        let base = cell(0, 2, "snowy_taiga");
+        let stepped = step_toward(base, cell(1, 0, "plains"));
+        assert_eq!((stepped.t, stepped.h), (1, 1));
+        let near = step_toward(cell(3, 1, "savanna"), cell(3, 2, "forest"));
+        assert_eq!(near, cell(3, 2, "forest"));
+        assert_eq!(step_toward(base, base), base);
     }
 
     #[test]
