@@ -5,7 +5,7 @@
 //! C/E/W/PV — T115. Модуль не меняет v0 и не вызывается из `field`.
 
 use std::cmp::Ordering;
-use std::collections::{BinaryHeap, HashMap, HashSet, VecDeque};
+use std::collections::{BinaryHeap, HashMap, HashSet};
 use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 use std::sync::{Arc, Mutex, OnceLock};
 
@@ -132,6 +132,9 @@ pub struct DrainageNode {
     pub depression: Option<usize>,
 }
 
+/// Меньше этого числа клеток волны на поток обход делить невыгодно.
+const CELLS_PARALLEL_MIN_CHUNK: usize = 48;
+
 /// Меньше этого числа узлов на поток высоты считать параллельно невыгодно.
 const TOPO_PARALLEL_MIN_CHUNK: usize = 512;
 
@@ -183,7 +186,7 @@ impl PlateTopo {
         t = std::time::Instant::now();
         // Запрос плиты в узле делается один раз: его результат нужен и для
         // владельца клетки, и для высоты (Д-093).
-        let mut cells = collect_cells(anchor, plate.id, seed, params);
+        let mut cells = collect_cells(anchor, plate.id, seed, params, threads);
         cells.sort_unstable_by_key(|(cell, _)| *cell);
         log_phase(timings, "клетки", t);
         t = std::time::Instant::now();
@@ -314,6 +317,35 @@ impl PlateTopo {
         let node = self.node_at(cell)?;
         (node.in_plate && !node.outlet.is_outlet() && node.escape_km.is_finite())
             .then_some(node.escape_km)
+    }
+
+    /// Соседи, чьи узлы суши в кольце касаются хотя бы одного узла `wanted`.
+    /// Только они могут передать воду в эти узлы. По возрастанию id.
+    pub fn neighbors_touching(&self, wanted: &dyn Fn(Cell) -> bool) -> Vec<Plate> {
+        let mut out: Vec<Plate> = Vec::new();
+        for node in &self.nodes {
+            if node.in_plate || node.outlet.is_outlet() {
+                continue;
+            }
+            let Some(owner) = node.owner else {
+                continue;
+            };
+            if out.iter().any(|plate| plate.id == owner) {
+                continue;
+            }
+            let touches = (-1..=1).any(|di| {
+                (-1..=1).any(|dj| {
+                    (di != 0 || dj != 0) && neighbor_cell(node.cell, di, dj).is_some_and(wanted)
+                })
+            });
+            if touches {
+                if let Some(plate) = self.neighbors.iter().find(|plate| plate.id == owner) {
+                    out.push(*plate);
+                }
+            }
+        }
+        out.sort_unstable_by_key(|plate| plate.id);
+        out
     }
 
     /// Необходимое условие передачи воды из этой плиты в узлы плиты `target`:
@@ -458,6 +490,39 @@ impl PlateRouting {
         &self.neighbors
     }
 
+    /// Совпадают ли сети на узлах `mask`: тот же узел в той же клетке, тот же
+    /// уровень, тот же сток вниз и та же впадина. Узлы вне маски не
+    /// сравниваются. Нужна, чтобы подтвердить, что часть сети не зависит от
+    /// неизвестных уровней третьих плит (Д-094).
+    pub fn same_on(&self, mask: &[bool], other: &Self) -> bool {
+        let down_cell = |net: &Self, k: usize| net.nodes[k].downstream.map(|d| net.nodes[d].cell);
+        let basin = |net: &Self, k: usize| {
+            net.nodes[k].depression.map(|d| {
+                let depression = &net.depressions[d];
+                (
+                    depression.kind,
+                    net.nodes[depression.bottom_node].cell,
+                    depression.node_count,
+                    depression.plate_node_count,
+                )
+            })
+        };
+        self.nodes.iter().enumerate().all(|(k, node)| {
+            if !mask.get(k).copied().unwrap_or(false) {
+                return true;
+            }
+            let Some(m) = other.node_index(node.cell) else {
+                return false;
+            };
+            let twin = &other.nodes[m];
+            twin.in_plate == node.in_plate
+                && twin.outlet == node.outlet
+                && twin.filled_km.to_bits() == node.filled_km.to_bits()
+                && down_cell(self, k) == down_cell(other, m)
+                && basin(self, k) == basin(other, m)
+        })
+    }
+
     pub fn node_index(&self, cell: Cell) -> Option<usize> {
         self.nodes
             .binary_search_by_key(&cell, |node| node.cell)
@@ -586,14 +651,14 @@ fn cell_bounds(nodes: &[DrainageNode]) -> Option<(Cell, Cell)> {
     Some((lo, hi))
 }
 
-fn timings_enabled() -> bool {
+pub(crate) fn timings_enabled() -> bool {
     std::env::var_os("LITHO_DRAINAGE_TIMINGS").is_some()
 }
 
 /// Env-gated фаза-замер сборки сети (T79 вторая часть): печатает в stdout
 /// строку `drainage-фазы: <имя> <мс>` только при `LITHO_DRAINAGE_TIMINGS=1`.
 /// Математика не меняется; без переменной окружения — роспуск незаметен.
-fn log_phase(enabled: bool, label: &str, started: std::time::Instant) {
+pub(crate) fn log_phase(enabled: bool, label: &str, started: std::time::Instant) {
     if enabled {
         println!(
             "drainage-фазы: {label} {:.3} мс",
@@ -622,7 +687,11 @@ impl RiverNet {
         let nodes = routing.nodes();
         let depressions = routing.depressions();
         let mut t = std::time::Instant::now();
-        let points: Vec<_> = nodes.iter().map(|node| node.point).collect();
+        let points: Vec<_> = nodes
+            .iter()
+            .filter(|node| crate::runoff::needs_climate(node))
+            .map(|node| node.point)
+            .collect();
         let grid = ClimateGrid::build(&points, p.climate_step_l, climate)?;
         log_phase(timings, "климат", t);
         t = std::time::Instant::now();
@@ -843,27 +912,53 @@ fn collect_cells(
     plate_id: u64,
     seed: u64,
     params: &Params,
+    threads: usize,
 ) -> Vec<(Cell, Option<PlateSample>)> {
     let query = |cell: Cell| plate_query(jittered_point(cell, seed, params), seed, params);
     let mut seen = HashSet::<Cell>::new();
-    let mut queue = VecDeque::new();
     let mut cells = Vec::new();
     seen.insert(anchor);
-    queue.push_back(anchor);
     cells.push((anchor, query(anchor)));
-    while let Some(cell) = queue.pop_front() {
-        for (di, dj) in [(1, 0), (-1, 0), (0, 1), (0, -1)] {
-            let Some(next) = neighbor_cell(cell, di, dj) else {
-                continue;
-            };
-            if !seen.insert(next) {
-                continue;
+    // Обход волнами: все новые соседи текущего фронта спрашиваются разом,
+    // при большой волне — в нескольких потоках. Набор клеток тот же, что у
+    // обхода по одной; порядок вызывающий задаёт сортировкой.
+    let mut front = vec![anchor];
+    let mut wave = Vec::new();
+    while !front.is_empty() {
+        wave.clear();
+        for &cell in &front {
+            for (di, dj) in [(1, 0), (-1, 0), (0, 1), (0, -1)] {
+                if let Some(next) = neighbor_cell(cell, di, dj) {
+                    if seen.insert(next) {
+                        wave.push(next);
+                    }
+                }
             }
-            let sample = query(next);
+        }
+        let workers = threads.clamp(1, (wave.len() / CELLS_PARALLEL_MIN_CHUNK).max(1));
+        let samples: Vec<Option<PlateSample>> = if workers >= 2 {
+            let size = wave.len().div_ceil(workers);
+            std::thread::scope(|scope| {
+                let handles: Vec<_> = wave
+                    .chunks(size)
+                    .map(|chunk| {
+                        scope.spawn(|| chunk.iter().map(|&cell| query(cell)).collect::<Vec<_>>())
+                    })
+                    .collect();
+                handles
+                    .into_iter()
+                    .flat_map(|handle| handle.join().expect("поток обхода клеток не паникует"))
+                    .collect()
+            })
+        } else {
+            wave.iter().map(|&cell| query(cell)).collect()
+        };
+        front.clear();
+        for (&cell, sample) in wave.iter().zip(samples) {
             if sample.is_some_and(|s| s.a.id == plate_id) {
-                queue.push_back(next);
+                front.push(cell);
             }
-            cells.push((next, sample));
+            cells.push((cell, sample));
         }
     }
     cells

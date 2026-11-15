@@ -35,6 +35,8 @@ pub struct ClimateGrid {
 /// рисует карты в несколько потоков, размножать потоки на каждый чанк.
 const CLIMATE_PARALLEL_MIN_KEYS: usize = 64;
 const CLIMATE_PARALLEL_MAX_THREADS: usize = 4;
+/// Узлов в одном блоке, который поток берёт со счётчика.
+const CLIMATE_PARALLEL_BLOCK: usize = 4;
 
 impl ClimateGrid {
     pub fn build<'a, F>(
@@ -192,33 +194,72 @@ where
             .map(|key| climate_key_value(key, step_l, sample))
             .collect();
     }
-    let chunk = keys.len().div_ceil(threads);
-    std::thread::scope(|scope| {
-        let handles: Vec<_> = keys
-            .chunks(chunk)
-            .map(|part| {
-                scope.spawn(move || {
-                    part.iter()
-                        .copied()
-                        .map(|key| climate_key_value(key, step_l, sample))
-                        .collect::<Result<Vec<_>, _>>()
+    // Д-094: узлы разбираются по счётчику малыми блоками, а не четырьмя
+    // равными кусками: цена узла неодинакова, и поток с дешёвым куском
+    // раньше простаивал. Значения возвращаются на свои места по индексу.
+    let next = std::sync::atomic::AtomicUsize::new(0);
+    let parts: Vec<Result<Vec<(usize, RunoffClimate)>, RiverNetError>> =
+        std::thread::scope(|scope| {
+            let handles: Vec<_> = (0..threads)
+                .map(|_| {
+                    scope.spawn(|| {
+                        let mut out = Vec::new();
+                        loop {
+                            let start = next.fetch_add(
+                                CLIMATE_PARALLEL_BLOCK,
+                                std::sync::atomic::Ordering::Relaxed,
+                            );
+                            if start >= keys.len() {
+                                break;
+                            }
+                            let end = (start + CLIMATE_PARALLEL_BLOCK).min(keys.len());
+                            for k in start..end {
+                                out.push((k, climate_key_value(keys[k], step_l, sample)?));
+                            }
+                        }
+                        Ok(out)
+                    })
                 })
-            })
-            .collect();
-        let mut values = Vec::with_capacity(keys.len());
-        for handle in handles {
-            match handle.join() {
-                Ok(Ok(part)) => values.extend(part),
-                Ok(Err(err)) => return Err(err),
-                Err(_) => {
-                    return Err(RiverNetError::InvalidParameters(
-                        "поток выборки климатической решётки завершился с паникой",
-                    ));
+                .collect();
+            handles
+                .into_iter()
+                .map(|handle| {
+                    handle
+                        .join()
+                        .unwrap_or(Err(RiverNetError::InvalidParameters(
+                            "поток выборки климатической решётки завершился с паникой",
+                        )))
+                })
+                .collect()
+        });
+    let mut values: Vec<Option<RunoffClimate>> = vec![None; keys.len()];
+    let mut first_error: Option<(usize, RiverNetError)> = None;
+    for (thread, part) in parts.into_iter().enumerate() {
+        match part {
+            Ok(part) => {
+                for (k, value) in part {
+                    values[k] = Some(value);
+                }
+            }
+            // Ошибку выбираем по номеру потока: сообщение не зависит от гонки.
+            Err(err) => {
+                if first_error.is_none_or(|(t, _)| thread < t) {
+                    first_error = Some((thread, err));
                 }
             }
         }
-        Ok(values)
-    })
+    }
+    if let Some((_, err)) = first_error {
+        return Err(err);
+    }
+    values
+        .into_iter()
+        .map(|value| {
+            value.ok_or(RiverNetError::InvalidParameters(
+                "узел климатической решётки не посчитан",
+            ))
+        })
+        .collect()
 }
 
 fn checked_cell(i: i64, j: i64, di: i64, dj: i64) -> Option<Cell> {
@@ -350,8 +391,19 @@ impl Runoff {
                     reason: "неконечный или отрицательный приток от соседей",
                 });
             }
-            let climate = grid.sample(node.point)?;
             let land = node.in_plate && node.route_km >= 0.0 && node.outlet != DrainageOutlet::Sea;
+            // Д-094: климат читают только узлы, которым он нужен. Море и
+            // кольцо соседа воды не дают и не испаряют; их поля климата
+            // остаются нулевыми, а узлы решётки под ними не считаются.
+            let climate = if needs_climate(node) {
+                grid.sample(node.point)?
+            } else {
+                RunoffClimate {
+                    p_mm: 0.0,
+                    pet_mm: 0.0,
+                    t_min_c: 0.0,
+                }
+            };
             let runoff = if land {
                 (climate.p_mm - p.et_factor * climate.pet_mm).max(0.0) * area
             } else {
@@ -555,6 +607,15 @@ fn basin_terminal(balance: BasinBalance) -> FlowTerminal {
             depression: balance.depression,
         }
     }
+}
+
+/// Нужен ли узлу климат: свой узел суши даёт сток, свой узел впадины —
+/// дождь на зеркало и испарение. Остальные (море, кольцо соседа) климат не
+/// читают. Точки для [`ClimateGrid::build`] берутся только у таких узлов.
+pub fn needs_climate(node: &DrainageNode) -> bool {
+    node.in_plate
+        && (node.depression.is_some()
+            || (node.route_km >= 0.0 && node.outlet != DrainageOutlet::Sea))
 }
 
 /// Шаг 2 плана (T113): узлы, вода которых приходит в `targets`, и сами

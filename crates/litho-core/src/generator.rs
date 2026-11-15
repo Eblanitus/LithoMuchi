@@ -784,37 +784,32 @@ impl Generator {
             return Ok(inflow);
         }
         let own = self.drainage_topo(routing.plate())?;
-        let around = self.drainage_topos(routing.neighbors())?;
         let is_wanted = |cell: (i64, i64)| {
             routing.node_index(cell).is_some_and(|k| {
                 let node = &routing.nodes()[k];
                 node.in_plate && !node.outlet.is_outlet() && wanted.is_none_or(|mask| mask[k])
             })
         };
-        let sources: Vec<&Plate> = routing
-            .neighbors()
+        // Топографии нужны только у соседей, чья суша касается нужных узлов:
+        // для целой плиты это все её соседи, они уже построены; для
+        // водосбора вложенного вызова — обычно никто.
+        let candidates = if wanted.is_none() {
+            routing.neighbors().to_vec()
+        } else {
+            own.neighbors_touching(&is_wanted)
+        };
+        let around = self.drainage_topos(&candidates)?;
+        let sources: Vec<(&Plate, &Arc<PlateTopo>)> = candidates
             .iter()
             .zip(&around)
             .filter(|(_, topo)| topo.may_hand_to(&own, &is_wanted))
-            .map(|(neighbor, _)| neighbor)
             .collect();
-        // Связанной сети соседа нужны топографии его соседей: недостающие
-        // строим одной пачкой, а не по две-три на каждого соседа.
-        let mut second_ring: Vec<Plate> = Vec::new();
-        for (neighbor, topo) in routing.neighbors().iter().zip(&around) {
-            if sources.iter().any(|s| s.id == neighbor.id) {
-                for plate in topo.neighbors() {
-                    if !second_ring.iter().any(|p| p.id == plate.id) {
-                        second_ring.push(*plate);
-                    }
-                }
-            }
-        }
-        self.drainage_topos(&second_ring)?;
         // Вклад одного соседа: (свой узел, расход). Соседи независимы.
-        let contribution = |neighbor: &Plate| -> Result<Vec<(usize, f64)>, RiverNetError> {
-            let source = self.drainage_routing(neighbor)?;
-            // Узлы-передачи соседа, лежащие в нужных узлах этой плиты.
+        let me = routing.plate_id();
+        // Узлы-передачи сети соседа, лежащие в нужных узлах этой плиты, свои
+        // узлы-приёмники и водосбор этих передач.
+        type Catchment = (Vec<usize>, Vec<usize>, Vec<bool>);
+        let catchment = |source: &PlateRouting| -> Result<Option<Catchment>, RiverNetError> {
             let mut targets = Vec::new();
             let mut receivers = Vec::new();
             for (k, node) in source.nodes().iter().enumerate() {
@@ -830,41 +825,82 @@ impl Generator {
                 }
             }
             if targets.is_empty() {
-                return Ok(Vec::new());
+                return Ok(None);
             }
             let mask =
                 crate::runoff::upstream_mask(source.nodes(), source.depressions(), &targets)?;
             // Кроме самих узлов-передач в маске должен быть хоть один узел.
             if mask.iter().filter(|m| **m).count() == targets.len() {
-                return Ok(Vec::new());
+                return Ok(None);
             }
-            let upstream = self.handoff_inflow(&source, hops - 1, Some(&mask))?;
-            let points: Vec<Vec2> = source
-                .nodes()
-                .iter()
-                .zip(&mask)
-                .filter(|(_, m)| **m)
-                .map(|(node, _)| node.point)
-                .collect();
-            let grid = crate::runoff::ClimateGrid::build(
-                &points,
-                self.params.drainage.climate_step_l,
-                |point| self.runoff_climate_at(point),
-            )?;
-            let runoff = crate::runoff::Runoff::calculate_with(
-                source.nodes(),
-                source.depressions(),
-                &grid,
-                &self.params,
-                Some(&upstream),
-                Some(&mask),
-            )?;
-            Ok(targets
-                .iter()
-                .zip(&receivers)
-                .map(|(&target, &here)| (here, runoff.nodes()[target].discharge_mm_l2))
-                .collect())
+            Ok(Some((targets, receivers, mask)))
         };
+        let contribution =
+            |neighbor: &Plate, topo: &PlateTopo| -> Result<Vec<(usize, f64)>, RiverNetError> {
+                // Д-094. Настоящей связанной сети соседа нужны топографии всех
+                // его соседей. Чаще всего они не нужны: строим две сети соседа,
+                // связанные только с этой плитой. В первой третьи плиты воду не
+                // принимают совсем, во второй принимают на самом низком возможном
+                // уровне — высоте своего узла. Настоящая сеть лежит между ними.
+                // Если в первой сюда ничего не течёт, не течёт и в настоящей.
+                // Если водосбор в обеих один и тот же, он такой же и в настоящей.
+                // Иначе строим настоящую сеть.
+                let closed = PlateRouting::build(topo, &self.params, &|owner, cell| {
+                    (owner == me).then(|| own.escape_level_km(cell)).flatten()
+                })?;
+                let Some(found) = catchment(&closed)? else {
+                    return Ok(Vec::new());
+                };
+                let settled = topo.neighbors().iter().all(|plate| plate.id == me) || {
+                    let open = PlateRouting::build(topo, &self.params, &|owner, cell| {
+                        if owner == me {
+                            own.escape_level_km(cell)
+                        } else {
+                            Some(f64::MIN)
+                        }
+                    })?;
+                    closed.same_on(&found.2, &open)
+                        && catchment(&open)?.is_some_and(|other| {
+                            other.2.iter().filter(|m| **m).count()
+                                == found.2.iter().filter(|m| **m).count()
+                        })
+                };
+                let (source, (targets, receivers, mask)) = if settled {
+                    (Arc::new(closed), found)
+                } else {
+                    let full = self.drainage_routing(neighbor)?;
+                    let Some(found) = catchment(&full)? else {
+                        return Ok(Vec::new());
+                    };
+                    (full, found)
+                };
+                let upstream = self.handoff_inflow(&source, hops - 1, Some(&mask))?;
+                let points: Vec<Vec2> = source
+                    .nodes()
+                    .iter()
+                    .zip(&mask)
+                    .filter(|(node, m)| **m && crate::runoff::needs_climate(node))
+                    .map(|(node, _)| node.point)
+                    .collect();
+                let grid = crate::runoff::ClimateGrid::build(
+                    &points,
+                    self.params.drainage.climate_step_l,
+                    |point| self.runoff_climate_at(point),
+                )?;
+                let runoff = crate::runoff::Runoff::calculate_with(
+                    source.nodes(),
+                    source.depressions(),
+                    &grid,
+                    &self.params,
+                    Some(&upstream),
+                    Some(&mask),
+                )?;
+                Ok(targets
+                    .iter()
+                    .zip(&receivers)
+                    .map(|(&target, &here)| (here, runoff.nodes()[target].discharge_mm_l2))
+                    .collect())
+            };
         // Верхний уровень считает соседей одновременно; вложенные вызовы —
         // по очереди, чтобы число потоков не росло с глубиной. Вклады
         // складываются в порядке id соседей, от потоков сумма не зависит.
@@ -873,7 +909,7 @@ impl Generator {
                 std::thread::scope(|scope| {
                     let handles: Vec<_> = sources
                         .iter()
-                        .map(|neighbor| scope.spawn(|| contribution(neighbor)))
+                        .map(|(neighbor, topo)| scope.spawn(|| contribution(neighbor, topo)))
                         .collect();
                     handles
                         .into_iter()
@@ -883,7 +919,7 @@ impl Generator {
             } else {
                 sources
                     .iter()
-                    .map(|neighbor| contribution(neighbor))
+                    .map(|(neighbor, topo)| contribution(neighbor, topo))
                     .collect()
             };
         for part in parts {
@@ -895,8 +931,15 @@ impl Generator {
     }
 
     fn build_drainage_network(&self, plate: &Plate) -> Result<RiverNet, RiverNetError> {
+        // Этапы целиком, по часам: вместе с работой над соседними плитами.
+        let timings = crate::drainage::timings_enabled();
+        let mut t = std::time::Instant::now();
         let routing = self.drainage_routing(plate)?;
+        crate::drainage::log_phase(timings, "этап-связь", t);
+        t = std::time::Instant::now();
         let inflow = self.handoff_inflow(&routing, self.params.drainage.handoff_max_hops, None)?;
+        crate::drainage::log_phase(timings, "этап-приток", t);
+        t = std::time::Instant::now();
         let net = RiverNet::assemble(
             routing,
             self.seed,
@@ -904,6 +947,7 @@ impl Generator {
             &|point| self.runoff_climate_at(point),
             &inflow,
         )?;
+        crate::drainage::log_phase(timings, "этап-сборка", t);
         Ok(net)
     }
 
