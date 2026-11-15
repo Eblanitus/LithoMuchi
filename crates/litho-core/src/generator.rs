@@ -1257,7 +1257,9 @@ impl Generator {
     /// берег у (−2000, 3630): оценка ±48 давала 98 блоков вместо ~4).
     /// Океан даёт 0; дальше ширины спуска марш не идёт — рампа там
     /// всё равно выключена.
-    fn shore_distance_blocks(&self, x: f64, z: f64, c: f64) -> f64 {
+    /// К4: расстояние до берега океана в блоках; публично для диагностики
+    /// песочницы (К4а).
+    pub fn shore_distance_blocks(&self, x: f64, z: f64, c: f64) -> f64 {
         let threshold = self.params.climate.ocean_c_threshold;
         if c <= threshold {
             return 0.0;

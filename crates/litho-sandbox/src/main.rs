@@ -451,7 +451,13 @@ fn cmd_shores(args: &[String]) -> Result<(), String> {
 fn cmd_walls(args: &[String]) -> Result<(), String> {
     let opts = options_from(args)?;
     let generator = generator(&opts)?;
-    walls::run(&generator, (opts.center_x, opts.center_z))
+    let result = walls::run(&generator, (opts.center_x, opts.center_z));
+    if let Some(text) = value(args, "--slope-at") {
+        let (x, z) = parse_pair(&text)?;
+        let slope = walls::slope_around(&generator, (x, z), 16.0);
+        println!("  уклон вокруг ({x}, {z}) радиусом 16: {slope:.2} блока на блок (цель ≤ 1,5)");
+    }
+    result
 }
 
 fn cmd_lava(args: &[String]) -> Result<(), String> {

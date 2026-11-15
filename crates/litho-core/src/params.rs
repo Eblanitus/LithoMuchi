@@ -434,7 +434,13 @@ pub struct ReliefParams {
     /// Расстояние до ближайшей границы плиты, L: дальше начинается «старая» кора.
     pub active_boundary_lo: f64,
     pub active_boundary_hi: f64,
-    pub land_e_fade_km: f64,
+    /// К4а/часть 2: ширина полосы затухания рельефа у низин в блоках (Д-106).
+    /// Холм у низины кончается спуском этой ширины, а не стеной.
+    pub land_fade_blocks: f64,
+    /// Оценка градиента поля e_km у кромки низины, км на блок. Полоса в блоках
+    /// переводится в порог e_km им (Д-106: 0,05 км ≈ 10–20 блоков в
+    /// геймплейном, научный λ вчетверо крупнее).
+    pub land_e_gradient_km_per_block: f64,
     pub continental_chi_lo: f64,
     pub continental_chi_hi: f64,
     pub craton_iota_lo: f64,
@@ -470,6 +476,11 @@ pub struct ReliefParams {
 }
 
 impl ReliefParams {
+    /// Порог затухания рельефа в e_km: полоса `land_fade_blocks` блоков при
+    /// измеренном градиенте поля у кромки низины (К4а/часть 2, Д-106).
+    pub fn land_fade_km(&self) -> f64 {
+        self.land_fade_blocks * self.land_e_gradient_km_per_block
+    }
     pub fn validate(&self) -> Result<(), &'static str> {
         let positive = [
             self.foothill_fade,
@@ -477,7 +488,8 @@ impl ReliefParams {
             self.hills_lambda_l,
             self.basin_lambda_l,
             self.basin_depth_km,
-            self.land_e_fade_km,
+            self.land_fade_blocks,
+            self.land_e_gradient_km_per_block,
             self.rift_floor_factor,
             self.rift_shoulder_offset_factor,
             self.rift_shoulder_width_factor,
@@ -1419,7 +1431,11 @@ impl Params {
                 paleo_a_max: 0.6,
                 active_boundary_lo: 0.5,
                 active_boundary_hi: 2.0,
-                land_e_fade_km: 0.05,
+                land_fade_blocks: 64.0,
+                land_e_gradient_km_per_block: match mode {
+                    Mode::Gameplay => 0.004,
+                    Mode::Scientific => 0.001,
+                },
                 continental_chi_lo: 0.5,
                 continental_chi_hi: 0.8,
                 craton_iota_lo: 0.3,
@@ -2152,7 +2168,11 @@ impl Params {
                 ("relief.paleo_a_max", r.paleo_a_max),
                 ("relief.active_boundary_lo", r.active_boundary_lo),
                 ("relief.active_boundary_hi", r.active_boundary_hi),
-                ("relief.land_e_fade_km", r.land_e_fade_km),
+                ("relief.land_fade_blocks", r.land_fade_blocks),
+                (
+                    "relief.land_e_gradient_km_per_block",
+                    r.land_e_gradient_km_per_block,
+                ),
                 ("relief.continental_chi_lo", r.continental_chi_lo),
                 ("relief.continental_chi_hi", r.continental_chi_hi),
                 ("relief.craton_iota_lo", r.craton_iota_lo),

@@ -48,7 +48,7 @@ pub fn apply_with_pv(
     let m = &params.morpho;
     let r = &params.relief;
     let surface = climate.surface;
-    let land = smoothstep(0.0, r.land_e_fade_km, surface.e_km);
+    let land = smoothstep(0.0, r.land_fade_km(), surface.e_km);
     let zone = morphoclimate::mix(weights, params);
     let a = smoothstep(r.a_lo, r.a_hi, relief.a);
 
