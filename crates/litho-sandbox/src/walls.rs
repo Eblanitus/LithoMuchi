@@ -10,8 +10,8 @@
 //! - у реки (`river`);
 //! - суша вдали от воды (то, что разбирает К4а, часть 2).
 
-use litho_core::height::SEA_LEVEL;
 use litho_core::Generator;
+use litho_core::height::SEA_LEVEL;
 
 /// Шаг пробы вдоль линии, блоки.
 const STEP: i64 = 2;
@@ -109,7 +109,11 @@ fn line(generator: &Generator, tally: &mut Tally, at: impl Fn(i64) -> (f64, f64)
                         if raise > 1.0 {
                             tally.raised += 1;
                             if raise > tally.worst_raise.0 {
-                                tally.worst_raise = (raise, if cut_a { ax } else { bx }, if cut_a { az } else { bz });
+                                tally.worst_raise = (
+                                    raise,
+                                    if cut_a { ax } else { bx },
+                                    if cut_a { az } else { bz },
+                                );
                             }
                         }
                     } else if a.river > 0.0 || b.river > 0.0 {
