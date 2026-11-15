@@ -253,9 +253,13 @@ pub struct Generator {
     /// колонок попадают в одни ячейки, чанк платит одну кору на ячейку.
     shore_c: Arc<ShardedCache<(i64, i64), f64>>,
     /// К4а/часть 2 (Д-110): ячейки кромки океана по квадратам `SHORE_BLOCK`.
-    shore_edges: Arc<ShardedCache<(i64, i64), Arc<Vec<[u8; 2]>>>>,
+    shore_edges: Arc<ShardedCache<(i64, i64), ShoreEdge>>,
     spawn_shift: Vec2,
 }
+
+/// К4а/часть 2 (Д-110): ячейки кромки океана одного квадрата `SHORE_BLOCK` —
+/// номера ячеек 4×4 внутри квадрата.
+type ShoreEdge = Arc<Vec<[u8; 2]>>;
 
 /// К4: сторона ячейки, в центре которой берётся континентальность берега.
 const SHORE_CELL: f64 = 4.0;
@@ -1296,7 +1300,7 @@ impl Generator {
     /// однородным и даёт пустой список: глубь материка и открытый океан не
     /// платят за разбор по ячейкам (залив или островок уже квадрата может
     /// выпасть — тогда у него остаётся прежний берег по окну C).
-    fn shore_edge_cells(&self, bx: i64, bz: i64) -> Arc<Vec<[u8; 2]>> {
+    fn shore_edge_cells(&self, bx: i64, bz: i64) -> ShoreEdge {
         self.shore_edges.get_or_insert((bx, bz), || {
             let threshold = self.params.climate.ocean_c_threshold;
             let (x0, z0) = (bx as f64 * SHORE_BLOCK, bz as f64 * SHORE_BLOCK);
