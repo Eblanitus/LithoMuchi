@@ -584,14 +584,11 @@ pub struct MorphoParams {
     pub lambda_pv_blocks: [f64; MORPHO_ZONES],
     pub sigma_e: [f64; MORPHO_ZONES],
     pub sigma_pv: [f64; MORPHO_ZONES],
-    /// Д-095 (T123): зональная перекладка E между полосами E2, E3 и E4.
-    /// `e_remap_lo[k]` — значение E зоны `k`, которое становится границей
-    /// E2/E3 (`height.e_knots[3]`); `e_remap_hi[k]` — границей E3/E4
-    /// (`height.e_knots[4]`). Края E1/E2 и E4/E5 остаются на месте, поэтому
-    /// доли E0, E1, E5, E6 зона не меняет. Равные границам значения —
-    /// перекладки нет.
-    pub e_remap_lo: [f64; MORPHO_ZONES],
-    pub e_remap_hi: [f64; MORPHO_ZONES],
+    /// Д-095 (T123): сдвиг окна «равнина → холмы» по потенциалу рельефа A
+    /// для зоны. Отрицательный — холмы начинаются при меньшем A (зона
+    /// расчленённее), положительный — зона ровнее. Ширина окна не меняется,
+    /// поэтому крутизна перехода и швы остаются прежними.
+    pub a_shift: [f64; MORPHO_ZONES],
     pub scientific_lambda_factor: f64,
     pub scientific_sigma_factor: f64,
 }
@@ -672,12 +669,11 @@ impl MorphoParams {
             return Err("λ_PV зон morpho должна быть положительной");
         }
         if self
-            .e_remap_lo
+            .a_shift
             .iter()
-            .zip(&self.e_remap_hi)
-            .any(|(lo, hi)| !lo.is_finite() || !hi.is_finite() || lo >= hi)
+            .any(|v| !v.is_finite() || !(-1.0..=1.0).contains(v))
         {
-            return Err("перекладка E зон morpho: нижний узел должен быть ниже верхнего");
+            return Err("сдвиг окна A зон morpho должен лежать в [-1, 1]");
         }
         for array in [&self.sigma_e, &self.sigma_pv] {
             if array
@@ -1480,8 +1476,7 @@ impl Params {
                 lambda_pv_blocks: [250.0, 300.0, 450.0, 600.0, 800.0, 250.0, 450.0, 450.0],
                 sigma_e: [0.08, 0.10, 0.12, 0.10, 0.08, 0.12, 0.15, 0.15],
                 sigma_pv: [0.10, 0.12, 0.15, 0.12, 0.10, 0.15, 0.20, 0.20],
-                e_remap_lo: [-0.2225; MORPHO_ZONES],
-                e_remap_hi: [0.05; MORPHO_ZONES],
+                a_shift: [0.0; MORPHO_ZONES],
                 scientific_lambda_factor: 2.0,
                 scientific_sigma_factor: 0.6,
             },
@@ -1751,22 +1746,6 @@ impl Params {
                 [0.04, -0.11, -0.21, -0.44, -0.46, -0.18, -0.75, -0.70]
             };
             p.morpho.sigma_e = [0.12, 0.15, 0.18, 0.15, 0.12, 0.18, 0.15, 0.15];
-            // Д-095 (T123): климат перекладывает сушу между плато (E2),
-            // холмами (E3) и равнинами (E4). Влажные и холодные зоны теряют
-            // плато, холодные становятся ровнее; сухие получают плато:
-            // аридная — столовые земли, полуаридная — между ней и умеренной.
-            // Горные зоны (6, 7) не трогаются. Режимы разведены, потому что
-            // в научном шум E уже и запас глобальных полос E меньше.
-            p.morpho.e_remap_lo = if gameplay {
-                [-0.36, -0.36, -0.36, -0.15, -0.02, -0.36, -0.2225, -0.2225]
-            } else {
-                [-0.36, -0.36, -0.36, -0.08, 0.04, -0.36, -0.2225, -0.2225]
-            };
-            p.morpho.e_remap_hi = if gameplay {
-                [-0.03, -0.03, 0.02, 0.05, 0.10, 0.05, 0.05, 0.05]
-            } else {
-                [-0.12, -0.12, 0.09, 0.02, 0.05, 0.05, 0.05, 0.05]
-            };
             p.climate.m_e_hi = if gameplay { 1.0 } else { 0.7 };
             p.hydrology.floodplain_e = if gameplay { 0.44 } else { 0.50 };
             p.hydrology.dry_basin_e = 0.5;
@@ -2230,8 +2209,7 @@ impl Params {
             writeln!(w, "morpho.lambda_pv_blocks={:?}", m.lambda_pv_blocks).unwrap();
             writeln!(w, "morpho.sigma_e={:?}", m.sigma_e).unwrap();
             writeln!(w, "morpho.sigma_pv={:?}", m.sigma_pv).unwrap();
-            writeln!(w, "morpho.e_remap_lo={:?}", m.e_remap_lo).unwrap();
-            writeln!(w, "morpho.e_remap_hi={:?}", m.e_remap_hi).unwrap();
+            writeln!(w, "morpho.a_shift={:?}", m.a_shift).unwrap();
             let hg = &self.height;
             writeln!(w, "height.e_knots={:?}", hg.e_knots).unwrap();
             writeln!(w, "height.pv_knots={:?}", hg.pv_knots).unwrap();

@@ -1,6 +1,6 @@
 {
-  "name": "t123-remap-1",
-  "note": "Д-095, круг 1: зональная перекладка E между E2/E3/E4 (morpho.e_remap_lo/hi). Вариант base — Params::defaults этого коммита; остальные — подбор через --set, не приёмка. Основная сетка 160×160 на 200 L, окна рельефа и сетка границ в 25 пятнах — неполный объём 10.1.",
+  "name": "t123-ashift-1",
+  "note": "Д-095, круг 2: перекладка E из круга 1 снята (её крутизна ломала шов 0.02: |ΔE| 0.02787), вместо неё сдвиг окна A по зонам (morpho.a_shift), ширина окна прежняя. Все варианты — подбор через --set, не приёмка; Params::defaults этого коммита равны main.",
   "version": "v1-dev",
   "modes": [
     "gameplay",
@@ -27,33 +27,113 @@
   "args": "--size 160 --patches 5 --relief-size 16 --boundary-size 32",
   "variants": [
     {
-      "name": "base",
-      "set": ""
-    },
-    {
-      "name": "g-temp-neutral",
-      "set": "morpho.e_remap_hi[2]=0.05",
+      "name": "g-a",
+      "set": "morpho.a_shift[4]=-0.1,morpho.a_shift[0]=0.08,morpho.a_shift[1]=0.08,morpho.a_shift[5]=-0.15",
       "modes": [
         "gameplay"
       ]
     },
     {
-      "name": "g-temp-flat",
-      "set": "morpho.e_remap_hi[2]=-0.03",
+      "name": "g-b",
+      "set": "morpho.a_shift[4]=-0.14,morpho.a_shift[0]=0.08,morpho.a_shift[1]=0.08,morpho.a_shift[5]=-0.15",
       "modes": [
         "gameplay"
       ]
     },
     {
-      "name": "s-arid-more",
-      "set": "morpho.e_remap_lo[4]=0.07,morpho.e_remap_hi[4]=0.08",
+      "name": "g-c",
+      "set": "morpho.a_shift[4]=-0.12,morpho.a_shift[0]=0.12,morpho.a_shift[1]=0.12,morpho.a_shift[5]=0.15",
+      "modes": [
+        "gameplay"
+      ]
+    },
+    {
+      "name": "g-d",
+      "set": "morpho.a_shift[4]=-0.12,morpho.a_shift[0]=0.08,morpho.a_shift[1]=0.08,morpho.a_shift[5]=-0.25",
+      "modes": [
+        "gameplay"
+      ]
+    },
+    {
+      "name": "g-e",
+      "set": "morpho.a_shift[4]=-0.12,morpho.a_shift[0]=0.08,morpho.a_shift[1]=0.08,morpho.a_shift[5]=0.25",
+      "modes": [
+        "gameplay"
+      ]
+    },
+    {
+      "name": "g-f",
+      "set": "morpho.a_shift[4]=-0.14,morpho.a_shift[0]=0.12,morpho.a_shift[1]=0.12,morpho.a_shift[5]=0.15,morpho.a_shift[2]=0.04",
+      "modes": [
+        "gameplay"
+      ]
+    },
+    {
+      "name": "g-g",
+      "set": "morpho.a_shift[4]=-0.12,morpho.a_shift[0]=0.08,morpho.a_shift[1]=0.08,morpho.a_shift[5]=0.15,morpho.a_shift[3]=0.05",
+      "modes": [
+        "gameplay"
+      ]
+    },
+    {
+      "name": "g-h",
+      "set": "morpho.a_shift[4]=-0.18,morpho.a_shift[0]=0.15,morpho.a_shift[1]=0.15,morpho.a_shift[5]=0.25,morpho.a_shift[2]=0.04,morpho.a_shift[3]=0.05",
+      "modes": [
+        "gameplay"
+      ]
+    },
+    {
+      "name": "s-a",
+      "set": "morpho.a_shift[4]=-0.1,morpho.a_shift[0]=0.08,morpho.a_shift[1]=0.08,morpho.a_shift[5]=-0.15",
       "modes": [
         "scientific"
       ]
     },
     {
-      "name": "s-cold-less",
-      "set": "morpho.e_remap_hi[0]=-0.08,morpho.e_remap_hi[1]=-0.08",
+      "name": "s-b",
+      "set": "morpho.a_shift[4]=-0.14,morpho.a_shift[0]=0.08,morpho.a_shift[1]=0.08,morpho.a_shift[5]=-0.15",
+      "modes": [
+        "scientific"
+      ]
+    },
+    {
+      "name": "s-c",
+      "set": "morpho.a_shift[4]=-0.12,morpho.a_shift[0]=0.12,morpho.a_shift[1]=0.12,morpho.a_shift[5]=0.15",
+      "modes": [
+        "scientific"
+      ]
+    },
+    {
+      "name": "s-d",
+      "set": "morpho.a_shift[4]=-0.12,morpho.a_shift[0]=0.08,morpho.a_shift[1]=0.08,morpho.a_shift[5]=-0.25",
+      "modes": [
+        "scientific"
+      ]
+    },
+    {
+      "name": "s-e",
+      "set": "morpho.a_shift[4]=-0.12,morpho.a_shift[0]=0.08,morpho.a_shift[1]=0.08,morpho.a_shift[5]=0.25",
+      "modes": [
+        "scientific"
+      ]
+    },
+    {
+      "name": "s-f",
+      "set": "morpho.a_shift[4]=-0.14,morpho.a_shift[0]=0.12,morpho.a_shift[1]=0.12,morpho.a_shift[5]=0.15,morpho.a_shift[2]=0.04",
+      "modes": [
+        "scientific"
+      ]
+    },
+    {
+      "name": "s-g",
+      "set": "morpho.a_shift[4]=-0.12,morpho.a_shift[0]=0.08,morpho.a_shift[1]=0.08,morpho.a_shift[5]=0.15,morpho.a_shift[3]=0.05",
+      "modes": [
+        "scientific"
+      ]
+    },
+    {
+      "name": "s-h",
+      "set": "morpho.a_shift[4]=-0.18,morpho.a_shift[0]=0.15,morpho.a_shift[1]=0.15,morpho.a_shift[5]=0.25,morpho.a_shift[2]=0.04,morpho.a_shift[3]=0.05",
       "modes": [
         "scientific"
       ]

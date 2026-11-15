@@ -53,44 +53,8 @@ pub struct MorphoMix {
     pub lambda_pv_blocks: f64,
     pub sigma_e: f64,
     pub sigma_pv: f64,
-}
-
-/// Д-095 (T123): зональная перекладка E. Каждая зона сдвигает границы
-/// E2/E3 и E3/E4 внутри отрезка от края E1/E2 до края E4/E5; концы отрезка
-/// неподвижны, вне его E не меняется. Так климат перераспределяет сушу между
-/// плато (E2), холмами (E3) и равнинами (E4), а горы и низины остаются как
-/// были. Результат — смесь по весам зон, поэтому на границе зон он непрерывен.
-pub fn remap_erosion(e: f64, weights: &MorphoWeights, params: &Params) -> f64 {
-    let knots = &params.height.e_knots;
-    let (floor, edge_lo, edge_hi, ceil) = (knots[2], knots[3], knots[4], knots[5]);
-    if !(e > floor && e < ceil) {
-        return e;
-    }
-    let p = &params.morpho;
-    let mut out = 0.0;
-    for (k, w) in weights.values.iter().enumerate() {
-        if *w <= 0.0 {
-            continue;
-        }
-        let lo = p.e_remap_lo[k].clamp(floor, ceil);
-        let hi = p.e_remap_hi[k].clamp(lo, ceil);
-        let span = |from: f64, to: f64, a: f64, b: f64| {
-            if to > from {
-                a + (e - from) / (to - from) * (b - a)
-            } else {
-                b
-            }
-        };
-        let mapped = if e <= lo {
-            span(floor, lo, floor, edge_lo)
-        } else if e <= hi {
-            span(lo, hi, edge_lo, edge_hi)
-        } else {
-            span(hi, ceil, edge_hi, ceil)
-        };
-        out += w * mapped;
-    }
-    out
+    /// Д-095: сдвиг окна «равнина → холмы» по A.
+    pub a_shift: f64,
 }
 
 pub fn validate(params: &Params) -> Result<(), &'static str> {
@@ -179,6 +143,7 @@ pub fn mix(weights: &MorphoWeights, params: &Params) -> MorphoMix {
         out.lambda_pv_blocks += w * p.lambda_pv_blocks[k];
         out.sigma_e += w * p.sigma_e[k];
         out.sigma_pv += w * p.sigma_pv[k];
+        out.a_shift += w * p.a_shift[k];
     }
     if params.mode == Mode::Scientific {
         out.lambda_pv_blocks *= p.scientific_lambda_factor;
@@ -190,7 +155,7 @@ pub fn mix(weights: &MorphoWeights, params: &Params) -> MorphoMix {
 
 #[cfg(test)]
 mod tests {
-    use super::{MORPHO_ZONES, MorphoWeights, mix, remap_erosion, validate, weights};
+    use super::{MORPHO_ZONES, mix, validate, weights};
     use crate::mode::Mode;
     use crate::params::Params;
     use crate::version::GenVersion;
@@ -290,70 +255,5 @@ mod tests {
                 < 1e-12
         );
         assert!((s.sigma_e - g.sigma_e * game.morpho.scientific_sigma_factor).abs() < 1e-12);
-    }
-
-    fn single(zone: usize) -> MorphoWeights {
-        let mut values = [0.0; MORPHO_ZONES];
-        values[zone] = 1.0;
-        MorphoWeights { values }
-    }
-
-    #[test]
-    fn erosion_remap_keeps_outer_bands_and_order() {
-        // Д-095: перекладка действует только между краями E1/E2 и E4/E5,
-        // монотонна и непрерывна — рельеф не рвётся и горы с низинами целы.
-        for mode in [Mode::Gameplay, Mode::Scientific] {
-            let p = Params::defaults(GenVersion::V1Dev, mode);
-            let knots = p.height.e_knots;
-            for zone in 0..MORPHO_ZONES {
-                let w = single(zone);
-                for e in [-1.0, -0.9, knots[2], knots[5], 0.5, 1.0] {
-                    assert_eq!(remap_erosion(e, &w, &p), e);
-                }
-                let mut previous = remap_erosion(knots[2], &w, &p);
-                let steps = 2000;
-                for n in 1..=steps {
-                    let e = knots[2] + (knots[5] - knots[2]) * n as f64 / steps as f64;
-                    let mapped = remap_erosion(e, &w, &p);
-                    assert!(mapped >= previous, "зона {zone}: порядок нарушен в {e}");
-                    assert!(mapped - previous < 0.02, "зона {zone}: скачок в {e}");
-                    assert!(mapped >= knots[2] && mapped <= knots[5]);
-                    previous = mapped;
-                }
-            }
-        }
-    }
-
-    #[test]
-    fn erosion_remap_moves_zone_edges() {
-        let p = Params::defaults(GenVersion::V1Dev, Mode::Gameplay);
-        let knots = p.height.e_knots;
-        // Горные зоны не трогаются.
-        for zone in [6, 7] {
-            for e in [-0.3, -0.1, 0.0, 0.2] {
-                assert!((remap_erosion(e, &single(zone), &p) - e).abs() < 1e-12);
-            }
-        }
-        // Узлы зоны попадают точно на границы полос.
-        for zone in 0..6 {
-            let w = single(zone);
-            let lo = remap_erosion(p.morpho.e_remap_lo[zone], &w, &p);
-            let hi = remap_erosion(p.morpho.e_remap_hi[zone], &w, &p);
-            assert!((lo - knots[3]).abs() < 1e-12);
-            assert!((hi - knots[4]).abs() < 1e-12);
-        }
-        // Холм (E3) в аридной зоне становится плато (E2), плато во влажной
-        // умеренной — холмом.
-        assert!(remap_erosion(-0.10, &single(4), &p) < knots[3]);
-        assert!(remap_erosion(-0.30, &single(2), &p) > knots[3]);
-        // Смесь зон — смесь результатов.
-        let mut mixed = [0.0; MORPHO_ZONES];
-        mixed[2] = 0.25;
-        mixed[4] = 0.75;
-        let e = -0.1;
-        let expected =
-            0.25 * remap_erosion(e, &single(2), &p) + 0.75 * remap_erosion(e, &single(4), &p);
-        let got = remap_erosion(e, &MorphoWeights { values: mixed }, &p);
-        assert!((got - expected).abs() < 1e-12);
     }
 }
