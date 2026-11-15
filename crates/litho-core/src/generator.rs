@@ -1215,6 +1215,20 @@ impl Generator {
         }
     }
 
+    /// T77: значение поля лавы аквиферов для ячейки игры
+    /// `(x div 64, y div 40, z div 64)`. λ берётся в центре ячейки.
+    pub fn lava_aquifer(&self, cell_x: i64, cell_y: i64, cell_z: i64) -> f64 {
+        let half = crate::lava::AQUIFER_CELL_XZ as f64 * 0.5;
+        let x = (cell_x * crate::lava::AQUIFER_CELL_XZ) as f64 + half;
+        let z = (cell_z * crate::lava::AQUIFER_CELL_XZ) as f64 + half;
+        crate::lava::aquifer_value(
+            self.lava_sample(x, z),
+            [cell_x, cell_y, cell_z],
+            self.seed,
+            &self.params,
+        )
+    }
+
     /// Насколько точка подходит для появления (слой `spawn`, T54).
     pub fn spawn_quality(&self, x: f64, z: f64) -> SpawnQuality {
         spawn::evaluate(self.macro_point(x, z), self.seed, &self.params)

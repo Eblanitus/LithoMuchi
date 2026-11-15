@@ -77,33 +77,89 @@ pub fn field_for(seed: i64, name: &str, x: f64, z: f64) -> Option<f32> {
 type Key = (i64, u8, u8);
 static REGISTRY: Mutex<Vec<(Key, Weak<Generator>)>> = Mutex::new(Vec::new());
 
-fn key(seed: i64, spec: NoiseSpec) -> Key {
-    let version = spec.version as u8;
-    let mode = if spec.mode == Mode::Scientific { 0 } else { 1 };
-    (seed, version, mode)
-}
-
 /// Один Generator на (seed, mode, version), общий для всех полей мира и LOD.
-pub fn noise_for(seed: i64, spec: NoiseSpec) -> Option<Arc<dyn crate::noise::Noise>> {
-    let k = key(seed, spec);
+fn generator_for(seed: i64, version: GenVersion, mode: Mode) -> Option<Arc<Generator>> {
+    let k: Key = (
+        seed,
+        version as u8,
+        if mode == Mode::Scientific { 0 } else { 1 },
+    );
     let mut registry = REGISTRY.lock().ok()?;
     registry.retain(|(_, weak)| weak.strong_count() > 0);
     for (existing, weak) in registry.iter() {
         if *existing == k {
             if let Some(generator) = weak.upgrade() {
-                return Some(Arc::new(LithoNoise {
-                    generator,
-                    field: spec.field,
-                }));
+                return Some(generator);
             }
         }
     }
-    let generator = Arc::new(Generator::new(seed, spec.mode, spec.version).ok()?);
+    let generator = Arc::new(Generator::new(seed, mode, version).ok()?);
     registry.push((k, Arc::downgrade(&generator)));
+    Some(generator)
+}
+
+pub fn noise_for(seed: i64, spec: NoiseSpec) -> Option<Arc<dyn crate::noise::Noise>> {
+    let generator = generator_for(seed, spec.version, spec.mode)?;
     Some(Arc::new(LithoNoise {
         generator,
         field: spec.field,
     }))
+}
+
+/// T77: ванильный шум лавы аквиферов. Пак его не переименовывает (настройки
+/// шума мира — файл Mojang, мы его не копируем), поэтому мир узнаётся по
+/// именам шумов в графе: если в нём есть шумы `litospherity:v1-dev/<режим>/…`
+/// ровно одного режима, мир наш.
+pub const VANILLA_AQUIFER_LAVA: &str = "minecraft:aquifer_lava";
+
+/// Версия и режим мира по именам шумов графа. Нет наших имён, имена разных
+/// режимов или версия без лавы (v0 заморожена) -> None, лава остаётся ванильной.
+pub fn world_spec<'a>(names: impl Iterator<Item = &'a String>) -> Option<(GenVersion, Mode)> {
+    let mut found = None;
+    for name in names {
+        let Some(spec) = parse_noise_name(name) else {
+            continue;
+        };
+        let world = (spec.version, spec.mode);
+        match found {
+            None => found = Some(world),
+            Some(existing) if existing == world => {}
+            Some(_) => return None,
+        }
+    }
+    found.filter(|(version, _)| *version == GenVersion::V1Dev)
+}
+
+pub fn aquifer_lava_for<'a>(
+    seed: i64,
+    names: impl Iterator<Item = &'a String>,
+) -> Option<Arc<dyn crate::noise::Noise>> {
+    let (version, mode) = world_spec(names)?;
+    let generator = generator_for(seed, version, mode)?;
+    Some(Arc::new(LavaNoise { generator }))
+}
+
+/// Поле лавы аквиферов. Игра спрашивает его в координатах ячейки
+/// `(x div 64, y div 40, z div 64)` с масштабами 1/1 (26.3), поэтому
+/// координаты приходят целыми номерами ячеек.
+#[derive(Debug)]
+pub struct LavaNoise {
+    generator: Arc<Generator>,
+}
+
+impl crate::noise::Noise for LavaNoise {
+    fn range(&self) -> Result<[f32; 2], crate::noise::NanRange> {
+        Ok([0.0, 0.5])
+    }
+
+    fn get2(&self, x: f64, z: f64) -> f32 {
+        self.get3(x, 0.0, z)
+    }
+
+    fn get3(&self, x: f64, y: f64, z: f64) -> f32 {
+        self.generator
+            .lava_aquifer(x.round() as i64, y.round() as i64, z.round() as i64) as f32
+    }
 }
 
 #[derive(Debug)]

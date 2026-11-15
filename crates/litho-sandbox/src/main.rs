@@ -429,6 +429,73 @@ fn cmd_paths(args: &[String]) -> Result<(), String> {
     }
 }
 
+/// T77: подсчёт лавы аквиферов по выборке ячеек 64×40×64. Доля лавовых
+/// ячеек у стыков плит (λ ≥ 0.5) против ячеек вдали (λ равна фону).
+fn cmd_lava(args: &[String]) -> Result<(), String> {
+    let opts = options_from(args)?;
+    let generator = generator(&opts)?;
+    let background = generator.params().lava.background;
+    let half = 256_i64;
+    // Слои ячеек по Y: −2 это y −80…−41, −1 это y −40…−1.
+    let layers = [-2_i64, -1];
+    let mut near = (0_u64, 0_u64);
+    let mut far = (0_u64, 0_u64);
+    let mut all = (0_u64, 0_u64);
+    for cx in -half..half {
+        for cz in -half..half {
+            let x = (cx * 64 + 32) as f64;
+            let z = (cz * 64 + 32) as f64;
+            let lambda = generator.lava_sample(x, z);
+            for cy in layers {
+                let on = u64::from(generator.lava_aquifer(cx, cy, cz).abs() > 0.3);
+                all = (all.0 + on, all.1 + 1);
+                if lambda >= 0.5 {
+                    near = (near.0 + on, near.1 + 1);
+                } else if lambda <= background {
+                    far = (far.0 + on, far.1 + 1);
+                }
+            }
+        }
+    }
+    let pct = |(on, total): (u64, u64)| {
+        if total == 0 {
+            0.0
+        } else {
+            100.0 * on as f64 / total as f64
+        }
+    };
+    println!(
+        "lava: {n}×{n} ячеек 64×40×64 (область {span} блоков), слои y −80…−1; фон λ = {background}",
+        n = 2 * half,
+        span = 2 * half * 64,
+    );
+    println!(
+        "  у стыков (λ ≥ 0.5): {:.1} % лавовых из {} ячеек",
+        pct(near),
+        near.1
+    );
+    println!(
+        "  вдали (λ = фон):    {:.1} % лавовых из {} ячеек",
+        pct(far),
+        far.1
+    );
+    println!(
+        "  всего:              {:.1} % лавовых из {} ячеек; у стыков {:.1} % площади",
+        pct(all),
+        all.1,
+        100.0 * near.1 as f64 / all.1 as f64
+    );
+    if near.1 == 0 || far.1 == 0 {
+        return Err("в области нет ячеек у стыка или вдали от него".into());
+    }
+    let ratio = pct(near) / pct(far).max(1e-9);
+    println!("  у стыков лавы больше в {ratio:.1} раза");
+    if ratio < 3.0 {
+        return Err("у стыков лавы меньше чем втрое против фона".into());
+    }
+    Ok(())
+}
+
 fn cmd_seams(args: &[String]) -> Result<(), String> {
     let opts = options_from(args)?;
     let generator = generator(&opts)?;
@@ -1722,6 +1789,7 @@ fn main() -> Result<(), String> {
         "stats-all" => cmd_stats_all(&args[1..]),
         "acceptance" => cmd_acceptance(&args[1..]),
         "seams" => cmd_seams(&args[1..]),
+        "lava" => cmd_lava(&args[1..]),
         "paths" => cmd_paths(&args[1..]),
         "drainage" => cmd_drainage(&args[1..]),
         "bench" => cmd_bench(&args[1..]),
