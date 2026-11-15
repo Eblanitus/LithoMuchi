@@ -1947,13 +1947,16 @@ impl HeightStats {
             .collect::<Vec<_>>()
             .join(", ");
         format!(
-            "{{\"climate_shape\": {{\"land\": {}, \"erosion_pct\": {:?}, \"lake_pct\": {:.4}, \"river_pct\": {:.4}, \"zones\": [{}], \"pass\": {}, \"notes\": [{}]}}, \"rivers_lakes\": {{\"land\": {}, \"lake_land\": {}, \"river_land\": {}, \"dry_land\": {}, \"lake_pct\": {:.4}, \"river_pct\": {:.4}, \"lakes_per_100_l2\": {:.4}, \"area_l2\": {:.3}}}}}",
+            "{{\"climate_shape\": {{\"land\": {}, \"erosion_pct\": {:?}, \"lake_pct\": {:.4}, \"river_pct\": {:.4}, \"zones\": [{}], \"pass\": {}, \"bands_pass\": {}, \"notes\": [{}]}}, \"rivers_lakes\": {{\"land\": {}, \"lake_land\": {}, \"river_land\": {}, \"dry_land\": {}, \"lake_pct\": {:.4}, \"river_pct\": {:.4}, \"lakes_per_100_l2\": {:.4}, \"area_l2\": {:.3}}}}}",
             shape.land,
             shape.erosion_pct,
             shape.lake_pct,
             shape.river_pct,
             zones,
             shape.pass.map_or("null".to_string(), |p| p.to_string()),
+            shape
+                .bands_pass
+                .map_or("null".to_string(), |p| p.to_string()),
             notes,
             plan.rivers.land,
             plan.rivers.lake_land,

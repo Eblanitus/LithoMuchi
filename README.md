@@ -27,7 +27,7 @@
 работает и что делать дальше по порядку — в [docs/PLAN.md](docs/PLAN.md).
 
 - **v0 заморожена** (Д-026): scientific `5cdbe1d36ef8d16a`, gameplay `b48e8037c4e85977`.
-- **v1-dev** — рабочая линия: scientific `e2458101c5081779`, gameplay `5c6eb754e6390a4d`.
+- **v1-dev** — рабочая линия: scientific `671c12eed85b6e3e`, gameplay `db58625a4ca0096f`.
   Числа: [docs/PARAMS-V1-DEV.md](docs/PARAMS-V1-DEV.md).
 - Мод собирается в `.hnmod` (`tools/package_mod.py`), CI проверяет его на закреплённых
   исходниках Horizon. Тест №2 в игре пройден 2026-11-11: высота, уровень моря и берега в норме.
