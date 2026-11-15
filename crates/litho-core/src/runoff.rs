@@ -213,8 +213,11 @@ where
                                 break;
                             }
                             let end = (start + CLIMATE_PARALLEL_BLOCK).min(keys.len());
-                            for k in start..end {
-                                out.push((k, climate_key_value(keys[k], step_l, sample)?));
+                            for (offset, key) in keys[start..end].iter().enumerate() {
+                                out.push((
+                                    start + offset,
+                                    climate_key_value(*key, step_l, sample)?,
+                                ));
                             }
                         }
                         Ok(out)
