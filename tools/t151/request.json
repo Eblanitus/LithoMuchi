@@ -1,6 +1,6 @@
 {
-  "name": "t123-remap-2",
-  "note": "Д-095, круг 3: перекладка E возвращена с пределом крутизны отрезков (REMAP_MAX_SLOPE = 2), полуаридная в gameplay не тронута; сдвиг окна A (круг 2) снят. base — значения по умолчанию этого коммита, остальные варианты — подбор через --set, не приёмка.",
+  "name": "t123-remap-3",
+  "note": "Д-095, круг 4: gameplay — перекладка E с растяжением отрезков не больше 2, вокруг лучшего варианта круга 3 (g-mix); scientific — значения круга 1 (крутые отрезки, шов с запасом) с усиленной тропической зоной. base — значения по умолчанию этого коммита, остальные варианты — подбор через --set, не приёмка.",
   "version": "v1-dev",
   "modes": [
     "gameplay",
@@ -34,50 +34,50 @@
       ]
     },
     {
-      "name": "g-arid-less",
-      "set": "morpho.e_remap_lo[4]=-0.08",
+      "name": "g-cold15",
+      "set": "morpho.e_remap_hi[0]=-0.15,morpho.e_remap_hi[1]=-0.15",
       "modes": [
         "gameplay"
       ]
     },
     {
-      "name": "g-arid-more",
-      "set": "morpho.e_remap_lo[4]=-0.02,morpho.e_remap_hi[4]=0.17",
+      "name": "g-cold15-trop15",
+      "set": "morpho.e_remap_hi[0]=-0.15,morpho.e_remap_hi[1]=-0.15,morpho.e_remap_hi[5]=-0.15",
       "modes": [
         "gameplay"
       ]
     },
     {
-      "name": "g-trop-strong",
-      "set": "morpho.e_remap_lo[5]=-0.29,morpho.e_remap_hi[5]=-0.12",
+      "name": "g-temp03",
+      "set": "morpho.e_remap_hi[2]=-0.03",
       "modes": [
         "gameplay"
       ]
     },
     {
-      "name": "g-cold-strong",
-      "set": "morpho.e_remap_lo[0]=-0.29,morpho.e_remap_hi[0]=-0.12,morpho.e_remap_lo[1]=-0.29,morpho.e_remap_hi[1]=-0.12",
+      "name": "g-arid20",
+      "set": "morpho.e_remap_hi[4]=0.2",
       "modes": [
         "gameplay"
       ]
     },
     {
-      "name": "g-temp-neutral",
-      "set": "morpho.e_remap_lo[2]=-0.2225,morpho.e_remap_hi[2]=0.05",
+      "name": "g-cold15-arid20",
+      "set": "morpho.e_remap_hi[0]=-0.15,morpho.e_remap_hi[1]=-0.15,morpho.e_remap_hi[4]=0.2",
       "modes": [
         "gameplay"
       ]
     },
     {
-      "name": "g-semi",
-      "set": "morpho.e_remap_lo[3]=-0.19,morpho.e_remap_hi[3]=0.07",
+      "name": "g-arid-lo10",
+      "set": "morpho.e_remap_lo[4]=-0.1",
       "modes": [
         "gameplay"
       ]
     },
     {
-      "name": "g-mix",
-      "set": "morpho.e_remap_lo[4]=-0.08,morpho.e_remap_lo[5]=-0.29,morpho.e_remap_hi[5]=-0.12,morpho.e_remap_lo[0]=-0.29,morpho.e_remap_hi[0]=-0.12,morpho.e_remap_lo[1]=-0.29,morpho.e_remap_hi[1]=-0.12",
+      "name": "g-cold15-temp03",
+      "set": "morpho.e_remap_hi[0]=-0.15,morpho.e_remap_hi[1]=-0.15,morpho.e_remap_hi[2]=-0.03",
       "modes": [
         "gameplay"
       ]
@@ -90,50 +90,50 @@
       ]
     },
     {
-      "name": "s-trop-less",
-      "set": "morpho.e_remap_hi[5]=-0.03",
+      "name": "s-trop-hi05",
+      "set": "morpho.e_remap_hi[5]=0.05",
       "modes": [
         "scientific"
       ]
     },
     {
-      "name": "s-trop-strong",
-      "set": "morpho.e_remap_lo[5]=-0.29,morpho.e_remap_hi[5]=-0.12",
+      "name": "s-trop-hi16",
+      "set": "morpho.e_remap_hi[5]=0.16",
       "modes": [
         "scientific"
       ]
     },
     {
-      "name": "s-arid-less",
-      "set": "morpho.e_remap_lo[4]=0.0",
+      "name": "s-cold15",
+      "set": "morpho.e_remap_hi[0]=-0.15,morpho.e_remap_hi[1]=-0.15",
       "modes": [
         "scientific"
       ]
     },
     {
-      "name": "s-cold-less",
-      "set": "morpho.e_remap_hi[0]=-0.08,morpho.e_remap_hi[1]=-0.08",
+      "name": "s-cold15-trop16",
+      "set": "morpho.e_remap_hi[0]=-0.15,morpho.e_remap_hi[1]=-0.15,morpho.e_remap_hi[5]=0.16",
       "modes": [
         "scientific"
       ]
     },
     {
-      "name": "s-temp-neutral",
-      "set": "morpho.e_remap_lo[2]=-0.2225,morpho.e_remap_hi[2]=0.05",
+      "name": "s-trop-flat",
+      "set": "morpho.e_remap_hi[5]=-0.12",
       "modes": [
         "scientific"
       ]
     },
     {
-      "name": "s-semi-id",
-      "set": "morpho.e_remap_lo[3]=-0.2225,morpho.e_remap_hi[3]=0.05",
+      "name": "s-temp12",
+      "set": "morpho.e_remap_hi[2]=0.12",
       "modes": [
         "scientific"
       ]
     },
     {
-      "name": "s-semi-more",
-      "set": "morpho.e_remap_lo[3]=-0.08,morpho.e_remap_hi[3]=0.07",
+      "name": "s-cold10",
+      "set": "morpho.e_remap_hi[0]=-0.1,morpho.e_remap_hi[1]=-0.1",
       "modes": [
         "scientific"
       ]
