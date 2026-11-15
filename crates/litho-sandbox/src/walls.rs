@@ -118,6 +118,33 @@ struct DryTally {
     fade_strip: u64,
 }
 
+/// Одна из худших не-горных ступеней: перепад, место, причина и поля
+/// нижней (`lo_*`) и верхней (`hi_*`) точек.
+#[derive(Clone, Copy)]
+struct TopStep {
+    dy: f64,
+    x: f64,
+    z: f64,
+    category: &'static str,
+    lo_y: f64,
+    lo_e: f64,
+    lo_pv: f64,
+    lo_c: f64,
+    lo_e_km: f64,
+    table_lo: f64,
+    hi_e: f64,
+    hi_pv: f64,
+    hi_mountain: f64,
+    hi_plateau: f64,
+    table_hi: f64,
+    lo_shore: f64,
+    hi_shore: f64,
+    lo_floodplain: f64,
+    hi_floodplain: f64,
+    hi_estuary: f64,
+    hi_inland_sea: f64,
+}
+
 #[derive(Default)]
 struct Tally {
     pairs: u64,
@@ -142,29 +169,7 @@ struct Tally {
     /// e_high, pv_high, mountain_hi, plateau_hi, табличное y_high,
     /// shore_low, shore_high, floodplain_lo, floodplain_hi, estuary_hi,
     /// inland_sea_hi).
-    top: Vec<(
-        f64,
-        f64,
-        f64,
-        &'static str,
-        f64,
-        f64,
-        f64,
-        f64,
-        f64,
-        f64,
-        f64,
-        f64,
-        f64,
-        f64,
-        f64,
-        f64,
-        f64,
-        f64,
-        f64,
-        f64,
-        f64,
-    )>,
+    top: Vec<TopStep>,
 }
 
 fn line(generator: &Generator, tally: &mut Tally, at: impl Fn(i64) -> (f64, f64)) {
@@ -268,30 +273,30 @@ fn classify_dry(
         let (lo, hi) = if a.y <= b.y { (a, b) } else { (b, a) };
         let table_lo = table_y(generator, lo.e, lo.pv, lo.e_km);
         let table_hi = table_y(generator, hi.e, hi.pv, hi.e_km);
-        tally.top.push((
+        tally.top.push(TopStep {
             dy,
-            bx,
-            bz,
+            x: bx,
+            z: bz,
             category,
-            lo.y,
-            lo.e,
-            lo.pv,
-            lo.c,
-            lo.e_km,
+            lo_y: lo.y,
+            lo_e: lo.e,
+            lo_pv: lo.pv,
+            lo_c: lo.c,
+            lo_e_km: lo.e_km,
             table_lo,
-            hi.e,
-            hi.pv,
-            hi.mountain,
-            hi.plateau,
+            hi_e: hi.e,
+            hi_pv: hi.pv,
+            hi_mountain: hi.mountain,
+            hi_plateau: hi.plateau,
             table_hi,
-            lo.shore,
-            hi.shore,
-            lo.floodplain,
-            hi.floodplain,
-            hi.estuary,
-            hi.inland_sea,
-        ));
-        tally.top.sort_by(|x, y| y.0.total_cmp(&x.0));
+            lo_shore: lo.shore,
+            hi_shore: hi.shore,
+            lo_floodplain: lo.floodplain,
+            hi_floodplain: hi.floodplain,
+            hi_estuary: hi.estuary,
+            hi_inland_sea: hi.inland_sea,
+        });
+        tally.top.sort_by(|x, y| y.dy.total_cmp(&x.dy));
         tally.top.truncate(5);
     }
 }
@@ -361,27 +366,27 @@ pub fn run(generator: &Generator, center: (f64, f64)) -> Result<(), String> {
     for step in &tally.top {
         println!(
             "    {:.0} бл. на {STEP} у ({:.0}, {:.0}), {}: низ y {:.0} (табл. {:.0}) e {:+.3} pv {:+.2} c {:+.2} e_km {:.3} берег {:.0} пойма {:.2}; высок e {:+.3} pv {:+.2} (табл. {:.0}) mnt {:.2} plat {:.2} берег {:.0} пойма {:.2} устье {:.2} внморе {:.2}",
-            step.0,
-            step.1,
-            step.2,
-            step.3,
-            step.4,
-            step.9,
-            step.5,
-            step.6,
-            step.7,
-            step.8,
-            step.15,
-            step.17,
-            step.10,
-            step.11,
-            step.14,
-            step.12,
-            step.13,
-            step.16,
-            step.18,
-            step.19,
-            step.20
+            step.dy,
+            step.x,
+            step.z,
+            step.category,
+            step.lo_y,
+            step.table_lo,
+            step.lo_e,
+            step.lo_pv,
+            step.lo_c,
+            step.lo_e_km,
+            step.lo_shore,
+            step.lo_floodplain,
+            step.hi_e,
+            step.hi_pv,
+            step.table_hi,
+            step.hi_mountain,
+            step.hi_plateau,
+            step.hi_shore,
+            step.hi_floodplain,
+            step.hi_estuary,
+            step.hi_inland_sea
         );
     }
     Ok(())
