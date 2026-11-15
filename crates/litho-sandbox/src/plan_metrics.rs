@@ -62,6 +62,10 @@ pub struct ClimateShape {
     /// Итоговая проверка 10.1 по зонам, где есть достаточный объём.
     /// `None` — объём меньше порога, вердикта нет.
     pub pass: Option<bool>,
+    /// Та же проверка без воды: только полосы E (отличие зоны от средней
+    /// и E2 аридной). Озёра холодных зон ждут воду выше моря (Д-070, Д-088),
+    /// поэтому форма рельефа отчитывается отдельно от них.
+    pub bands_pass: Option<bool>,
     /// Почему проверка не прошла или не считается.
     pub notes: Vec<String>,
 }
@@ -234,6 +238,7 @@ impl PlanAccumulator {
         shape.river_pct = pct(self.river_land, rivers.land);
 
         let mut all_ok = true;
+        let mut bands_ok = true;
         let mut any_zone_verdict = false;
         for (zone, name) in ZONE_NAMES.iter().enumerate() {
             let total = self.zone_land[zone] + self.zone_lake[zone] + self.zone_river[zone];
@@ -283,9 +288,15 @@ impl PlanAccumulator {
             );
             if in_plan_list && z.distinct_bands == 0 {
                 zone_ok = false;
+                bands_ok = false;
+                shape.notes.push(format!(
+                    "{}: ни одна полоса E не отличается от средней на {CLIMATE_SHAPE_MIN_GAP_PP} п. п. (наибольшее отличие {:.1})",
+                    z.name, z.max_gap_pp
+                ));
             }
             if z.name == "arid" && z.erosion_pct[2] < ARID_E2_MIN_PCT {
                 zone_ok = false;
+                bands_ok = false;
                 shape.notes.push(format!(
                     "arid: E2 {:.1} % < {ARID_E2_MIN_PCT} %",
                     z.erosion_pct[2]
@@ -311,6 +322,11 @@ impl PlanAccumulator {
             shape.zones.push(z);
         }
         shape.pass = if any_zone_verdict { Some(all_ok) } else { None };
+        shape.bands_pass = if any_zone_verdict {
+            Some(bands_ok)
+        } else {
+            None
+        };
         (shape, rivers, self.diag)
     }
 }
@@ -562,6 +578,11 @@ pub fn text(
         Some(true) => out.push_str("  итог: в цели 10.1\n"),
         Some(false) => out.push_str("  итог: НЕ в цели 10.1\n"),
         None => out.push_str("  итог: нет объёма по зонам\n"),
+    }
+    match shape.bands_pass {
+        Some(true) => out.push_str("  только полосы E (без озёр и рек): в цели\n"),
+        Some(false) => out.push_str("  только полосы E (без озёр и рек): НЕ в цели\n"),
+        None => {}
     }
     for note in &shape.notes {
         out.push_str(&format!("  · {note}\n"));

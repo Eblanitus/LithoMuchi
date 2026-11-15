@@ -1,9 +1,62 @@
 {
-  "name": "acceptance-vol-gp-1",
-  "note": "Приёмочный объём 10.1, gameplay: сетка границ 1600 при шаге 32 блока — span 204.8 L (критерий acceptance_volume ≥200 L при шаге ≤32). Размер 6250 из пробы acceptance-vol-probe-1 для gameplay непригоден: область 800x800 L, прогон не завершился за 1.5 часа (сети стока тысяч плит). 16 сидов, patches 1.",
+  "name": "t123-remap-1",
+  "note": "Д-095, круг 1: зональная перекладка E между E2/E3/E4 (morpho.e_remap_lo/hi). Вариант base — Params::defaults этого коммита; остальные — подбор через --set, не приёмка. Основная сетка 160×160 на 200 L, окна рельефа и сетка границ в 25 пятнах — неполный объём 10.1.",
   "version": "v1-dev",
-  "modes": ["gameplay"],
-  "seeds": [-123456789, -42, -1, 0, 1, 2, 7, 42, 123, 777, 1234, 2024, 12345, 54321, 99999, 987654321],
-  "args": "--size 160 --patches 1 --relief-size 16 --boundary-size 1600",
-  "variants": []
+  "modes": [
+    "gameplay",
+    "scientific"
+  ],
+  "seeds": [
+    -123456789,
+    -42,
+    -1,
+    0,
+    1,
+    2,
+    7,
+    42,
+    123,
+    777,
+    1234,
+    2024,
+    12345,
+    54321,
+    99999,
+    987654321
+  ],
+  "args": "--size 160 --patches 5 --relief-size 16 --boundary-size 32",
+  "variants": [
+    {
+      "name": "base",
+      "set": ""
+    },
+    {
+      "name": "g-temp-neutral",
+      "set": "morpho.e_remap_hi[2]=0.05",
+      "modes": [
+        "gameplay"
+      ]
+    },
+    {
+      "name": "g-temp-flat",
+      "set": "morpho.e_remap_hi[2]=-0.03",
+      "modes": [
+        "gameplay"
+      ]
+    },
+    {
+      "name": "s-arid-more",
+      "set": "morpho.e_remap_lo[4]=0.07,morpho.e_remap_hi[4]=0.08",
+      "modes": [
+        "scientific"
+      ]
+    },
+    {
+      "name": "s-cold-less",
+      "set": "morpho.e_remap_hi[0]=-0.08,morpho.e_remap_hi[1]=-0.08",
+      "modes": [
+        "scientific"
+      ]
+    }
+  ]
 }
