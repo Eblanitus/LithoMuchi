@@ -301,6 +301,7 @@ jobs:
           fi
           cat /tmp/litho-mixin-test.log
       - name: "Д-098 — настоящий аквифер: лава ниже −54 только у стыков плит"
+        timeout-minutes: 15
         run: |
           mkdir -p /tmp/litho-horizon-staged-ci/crates/horizon-world/tests
           cp tools/horizon-core-check/deep_lava.rs /tmp/litho-horizon-staged-ci/crates/horizon-world/tests/litho_deep_lava.rs

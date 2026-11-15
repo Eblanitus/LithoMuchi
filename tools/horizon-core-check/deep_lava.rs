@@ -152,6 +152,9 @@ fn cells() -> ([i64; 2], [i64; 2]) {
             if far.is_none() && lambda <= 0.2 {
                 far = Some([cx, cz]);
             }
+            if let (Some(near), Some(far)) = (near, far) {
+                return (near, far);
+            }
         }
     }
     (near.expect("junction cell"), far.expect("far cell"))
