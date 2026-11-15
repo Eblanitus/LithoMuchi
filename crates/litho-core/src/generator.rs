@@ -934,11 +934,41 @@ impl Generator {
         // Этапы целиком, по часам: вместе с работой над соседними плитами.
         let timings = crate::drainage::timings_enabled();
         let mut t = std::time::Instant::now();
-        let routing = self.drainage_routing(plate)?;
-        crate::drainage::log_phase(timings, "этап-связь", t);
+        // Д-094: климат своих узлов суши зависит только от их координат,
+        // а они известны уже по своей топографии. Считаем его заранее, пока
+        // строятся топографии соседей и приток; сборка ниже возьмёт готовые
+        // значения из кэша. На результат это не влияет: значения те же.
+        let own = self.drainage_topo(plate)?;
+        crate::drainage::log_phase(timings, "этап-своя", t);
         t = std::time::Instant::now();
-        let inflow = self.handoff_inflow(&routing, self.params.drainage.handoff_max_hops, None)?;
-        crate::drainage::log_phase(timings, "этап-приток", t);
+        let warm_points: Vec<Vec2> = own
+            .nodes()
+            .iter()
+            .filter(|node| {
+                node.in_plate && node.route_km >= 0.0 && node.outlet != DrainageOutlet::Sea
+            })
+            .map(|node| node.point)
+            .collect();
+        let linked = std::thread::scope(|scope| {
+            if worker_threads() >= 2 && !warm_points.is_empty() {
+                scope.spawn(|| {
+                    // Ошибку, если она есть, вернёт сборка сети.
+                    let _ = crate::runoff::ClimateGrid::build(
+                        &warm_points,
+                        self.params.drainage.climate_step_l,
+                        |point| self.runoff_climate_at(point),
+                    );
+                });
+            }
+            let routing = self.drainage_routing(plate)?;
+            crate::drainage::log_phase(timings, "этап-связь", t);
+            let t = std::time::Instant::now();
+            let inflow =
+                self.handoff_inflow(&routing, self.params.drainage.handoff_max_hops, None)?;
+            crate::drainage::log_phase(timings, "этап-приток", t);
+            Ok::<_, RiverNetError>((routing, inflow))
+        });
+        let (routing, inflow) = linked?;
         t = std::time::Instant::now();
         let net = RiverNet::assemble(
             routing,
