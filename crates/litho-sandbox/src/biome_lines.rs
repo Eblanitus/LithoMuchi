@@ -1,5 +1,6 @@
 //! К1 (Д-103): как часто меняется биом вдоль прямых линий и какого размера
 //! пятна. Считается по суше: океан и точки без плиты линию разрывают.
+//! Реки (`river`, `frozen_river`) считаются и вместе со всеми, и отдельно.
 
 use litho_core::Generator;
 
@@ -15,48 +16,98 @@ struct Tally {
     /// Пары соседних проб суши.
     pairs: u64,
     biome: u64,
+    /// Смены биома, где с одной из сторон река (`river`, `frozen_river`).
+    river: u64,
     belt: u64,
     province: u64,
     /// Длины пятен одного биома, блоки (пятно ограничено сменой биома).
     runs: Vec<i64>,
+    /// То же без рек: речные пробы пропущены, лес по обе стороны реки —
+    /// одно пятно, ширина реки в его длину не входит.
+    dry: Runs,
+}
+
+/// Счёт пятен вдоль линии. Пятно считается, только если оно с обеих сторон
+/// ограничено сменой биома, а не берегом или концом линии.
+#[derive(Default)]
+struct Runs {
+    previous: Option<&'static str>,
+    run: i64,
+    closed_start: bool,
+    changes: u64,
+    /// Пробы, вошедшие в счёт (без первой на каждом отрезке суши).
+    pairs: u64,
+    lengths: Vec<i64>,
+}
+
+impl Runs {
+    fn push(&mut self, biome: &'static str) {
+        match self.previous {
+            Some(previous) => {
+                self.pairs += 1;
+                if previous == biome {
+                    self.run += STEP;
+                } else {
+                    self.changes += 1;
+                    if self.closed_start {
+                        self.lengths.push(self.run);
+                    }
+                    self.run = STEP;
+                    self.closed_start = true;
+                }
+            }
+            None => {
+                self.run = STEP;
+                self.closed_start = false;
+            }
+        }
+        self.previous = Some(biome);
+    }
+
+    /// Берег или конец линии: незакрытое пятно не считается.
+    fn gap(&mut self) {
+        self.previous = None;
+    }
+}
+
+fn is_river(biome: &str) -> bool {
+    biome == "river" || biome == "frozen_river"
 }
 
 fn line(generator: &Generator, tally: &mut Tally, at: impl Fn(i64) -> (f64, f64)) {
+    let mut all = Runs::default();
+    tally.dry.gap();
     let mut previous: Option<(&'static str, u8, u8)> = None;
-    let mut run = 0_i64;
-    // Пятно считается, только если оно с обеих сторон ограничено сменой
-    // биома, а не берегом или концом линии.
-    let mut closed_start = false;
     for k in 0..LENGTH / STEP {
         let (x, z) = at(k * STEP - LENGTH / 2);
         let current = generator
             .sample(x, z)
             .filter(|sample| !sample.class.is_ocean)
             .map(|sample| (sample.cell.biome, sample.zone.belt, sample.zone.province));
-        match (previous, current) {
-            (Some(a), Some(b)) => {
-                tally.pairs += 1;
-                tally.belt += u64::from(a.1 != b.1);
-                tally.province += u64::from(a.2 != b.2);
-                if a.0 == b.0 {
-                    run += STEP;
-                } else {
-                    tally.biome += 1;
-                    if closed_start {
-                        tally.runs.push(run);
+        match current {
+            Some(b) => {
+                if let Some(a) = previous {
+                    tally.pairs += 1;
+                    tally.belt += u64::from(a.1 != b.1);
+                    tally.province += u64::from(a.2 != b.2);
+                    if a.0 != b.0 {
+                        tally.biome += 1;
+                        tally.river += u64::from(is_river(a.0) || is_river(b.0));
                     }
-                    run = STEP;
-                    closed_start = true;
+                }
+                all.push(b.0);
+                if !is_river(b.0) {
+                    tally.dry.push(b.0);
                 }
             }
-            (None, Some(_)) => {
-                run = STEP;
-                closed_start = false;
+            None => {
+                all.gap();
+                tally.dry.gap();
             }
-            _ => {}
         }
         previous = current;
     }
+    tally.runs.append(&mut all.lengths);
 }
 
 pub fn run(generator: &Generator, center: (f64, f64)) -> Result<(), String> {
@@ -81,13 +132,16 @@ pub fn run(generator: &Generator, center: (f64, f64)) -> Result<(), String> {
         }
     };
     tally.runs.sort_unstable();
-    let quantile = |q: f64| {
-        if tally.runs.is_empty() {
+    tally.dry.lengths.sort_unstable();
+    let quantile_of = |runs: &[i64], q: f64| {
+        if runs.is_empty() {
             0
         } else {
-            tally.runs[((tally.runs.len() - 1) as f64 * q).round() as usize]
+            runs[((runs.len() - 1) as f64 * q).round() as usize]
         }
     };
+    let quantile = |q: f64| quantile_of(&tally.runs, q);
+    let dry = |q: f64| quantile_of(&tally.dry.lengths, q);
     println!(
         "biomes: {n} линий по {LENGTH} блоков, шаг {STEP}; суши {land:.0} блоков",
         n = 2 * OFFSETS.len()
@@ -108,6 +162,29 @@ pub fn run(generator: &Generator, center: (f64, f64)) -> Result<(), String> {
         quantile(0.25),
         quantile(0.75),
         tally.runs.len()
+    );
+    println!(
+        "  из-за рек: {} смен из {} ({:.0} %)",
+        tally.river,
+        tally.biome,
+        100.0 * tally.river as f64 / tally.biome as f64
+    );
+    let dry_land = tally.dry.pairs as f64 * STEP as f64;
+    println!(
+        "  без рек: смена биома раз в {:.0} блоков ({} смен)",
+        if tally.dry.changes == 0 {
+            f64::INFINITY
+        } else {
+            dry_land / tally.dry.changes as f64
+        },
+        tally.dry.changes
+    );
+    println!(
+        "  без рек: пятно биома медиана {} блоков, четверти {} и {} ({} пятен)",
+        dry(0.5),
+        dry(0.25),
+        dry(0.75),
+        tally.dry.lengths.len()
     );
     Ok(())
 }
