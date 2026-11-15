@@ -102,6 +102,7 @@ struct Count {
 fn chunk(registry: &BlockRegistry, samplers: &AquiferSamplers, min: [i32; 2]) -> Count {
     let volume = DensityVolume::new([16, 384, 16], [min[0], -64, min[1]], [1, 1, 1]).unwrap();
     let mut context = SamplerContext::cached();
+    println!("progress: chunk {min:?} begins");
     let mut aquifer = NoiseBasedAquifer::new(
         AquiferSamplers::new(AquiferField::ALL.map(|field| samplers.get(field).clone())),
         GlobalFluidPicker::new(63, WATER, LAVA, AIR),
@@ -114,6 +115,7 @@ fn chunk(registry: &BlockRegistry, samplers: &AquiferSamplers, min: [i32; 2]) ->
         &mut context,
     )
     .unwrap();
+    println!("progress: aquifer built");
     let mut count = Count::default();
     for x in min[0]..min[0] + 16 {
         for z in min[1]..min[1] + 16 {
@@ -163,13 +165,16 @@ fn cells() -> ([i64; 2], [i64; 2]) {
 #[test]
 fn lava_below_minus_54_stays_only_at_plate_junctions() {
     let registry = registry();
+    let started = std::time::Instant::now();
     let (near, far) = cells();
+    println!("progress: cells {near:?} {far:?} at {:?}", started.elapsed());
     // The middle chunk of the cell: its aquifer grid stays inside the cell.
     let at = |cell: [i64; 2]| [(cell[0] * 64 + 16) as i32, (cell[1] * 64 + 16) as i32];
     let deep_blocks = 16 * 16 * 10;
 
     let ours = world(&registry, true);
     let vanilla = world(&registry, false);
+    println!("progress: worlds at {:?}", started.elapsed());
 
     let junction = chunk(&registry, &ours, at(near));
     assert!(deep_lava_by_aquifer(), "our aquifer must mark the thread");

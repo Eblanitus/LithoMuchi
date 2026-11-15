@@ -305,10 +305,10 @@ jobs:
         run: |
           mkdir -p /tmp/litho-horizon-staged-ci/crates/horizon-world/tests
           cp tools/horizon-core-check/deep_lava.rs /tmp/litho-horizon-staged-ci/crates/horizon-world/tests/litho_deep_lava.rs
-          if ! timeout 780 cargo test --locked --offline --manifest-path /tmp/litho-horizon-staged-ci/Cargo.toml \
+          if ! timeout 600 cargo test --locked --offline --manifest-path /tmp/litho-horizon-staged-ci/Cargo.toml \
             -p horizon-world --test litho_deep_lava -- --nocapture > /tmp/litho-deep-lava.log 2>&1; then
             cat /tmp/litho-deep-lava.log
-            grep -E '^error|panicked|assertion|left:|right:|junction|far|vanilla' /tmp/litho-deep-lava.log | head -9 | sed 's/^/::error::/'
+            grep -E '^error|panicked|assertion|left:|right:|progress|v1-dev|vanilla' /tmp/litho-deep-lava.log | tail -9 | sed 's/^/::error::/'
             exit 1
           fi
           cat /tmp/litho-deep-lava.log
