@@ -166,14 +166,16 @@ fn cells() -> ([i64; 2], [i64; 2]) {
 fn lava_below_minus_54_stays_only_at_plate_junctions() {
     let registry = registry();
     let started = std::time::Instant::now();
+    // The worlds first: our world keeps the shared generator alive, so the
+    // cell search below does not rebuild it for every cell.
+    let ours = world(&registry, true);
+    let vanilla = world(&registry, false);
     let (near, far) = cells();
     println!("progress: cells {near:?} {far:?} at {:?}", started.elapsed());
     // The middle chunk of the cell: its aquifer grid stays inside the cell.
     let at = |cell: [i64; 2]| [(cell[0] * 64 + 16) as i32, (cell[1] * 64 + 16) as i32];
     let deep_blocks = 16 * 16 * 10;
 
-    let ours = world(&registry, true);
-    let vanilla = world(&registry, false);
     println!("progress: worlds at {:?}", started.elapsed());
 
     let junction = chunk(&registry, &ours, at(near));
