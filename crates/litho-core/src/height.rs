@@ -253,8 +253,6 @@ pub fn validate(params: &Params) -> Result<(), &'static str> {
         || h.shore_width_blocks < 0.0
         || !h.shore_cliff_e.is_finite()
         || !(-1.0..=1.0).contains(&h.shore_cliff_e)
-        || !h.shore_probe_blocks.is_finite()
-        || h.shore_probe_blocks <= 0.0
         || !h.e_gain_blocks_per_km.is_finite()
         || !h.e_gain_base_km.is_finite()
         || h.e_gain_base_km < 0.0
@@ -401,9 +399,6 @@ mod tests {
         assert!(validate(&bad).is_err());
         let mut bad = dev.clone();
         bad.height.shore_width_blocks = -1.0;
-        assert!(validate(&bad).is_err());
-        let mut bad = dev.clone();
-        bad.height.shore_probe_blocks = 0.0;
         assert!(validate(&bad).is_err());
     }
 

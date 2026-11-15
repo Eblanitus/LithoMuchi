@@ -24,6 +24,8 @@ const LENGTH: i64 = 16_384;
 const OFFSETS: [i64; 4] = [-6000, -2000, 2000, 6000];
 /// Порог ступени: перепад больше 3 блоков на блок.
 const STEEP_PER_BLOCK: f64 = 3.0;
+/// Разрыв коры: скачок `e_km` между соседними пробами, км (Д-110).
+const CRUST_JUMP_KM: f64 = 0.1;
 /// Доля вклада, с которой ступень приписывается одному полю.
 const MAIN_SHARE: f64 = 0.6;
 
@@ -116,6 +118,33 @@ struct DryTally {
     fade_strip: u64,
 }
 
+/// Одна из худших не-горных ступеней: перепад, место, причина и поля
+/// нижней (`lo_*`) и верхней (`hi_*`) точек.
+#[derive(Clone, Copy)]
+struct TopStep {
+    dy: f64,
+    x: f64,
+    z: f64,
+    category: &'static str,
+    lo_y: f64,
+    lo_e: f64,
+    lo_pv: f64,
+    lo_c: f64,
+    lo_e_km: f64,
+    table_lo: f64,
+    hi_e: f64,
+    hi_pv: f64,
+    hi_mountain: f64,
+    hi_plateau: f64,
+    table_hi: f64,
+    lo_shore: f64,
+    hi_shore: f64,
+    lo_floodplain: f64,
+    hi_floodplain: f64,
+    hi_estuary: f64,
+    hi_inland_sea: f64,
+}
+
 #[derive(Default)]
 struct Tally {
     pairs: u64,
@@ -125,6 +154,13 @@ struct Tally {
     /// Из них «стол со стеной»: вырезанная точка выше суши рядом.
     raised: u64,
     river: u64,
+    /// Из них у горного русла (E ниже `shore_cliff_e`).
+    river_mountain: u64,
+    /// Разрывы коры: `e_km` меняется больше чем на `CRUST_JUMP_KM` между
+    /// соседними пробами (любая пара точек мира, не только суша).
+    crust_jumps: u64,
+    /// Самый большой разрыв коры: скачок e_km, x, z.
+    worst_crust: (f64, f64, f64),
     dry: DryTally,
     /// Самая крутая не-горная ступень: перепад, x, z, категория.
     worst_dry: (f64, f64, f64, &'static str),
@@ -133,29 +169,7 @@ struct Tally {
     /// e_high, pv_high, mountain_hi, plateau_hi, табличное y_high,
     /// shore_low, shore_high, floodplain_lo, floodplain_hi, estuary_hi,
     /// inland_sea_hi).
-    top: Vec<(
-        f64,
-        f64,
-        f64,
-        &'static str,
-        f64,
-        f64,
-        f64,
-        f64,
-        f64,
-        f64,
-        f64,
-        f64,
-        f64,
-        f64,
-        f64,
-        f64,
-        f64,
-        f64,
-        f64,
-        f64,
-        f64,
-    )>,
+    top: Vec<TopStep>,
 }
 
 fn line(generator: &Generator, tally: &mut Tally, at: impl Fn(i64) -> (f64, f64)) {
@@ -171,7 +185,14 @@ fn line(generator: &Generator, tally: &mut Tally, at: impl Fn(i64) -> (f64, f64)
                 continue;
             }
         };
-        if let Some((a, ax, az)) = previous {
+        if let Some((a, _, _)) = previous {
+            let jump = (b.e_km - a.e_km).abs();
+            if jump > CRUST_JUMP_KM {
+                tally.crust_jumps += 1;
+                if jump > tally.worst_crust.0 {
+                    tally.worst_crust = (jump, bx, bz);
+                }
+            }
             if a.land && b.land {
                 tally.pairs += 1;
                 let dy = (b.y - a.y).abs();
@@ -189,6 +210,10 @@ fn line(generator: &Generator, tally: &mut Tally, at: impl Fn(i64) -> (f64, f64)
                         }
                     } else if a.river > 0.0 || b.river > 0.0 {
                         tally.river += 1;
+                        // Каньон в горах задуман; считаем его отдельно.
+                        if a.e.min(b.e) < generator.params().height.shore_cliff_e {
+                            tally.river_mountain += 1;
+                        }
                     } else if !a.near_water() && !b.near_water() {
                         classify_dry(generator, tally, &a, &b, bx, bz, dy);
                     }
@@ -210,8 +235,10 @@ fn classify_dry(
     dy: f64,
 ) {
     let category = if a.e.min(b.e) < generator.params().height.shore_cliff_e {
+        tally.dry.mountain += 1;
         "горы"
     } else if (a.mountain - b.mountain).abs() > 0.5 || (a.plateau - b.plateau).abs() > 0.5 {
+        tally.dry.crust_seam += 1;
         "шов коры"
     } else {
         // Разложение по таблице: чьё поле двинуло высоту сильнее.
@@ -246,30 +273,30 @@ fn classify_dry(
         let (lo, hi) = if a.y <= b.y { (a, b) } else { (b, a) };
         let table_lo = table_y(generator, lo.e, lo.pv, lo.e_km);
         let table_hi = table_y(generator, hi.e, hi.pv, hi.e_km);
-        tally.top.push((
+        tally.top.push(TopStep {
             dy,
-            bx,
-            bz,
+            x: bx,
+            z: bz,
             category,
-            lo.y,
-            lo.e,
-            lo.pv,
-            lo.c,
-            lo.e_km,
+            lo_y: lo.y,
+            lo_e: lo.e,
+            lo_pv: lo.pv,
+            lo_c: lo.c,
+            lo_e_km: lo.e_km,
             table_lo,
-            hi.e,
-            hi.pv,
-            hi.mountain,
-            hi.plateau,
+            hi_e: hi.e,
+            hi_pv: hi.pv,
+            hi_mountain: hi.mountain,
+            hi_plateau: hi.plateau,
             table_hi,
-            lo.shore,
-            hi.shore,
-            lo.floodplain,
-            hi.floodplain,
-            hi.estuary,
-            hi.inland_sea,
-        ));
-        tally.top.sort_by(|x, y| y.0.total_cmp(&x.0));
+            lo_shore: lo.shore,
+            hi_shore: hi.shore,
+            lo_floodplain: lo.floodplain,
+            hi_floodplain: hi.floodplain,
+            hi_estuary: hi.estuary,
+            hi_inland_sea: hi.inland_sea,
+        });
+        tally.top.sort_by(|x, y| y.dy.total_cmp(&x.dy));
         tally.top.truncate(5);
     }
 }
@@ -310,7 +337,10 @@ pub fn run(generator: &Generator, center: (f64, f64)) -> Result<(), String> {
         "  у выреза воды: {} (из них «стол со стеной»: {})",
         tally.water_edge, tally.raised
     );
-    println!("  у реки: {}", tally.river);
+    println!(
+        "  у реки: {} (из них в горах, каньоны: {})",
+        tally.river, tally.river_mountain
+    );
     println!(
         "  суша вдали от воды: {} — горы {}, шов коры {}, таблица E {}, PV {}, смешанные {} (из них в полосе затухания: {})",
         tally.dry.mountain
@@ -326,33 +356,37 @@ pub fn run(generator: &Generator, center: (f64, f64)) -> Result<(), String> {
         tally.dry.fade_strip
     );
     println!(
+        "  разрывы коры (e_km больше {CRUST_JUMP_KM} км на {STEP} блока): {}; самый большой {:.2} км у ({:.0}, {:.0})",
+        tally.crust_jumps, tally.worst_crust.0, tally.worst_crust.1, tally.worst_crust.2
+    );
+    println!(
         "  суша вне гор: {inland} ступеней; самая крутая {:.0} блоков на {STEP} у ({:.0}, {:.0}), категория {}",
         tally.worst_dry.0, tally.worst_dry.1, tally.worst_dry.2, tally.worst_dry.3
     );
     for step in &tally.top {
         println!(
             "    {:.0} бл. на {STEP} у ({:.0}, {:.0}), {}: низ y {:.0} (табл. {:.0}) e {:+.3} pv {:+.2} c {:+.2} e_km {:.3} берег {:.0} пойма {:.2}; высок e {:+.3} pv {:+.2} (табл. {:.0}) mnt {:.2} plat {:.2} берег {:.0} пойма {:.2} устье {:.2} внморе {:.2}",
-            step.0,
-            step.1,
-            step.2,
-            step.3,
-            step.4,
-            step.9,
-            step.5,
-            step.6,
-            step.7,
-            step.8,
-            step.15,
-            step.16,
-            step.10,
-            step.11,
-            step.14,
-            step.12,
-            step.13,
-            step.17,
-            step.18,
-            step.19,
-            step.20
+            step.dy,
+            step.x,
+            step.z,
+            step.category,
+            step.lo_y,
+            step.table_lo,
+            step.lo_e,
+            step.lo_pv,
+            step.lo_c,
+            step.lo_e_km,
+            step.lo_shore,
+            step.lo_floodplain,
+            step.hi_e,
+            step.hi_pv,
+            step.table_hi,
+            step.hi_mountain,
+            step.hi_plateau,
+            step.hi_shore,
+            step.hi_floodplain,
+            step.hi_estuary,
+            step.hi_inland_sea
         );
     }
     Ok(())

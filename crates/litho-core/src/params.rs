@@ -1100,9 +1100,6 @@ pub struct HeightParams {
     pub shore_width_blocks: f64,
     /// К4: эрозия ниже этой границы — горный берег, обрыв остаётся.
     pub shore_cliff_e: f64,
-    /// К4: отступ проб градиента континентальности для направления к морю,
-    /// блоки.
-    pub shore_probe_blocks: f64,
     /// Научный режим: реальная `e_km` поверх таблицы; gameplay по умолчанию 0.
     pub e_gain_blocks_per_km: f64,
     /// Д-057: макровысота, с которой начинается прибавка `e_gain`, км.
@@ -1519,7 +1516,6 @@ impl Params {
                 coast_width_c: 0.06,
                 shore_width_blocks: 24.0,
                 shore_cliff_e: -0.375,
-                shore_probe_blocks: 8.0,
                 e_gain_blocks_per_km: match mode {
                     Mode::Gameplay => 0.0,
                     Mode::Scientific => 24.0,
@@ -1775,7 +1771,10 @@ impl Params {
             p.morpho.e_remap_hi = if gameplay {
                 [-0.15, -0.15, 0.02, 0.05, 0.16, -0.12, 0.05, 0.05]
             } else {
-                [-0.12, -0.15, 0.09, 0.02, 0.05, 0.12, 0.05, 0.05]
+                // Д-110: аридная зона (4) — 0,05 → 0,11. Отрезок холмов
+                // 0,04…0,05 растягивался в 27 раз и давал стены 15 блоков
+                // на 2; теперь в 3,9 раза, граница плато на месте.
+                [-0.12, -0.15, 0.09, 0.02, 0.11, 0.12, 0.05, 0.05]
             };
             p.climate.m_e_hi = if gameplay { 1.0 } else { 0.7 };
             p.hydrology.floodplain_e = if gameplay { 0.44 } else { 0.50 };
@@ -2258,7 +2257,6 @@ impl Params {
                 ("height.coast_width_c", hg.coast_width_c),
                 ("height.shore_width_blocks", hg.shore_width_blocks),
                 ("height.shore_cliff_e", hg.shore_cliff_e),
-                ("height.shore_probe_blocks", hg.shore_probe_blocks),
                 ("height.e_gain_blocks_per_km", hg.e_gain_blocks_per_km),
                 ("height.cold_jagged_gain", hg.cold_jagged_gain),
                 ("height.warm_jagged_drop", hg.warm_jagged_drop),

@@ -75,17 +75,42 @@ pub fn sample(
     seed: u64,
     params: &Params,
 ) -> ReliefSample {
+    sample_near_shore(plate, crust, basin_depth_km, 1.0, seed, params)
+}
+
+/// К4а/часть 2 (Д-110): то же, но потенциал рельефа дополнительно гаснет к
+/// берегу океана. `shore_fade` — 0 у воды, 1 дальше `relief.land_fade_blocks`
+/// блоков от неё (генератор считает его по расстоянию до берега). Порог по
+/// `e_km` на крутом берегу укладывается в 10–15 блоков, и холм кончался
+/// стеной; расстояние в блоках от крутизны коры не зависит.
+pub fn sample_near_shore(
+    plate: &PlateSample,
+    crust: &CrustSample,
+    basin_depth_km: f64,
+    shore_fade: f64,
+    seed: u64,
+    params: &Params,
+) -> ReliefSample {
     debug_assert!(validate(params).is_ok());
     let r = &params.relief;
     let q = plate.q;
-    let land = smoothstep(0.0, r.land_fade_km(), crust.e_km);
+    let land = smoothstep(0.0, r.land_fade_km(), crust.e_km).min(clamp01(shore_fade));
     let continental = land * smoothstep(r.continental_chi_lo, r.continental_chi_hi, crust.chi);
     let inactive = smoothstep(r.active_boundary_lo, r.active_boundary_hi, plate.d_ab_l);
 
     // Предгорья: внешний склон орогена, полоса 0,05 < M < 0,5.
     let m = crust.mountain;
     let rise = smoothstep(r.foothill_m_lo, r.foothill_m_lo + r.foothill_fade, m);
-    let fall = 1.0 - smoothstep(r.foothill_m_hi - r.foothill_fade, r.foothill_m_hi, m);
+    // К4а/часть 2 (Д-110): предгорья гаснут не за `foothill_fade`, а до
+    // `climate.m_e_hi` — места, где E уже целиком горная. Узкий спад на
+    // M 0,4…0,5 в gameplay укладывался в 20 блоков, а горная E там ещё
+    // наполовину не набрана: за предгорьем получался ров со стеной.
+    let fall_end = if params.version.is_water_relief_dev() {
+        r.foothill_m_hi.max(params.climate.m_e_hi)
+    } else {
+        r.foothill_m_hi
+    };
+    let fall = 1.0 - smoothstep(r.foothill_m_hi - r.foothill_fade, fall_end, m);
     let amplitude = lerp(
         r.foothill_a_min,
         r.foothill_a_max,
@@ -197,7 +222,7 @@ pub fn sample(
 
 #[cfg(test)]
 mod tests {
-    use super::{sample, validate};
+    use super::{sample, sample_near_shore, validate};
     use crate::crust::crust_from_sample;
     use crate::math::Vec2;
     use crate::mode::Mode;
@@ -330,7 +355,29 @@ mod tests {
         crust.mountain = 0.25;
         let mid = sample(&plate, &crust, 0.0, 7, &p).foothill;
         assert!(mid > 0.4 && mid < 0.8);
-        crust.mountain = 0.9;
+        // Д-110: спад идёт до `climate.m_e_hi`, где E уже целиком горная,
+        // и по дороге только убывает.
+        crust.mountain = 0.5 * (p.relief.foothill_m_hi + p.climate.m_e_hi);
+        let fading = sample(&plate, &crust, 0.0, 7, &p).foothill;
+        assert!(fading > 0.0 && fading < mid);
+        crust.mountain = p.climate.m_e_hi;
         assert!(sample(&plate, &crust, 0.0, 7, &p).foothill < 1e-9);
+    }
+
+    #[test]
+    fn relief_fades_towards_the_ocean_shore() {
+        let p = params();
+        let point = Vec2::new(2.0, 3.0);
+        let plate = plate_query(point, 7, &p).unwrap();
+        let mut crust = crust_from_sample(point, &plate, 7, &p);
+        crust.e_km = 0.5;
+        crust.mountain = 0.25;
+        let inland = sample(&plate, &crust, 0.0, 7, &p);
+        let same = sample_near_shore(&plate, &crust, 0.0, 1.0, 7, &p);
+        assert_eq!(inland.a, same.a);
+        let half = sample_near_shore(&plate, &crust, 0.0, 0.5, 7, &p);
+        let shore = sample_near_shore(&plate, &crust, 0.0, 0.0, 7, &p);
+        assert!(half.foothill < inland.foothill && half.foothill > 0.0);
+        assert!(shore.foothill < 1e-12 && shore.hills < 1e-12);
     }
 }
