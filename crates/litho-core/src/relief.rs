@@ -78,7 +78,7 @@ pub fn sample(
     debug_assert!(validate(params).is_ok());
     let r = &params.relief;
     let q = plate.q;
-    let land = smoothstep(0.0, r.land_e_fade_km, crust.e_km);
+    let land = smoothstep(0.0, r.land_fade_km(), crust.e_km);
     let continental = land * smoothstep(r.continental_chi_lo, r.continental_chi_hi, crust.chi);
     let inactive = smoothstep(r.active_boundary_lo, r.active_boundary_hi, plate.d_ab_l);
 

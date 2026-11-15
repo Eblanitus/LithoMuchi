@@ -36,16 +36,14 @@ def validate_pack(pack: Path) -> None:
     df = pack / "data/minecraft/worldgen/density_function/overworld"
     noise = pack / "data/litospherity/worldgen/noise"
     if pack.name.startswith("litospherity_v1-dev_"):
-        for name in ("ridges_folded", "offset"):
+        # К4а/часть 1: полная I2 — offset, pv и теперь factor/jaggedness
+        # из ядра, чтобы игра не добавляла свой рельеф (Д-106).
+        for name in ("ridges_folded", "offset", "factor", "jaggedness"):
             if not (df / f"{name}.json").is_file():
                 raise ValueError(f"В {pack.name} нет I2-поля {name}")
-        for name in ("pv", "offset"):
+        for name in ("pv", "offset", "factor", "jaggedness"):
             if not any(noise.rglob(f"{name}.json")):
                 raise ValueError(f"В {pack.name} нет шума {name}")
-        # К2 / шаг 2: ваниль сама считает factor/jaggedness из C/E/PV.
-        for name in ("factor", "jaggedness"):
-            if (df / f"{name}.json").exists() or any(noise.rglob(f"{name}.json")):
-                raise ValueError(f"{pack.name} не должен переопределять {name} до теста №2")
     elif pack.name.startswith("litospherity_v0_"):
         for name in ("ridges_folded", "offset", "factor", "jaggedness"):
             if (df / f"{name}.json").exists() or any(noise.rglob(f"{name}.json")):

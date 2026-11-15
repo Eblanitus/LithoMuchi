@@ -11,6 +11,7 @@ mod png;
 mod render;
 mod shores;
 mod tune;
+mod walls;
 
 use std::path::Path;
 use std::time::Instant;
@@ -444,6 +445,19 @@ fn cmd_shores(args: &[String]) -> Result<(), String> {
     let opts = options_from(args)?;
     let generator = generator(&opts)?;
     shores::run(&generator, (opts.center_x, opts.center_z))
+}
+
+/// К3/К4а: крутые ступени на суше по линиям, с разбивкой по причинам.
+fn cmd_walls(args: &[String]) -> Result<(), String> {
+    let opts = options_from(args)?;
+    let generator = generator(&opts)?;
+    let result = walls::run(&generator, (opts.center_x, opts.center_z));
+    if let Some(text) = value(args, "--slope-at") {
+        let (x, z) = parse_pair(&text)?;
+        let slope = walls::slope_around(&generator, (x, z), 16.0);
+        println!("  уклон вокруг ({x}, {z}) радиусом 16: {slope:.2} блока на блок (цель ≤ 1,5)");
+    }
+    result
 }
 
 fn cmd_lava(args: &[String]) -> Result<(), String> {
@@ -1809,6 +1823,7 @@ fn main() -> Result<(), String> {
         "lava" => cmd_lava(&args[1..]),
         "biomes" => cmd_biomes(&args[1..]),
         "shores" => cmd_shores(&args[1..]),
+        "walls" => cmd_walls(&args[1..]),
         "paths" => cmd_paths(&args[1..]),
         "drainage" => cmd_drainage(&args[1..]),
         "bench" => cmd_bench(&args[1..]),
