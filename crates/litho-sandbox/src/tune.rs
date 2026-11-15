@@ -117,6 +117,9 @@ fn set(p: &mut Params, key: &str, value: f64) -> Result<(), String> {
         "hydrology.dry_basin_e" => Some(&mut p.hydrology.dry_basin_e),
         "height.e_gain_base_km" => Some(&mut p.height.e_gain_base_km),
         "height.e_gain_blocks_per_km" => Some(&mut p.height.e_gain_blocks_per_km),
+        "height.shore_width_blocks" => Some(&mut p.height.shore_width_blocks),
+        "height.shore_cliff_e" => Some(&mut p.height.shore_cliff_e),
+        "height.shore_probe_blocks" => Some(&mut p.height.shore_probe_blocks),
         _ => None,
     };
     if let Some(slot) = scalar {

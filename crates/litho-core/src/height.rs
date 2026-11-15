@@ -76,13 +76,16 @@ pub fn sample(
     warm: f64,
     params: &Params,
 ) -> HeightSample {
-    sample_micro(c, e, pv, e_km, cold, warm, 0.0, 0.0, params)
+    // Без данных о береге (песочница/тесты): спуск К4 не применяется.
+    sample_micro(c, e, pv, e_km, cold, warm, 0.0, 0.0, f64::INFINITY, params)
 }
 
 /// Д-057: то же с мелким рельефом. `noise` — единичный шум бугров, `gate` —
 /// его вес 0…1 (в долине реки 0, чтобы дно оставалось на уровне русла).
 /// Размах в блоках берётся по полосе E. Ниже `micro_low_y` бугры только
 /// поднимают поверхность, поэтому низменность не затапливается.
+/// К4: `shore_dist` — расстояние до берега океана в блоках (генератор
+/// оценивает его по градиенту континентальности); `INFINITY` — берега нет.
 #[allow(clippy::too_many_arguments)]
 pub fn sample_micro(
     c: f64,
@@ -93,6 +96,7 @@ pub fn sample_micro(
     warm: f64,
     noise: f64,
     gate: f64,
+    shore_dist: f64,
     params: &Params,
 ) -> HeightSample {
     debug_assert!(validate(params).is_ok());
@@ -113,7 +117,16 @@ pub fn sample_micro(
     }
     let ocean_y = piecewise(&h.ocean_c, &h.ocean_y, c);
     let threshold = params.climate.ocean_c_threshold;
-    let coast = smoothstep(threshold - h.coast_width_c, threshold + h.coast_width_c, c);
+    let coast_c = smoothstep(threshold - h.coast_width_c, threshold + h.coast_width_c, c);
+    // К4: суша спускается к воде на `shore_width_blocks` от берега по
+    // расстоянию, а не только по окну C — окно сжимается на крутом шельфе.
+    // Горный берег (низкая эрозия) обрыв сохраняет, как каменный в ванили.
+    let ramp = if e < h.shore_cliff_e || h.shore_width_blocks <= 0.0 {
+        1.0
+    } else {
+        smoothstep(0.0, h.shore_width_blocks, shore_dist)
+    };
+    let coast = coast_c.min(ramp);
     let mut y = ocean_y + (land_y - ocean_y) * coast;
     // Научный режим: реальная макровысота поверх своей таблицы. Gameplay
     // остаётся на блочной таблице; e_gain по умолчанию 0.
@@ -236,6 +249,12 @@ pub fn validate(params: &Params) -> Result<(), &'static str> {
     }
     if !h.coast_width_c.is_finite()
         || h.coast_width_c <= 0.0
+        || !h.shore_width_blocks.is_finite()
+        || h.shore_width_blocks < 0.0
+        || !h.shore_cliff_e.is_finite()
+        || !(-1.0..=1.0).contains(&h.shore_cliff_e)
+        || !h.shore_probe_blocks.is_finite()
+        || h.shore_probe_blocks <= 0.0
         || !h.e_gain_blocks_per_km.is_finite()
         || !h.e_gain_base_km.is_finite()
         || h.e_gain_base_km < 0.0
@@ -380,6 +399,12 @@ mod tests {
         let mut bad = dev.clone();
         bad.height.coast_width_c = 0.0;
         assert!(validate(&bad).is_err());
+        let mut bad = dev.clone();
+        bad.height.shore_width_blocks = -1.0;
+        assert!(validate(&bad).is_err());
+        let mut bad = dev.clone();
+        bad.height.shore_probe_blocks = 0.0;
+        assert!(validate(&bad).is_err());
     }
 
     fn base_at(y: f64) -> HeightSample {
@@ -488,5 +513,53 @@ mod tests {
         // На обычном берегу (суша выше зеркала) зажим не мешает.
         let high = with_water(base_at(80.0), &hydro, &p);
         assert_eq!(high.water_y, 76.0); // 63 + 0.2*64 = 75.8 -> 76
+    }
+
+    /// К4: у берега, где окно C сжато крутым шельфом, суша всё равно
+    /// спускается к воде на `shore_width_blocks` от изолинии.
+    #[test]
+    fn shore_ramp_descends_to_the_water_within_width() {
+        let p = params(Mode::Gameplay);
+        let h = &p.height;
+        // Равнина у берега: окно C уже пройдено (coast_c = 1), до берега 2 блока.
+        let c = p.climate.ocean_c_threshold + 2.0 * h.coast_width_c;
+        let land = sample_micro(c, 0.3, 0.0, 0.1, 0.0, 0.0, 0.0, 0.0, f64::INFINITY, &p);
+        let shore = sample_micro(c, 0.3, 0.0, 0.1, 0.0, 0.0, 0.0, 0.0, 2.0, &p);
+        assert!(
+            land.surface_y > shore.surface_y + 5.0,
+            "рампа не срезала берег: суша {:?}, берег {:?}",
+            land.surface_y,
+            shore.surface_y
+        );
+        assert!(
+            (SEA_LEVEL - 1.0..SEA_LEVEL + 3.0).contains(&shore.surface_y),
+            "берег {:?} не у воды",
+            shore.surface_y
+        );
+        // Дальше ширины спуска рампа не действует.
+        let far = sample_micro(
+            c,
+            0.3,
+            0.0,
+            0.1,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            4.0 * h.shore_width_blocks,
+            &p,
+        );
+        assert_eq!(far.surface_y, land.surface_y);
+    }
+
+    /// К4: горный берег (низкая эрозия) обрыв сохраняет — рампа не действует.
+    #[test]
+    fn mountain_shore_keeps_the_cliff() {
+        let p = params(Mode::Gameplay);
+        let c = p.climate.ocean_c_threshold + 2.0 * p.height.coast_width_c;
+        let far = sample_micro(c, -0.6, 0.0, 0.1, 0.0, 0.0, 0.0, 0.0, f64::INFINITY, &p);
+        let shore = sample_micro(c, -0.6, 0.0, 0.1, 0.0, 0.0, 0.0, 0.0, 2.0, &p);
+        assert_eq!(far.surface_y, shore.surface_y);
+        assert!(shore.surface_y > SEA_LEVEL + 10.0);
     }
 }

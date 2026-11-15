@@ -249,6 +249,9 @@ pub struct Generator {
     /// спрашивает одну ячейку сотни раз; кэш ответ не меняет.
     lava_cells: Arc<ShardedCache<(i64, i64), f64>>,
     lava_land: Arc<ShardedCache<(i64, i64), bool>>,
+    /// К4: континентальность в центрах ячеек 4×4 блока. Пробы берега соседних
+    /// колонок попадают в одни ячейки, чанк платит одну кору на ячейку.
+    shore_c: Arc<ShardedCache<(i64, i64), f64>>,
     spawn_shift: Vec2,
 }
 
@@ -324,6 +327,7 @@ impl Generator {
             ray_field_nodes: Arc::new(std::sync::atomic::AtomicU64::new(0)),
             lava_cells: Arc::new(ShardedCache::new(shards, LAVA_CELL_CACHE_CAPACITY)),
             lava_land: Arc::new(ShardedCache::new(shards, LAVA_CELL_CACHE_CAPACITY)),
+            shore_c: Arc::new(ShardedCache::new(shards, LAVA_CELL_CACHE_CAPACITY)),
             spawn_shift: shift,
         })
     }
@@ -1188,6 +1192,7 @@ impl Generator {
         } else {
             0.0
         };
+        let shore_dist = self.shore_distance_blocks(x, z, vanilla.c);
         let height = crate::height::with_water(
             crate::height::sample_micro(
                 vanilla.c,
@@ -1198,6 +1203,7 @@ impl Generator {
                 morpho.values[7],
                 micro,
                 1.0 - crate::math::clamp01(river),
+                shore_dist,
                 &self.params,
             ),
             &water,
@@ -1212,6 +1218,91 @@ impl Generator {
             pv,
             height,
         })
+    }
+
+    /// К4: континентальность в блочной точке без остального климата
+    /// (плита + кора, как в `surface_at`, но без луча влаги).
+    fn continentalness_at(&self, x: f64, z: f64) -> f64 {
+        let point = self.macro_point(x, z);
+        match plate_query(point, self.seed, &self.params) {
+            Some(plate) => {
+                let crust = crust_from_sample(point, &plate, self.seed, &self.params);
+                continentalness(crust.e_km, crust.iota_l, &self.params)
+            }
+            // Без плиты — нейтральная поверхность, как в `surface_at`.
+            None => continentalness(0.0, 0.0, &self.params),
+        }
+    }
+
+    /// К4: континентальность в центре ячейки 4×4 блока, содержащей точку.
+    /// Квантование нужно для кэша: пробы берега соседних колонок попадают
+    /// в одни ячейки. Ответ зависит только от ячейки, не от запроса.
+    fn shore_c_at(&self, x: f64, z: f64) -> f64 {
+        const SHORE_CELL: f64 = 4.0;
+        let cx = (x / SHORE_CELL).floor() as i64;
+        let cz = (z / SHORE_CELL).floor() as i64;
+        self.shore_c.get_or_insert((cx, cz), || {
+            let px = (cx as f64 + 0.5) * SHORE_CELL;
+            let pz = (cz as f64 + 0.5) * SHORE_CELL;
+            self.continentalness_at(px, pz)
+        })
+    }
+
+    /// К4: расстояние до берега океана в блоках — до изолинии
+    /// `c = ocean_c_threshold`. Направление к морю — по градиенту
+    /// континентальности на пробах ±`shore_probe_blocks`, дальше марш
+    /// шагами по 4 блока с ранним выходом: у крутого шельфа c меняется
+    /// ступенькой за несколько блоков, и конечная разность на большом
+    /// шаге размазывает её по плато за ступенькой (замер на сиде 42,
+    /// берег у (−2000, 3630): оценка ±48 давала 98 блоков вместо ~4).
+    /// Океан даёт 0; дальше ширины спуска марш не идёт — рампа там
+    /// всё равно выключена.
+    fn shore_distance_blocks(&self, x: f64, z: f64, c: f64) -> f64 {
+        let threshold = self.params.climate.ocean_c_threshold;
+        if c <= threshold {
+            return 0.0;
+        }
+        let h = &self.params.height;
+        let width = h.shore_width_blocks;
+        let probe = h.shore_probe_blocks;
+        let cx_pos = self.shore_c_at(x + probe, z);
+        let cx_neg = self.shore_c_at(x - probe, z);
+        let cz_pos = self.shore_c_at(x, z + probe);
+        let cz_neg = self.shore_c_at(x, z - probe);
+        // Все пробы заметно выше изолинии: берег дальше пробы в любую
+        // сторону, марш не нужен. Ступенька в пределах пробы дала бы
+        // хотя бы одну пробу у порога.
+        let margin = c - threshold;
+        if cx_pos > c
+            && cx_neg > c
+            && cz_pos > c
+            && cz_neg > c
+            && (cx_pos - threshold)
+                .min(cx_neg - threshold)
+                .min(cz_pos - threshold)
+                .min(cz_neg - threshold)
+                > margin * 0.5 + 0.05
+        {
+            return width * 2.0;
+        }
+        let dx = (cx_pos - cx_neg) / (2.0 * probe);
+        let dz = (cz_pos - cz_neg) / (2.0 * probe);
+        let grad = (dx * dx + dz * dz).sqrt();
+        if grad <= 1e-9 {
+            return width * 2.0;
+        }
+        // Марш против градиента (к морю) с шагом 4 блока.
+        let step = 4.0;
+        let (ux, uz) = (-dx / grad, -dz / grad);
+        let mut r = step;
+        while r <= width {
+            let sample = self.shore_c_at(x + ux * r, z + uz * r);
+            if sample < threshold {
+                return r - step * 0.5;
+            }
+            r += step;
+        }
+        width * 2.0
     }
 
     /// Поле глубинной лавы λ (слой `lava`, T53).
