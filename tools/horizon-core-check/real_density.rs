@@ -151,3 +151,91 @@ fn real_seeded_density_and_volume_dispatch() {
         );
     }
 }
+
+// T77: the vanilla aquifer lava noise is replaced only when the same graph
+// carries our v1-dev noises; a vanilla graph keeps the vanilla sampler.
+#[test]
+fn aquifer_lava_noise_follows_the_core_only_in_our_world() {
+    let lava_definition = || {
+        NormalNoise::builder()
+            .set_base_amplitude(1.0)
+            .set_octave_count(1)
+            .unwrap()
+            .build()
+            .unwrap()
+    };
+    let plain = NormalNoise::builder()
+        .set_octave_count(0)
+        .unwrap()
+        .build()
+        .unwrap();
+    let lava_root = |graph: &mut DensityGraph, noise| {
+        let zero = graph.insert(GraphNode::Constant(0.)).unwrap();
+        // 26.3 noise_settings: aquifers.lava = noise aquifer_lava, scales 1/1.
+        graph
+            .insert(GraphNode::Noise {
+                noise,
+                xz_scale: 1.0,
+                y_scale: 1.0,
+                shift_x: zero,
+                shift_y: zero,
+                shift_z: zero,
+            })
+            .unwrap()
+    };
+
+    let mut ours = DensityGraph::new();
+    let lava = ours
+        .register_noise("minecraft:aquifer_lava".into(), lava_definition())
+        .unwrap();
+    ours.register_noise("litospherity:v1-dev/gameplay/continents".into(), plain.clone())
+        .unwrap();
+    ours.register_noise("litospherity:v1-dev/gameplay/offset".into(), plain.clone())
+        .unwrap();
+    let root = lava_root(&mut ours, lava);
+
+    let mut vanilla = DensityGraph::new();
+    let vanilla_lava = vanilla
+        .register_noise("minecraft:aquifer_lava".into(), lava_definition())
+        .unwrap();
+    vanilla
+        .register_noise("minecraft:plain_test".into(), plain.clone())
+        .unwrap();
+
+    let mut v0 = DensityGraph::new();
+    let v0_lava = v0
+        .register_noise("minecraft:aquifer_lava".into(), lava_definition())
+        .unwrap();
+    v0.register_noise("litospherity:v0/gameplay/continents".into(), plain)
+        .unwrap();
+
+    let generator = Generator::new(1, Mode::Gameplay, GenVersion::V1Dev).unwrap();
+    for legacy in [false, true] {
+        let compiler = DensityCompiler::new_seeded(ours.clone(), 1, legacy);
+        let sampler = compiler.compile_raw(root).unwrap();
+        let mut on = 0;
+        for x in -40..40 {
+            for z in -40..40 {
+                // The game samples at aquifer cell indices (x div 64, y div 40, z div 64).
+                let value = sampler
+                    .sample_value(&mut SamplerContext::default(), [x, -1, z])
+                    .unwrap();
+                let expected = generator.lava_aquifer(i64::from(x), -1, i64::from(z)) as f32;
+                assert_eq!(value.to_bits(), expected.to_bits(), "cell ({x}, -1, {z})");
+                on += i32::from(value.abs() > 0.3);
+            }
+        }
+        assert!(on > 0 && on < 6400, "lava cells {on} of 6400");
+
+        for (graph, id) in [(&vanilla, vanilla_lava), (&v0, v0_lava)] {
+            let compiler = DensityCompiler::new_seeded(graph.clone(), 1, legacy);
+            let noise = compiler.get_noise_sampler(id).unwrap();
+            let mut other = false;
+            for x in 0..32 {
+                let value = noise.get3(f64::from(x) * 0.37, -1.3, 2.1);
+                other |= value != 0.0 && value != 0.5;
+            }
+            assert!(other, "vanilla aquifer lava noise must stay vanilla");
+        }
+    }
+}

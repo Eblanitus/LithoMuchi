@@ -4,6 +4,7 @@
 use crate::math::{Vec2, dexp};
 use crate::params::Params;
 use crate::plates::{PlateSample, boundary_type};
+use crate::seed::{CellRng, SALT_LAVA_AQUIFER, cell_hash, subseed};
 
 fn boundary_term(
     sample: &PlateSample,
@@ -46,9 +47,30 @@ pub fn sample(point: Vec2, plates: &PlateSample, seed: u64, params: &Params) -> 
     b.max(c).max(params.lava.background).min(1.0)
 }
 
+/// Сторона ячейки аквифера Minecraft по X/Z и по Y, блоков. Игра спрашивает
+/// поле лавы в координатах ячейки: `(x div 64, y div 40, z div 64)`.
+pub const AQUIFER_CELL_XZ: i64 = 64;
+pub const AQUIFER_CELL_Y: i64 = 40;
+/// Значение «в ячейке лава». Игра ставит лаву при `|значение| > 0.3`.
+pub const AQUIFER_LAVA_ON: f64 = 0.5;
+pub const AQUIFER_LAVA_OFF: f64 = 0.0;
+
+/// T77: лава аквиферов. Ячейка лавовая с вероятностью λ: у стыка плит
+/// почти всегда, вдали — с фоновой долей `lava.background`. Жребий ячейки
+/// зависит только от сида и её координат.
+pub fn aquifer_value(lambda: f64, cell: [i64; 3], seed: u64, _params: &Params) -> f64 {
+    let hash = cell_hash(subseed(seed, SALT_LAVA_AQUIFER), cell[0], cell[1], cell[2]);
+    let lot = CellRng::from_hash(hash).next_unit();
+    if lambda > lot {
+        AQUIFER_LAVA_ON
+    } else {
+        AQUIFER_LAVA_OFF
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::sample;
+    use super::{AQUIFER_LAVA_OFF, AQUIFER_LAVA_ON, aquifer_value, sample};
     use crate::math::Vec2;
     use crate::mode::Mode;
     use crate::params::Params;
@@ -90,5 +112,35 @@ mod tests {
         let value = sample(Vec2::default(), &empty_sample(), 42, &p);
         assert!((value - p.lava.background).abs() < 1e-12);
         assert!((0.0..=1.0).contains(&value));
+    }
+
+    #[test]
+    fn aquifer_lava_share_follows_lambda() {
+        let p = Params::defaults(GenVersion::V1Dev, Mode::Gameplay);
+        for (lambda, lo, hi) in [
+            (0.0, 0.0, 0.0),
+            (0.15, 0.12, 0.18),
+            (0.7, 0.67, 0.73),
+            (1.0, 1.0, 1.0),
+        ] {
+            let mut on = 0_u32;
+            let mut total = 0_u32;
+            for x in -20..20 {
+                for z in -20..20 {
+                    for y in -2..0 {
+                        let v = aquifer_value(lambda, [x, y, z], 42, &p);
+                        assert!(v == AQUIFER_LAVA_ON || v == AQUIFER_LAVA_OFF);
+                        on += u32::from(v == AQUIFER_LAVA_ON);
+                        total += 1;
+                    }
+                }
+            }
+            let share = f64::from(on) / f64::from(total);
+            assert!((lo..=hi).contains(&share), "λ={lambda}: доля {share}");
+        }
+        // Жребий ячейки не зависит от порядка вызовов.
+        let a = aquifer_value(0.5, [3, -1, -7], 42, &p);
+        let _ = aquifer_value(0.5, [4, -1, -7], 42, &p);
+        assert_eq!(a, aquifer_value(0.5, [3, -1, -7], 42, &p));
     }
 }

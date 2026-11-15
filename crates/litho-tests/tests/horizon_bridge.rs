@@ -110,6 +110,17 @@ mod hook_contract {
     }
     struct DensityGraph {
         entries: Vec<Entry>,
+        noise_names: std::collections::HashMap<String, NoiseId>,
+    }
+    fn graph_of(names: &[&str]) -> DensityGraph {
+        DensityGraph {
+            entries: names.iter().map(|n| Entry { name: (*n).into() }).collect(),
+            noise_names: names
+                .iter()
+                .enumerate()
+                .map(|(i, n)| ((*n).to_owned(), i))
+                .collect(),
+        }
     }
     impl DensityGraph {
         fn noise_entry(&self, id: NoiseId) -> Result<&Entry, CompileError> {
@@ -122,19 +133,11 @@ mod hook_contract {
     #[test]
     fn hook_replaces_our_noise_and_passes_through_others() {
         let ctx = SeededContext { seed: 42 };
-        let graph = DensityGraph {
-            entries: vec![
-                Entry {
-                    name: "litospherity:smoke/continents".into(),
-                },
-                Entry {
-                    name: "minecraft:temperature".into(),
-                },
-                Entry {
-                    name: "litospherity:v1-dev/gameplay/offset".into(),
-                },
-            ],
-        };
+        let graph = graph_of(&[
+            "litospherity:smoke/continents",
+            "minecraft:temperature",
+            "litospherity:v1-dev/gameplay/offset",
+        ]);
         match litospherity_noise(&ctx, &graph, 0) {
             core::ops::ControlFlow::Break(Ok(noise)) => {
                 assert_eq!(noise.get2(0.0, 0.0), 0.8);
@@ -155,5 +158,62 @@ mod hook_contract {
             litospherity_noise(&ctx, &graph, 3),
             core::ops::ControlFlow::Continue(())
         ));
+    }
+
+    #[test]
+    fn aquifer_lava_is_ours_only_in_a_v1_dev_world() {
+        let ctx = SeededContext { seed: 42 };
+        let lava = "minecraft:aquifer_lava";
+        // Наш мир v1-dev: шум лавы подменён и совпадает с ядром.
+        let graph = graph_of(&[
+            lava,
+            "litospherity:v1-dev/gameplay/continents",
+            "litospherity:v1-dev/gameplay/offset",
+            "litospherity:smoke/continents",
+            "minecraft:temperature",
+        ]);
+        let generator = litho_core::Generator::new(
+            42,
+            litho_core::Mode::Gameplay,
+            litho_core::GenVersion::V1Dev,
+        )
+        .unwrap();
+        match litospherity_noise(&ctx, &graph, 0) {
+            core::ops::ControlFlow::Break(Ok(noise)) => {
+                let mut on = 0;
+                for x in -40..40 {
+                    for z in -40..40 {
+                        let v = noise.get3(f64::from(x), -1.0, f64::from(z));
+                        let expected =
+                            generator.lava_aquifer(i64::from(x), -1, i64::from(z)) as f32;
+                        assert_eq!(v.to_bits(), expected.to_bits());
+                        assert!(v == 0.0 || v == 0.5);
+                        on += i32::from(v > 0.3);
+                    }
+                }
+                assert!(on > 0 && on < 6400, "лавовых ячеек {on} из 6400");
+            }
+            _ => panic!("в мире v1-dev шум лавы аквиферов должен быть нашим"),
+        }
+        // Ванильный мир, мир v0 и граф с двумя режимами: лава ванильная.
+        for names in [
+            vec![lava, "minecraft:temperature"],
+            vec![lava, "litospherity:v0/gameplay/continents"],
+            vec![lava, "litospherity:smoke/continents"],
+            vec![
+                lava,
+                "litospherity:v1-dev/gameplay/continents",
+                "litospherity:v1-dev/scientific/continents",
+            ],
+        ] {
+            let graph = graph_of(&names);
+            assert!(
+                matches!(
+                    litospherity_noise(&ctx, &graph, 0),
+                    core::ops::ControlFlow::Continue(())
+                ),
+                "{names:?}"
+            );
+        }
     }
 }

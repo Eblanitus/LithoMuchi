@@ -16,6 +16,14 @@ fn litospherity_noise(
     let Ok(entry) = graph.noise_entry(id) else {
         return core::ops::ControlFlow::Continue(());
     };
+    // T77: ванильный шум лавы аквиферов подменяется только в нашем мире
+    // v1-dev; мир узнаётся по именам шумов этого же графа.
+    if entry.name == crate::litospherity_glue::VANILLA_AQUIFER_LAVA {
+        return match crate::litospherity_glue::aquifer_lava_for(ctx.seed, graph.noise_names.keys()) {
+            Some(noise) => core::ops::ControlFlow::Break(Ok(noise)),
+            None => core::ops::ControlFlow::Continue(()),
+        };
+    }
     match crate::litospherity_glue::noise_for_name(ctx.seed, &entry.name) {
         Some(noise) => core::ops::ControlFlow::Break(Ok(noise)),
         // Не наш шум, неизвестная версия или nether: обычный путь Horizon.

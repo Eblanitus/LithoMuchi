@@ -100,6 +100,8 @@ pub const SALT_HEIGHT_MICRO: &str = "height.micro";
 pub const SALT_MOISTURE_BEND: &str = "climate.moisture_bend";
 // T132: перевалы вдоль хребтов; соль v0 не меняется.
 pub const SALT_CRUST_PASS: &str = "crust.pass";
+/// T77: жребий ячейки аквифера для лавы (только v1-dev).
+pub const SALT_LAVA_AQUIFER: &str = "lava.aquifer";
 
 #[cfg(test)]
 mod tests {
