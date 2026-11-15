@@ -93,6 +93,14 @@ fn set(p: &mut Params, key: &str, value: f64) -> Result<(), String> {
         }
         None => (key, Vec::new()),
     };
+    if name == "drainage.handoff_max_hops" {
+        // Целый параметр: шаг 2 плана (T113), число границ плит для притока.
+        if !indices.is_empty() || value < 0.0 || value.fract() != 0.0 {
+            return Err(format!("--set {key}: нужно целое число ≥ 0 без индекса"));
+        }
+        p.drainage.handoff_max_hops = value as i64;
+        return Ok(());
+    }
     let scalar: Option<&mut f64> = match name {
         "boundaries.ray_field_l" => Some(&mut p.boundaries.ray_field_l),
         "boundaries.ray_lattice_l" => Some(&mut p.boundaries.ray_lattice_l),

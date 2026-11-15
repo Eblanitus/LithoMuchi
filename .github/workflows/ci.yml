@@ -134,7 +134,13 @@ jobs:
       - name: "Э3.5 — T110–T122 drainage/lakes/hydrology/relief smoke (R1 + галерейные леса + A/зоны)"
         run: |
           set -o pipefail
-          LITHO_DRAINAGE_TIMINGS=1 cargo run -q -p litho-sandbox --release -- drainage --seed 42 --mode gameplay --version v1-dev --at 0,0 | python3 tools/ci_annotations.py report
+          # Д-093: первая сеть строит топографии соседей, и построчные фазы
+          # вытесняли из аннотации итог. В аннотацию идёт сводка без фаз и
+          # отдельно суммы фаз.
+          cargo run -q -p litho-sandbox --release -- drainage --seed 42 --mode gameplay --version v1-dev --at 0,0 | python3 tools/ci_annotations.py report
+          cargo run -q -p litho-sandbox --release -- drainage --seed 42 --mode scientific --version v1-dev --at 0,0 | python3 tools/ci_annotations.py report
+          # Фазы первой сети вместе с соседними плитами: сумма по каждой фазе.
+          LITHO_DRAINAGE_TIMINGS=1 cargo run -q -p litho-sandbox --release -- drainage --seed 42 --mode gameplay --version v1-dev --at 0,0 | awk '/^drainage-фазы:/{v=$(NF-1); k=$2; for(i=3;i<NF-1;i++)k=k" "$i; s[k]+=v; n[k]++} /^время:/{print} END{print "drainage-фазы, сумма по сети и соседям:"; for(k in s) printf "  %s: %d шт., %.1f мс\n",k,n[k],s[k]}' | python3 tools/ci_annotations.py report
           cargo run -q -p litho-sandbox --release -- render --seed 42 --mode gameplay --version v1-dev --layers channels,lakes,hydrology --size 32 --bpp 32 --out out/channels-smoke
           cargo run -q -p litho-sandbox --release -- render --seed 42 --mode gameplay --version v1-dev --layers channels,lakes,hydrology --center -54524.133387731,24107.233303404 --size 32 --bpp 32 --out out/lakes-delta-smoke
           # T120–T122: A/зоны переведены в C/E/W; малый кадр проверяет путь

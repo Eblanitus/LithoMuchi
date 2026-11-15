@@ -2,8 +2,9 @@
 //!
 //! Цепочки узлов превращаются в сглаженные полилинии, ширина растёт как √Q,
 //! меандры смещают полилинию по нормали, отрезки раскладываются в корзины
-//! 0.5 L. Общий запрос соседних плит T112/T113 живёт в генераторе; это пока
-//! диагностика: `field()` и ванильные C/E/W/PV от сети не меняются.
+//! 0.5 L. Общий запрос соседних плит T112/T113 живёт в генераторе. Русло,
+//! ушедшее за границу плиты, кончается на узле кольца (`ReachEnd::Handoff`):
+//! дальше его ведёт сеть соседа, получившая этот расход.
 
 use std::collections::{BTreeSet, HashMap};
 
@@ -34,13 +35,14 @@ pub enum ReachEnd {
     Confluence,
     /// Следующий узел ниже Q_min; не выдаётся за полноценное устье.
     BelowThreshold,
-    /// Кольцо соседней плиты без выхода в этой сети. T113 накладывает геометрию
-    /// соседей общим запросом, но не переносит Q между плитами (§5.5). С Д-058
-    /// русло продолжается по узлам кольца, так что этот конец остаётся только
-    /// там, где сток кольца вообще не нашёл выхода.
+    /// Узел без выхода и без пути вниз. В связанной сети плиты не возникает:
+    /// узлы кольца без выхода в неё не входят, а вода уходит через `Handoff`.
     Boundary,
     /// Замкнутый избыток T111; контур/выход уточнят T113/T114.
     ClosedSurplus,
+    /// Шаг 2 плана (T113): русло дошло до узла соседней плиты и передало ей
+    /// воду. Продолжение рисует сеть соседа с суммарным расходом.
+    Handoff,
 }
 
 impl ReachEnd {
@@ -62,6 +64,7 @@ impl ReachEnd {
             Self::BelowThreshold => "below_threshold",
             Self::Boundary => "boundary",
             Self::ClosedSurplus => "closed_surplus",
+            Self::Handoff => "handoff",
         }
     }
 }
@@ -240,10 +243,9 @@ impl ChannelNetwork {
             .iter()
             .enumerate()
             .map(|(k, node)| {
-                // Д-058: узлы кольца соседней плиты тоже несут русло. Раньше
-                // река, ушедшая за границу плиты, обрывалась на первом узле
-                // кольца, хотя сток идёт по кольцу дальше до моря, рифта или
-                // обратно в плиту. Общий запрос T113 рисует сети всех плит.
+                // Узел кольца — всегда конец русла: настоящий выход (море,
+                // рифт, трансформ) или передача воды сети соседней плиты.
+                // Продолжение за границей рисует сеть соседа с суммарным Q.
                 node.depression.is_none()
                     && node.route_km >= 0.0
                     && runoff.nodes()[k].discharge_mm_l2 >= q_min
@@ -288,6 +290,7 @@ impl ChannelNetwork {
                             crate::drainage::DrainageOutlet::Sea => ReachEnd::Sea,
                             crate::drainage::DrainageOutlet::Rift => ReachEnd::Rift,
                             crate::drainage::DrainageOutlet::Transform => ReachEnd::Transform,
+                            crate::drainage::DrainageOutlet::Handoff => ReachEnd::Handoff,
                             crate::drainage::DrainageOutlet::None => ReachEnd::Boundary,
                         }
                     } else if !nodes[down].in_plate {
@@ -773,6 +776,7 @@ fn terminal_end(terminal: FlowTerminal) -> ReachEnd {
         FlowTerminal::Endorheic { .. } => ReachEnd::Endorheic,
         FlowTerminal::ClosedSurplus { .. } => ReachEnd::ClosedSurplus,
         FlowTerminal::Boundary => ReachEnd::Boundary,
+        FlowTerminal::Handoff => ReachEnd::Handoff,
         FlowTerminal::Flowing => ReachEnd::BelowThreshold,
     }
 }

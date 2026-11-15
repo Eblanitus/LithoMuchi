@@ -341,6 +341,10 @@ pub struct DrainageParams {
     pub climate_step_l: f64,
     /// T111: коэффициент перед PET в стоке суши P - k_et·PET.
     pub et_factor: f64,
+    /// Шаг 2 плана (T113): через сколько границ плит прослеживается приток
+    /// вверх по течению. 0 — расход между плитами не передаётся. Вода,
+    /// пришедшая дальше этого числа границ, в расход не входит.
+    pub handoff_max_hops: i64,
 }
 
 /// T112: геометрия русел поверх Q. Числа блочные, поэтому режимы различаются;
@@ -1329,6 +1333,7 @@ impl Params {
                 anchor_search_radius_cells: 2,
                 climate_step_l: 1.0,
                 et_factor: 1.0,
+                handoff_max_hops: 0,
             },
             channels: ChannelParams {
                 // Стартовый отсев русел; плотность подбирается T151 по 10.1.
@@ -1690,6 +1695,8 @@ impl Params {
             // К5 / Д-057: впадины сверх 3 % узлов суши плиты прорезаются
             // руслом, а не заливаются. С полосой берега это ≤5–8 % суши.
             p.drainage.lake_area_max_fraction = 0.03;
+            // Шаг 2 плана (T113): расход передаётся через границу плиты.
+            p.drainage.handoff_max_hops = 6;
             // Д-059: луч влаги — около 85 % цены колонки. Быстрый путь считает его
             // наветренную часть в узлах решётки 0.128 L (32 блока gameplay,
             // 128 scientific) — вдвое мельче шага самого луча (0.25 L).
@@ -2046,6 +2053,7 @@ impl Params {
                 v = d.anchor_search_radius_cells
             )
             .unwrap();
+            writeln!(w, "drainage.handoff_max_hops={v}", v = d.handoff_max_hops).unwrap();
             let ch = &self.channels;
             for (name, value) in [
                 ("channels.q_min_mm_l2", ch.q_min_mm_l2),
