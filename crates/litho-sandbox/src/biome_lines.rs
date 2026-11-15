@@ -2,6 +2,8 @@
 //! пятна. Считается по суше: океан и точки без плиты линию разрывают.
 //! Реки (`river`, `frozen_river`) считаются и вместе со всеми, и отдельно.
 
+use std::collections::BTreeMap;
+
 use litho_core::Generator;
 
 /// Шаг пробы вдоль линии, блоки: ячейка биома в игре 4 × 4 блока.
@@ -20,6 +22,14 @@ struct Tally {
     river: u64,
     belt: u64,
     province: u64,
+    /// К2: соседние пробы, у которых ванильная ступень T или H отличается
+    /// на 2 и больше. Реки не в счёт: у них T/H климата под ними.
+    jumps_t: u64,
+    jumps_h: u64,
+    /// Пары проб суши без рек, по которым считаются прыжки.
+    jump_pairs: u64,
+    /// Какие биомы стоят по сторонам прыжка и сколько раз.
+    jump_kinds: BTreeMap<(&'static str, &'static str), u64>,
     /// Длины пятен одного биома, блоки (пятно ограничено сменой биома).
     runs: Vec<i64>,
     /// То же без рек: речные пробы пропущены, лес по обе стороны реки —
@@ -78,12 +88,42 @@ fn line(generator: &Generator, tally: &mut Tally, at: impl Fn(i64) -> (f64, f64)
     let mut all = Runs::default();
     tally.dry.gap();
     let mut previous: Option<(&'static str, u8, u8)> = None;
+    // Последняя проба суши без реки: (биом, ступень T, ступень H).
+    let mut dry_cell: Option<(&'static str, u8, u8)> = None;
     for k in 0..LENGTH / STEP {
         let (x, z) = at(k * STEP - LENGTH / 2);
         let current = generator
             .sample(x, z)
             .filter(|sample| !sample.class.is_ocean)
-            .map(|sample| (sample.cell.biome, sample.zone.belt, sample.zone.province));
+            .map(|sample| {
+                (
+                    sample.cell.biome,
+                    sample.zone.belt,
+                    sample.zone.province,
+                    sample.cell.t,
+                    sample.cell.h,
+                )
+            });
+        let cell = current.map(|c| (c.0, c.3, c.4));
+        let current = current.map(|c| (c.0, c.1, c.2));
+        match cell {
+            Some(b) if !is_river(b.0) => {
+                if let Some(a) = dry_cell {
+                    tally.jump_pairs += 1;
+                    let jump_t = a.1.abs_diff(b.1) >= 2;
+                    let jump_h = a.2.abs_diff(b.2) >= 2;
+                    tally.jumps_t += u64::from(jump_t);
+                    tally.jumps_h += u64::from(jump_h);
+                    if jump_t || jump_h {
+                        let key = if a.0 <= b.0 { (a.0, b.0) } else { (b.0, a.0) };
+                        *tally.jump_kinds.entry(key).or_default() += 1;
+                    }
+                }
+                dry_cell = Some(b);
+            }
+            Some(_) => {}
+            None => dry_cell = None,
+        }
         match current {
             Some(b) => {
                 if let Some(a) = previous {
@@ -186,5 +226,24 @@ pub fn run(generator: &Generator, center: (f64, f64)) -> Result<(), String> {
         dry(0.75),
         tally.dry.lengths.len()
     );
+    let per_1000 = |count: u64| 1000.0 * count as f64 / tally.jump_pairs.max(1) as f64;
+    println!(
+        "  прыжки через ступень: T {} и H {} на {} пар соседей ({:.2} и {:.2} на 1000)",
+        tally.jumps_t,
+        tally.jumps_h,
+        tally.jump_pairs,
+        per_1000(tally.jumps_t),
+        per_1000(tally.jumps_h)
+    );
+    let jumps: u64 = tally.jump_kinds.values().sum();
+    println!(
+        "    всего пар с прыжком {jumps}: {:.1} % смен биома без рек",
+        100.0 * jumps as f64 / tally.dry.changes.max(1) as f64
+    );
+    let mut kinds: Vec<_> = tally.jump_kinds.iter().collect();
+    kinds.sort_by(|a, b| b.1.cmp(a.1));
+    for ((a, b), count) in kinds.into_iter().take(5) {
+        println!("    {a} ↔ {b}: {count}");
+    }
     Ok(())
 }
