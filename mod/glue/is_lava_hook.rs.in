@@ -1,0 +1,11 @@
+// Помощник инъекции Д-098: в аквифере нашего мира v1-dev проверка «это лава»
+// отвечает «нет». Так отключается общая лава ниже −54 (её ставит обход
+// аквифера по этой проверке); лаву у стыков плит ставят поля аквифера.
+// Правило 5.5: одна приватная функция без атрибутов.
+fn litospherity_is_lava() -> core::ops::ControlFlow<bool> {
+    if horizon_core::litospherity_glue::deep_lava_by_aquifer() {
+        core::ops::ControlFlow::Break(false)
+    } else {
+        core::ops::ControlFlow::Continue(())
+    }
+}

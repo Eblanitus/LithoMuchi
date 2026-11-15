@@ -1,0 +1,23 @@
+// Помощник инъекции Д-098 (T77, часть 2). Правило 5.5: ровно ОДНА приватная
+// функция, ни одного атрибута. Вставляется локальной функцией внутрь
+// material_condition/library.rs и видит приватное поле `compiler`.
+// Поля аквифера собираются один раз на мир; в нашем мире v1-dev клей
+// заворачивает их в обёртки, в остальных мирах возвращает как есть.
+fn litospherity_aquifer(
+    library: &mut MaterialRuleLibrary,
+    config: AquiferConfig,
+) -> core::ops::ControlFlow<Result<AquiferSamplers, DecodeError>> {
+    let compiled = match config.compile(&mut library.compiler) {
+        Ok(compiled) => compiled,
+        Err(error) => return core::ops::ControlFlow::Break(Err(error.into())),
+    };
+    let fields = crate::worldgen::aquifer::AquiferField::ALL;
+    let samplers: [Arc<dyn DensitySampler>; 6] =
+        std::array::from_fn(|index| compiled.get(fields[index]).clone());
+    core::ops::ControlFlow::Break(Ok(
+        match horizon_core::litospherity_glue::aquifer_samplers(&samplers) {
+            Some(wrapped) => AquiferSamplers::new(wrapped),
+            None => compiled,
+        },
+    ))
+}
