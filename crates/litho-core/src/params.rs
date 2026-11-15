@@ -973,10 +973,6 @@ pub struct BoundaryParams {
     pub pass_lambda_l: f64,
     pub pass_octaves: usize,
     pub pass_gain: f64,
-    /// T133 / Б5: второй, крупный масштаб дрожания классификации.
-    /// Амплитуды наследуют σ из `block.jitter_*` и умножаются на factor.
-    pub jitter_coarse_lambda_blocks: f64,
-    pub jitter_coarse_sigma_factor: f64,
     /// T133 / Б6: мозаика переходных биомов у порогов влажности.
     pub ecotone_width_log2: f64,
     pub ecotone_max_fraction: f64,
@@ -1055,16 +1051,6 @@ impl BoundaryParams {
             || self.pass_gain >= 1.0
         {
             return Err("перевалы: 1…4 октавы, gain ∈ (0, 1)");
-        }
-        if !self.jitter_coarse_lambda_blocks.is_finite()
-            || !(500.0..=2000.0).contains(&self.jitter_coarse_lambda_blocks)
-        {
-            return Err("λ крупного дрожания должна лежать в 500…2000 блоков");
-        }
-        if !self.jitter_coarse_sigma_factor.is_finite()
-            || !(1.0..=8.0).contains(&self.jitter_coarse_sigma_factor)
-        {
-            return Err("множитель σ крупного дрожания должен лежать в 1…8");
         }
         if !self.ecotone_width_log2.is_finite() || !(0.0..=1.0).contains(&self.ecotone_width_log2) {
             return Err("полуширина экотона по log2 R должна лежать в 0…1");
@@ -1552,8 +1538,6 @@ impl Params {
                 pass_lambda_l: 2.0,
                 pass_octaves: 1,
                 pass_gain: 0.5,
-                jitter_coarse_lambda_blocks: 1000.0,
-                jitter_coarse_sigma_factor: 4.0,
                 ecotone_width_log2: 0.35,
                 // T136: после лестницы T135 и веера Б2 мозаика T133 стала
                 // добавлять скачки h (проба 42: 0.99% без неё, 1.92% с ней).
@@ -1679,7 +1663,7 @@ impl Params {
             config_key: 0,
         };
         // T103 / Д-030: отдельный набор Э3.5. Ни одно число v0 не меняется.
-        // *_noise у fBm и jitter теперь означает σ, а не амплитуду сырого fBm.
+        // *_noise у fBm теперь означает σ, а не амплитуду сырого fBm.
         // w_mnt_noise остаётся амплитудой положительного ridged2, не fBm.
         if version.is_water_relief_dev() {
             p.block.lambda_e_blocks *= 2.0;
@@ -1694,11 +1678,8 @@ impl Params {
                 Mode::Gameplay => 48.0,
                 Mode::Scientific => 96.0,
             };
-            p.block.jitter_t_c = match mode {
-                Mode::Gameplay => 1.0,
-                Mode::Scientific => 0.5,
-            };
-            p.block.jitter_r_log2 = p.block.jitter_t_c * 0.25;
+            // К1 / Д-103: дрожание границ классификации — как в v0
+            // (`block.jitter_*` режима, обычный fBm). Переопределения T101 нет.
             let c = &mut p.climate;
             c.c_coast_e_km = 0.20;
             c.e_base = 0.15;
@@ -2309,14 +2290,6 @@ impl Params {
             }
             writeln!(w, "boundaries.pass_octaves={}", bd.pass_octaves).unwrap();
             for (name, value) in [
-                (
-                    "boundaries.jitter_coarse_lambda_blocks",
-                    bd.jitter_coarse_lambda_blocks,
-                ),
-                (
-                    "boundaries.jitter_coarse_sigma_factor",
-                    bd.jitter_coarse_sigma_factor,
-                ),
                 ("boundaries.ecotone_width_log2", bd.ecotone_width_log2),
                 ("boundaries.ecotone_max_fraction", bd.ecotone_max_fraction),
                 ("boundaries.ecotone_lambda_blocks", bd.ecotone_lambda_blocks),

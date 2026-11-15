@@ -1,6 +1,6 @@
 # Параметры генератора v1-dev
 
-> **Актуально на 2026-11-15, шаг 3 плана T123 (Д-095); до этого шаг 2 T113 (Д-092), T79 (Д-064) и шаг 7
+> **Актуально на 2026-11-15, К1 нового плана — откат шума границ к `v0` (Д-103); до этого шаг 3 плана T123 (Д-095); до этого шаг 2 T113 (Д-092), T79 (Д-064) и шаг 7
 > (Д-065).** Таблица и хеши
 > сгенерированы из `Params::defaults`; `v0` не менялась. Что изменилось —
 > [archive/T79-LOD-2026-11-12.md](archive/T79-LOD-2026-11-12.md) (дальний рельеф) и
@@ -16,8 +16,8 @@
 |---|---|---|
 | `block.delta_coarse_blocks` | `250` | `62.5` |
 | `block.delta_fine_blocks` | `62.5` | `15.625` |
-| `block.jitter_r_log2` | `0.125` | `0.25` |
-| `block.jitter_t_c` | `0.5` | `1` |
+| `block.jitter_r_log2` | `0.25` | `0.5` |
+| `block.jitter_t_c` | `0.8` | `1.5` |
 | `block.l_blocks` | `1000` | `250` |
 | `block.lambda_e_blocks` | `2400` | `1200` |
 | `block.lambda_s_blocks` | `8000` | `2400` |
@@ -33,8 +33,6 @@
 | `boundaries.ecotone_lambda_blocks` | `256.0` | `256.0` |
 | `boundaries.ecotone_max_fraction` | `0.0` | `0.0` |
 | `boundaries.ecotone_width_log2` | `0.35` | `0.35` |
-| `boundaries.jitter_coarse_lambda_blocks` | `1000.0` | `1000.0` |
-| `boundaries.jitter_coarse_sigma_factor` | `4.0` | `4.0` |
 | `boundaries.pass_depth` | `0.6` | `0.6` |
 | `boundaries.pass_gain` | `0.5` | `0.5` |
 | `boundaries.pass_lambda_l` | `2.0` | `2.0` |
@@ -418,4 +416,4 @@
 | `wind.knot7.phi_deg` | `90` | `90` |
 | `wind.knot7.s` | `0.3` | `0.3` |
 
-params_hash: scientific = 671c12eed85b6e3e, gameplay = db58625a4ca0096f
+params_hash: scientific = ed0ef09b33802fe6, gameplay = 2727805a539543be
