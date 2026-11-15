@@ -1083,6 +1083,14 @@ pub struct HeightParams {
     pub factor: [f64; 7],
     pub jaggedness: [f64; 7],
     pub coast_width_c: f64,
+    /// К4: ширина спуска суши к воде по расстоянию до берега, блоки.
+    /// 0 выключает спуск (замер «до» в песочнице).
+    pub shore_width_blocks: f64,
+    /// К4: эрозия ниже этой границы — горный берег, обрыв остаётся.
+    pub shore_cliff_e: f64,
+    /// К4: отступ проб градиента континентальности для направления к морю,
+    /// блоки.
+    pub shore_probe_blocks: f64,
     /// Научный режим: реальная `e_km` поверх таблицы; gameplay по умолчанию 0.
     pub e_gain_blocks_per_km: f64,
     /// Д-057: макровысота, с которой начинается прибавка `e_gain`, км.
@@ -1493,6 +1501,9 @@ impl Params {
                 factor: [1.0, 1.5, 3.0, 4.5, 5.5, 3.5, 5.0],
                 jaggedness: [0.8, 0.5, 0.0, 0.0, 0.0, 0.2, 0.0],
                 coast_width_c: 0.06,
+                shore_width_blocks: 24.0,
+                shore_cliff_e: -0.375,
+                shore_probe_blocks: 8.0,
                 e_gain_blocks_per_km: match mode {
                     Mode::Gameplay => 0.0,
                     Mode::Scientific => 24.0,
@@ -2225,6 +2236,9 @@ impl Params {
             writeln!(w, "height.jaggedness={:?}", hg.jaggedness).unwrap();
             for (name, value) in [
                 ("height.coast_width_c", hg.coast_width_c),
+                ("height.shore_width_blocks", hg.shore_width_blocks),
+                ("height.shore_cliff_e", hg.shore_cliff_e),
+                ("height.shore_probe_blocks", hg.shore_probe_blocks),
                 ("height.e_gain_blocks_per_km", hg.e_gain_blocks_per_km),
                 ("height.cold_jagged_gain", hg.cold_jagged_gain),
                 ("height.warm_jagged_drop", hg.warm_jagged_drop),

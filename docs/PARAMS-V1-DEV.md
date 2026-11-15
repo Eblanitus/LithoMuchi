@@ -1,6 +1,6 @@
 # Параметры генератора v1-dev
 
-> **Актуально на 2026-11-15, К1 нового плана — откат шума границ к `v0` (Д-103); до этого шаг 3 плана T123 (Д-095); до этого шаг 2 T113 (Д-092), T79 (Д-064) и шаг 7
+> **Актуально на 2026-11-16, К4 нового плана — спуск суши к воде по расстоянию до берега (Д-107); до этого К1 — откат шума границ к `v0` (Д-103); до этого шаг 3 плана T123 (Д-095); до этого шаг 2 T113 (Д-092), T79 (Д-064) и шаг 7
 > (Д-065).** Таблица и хеши
 > сгенерированы из `Params::defaults`; `v0` не менялась. Что изменилось —
 > [archive/T79-LOD-2026-11-12.md](archive/T79-LOD-2026-11-12.md) (дальний рельеф) и
@@ -10,15 +10,6 @@
 > [docs/README.md](README.md).
 
 Сгенерировано `cargo run -p xtask -- params-doc --version v1-dev > docs/PARAMS-V1-DEV.md`.
-Источник правды — `Params::defaults` в `crates/litho-core/src/params.rs`.
-
-| Параметр | scientific | gameplay |
-|---|---|---|
-| `block.delta_coarse_blocks` | `250` | `62.5` |
-| `block.delta_fine_blocks` | `62.5` | `15.625` |
-| `block.jitter_r_log2` | `0.25` | `0.5` |
-| `block.jitter_t_c` | `0.8` | `1.5` |
-| `block.l_blocks` | `1000` | `250` |
 | `block.lambda_e_blocks` | `2400` | `1200` |
 | `block.lambda_s_blocks` | `8000` | `2400` |
 | `block.lambda_w_blocks` | `500` | `300` |
@@ -223,6 +214,9 @@
 | `height.ocean_c` | `[-0.98, -0.7, -0.52, -0.45, -0.4, -0.3, -0.19]` | `[-0.98, -0.7, -0.52, -0.45, -0.4, -0.3, -0.19]` |
 | `height.ocean_y` | `[35.0, 42.0, 48.0, 52.0, 55.0, 59.0, 63.0]` | `[35.0, 42.0, 48.0, 52.0, 55.0, 59.0, 63.0]` |
 | `height.pv_knots` | `[-1.0, -0.5, 0.0, 0.5, 1.0]` | `[-1.0, -0.5, 0.0, 0.5, 1.0]` |
+| `height.shore_cliff_e` | `-0.375` | `-0.375` |
+| `height.shore_probe_blocks` | `8.0` | `8.0` |
+| `height.shore_width_blocks` | `24.0` | `24.0` |
 | `height.warm_jagged_drop` | `0.1` | `0.1` |
 | `height.water_km_to_blocks` | `24.0` | `64.0` |
 | `hydrology.bank_fraction` | `0.5` | `0.5` |
@@ -416,4 +410,4 @@
 | `wind.knot7.phi_deg` | `90` | `90` |
 | `wind.knot7.s` | `0.3` | `0.3` |
 
-params_hash: scientific = ed0ef09b33802fe6, gameplay = 2727805a539543be
+params_hash: scientific = 4ebb168992ccdbd4, gameplay = 9d3f3a7d527e3cfa

@@ -9,6 +9,7 @@ mod palette;
 mod plan_metrics;
 mod png;
 mod render;
+mod shores;
 mod tune;
 
 use std::path::Path;
@@ -436,6 +437,13 @@ fn cmd_biomes(args: &[String]) -> Result<(), String> {
     let opts = options_from(args)?;
     let generator = generator(&opts)?;
     biome_lines::run(&generator, (opts.center_x, opts.center_z))
+}
+
+/// К4: доля берегов океана с сушей выше моря на 10+ в 4 блоках от воды.
+fn cmd_shores(args: &[String]) -> Result<(), String> {
+    let opts = options_from(args)?;
+    let generator = generator(&opts)?;
+    shores::run(&generator, (opts.center_x, opts.center_z))
 }
 
 fn cmd_lava(args: &[String]) -> Result<(), String> {
@@ -1760,7 +1768,8 @@ fn usage() -> &'static str {
                     --strides 4,8,16,32,64,128 --tiles 3 --json\n\
        profile      разбивка времени по слоям\n\
        hash         хеши параметров для замка v0\n\
-       biomes       как часто меняется биом вдоль линий и размер пятен (К1)\n\
+       biomes       как часто меняется биом вдоль линий и размер пятен (К1)
+       shores       доля берегов с сушей выше моря на 10+ в 4 блоках от воды (К4)\n\
        checkpoints  10 точек вокруг точки появления\n\
        sweep        16 сидов × 2 режима + HTML-атлас\n\
        atlas        пересобрать только HTML-атлас\n\
@@ -1799,6 +1808,7 @@ fn main() -> Result<(), String> {
         "seams" => cmd_seams(&args[1..]),
         "lava" => cmd_lava(&args[1..]),
         "biomes" => cmd_biomes(&args[1..]),
+        "shores" => cmd_shores(&args[1..]),
         "paths" => cmd_paths(&args[1..]),
         "drainage" => cmd_drainage(&args[1..]),
         "bench" => cmd_bench(&args[1..]),
