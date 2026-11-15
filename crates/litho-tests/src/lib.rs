@@ -758,6 +758,8 @@ mod drainage_dev {
         // Сид 42, точки найдены сканом соседних плит; координаты блочные.
         // T132 изменил орографию/Q/русла и уровни: озеро, дельта и межплитовое
         // русло найдены заново сканом соседних плит (сид 42, блочные координаты).
+        // К4а/часть 2 (Д-110): тип деформации у тройных стыков стал
+        // непрерывным — то же озеро, уровень сдвинулся на 5 мм.
         let (lake_x, lake_z) = (-35098.064436977, 8022.221972733);
         let (_, lake) = generator.drainage_surface_query(lake_x, lake_z).unwrap();
         assert_eq!(lake.water, 1.0);
@@ -766,7 +768,7 @@ mod drainage_dev {
         assert!(hit.inside);
         assert!(
             hit.level_km
-                .is_some_and(|level| (level - 0.362633481).abs() < 1e-6)
+                .is_some_and(|level| (level - 0.362628181).abs() < 1e-6)
         );
         assert!(lake.networks_considered > 1);
 

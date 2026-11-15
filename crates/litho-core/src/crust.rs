@@ -13,7 +13,7 @@ use crate::noise::{fbm2, fbm2_unit, ridged2};
 use crate::params::Params;
 use crate::plates::{
     BoundaryType, Plate, PlateSample, boundary_type, boundary_weights_from_chi, continent_field,
-    continent_fraction, plate_query, seeds_in_cell,
+    continent_fraction, junction_query, plate_query, seeds_in_cell,
 };
 use crate::seed::{
     CellRng, SALT_BOUNDARY_SIDE, SALT_CRUST_DETAIL, SALT_CRUST_KAPPA, SALT_CRUST_PASS,
@@ -453,6 +453,64 @@ pub fn hotspot_height(point: Vec2, seed: u64, params: &Params) -> f64 {
 
 /// Полный расчёт слоя L2 в точке. `point` — макро-координата до искажения,
 /// `sample` — результат `plate_query` в той же точке.
+/// К4а/часть 2 (Д-110): тип деформации в окрестности тройного стыка —
+/// среднее типов трёх пар из трёх ближайших плит. Вес пары (i, j) —
+/// `exp(−(x_i + x_j)/τ)`, где x — насколько центр плиты дальше ближайшего,
+/// τ = `plates.triple_weight_l`. Каждая плита ещё умножается на запас до
+/// четвёртой `smoothstep(0, τ, r_4 − r_i)`: там, где третья и четвёртая
+/// меняются местами, вклад третьей равен нулю. Веса зависят только от
+/// расстояний до центров и не меняются при перестановке плит, поэтому тип
+/// непрерывен и на границах плит, и на биссектрисах внутри плиты. На
+/// границе двух плит вдали от третьей остаётся одна пара, и ответ совпадает
+/// с прежним; в глубине плиты, где вклад границы мал, тип — смесь пар.
+fn junction_boundary_type(
+    sample: &PlateSample,
+    ab: BoundaryType,
+    seed: u64,
+    params: &Params,
+) -> BoundaryType {
+    let tau = params.plates.triple_weight_l;
+    if tau <= 0.0 {
+        return ab;
+    }
+    let Some(junction) = junction_query(sample, seed, params) else {
+        return ab;
+    };
+    let q = sample.q;
+    let nearest = junction.dist_l[0];
+    let share = |i: usize| {
+        let r = junction.dist_l[i];
+        dexp(-(r - nearest) / tau) * smoothstep(0.0, tau, junction.fourth_l - r)
+    };
+    let shares = [share(0), share(1), share(2)];
+    let mut total = 0.0;
+    let mut out = BoundaryType::default();
+    for (i, j) in [(0, 1), (0, 2), (1, 2)] {
+        let weight = shares[i] * shares[j];
+        if weight <= 0.0 {
+            continue;
+        }
+        let (first, second) = (&junction.plates[i], &junction.plates[j]);
+        let delta = second.seed_pos.sub(first.seed_pos);
+        let separation = delta.len();
+        if separation <= 0.0 {
+            continue;
+        }
+        let pair = boundary_type(first, second, q, delta.scale(1.0 / separation), params);
+        out.conv += weight * pair.conv;
+        out.div += weight * pair.div;
+        out.tr += weight * pair.tr;
+        total += weight;
+    }
+    if total <= 0.0 {
+        return ab;
+    }
+    out.conv /= total;
+    out.div /= total;
+    out.tr /= total;
+    out
+}
+
 pub fn crust_from_sample(
     point: Vec2,
     sample: &PlateSample,
@@ -483,6 +541,15 @@ pub fn crust_from_sample(
         .b
         .map(|b| boundary_type(&sample.a, &b, sample.q, sample.n_ab, params))
         .unwrap_or_default();
+    // К4а/часть 2 (Д-110): у тройного стыка тип деформации смешивается по
+    // трём парам плит. С одним типом пары A|B он перескакивал там, где
+    // вторая и третья по близости плиты меняются местами (d_AB = d_AC), и
+    // `mountain`/`e_km` рвались на биссектрисе внутри плиты A.
+    let bt = if params.version.is_water_relief_dev() {
+        junction_boundary_type(sample, bt, seed, params)
+    } else {
+        bt
+    };
     let weights = boundary_weights_from_chi(bt, chi);
     if let Some(b) = sample.b {
         // Первый вклад кладём напрямую, а не через default(): иначе σ в
