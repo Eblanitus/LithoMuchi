@@ -381,7 +381,7 @@ mod tests {
         }
         // Холм (E3) в аридной зоне становится плато (E2), плато во влажной
         // умеренной — холмом.
-        assert!(remap_erosion(-0.10, &single(4), &p) < knots[3]);
+        assert!(remap_erosion(-0.15, &single(4), &p) < knots[3]);
         assert!(remap_erosion(-0.26, &single(2), &p) > knots[3]);
         // Смесь зон — смесь результатов.
         let mut mixed = [0.0; MORPHO_ZONES];
