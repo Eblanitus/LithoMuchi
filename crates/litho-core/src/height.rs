@@ -180,21 +180,29 @@ pub fn with_water(
     }
     if let Some(hit) = hydrology.lakes.water_hit.filter(|hit| hit.inside) {
         if let Some(level) = hit.level_km {
-            let cut = clamp01(hit.water_strength);
-            if cut > 0.0 {
-                let mirror = (SEA_LEVEL + level.max(0.0) * h.water_km_to_blocks)
-                    .round()
-                    .min(h.max_y - 1.0);
-                let depth = clamp(
-                    hit.max_depth_km * h.water_km_to_blocks,
-                    1.0,
-                    h.lake_depth_max_blocks,
-                );
-                let bed = (mirror - depth).max(h.min_y);
-                if cut > best || (cut == best && bed < bed_y) {
-                    best = cut;
-                    water_y = mirror;
-                    bed_y = bed;
+            // К3: вода выше R1 отложена до R2 (DeferredWater) — рельеф не
+            // вырезать и не поднимать, котловина остаётся сухой сушёй.
+            if level <= params.hydrology.r1_max_level_km {
+                let cut = clamp01(hit.water_strength);
+                if cut > 0.0 {
+                    // К3: зеркало не выше локального берега, как у рек, —
+                    // дно не может встать плоским столом над сушей.
+                    let mirror = (SEA_LEVEL + level.max(0.0) * h.water_km_to_blocks)
+                        .round()
+                        .min(land_y - 1.0);
+                    if mirror >= h.min_y {
+                        let depth = clamp(
+                            hit.max_depth_km * h.water_km_to_blocks,
+                            1.0,
+                            h.lake_depth_max_blocks,
+                        );
+                        let bed = (mirror - depth).max(h.min_y);
+                        if cut > best || (cut == best && bed < bed_y) {
+                            best = cut;
+                            water_y = mirror;
+                            bed_y = bed;
+                        }
+                    }
                 }
             }
         }
@@ -420,29 +428,65 @@ mod tests {
         assert!(low.surface_y <= low.water_y - 1.0);
     }
 
-    #[test]
-    fn lake_mirror_is_flat_at_spill_and_bed_is_below_it() {
-        let p = params(Mode::Gameplay);
-        let mut hydro = HydrologySample::default();
-        hydro.lakes.water_hit = Some(crate::lake::LakeHit {
+    fn lake_hit(level_km: f64, max_depth_km: f64) -> crate::lake::LakeHit {
+        crate::lake::LakeHit {
             plate_id: 1,
             lake: 0,
             depression: 0,
             kind: crate::lake::LakeKind::Lake,
             distance_l: 0.0,
             inside: true,
-            level_km: Some(0.1),
-            max_depth_km: 0.05,
+            level_km: Some(level_km),
+            max_depth_km,
             frozen: false,
             rift: false,
-            high: true,
+            high: level_km > 0.0,
             water_strength: 1.0,
             shore_strength: 1.0,
-        });
+        }
+    }
+
+    #[test]
+    fn lake_mirror_is_flat_at_spill_and_bed_is_below_it() {
+        let p = params(Mode::Gameplay);
+        let mut hydro = HydrologySample::default();
+        hydro.lakes.water_hit = Some(lake_hit(0.1, 0.05));
         let cut = with_water(base_at(80.0), &hydro, &p);
         assert_eq!(cut.water_y, 69.0); // 63 + 0.1*64 = 69.4 -> 69
         assert!((cut.bed_y - 65.8).abs() < 1e-9);
         assert_eq!(cut.surface_y, cut.bed_y);
         assert_eq!(cut.water_strength, 1.0);
+    }
+
+    #[test]
+    fn deferred_lake_leaves_terrain_untouched() {
+        // К3: уровень 0,5 км выше r1_max_level_km (0,3) — вода ждёт R2,
+        // рельеф не вырезать и не поднимать (Д-102).
+        let p = params(Mode::Gameplay);
+        let mut hydro = HydrologySample::default();
+        hydro.lakes.water_hit = Some(lake_hit(0.5, 0.05));
+        let out = with_water(base_at(80.0), &hydro, &p);
+        assert_eq!(out.surface_y, 80.0);
+        assert_eq!(out.water_strength, 0.0);
+        assert_eq!(out.bed_y, 80.0);
+        assert_eq!(out.water_y, SEA_LEVEL);
+    }
+
+    #[test]
+    fn r1_lake_water_never_stands_above_the_land() {
+        // К3: низменная котловина (суша 64) с зеркалом по уровню 0,2 км
+        // (63 + 12,8 ≈ 76). Без зажима берегом дно встало бы столом на
+        // 72,8 — выше суши, стена до ~26 блоков (Д-102).
+        let p = params(Mode::Gameplay);
+        let mut hydro = HydrologySample::default();
+        hydro.lakes.water_hit = Some(lake_hit(0.2, 0.05));
+        let cut = with_water(base_at(64.0), &hydro, &p);
+        assert_eq!(cut.water_y, 63.0); // 76 зажат берегом: min(76, 63)
+        assert!(cut.bed_y <= 63.0, "дно {:?} выше суши", cut.bed_y);
+        assert!(cut.bed_y < cut.water_y);
+        assert_eq!(cut.surface_y, cut.bed_y);
+        // На обычном берегу (суша выше зеркала) зажим не мешает.
+        let high = with_water(base_at(80.0), &hydro, &p);
+        assert_eq!(high.water_y, 76.0); // 63 + 0.2*64 = 75.8 -> 76
     }
 }
