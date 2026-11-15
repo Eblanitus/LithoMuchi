@@ -1,6 +1,6 @@
 {
-  "name": "t123-ashift-1",
-  "note": "Д-095, круг 2: перекладка E из круга 1 снята (её крутизна ломала шов 0.02: |ΔE| 0.02787), вместо неё сдвиг окна A по зонам (morpho.a_shift), ширина окна прежняя. Все варианты — подбор через --set, не приёмка; Params::defaults этого коммита равны main.",
+  "name": "t123-remap-2",
+  "note": "Д-095, круг 3: перекладка E возвращена с пределом крутизны отрезков (REMAP_MAX_SLOPE = 2), полуаридная в gameplay не тронута; сдвиг окна A (круг 2) снят. base — значения по умолчанию этого коммита, остальные варианты — подбор через --set, не приёмка.",
   "version": "v1-dev",
   "modes": [
     "gameplay",
@@ -27,113 +27,113 @@
   "args": "--size 160 --patches 5 --relief-size 16 --boundary-size 32",
   "variants": [
     {
-      "name": "g-a",
-      "set": "morpho.a_shift[4]=-0.1,morpho.a_shift[0]=0.08,morpho.a_shift[1]=0.08,morpho.a_shift[5]=-0.15",
+      "name": "g-base",
+      "set": "",
       "modes": [
         "gameplay"
       ]
     },
     {
-      "name": "g-b",
-      "set": "morpho.a_shift[4]=-0.14,morpho.a_shift[0]=0.08,morpho.a_shift[1]=0.08,morpho.a_shift[5]=-0.15",
+      "name": "g-arid-less",
+      "set": "morpho.e_remap_lo[4]=-0.08",
       "modes": [
         "gameplay"
       ]
     },
     {
-      "name": "g-c",
-      "set": "morpho.a_shift[4]=-0.12,morpho.a_shift[0]=0.12,morpho.a_shift[1]=0.12,morpho.a_shift[5]=0.15",
+      "name": "g-arid-more",
+      "set": "morpho.e_remap_lo[4]=-0.02,morpho.e_remap_hi[4]=0.17",
       "modes": [
         "gameplay"
       ]
     },
     {
-      "name": "g-d",
-      "set": "morpho.a_shift[4]=-0.12,morpho.a_shift[0]=0.08,morpho.a_shift[1]=0.08,morpho.a_shift[5]=-0.25",
+      "name": "g-trop-strong",
+      "set": "morpho.e_remap_lo[5]=-0.29,morpho.e_remap_hi[5]=-0.12",
       "modes": [
         "gameplay"
       ]
     },
     {
-      "name": "g-e",
-      "set": "morpho.a_shift[4]=-0.12,morpho.a_shift[0]=0.08,morpho.a_shift[1]=0.08,morpho.a_shift[5]=0.25",
+      "name": "g-cold-strong",
+      "set": "morpho.e_remap_lo[0]=-0.29,morpho.e_remap_hi[0]=-0.12,morpho.e_remap_lo[1]=-0.29,morpho.e_remap_hi[1]=-0.12",
       "modes": [
         "gameplay"
       ]
     },
     {
-      "name": "g-f",
-      "set": "morpho.a_shift[4]=-0.14,morpho.a_shift[0]=0.12,morpho.a_shift[1]=0.12,morpho.a_shift[5]=0.15,morpho.a_shift[2]=0.04",
+      "name": "g-temp-neutral",
+      "set": "morpho.e_remap_lo[2]=-0.2225,morpho.e_remap_hi[2]=0.05",
       "modes": [
         "gameplay"
       ]
     },
     {
-      "name": "g-g",
-      "set": "morpho.a_shift[4]=-0.12,morpho.a_shift[0]=0.08,morpho.a_shift[1]=0.08,morpho.a_shift[5]=0.15,morpho.a_shift[3]=0.05",
+      "name": "g-semi",
+      "set": "morpho.e_remap_lo[3]=-0.19,morpho.e_remap_hi[3]=0.07",
       "modes": [
         "gameplay"
       ]
     },
     {
-      "name": "g-h",
-      "set": "morpho.a_shift[4]=-0.18,morpho.a_shift[0]=0.15,morpho.a_shift[1]=0.15,morpho.a_shift[5]=0.25,morpho.a_shift[2]=0.04,morpho.a_shift[3]=0.05",
+      "name": "g-mix",
+      "set": "morpho.e_remap_lo[4]=-0.08,morpho.e_remap_lo[5]=-0.29,morpho.e_remap_hi[5]=-0.12,morpho.e_remap_lo[0]=-0.29,morpho.e_remap_hi[0]=-0.12,morpho.e_remap_lo[1]=-0.29,morpho.e_remap_hi[1]=-0.12",
       "modes": [
         "gameplay"
       ]
     },
     {
-      "name": "s-a",
-      "set": "morpho.a_shift[4]=-0.1,morpho.a_shift[0]=0.08,morpho.a_shift[1]=0.08,morpho.a_shift[5]=-0.15",
+      "name": "s-base",
+      "set": "",
       "modes": [
         "scientific"
       ]
     },
     {
-      "name": "s-b",
-      "set": "morpho.a_shift[4]=-0.14,morpho.a_shift[0]=0.08,morpho.a_shift[1]=0.08,morpho.a_shift[5]=-0.15",
+      "name": "s-trop-less",
+      "set": "morpho.e_remap_hi[5]=-0.03",
       "modes": [
         "scientific"
       ]
     },
     {
-      "name": "s-c",
-      "set": "morpho.a_shift[4]=-0.12,morpho.a_shift[0]=0.12,morpho.a_shift[1]=0.12,morpho.a_shift[5]=0.15",
+      "name": "s-trop-strong",
+      "set": "morpho.e_remap_lo[5]=-0.29,morpho.e_remap_hi[5]=-0.12",
       "modes": [
         "scientific"
       ]
     },
     {
-      "name": "s-d",
-      "set": "morpho.a_shift[4]=-0.12,morpho.a_shift[0]=0.08,morpho.a_shift[1]=0.08,morpho.a_shift[5]=-0.25",
+      "name": "s-arid-less",
+      "set": "morpho.e_remap_lo[4]=0.0",
       "modes": [
         "scientific"
       ]
     },
     {
-      "name": "s-e",
-      "set": "morpho.a_shift[4]=-0.12,morpho.a_shift[0]=0.08,morpho.a_shift[1]=0.08,morpho.a_shift[5]=0.25",
+      "name": "s-cold-less",
+      "set": "morpho.e_remap_hi[0]=-0.08,morpho.e_remap_hi[1]=-0.08",
       "modes": [
         "scientific"
       ]
     },
     {
-      "name": "s-f",
-      "set": "morpho.a_shift[4]=-0.14,morpho.a_shift[0]=0.12,morpho.a_shift[1]=0.12,morpho.a_shift[5]=0.15,morpho.a_shift[2]=0.04",
+      "name": "s-temp-neutral",
+      "set": "morpho.e_remap_lo[2]=-0.2225,morpho.e_remap_hi[2]=0.05",
       "modes": [
         "scientific"
       ]
     },
     {
-      "name": "s-g",
-      "set": "morpho.a_shift[4]=-0.12,morpho.a_shift[0]=0.08,morpho.a_shift[1]=0.08,morpho.a_shift[5]=0.15,morpho.a_shift[3]=0.05",
+      "name": "s-semi-id",
+      "set": "morpho.e_remap_lo[3]=-0.2225,morpho.e_remap_hi[3]=0.05",
       "modes": [
         "scientific"
       ]
     },
     {
-      "name": "s-h",
-      "set": "morpho.a_shift[4]=-0.18,morpho.a_shift[0]=0.15,morpho.a_shift[1]=0.15,morpho.a_shift[5]=0.25,morpho.a_shift[2]=0.04,morpho.a_shift[3]=0.05",
+      "name": "s-semi-more",
+      "set": "morpho.e_remap_lo[3]=-0.08,morpho.e_remap_hi[3]=0.07",
       "modes": [
         "scientific"
       ]
