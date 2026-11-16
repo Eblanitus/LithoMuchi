@@ -29,6 +29,10 @@
 - Smart App Control на Windows ломает сборку (os error 4551).
 - В CI собирается настоящий `.hnmod` (`tools/package_mod.py`). Для игры брать артефакт
   последнего зелёного CI на `main`.
+- Паки едут внутри `.hnmod` (К6, Д-112), поэтому в игре их не надо распаковывать: при
+  создании мира они уже в Data Packs. Клиентский хук — единственное место, где наш код
+  попадает в клиент, и CI собирает `horizon-client` с ним (`cargo check
+  --no-default-features`, без `audio`/`controllers`: на раннере нет ALSA).
 
 ## Вода
 
