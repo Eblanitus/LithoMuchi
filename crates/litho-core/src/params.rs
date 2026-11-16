@@ -1727,6 +1727,12 @@ impl Params {
             c.w_sign_epsilon = 1e-3;
             // K5: отсечь мелкие «лужи» и ослабить плоское дно котловин.
             p.drainage.depression_min_depth_km = 0.015;
+            // К7 / Д-113: научный мир выше ванильного — верх 447 (высота
+            // уровня 512), чтобы горы и плато не упирались в потолок 319.
+            // Геймплейный режим и v0 остаются ванильными.
+            if mode == Mode::Scientific {
+                p.height.max_y = 447.0;
+            }
             // К5 / Д-057: впадины сверх 3 % узлов суши плиты прорезаются
             // руслом, а не заливаются. С полосой берега это ≤5–8 % суши.
             p.drainage.lake_area_max_fraction = 0.03;
@@ -2365,6 +2371,19 @@ mod tests {
     use super::Params;
     use crate::mode::Mode;
     use crate::version::GenVersion;
+
+    /// К7 / Д-113: выше становится только научный `v1-dev`.
+    #[test]
+    fn k7_only_scientific_v1dev_is_taller() {
+        let scientific = Params::defaults(GenVersion::V1Dev, Mode::Scientific);
+        assert_eq!(scientific.height.max_y, 447.0);
+        let gameplay = Params::defaults(GenVersion::V1Dev, Mode::Gameplay);
+        assert_eq!(gameplay.height.max_y, 319.0);
+        for mode in Mode::ALL {
+            let v0 = Params::defaults(GenVersion::V0, mode);
+            assert_eq!(v0.height.max_y, 319.0);
+        }
+    }
 
     #[test]
     fn macro_params_do_not_depend_on_mode() {

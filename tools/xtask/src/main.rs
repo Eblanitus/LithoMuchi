@@ -6,6 +6,7 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use litho_core::height::SEA_LEVEL;
 use litho_core::{GenVersion, Mode, Params};
 
 /// Версия генератора, для которой сейчас собираются паки (план 6.8).
@@ -153,6 +154,7 @@ fn write_file(path: &Path, text: &str) -> Result<(), String> {
 fn make_pack(
     dir: &Path,
     version: GenVersion,
+    mode: Mode,
     label: &str,
     noise_prefix: &str,
     noise_dir: &str,
@@ -211,7 +213,49 @@ fn make_pack(
             &noise_json,
         )?;
     }
+    if version.is_water_relief_dev() && mode == Mode::Scientific {
+        write_tall_world(dir, version, mode)?;
+    }
     println!("пак: {}", dir.display());
+    Ok(())
+}
+
+/// К7 (Д-113): научный мир выше ванильного. Horizon берёт высоту уровня из
+/// `dimension_type`, а полосу шума — из `noise_settings`; пак научного режима
+/// несёт оба файла. Числа — из параметров ядра: верх мира `height.max_y`,
+/// высота уровня на единицу больше и кратна 16.
+fn write_tall_world(dir: &Path, version: GenVersion, mode: Mode) -> Result<(), String> {
+    let params = Params::defaults(version, mode);
+    let min_y = params.height.min_y as i32;
+    let height = (params.height.max_y as i32 + 1 - min_y).div_ceil(16) * 16;
+    let min_y_text = min_y.to_string();
+    let height_text = height.to_string();
+    let logical_text = height.min(384).to_string();
+    let sea_text = (SEA_LEVEL as i32).to_string();
+    let dimension = read_template("packs/dimension_type.json.in")?;
+    write_file(
+        &dir.join("data/minecraft/dimension_type/overworld.json"),
+        &render(
+            &dimension,
+            &[
+                ("MIN_Y", min_y_text.as_str()),
+                ("HEIGHT", height_text.as_str()),
+                ("LOGICAL", logical_text.as_str()),
+            ],
+        )?,
+    )?;
+    let settings = read_template("packs/noise_settings.json.in")?;
+    write_file(
+        &dir.join("data/minecraft/worldgen/noise_settings/overworld.json"),
+        &render(
+            &settings,
+            &[
+                ("MIN_Y", min_y_text.as_str()),
+                ("HEIGHT", height_text.as_str()),
+                ("SEA_LEVEL", sea_text.as_str()),
+            ],
+        )?,
+    )?;
     Ok(())
 }
 
@@ -252,6 +296,7 @@ fn cmd_pack(out: &Path) -> Result<(), String> {
             make_pack(
                 &out.join(&name),
                 version,
+                mode,
                 if version == GenVersion::V1Dev {
                     "Э3.5: рабочая версия, не релиз"
                 } else {
@@ -266,6 +311,7 @@ fn cmd_pack(out: &Path) -> Result<(), String> {
     make_pack(
         &out.join("litospherity_smoke"),
         GEN_VERSION,
+        Mode::Gameplay,
         "smoke-тест точки №1 (всюду суша)",
         "litospherity:smoke",
         "smoke",

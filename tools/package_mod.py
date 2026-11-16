@@ -46,6 +46,25 @@ def validate_pack(pack: Path) -> None:
         for name in ("pv", "offset", "factor", "jaggedness"):
             if not any(noise.rglob(f"{name}.json")):
                 raise ValueError(f"В {pack.name} нет шума {name}")
+    if pack.name == "litospherity_v1-dev_scientific":
+        # К7 (Д-113): научный мир выше ванильного — 512 блоков от -64.
+        dim_path = pack / "data/minecraft/dimension_type/overworld.json"
+        settings_path = pack / "data/minecraft/worldgen/noise_settings/overworld.json"
+        if not dim_path.is_file() or not settings_path.is_file():
+            raise ValueError("К7: в научном паке нет dimension_type/noise_settings")
+        dim = json.loads(dim_path.read_text())
+        settings = json.loads(settings_path.read_text())
+        if dim["min_y"] % 16 or dim["height"] % 16 or dim["height"] < 16:
+            raise ValueError("К7: высота мира не кратна 16")
+        if dim["min_y"] + dim["height"] > 2032:
+            raise ValueError("К7: высота мира за пределом Horizon")
+        if settings["noise"]["height"] != dim["height"]:
+            raise ValueError("К7: высота шума не равна высоте мира")
+        if settings["noise"]["min_y"] != dim["min_y"]:
+            raise ValueError("К7: низ шума не равен низу мира")
+    elif pack.name == "litospherity_v1-dev_gameplay":
+        if (pack / "data/minecraft/dimension_type/overworld.json").exists():
+            raise ValueError("К7: геймплейный пак не меняет высоту мира")
     elif pack.name.startswith("litospherity_v0_"):
         for name in ("ridges_folded", "offset", "factor", "jaggedness"):
             if (df / f"{name}.json").exists() or any(noise.rglob(f"{name}.json")):
