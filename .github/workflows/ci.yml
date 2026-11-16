@@ -318,19 +318,44 @@ jobs:
           fi
           cat /tmp/litho-deep-lava.log
           grep -E 'v1-dev|vanilla|test result' /tmp/litho-deep-lava.log | sed 's/^/::notice::/'
+      - name: "К6 — клиент Horizon без мода: платформа и окружение"
+        # Диагностика: если чистый клиент на этой платформе не собирается,
+        # гейт ниже пропускается честным `if`, а причина уходит аннотациями
+        # (сырые логи blob-хранилища из песочницы не читаются).
+        id: pristine
+        timeout-minutes: 60
+        continue-on-error: true
+        run: |
+          if ! cargo check --locked --offline --manifest-path .external/horizon/Cargo.toml \
+            -p horizon-client > /tmp/litho-client-pristine.log 2>&1; then
+            python3 - <<'PYTHON'
+          lines = open("/tmp/litho-client-pristine.log", errors="replace").read().splitlines()
+          errors = [line for line in lines if line.startswith("error") or " error[" in line]
+          for line in (errors[:10] if errors else lines[-10:]):
+              print("::error::" + line.replace("%", "%25").replace("\r", ""))
+          PYTHON
+            exit 1
+          fi
+          tail -3 /tmp/litho-client-pristine.log
+
       - name: "К6 — клиент Horizon с внедрённым хуком паков собирается"
         # Хук `Title::click`/`Title::confirm_key_size` — единственное место,
         # где наш код попадает в клиент. Пока он не скомпилирован, `.hnmod`
         # нельзя считать собранным, поэтому это настоящий гейт (Д-112).
+        if: steps.pristine.outcome == 'success'
         timeout-minutes: 60
         run: |
           if ! cargo check --locked --offline --manifest-path /tmp/litho-horizon-staged-ci/Cargo.toml \
             -p horizon-client > /tmp/litho-client-check.log 2>&1; then
-            tail -80 /tmp/litho-client-check.log
-            grep -E '^error' /tmp/litho-client-check.log | head -20 | sed 's/^/::error::/'
+            python3 - <<'PYTHON'
+          lines = open("/tmp/litho-client-check.log", errors="replace").read().splitlines()
+          errors = [line for line in lines if line.startswith("error") or " error[" in line]
+          for line in (errors[:10] if errors else lines[-10:]):
+              print("::error::" + line.replace("%", "%25").replace("\r", ""))
+          PYTHON
             exit 1
           fi
-          tail -5 /tmp/litho-client-check.log
+          tail -3 /tmp/litho-client-check.log
       - name: "К2 — настоящие данные 26.3: depth = 0.375 + offset"
         run: |
           mkdir -p /tmp/litho-horizon-staged-ci/crates/horizon-world/tests
