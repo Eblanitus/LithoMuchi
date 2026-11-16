@@ -4,36 +4,20 @@ name: Проба точки · probe по координатам
 # `litho-sandbox probe` в точке и вокруг неё, вывод — аннотациями задания.
 # Так разбирается К8 (issue #7, «меза у льда», X 1287 Z 832; «плоская стена»,
 # X −1797 Z −630) и любой следующий отчёт автора: нужен только сид, режим,
-# версия и координаты, а не пересборка ветки. Замер приёмки не заменяет.
+# версия и координаты.
+#
+# Запуск — как T151: правкой `tools/probe/request.json` и коммитом (push).
+# `workflow_dispatch` заработает после вливания файла в `main`; до этого
+# рабочая дорога — request.json, потому что вручную запускать можно только
+# workflow, зарегистрированный на ветке по умолчанию.
+#
+# Замер приёмки не заменяет и гейтом не является: только поля и биомы.
 on:
+  push:
+    branches: ["**"]
+    paths:
+      - "tools/probe/request.json"
   workflow_dispatch:
-    inputs:
-      seeds:
-        description: "Сиды через запятую"
-        required: true
-        default: "42"
-      at:
-        description: "Точки x,z через точку с запятой"
-        required: true
-        default: "1287,832;1518,1579"
-      mode:
-        description: "Режим"
-        type: choice
-        options: [gameplay, scientific]
-        default: gameplay
-      version:
-        description: "Версия генератора"
-        type: choice
-        options: [v0, v1-dev]
-        default: v0
-      radius:
-        description: "Радиус обхода вокруг точки (блоков); 0 — только центр"
-        required: true
-        default: "64"
-      step:
-        description: "Шаг обхода (блоков)"
-        required: true
-        default: "64"
 
 permissions:
   contents: read
@@ -53,28 +37,24 @@ jobs:
       - name: Сборка песочницы (release)
         run: cargo build --release -p litho-sandbox
       - name: Проба
-        env:
-          SEEDS: ${{ inputs.seeds }}
-          AT: ${{ inputs.at }}
-          MODE: ${{ inputs.mode }}
-          VERSION: ${{ inputs.version }}
-          RADIUS: ${{ inputs.radius }}
-          STEP: ${{ inputs.step }}
         run: |
           python3 - <<'PY'
-          import os, re, subprocess
+          import json, re, subprocess
 
-          seeds = [s.strip() for s in os.environ["SEEDS"].split(",") if s.strip()]
+          request = json.load(open("tools/probe/request.json", encoding="utf-8"))
+          mode = request.get("mode", "gameplay")
+          version = request.get("version", "v0")
+          radius = float(request.get("radius", 64))
+          step = float(request.get("step", 64))
+          seeds = [str(s) for s in request.get("seeds", [42])]
           points = []
-          for raw in os.environ["AT"].split(";"):
-              raw = raw.strip()
-              if raw:
-                  x, z = raw.split(",")
-                  points.append((float(x), float(z)))
-          radius = float(os.environ["RADIUS"])
-          step = float(os.environ["STEP"])
-          mode = os.environ["MODE"]
-          version = os.environ["VERSION"]
+          for raw in request.get("at", ["1287,832"]):
+              x, z = str(raw).split(",")
+              points.append((float(x), float(z)))
+          if request.get("note"):
+              print(request["note"])
+          print(f"режим {mode}, версия {version}, обход ±{radius:.0f} блоков шагом {step:.0f}, "
+                f"точек {len(points)}, сидов {len(seeds)}")
 
           def field(text, pattern, default="?"):
               found = re.search(pattern, text)
@@ -88,26 +68,26 @@ jobs:
               if run.returncode != 0:
                   tail = (run.stderr or run.stdout).strip().splitlines()
                   return f"ошибка: {tail[-1] if tail else 'код ' + str(run.returncode)}"
+              text = run.stdout
               return ("биом={} зона={} T_bio={} T={} H={} φ={} океан={}".format(
-                  field(run.stdout, r"биом=([^ ]+)"),
-                  field(run.stdout, r"зона=([^ ]+)"),
-                  field(run.stdout, r"T_bio=([-0-9.]+)"),
-                  field(run.stdout, r"\bT=([-0-9.]+)"),
-                  field(run.stdout, r"\bH=([-0-9.]+)"),
-                  field(run.stdout, r"φ=([-0-9.]+)"),
-                  field(run.stdout, r"океан=(\w+)"),
+                  field(text, r"биом=([^ ]+)"),
+                  field(text, r"зона=([^ ]+)"),
+                  field(text, r"T_bio=([-0-9.]+)"),
+                  field(text, r"\bT=([-0-9.]+)"),
+                  field(text, r"\bH=([-0-9.]+)"),
+                  field(text, r"φ=([-0-9.]+)"),
+                  field(text, r"океан=(\w+)"),
               ))
 
-          ring = [(0.0, 0.0)] if radius <= 0 else [
+          offsets = [(0.0, 0.0)] if radius <= 0 else [
               (dx * radius, dz * radius)
               for dz in (-1.0, 0.0, 1.0) for dx in (-1.0, 0.0, 1.0)
           ]
-          print(f"режим {mode}, версия {version}, обход ±{radius:.0f} блоков шагом {step:.0f}, "
-                f"точек {len(points)}, сидов {len(seeds)}")
           for seed in seeds:
               for x, z in points:
                   print(f"--- сид {seed}: точка ({x:.0f}, {z:.0f})")
-                  for dx, dz in ring:
+                  for dx, dz in offsets:
                       px, pz = x + dx * step, z + dz * step
-                      print(f"::notice::сид {seed} {mode} {version} ({px:.0f}, {pz:.0f}): {probe(seed, px, pz)}")
+                      print(f"::notice::сид {seed} {mode} {version} ({px:.0f}, {pz:.0f}): "
+                            f"{probe(seed, px, pz)}")
           PY
