@@ -117,14 +117,21 @@ jobs:
           done
           { echo "T100 synthetic sweep v1-dev local 16 L (НЕ приёмка, широкий скан после T160)"; cargo run -q -p litho-sandbox --release -- stats-all --version v1-dev --synthetic-height --span-l 16 --size 16 --relief-size 8 --boundary-size 8; } | python3 tools/ci_annotations.py report
       - name: "К7 — высота научного мира: потолок высоты и максимум суши (замер)"
+        # Замер, а не гейт: строка «К7» в отчёте — максимум суши и доля суши
+        # на потолке `height.max_y`. Ошибка запуска видна аннотацией, но
+        # прогон не валит (Д-113).
         run: |
-          set -o pipefail
-          for mode in gameplay scientific; do
-            cargo run -q -p litho-sandbox --release -- stats --seed 42 --mode "$mode" --version v1-dev --span-l 32 --size 32 | python3 tools/ci_annotations.py report
-          done
-          # До правки (Д-113): тот же научный мир с прежним потолком 319 —
-          # по строке К7 видно, сколько суши стояло на потолке.
-          cargo run -q -p litho-sandbox --release -- stats --seed 42 --mode scientific --version v1-dev --span-l 32 --size 32 --set height.max_y=319 | python3 tools/ci_annotations.py report
+          measure() {
+            if ! cargo run -q -p litho-sandbox --release -- stats "$@" > /tmp/k7.log 2>&1; then
+              tail -6 /tmp/k7.log | sed 's/^/::error::/'
+              return 0
+            fi
+            python3 tools/ci_annotations.py report < /tmp/k7.log
+          }
+          measure --seed 42 --mode gameplay --version v1-dev --span-l 32 --size 32
+          measure --seed 42 --mode scientific --version v1-dev --span-l 32 --size 32
+          # До правки: тот же научный мир с прежним потолком 319.
+          measure --seed 42 --mode scientific --version v1-dev --span-l 32 --size 32 --set height.max_y=319
 
       - name: "T151 — вердикт границ 10.1 и ориентиры 12.4 (объём малый, это НЕ приёмка)"
         run: |
