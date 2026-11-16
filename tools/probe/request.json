@@ -1,8 +1,8 @@
 {
-  "name": "issue7-jumps-1",
-  "note": "К8: вопрос автора из issue #7 — «меза рядом со льдом». Сид его мира неизвестен, поэтому проверяю механизм: счётчик К2 (Д-104) в `biomes` печатает пары соседних проб суши, у которых ванильная ступень T или H отличается на 2 и больше, и какие биомы стоят по сторонам. Сравнение v0 (мир 0.1.0 из теста 07.11) и v1-dev (после К2) на обычных сидах проекта.",
+  "name": "issue7-jumps-2",
+  "note": "К8: счётчик К2 на всех 16 приёмочных сидах в v1-dev (gameplay) — прыжков через ступень не должно быть ни на одном. Первый заход (issue7-jumps-1) дал v0 на сиде 42: 82 пары с прыжком, 28,9 % смен биома, среди пар plains ↔ snowy_taiga; v1-dev на сидах 42 и 7 — ноль.",
   "mode": "gameplay",
-  "version": "v0",
+  "version": "v1-dev",
   "seeds": [
     42
   ],
@@ -14,11 +14,65 @@
     [
       "biomes",
       "--seed",
-      "42",
+      "-123456789",
       "--mode",
       "gameplay",
       "--version",
-      "v0"
+      "v1-dev"
+    ],
+    [
+      "biomes",
+      "--seed",
+      "-42",
+      "--mode",
+      "gameplay",
+      "--version",
+      "v1-dev"
+    ],
+    [
+      "biomes",
+      "--seed",
+      "-1",
+      "--mode",
+      "gameplay",
+      "--version",
+      "v1-dev"
+    ],
+    [
+      "biomes",
+      "--seed",
+      "0",
+      "--mode",
+      "gameplay",
+      "--version",
+      "v1-dev"
+    ],
+    [
+      "biomes",
+      "--seed",
+      "1",
+      "--mode",
+      "gameplay",
+      "--version",
+      "v1-dev"
+    ],
+    [
+      "biomes",
+      "--seed",
+      "2",
+      "--mode",
+      "gameplay",
+      "--version",
+      "v1-dev"
+    ],
+    [
+      "biomes",
+      "--seed",
+      "7",
+      "--mode",
+      "gameplay",
+      "--version",
+      "v1-dev"
     ],
     [
       "biomes",
@@ -32,16 +86,70 @@
     [
       "biomes",
       "--seed",
-      "7",
+      "123",
       "--mode",
       "gameplay",
       "--version",
-      "v0"
+      "v1-dev"
     ],
     [
       "biomes",
       "--seed",
-      "7",
+      "777",
+      "--mode",
+      "gameplay",
+      "--version",
+      "v1-dev"
+    ],
+    [
+      "biomes",
+      "--seed",
+      "1234",
+      "--mode",
+      "gameplay",
+      "--version",
+      "v1-dev"
+    ],
+    [
+      "biomes",
+      "--seed",
+      "2024",
+      "--mode",
+      "gameplay",
+      "--version",
+      "v1-dev"
+    ],
+    [
+      "biomes",
+      "--seed",
+      "12345",
+      "--mode",
+      "gameplay",
+      "--version",
+      "v1-dev"
+    ],
+    [
+      "biomes",
+      "--seed",
+      "54321",
+      "--mode",
+      "gameplay",
+      "--version",
+      "v1-dev"
+    ],
+    [
+      "biomes",
+      "--seed",
+      "99999",
+      "--mode",
+      "gameplay",
+      "--version",
+      "v1-dev"
+    ],
+    [
+      "biomes",
+      "--seed",
+      "987654321",
       "--mode",
       "gameplay",
       "--version",
