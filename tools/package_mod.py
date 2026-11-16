@@ -52,6 +52,64 @@ def validate_pack(pack: Path) -> None:
                 raise ValueError(f"Замороженный {pack.name} не должен менять {name}")
 
 
+def rust_string(text: str) -> str:
+    """К6: строка Rust для `packs_data.rs` (данные паков едут в исходнике)."""
+    parts = ['"']
+    for char in text:
+        if char == "\\":
+            parts.append("\\\\")
+        elif char == '"':
+            parts.append('\\"')
+        elif char == "\n":
+            parts.append("\\n")
+        elif char == "\r":
+            parts.append("\\r")
+        elif char == "\t":
+            parts.append("\\t")
+        elif ord(char) < 0x20 or ord(char) == 0x7F:
+            raise ValueError(f"управляющий символ {ord(char):#x} в паке")
+        else:
+            parts.append(char)
+    parts.append('"')
+    return "".join(parts)
+
+
+def pack_dirs(bundle: Path) -> list[Path]:
+    return sorted(path for path in (bundle / "packs").iterdir() if path.is_dir())
+
+
+def write_packs_module(bundle: Path, target: Path) -> int:
+    """К6 (Д-112): паки в `.hnmod` как модуль `litospherity_packs`."""
+    packs = pack_dirs(bundle)
+    if not packs:
+        raise ValueError("в бандле нет паков: нечего встраивать")
+    lines = [
+        "// Сгенерировано `tools/package_mod.py` (К6, Д-112). Не редактировать.",
+        "// Все паки уже внутри `.hnmod`: клиентский хук кладёт их в папку паков",
+        "// нового мира, и Data Packs показывает их без перетаскивания файлов.",
+        "pub const PACKS: &[(&str, &[(&str, &str)])] = &[",
+    ]
+    total = 0
+    for pack in packs:
+        files = sorted(path for path in pack.rglob("*") if path.is_file())
+        if not files:
+            raise ValueError(f"пак {pack.name} пуст: нечего встраивать")
+        lines.append("    (")
+        lines.append(f"        {rust_string(pack.name)},")
+        lines.append("        &[")
+        for path in files:
+            relative = path.relative_to(pack).as_posix()
+            text = path.read_text()
+            total += len(text)
+            lines.append(f"            ({rust_string(relative)}, {rust_string(text)}),")
+        lines.append("        ],")
+        lines.append("    ),")
+    lines.append("];")
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text("\n".join(lines) + "\n")
+    return total
+
+
 def verify_embedded(hnmod: Path, packs) -> None:
     """К6 (Д-112): паки обязаны быть внутри архива, а не рядом с ним."""
     with zipfile.ZipFile(hnmod) as source:
@@ -98,12 +156,18 @@ def package(bundle, out):
         target = staging / "mixins/litospherity"
         for name in ("glue", "crates"):
             shutil.copytree(bundle / name, target / name, dirs_exist_ok=True)
+        embedded = write_packs_module(bundle, target / "glue/packs_data.rs")
         manifest = target / "horizon-mixin.toml"
         manifest.write_text(manifest.read_text() + "\n" + additions)
         parsed = tomllib.loads(manifest.read_text())
         for entry in parsed.get("module", []):
             if not (target / entry["source"]).is_file():
                 raise ValueError(f"[[module]] {entry['id']}: нет {entry['source']}")
+        if not any(
+            entry["source"] == "glue/packs_data.rs"
+            for entry in parsed.get("module", [])
+        ):
+            raise ValueError("в манифесте нет [[module]] с паками (К6)")
         for entry in parsed.get("injection", []):
             if not (target / entry["helper"]).is_file():
                 raise ValueError(f"[[injection]] {entry['id']}: нет {entry['helper']}")
@@ -119,6 +183,7 @@ def package(bundle, out):
         validate_pack(pack)
     verify_embedded(out / "litospherity.hnmod", packs)
     print(f"Packaged mod with {len(packs)} embedded datapacks: {out}")
+    print(f"Embedded pack text: {embedded} bytes")
     print("Horizon / mixins pins: " + PINS["horizon"] + " / " + PINS["horizon_mixins"])
     print("Native compilation and in-game world generation still require Horizon.")
 
