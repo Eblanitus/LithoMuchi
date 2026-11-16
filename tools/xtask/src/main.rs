@@ -338,6 +338,7 @@ fn cmd_bundle(out: &Path) -> Result<(), String> {
          Команда на Windows: horizon-launcher native-build <эта папка> --instance <имя> --trust-native-code\n\
          Все паки (v0, v1-dev обоих режимов и smoke) уже внутри мода: при создании\n\
          мира они видны в Data Packs, отдельные zip-файлы не нужны (К6, Д-112).\n\
+         Smoke: включите только litospherity_smoke, мир должен быть всюду сушей.\n\
          Тест №2: включите только litospherity_v1-dev_gameplay, запишите сид и номер сборки.\n\
          Актуальное состояние: docs/PLAN.md в репозитории.\n",
     )?;
@@ -355,10 +356,10 @@ fn check_no_placeholders(dir: &Path) -> Result<usize, String> {
             count += check_no_placeholders(&path)?;
             continue;
         }
-        let name = match path.file_name() {
-            Some(name) => name.to_string_lossy().into_owned(),
-            None => String::new(),
-        };
+        let name = path
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
         if !(name.ends_with(".json")
             || name.ends_with(".toml")
             || name.ends_with(".rs")
