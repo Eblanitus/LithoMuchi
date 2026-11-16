@@ -202,6 +202,8 @@ pub struct WorldSample {
 
 /// Результат перевода колонки в игровые поля (T115/T122/T141/T144).
 struct SurfaceFields {
+    /// К5 (Д-111): климат биомов — с вычетом температуры по высоте колонки.
+    climate: ClimateSample,
     class: crate::classify::ClassSample,
     vanilla: VanillaSample,
     river: f64,
@@ -597,7 +599,7 @@ impl Generator {
         };
         let c = continentalness(climate.surface.e_km, climate.surface.iota_l, &self.params);
         let is_ocean = c < self.params.climate.ocean_c_threshold;
-        let class = classify(&climate, is_ocean, x, z, self.seed, &self.params);
+        let class = self.class_before_height(&climate, is_ocean, x, z);
         // v0 сохраняет старый путь; v1-dev подключает сеть T115 ниже.
         let point = self.macro_point(x, z);
         let surface = &climate.surface;
@@ -619,7 +621,7 @@ impl Generator {
         let fields =
             self.surface_fields(&climate, class, is_ocean, x, z, local.max(traced), None)?;
         Ok(Some(WorldSample {
-            climate,
+            climate: fields.climate,
             class: fields.class,
             vanilla: fields.vanilla,
             river: fields.river,
@@ -1124,6 +1126,28 @@ impl Generator {
         Ok(geometry)
     }
 
+    /// Класс до расчёта высоты. На суше `v1-dev` биом выбирается заново
+    /// после высоты (К5, Д-111), поэтому здесь хватает заготовки без шума
+    /// дрожания границ: она никуда не попадает.
+    fn class_before_height(
+        &self,
+        climate: &ClimateSample,
+        is_ocean: bool,
+        x: f64,
+        z: f64,
+    ) -> crate::classify::ClassSample {
+        if self.params.version.is_water_relief_dev() && !is_ocean {
+            crate::classify::classify_inputs(
+                climate.temperature.t_bio,
+                climate.precip.ratio,
+                climate.temperature.t_min,
+                &self.params,
+            )
+        } else {
+            classify(climate, is_ocean, x, z, self.seed, &self.params)
+        }
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn surface_fields(
         &self,
@@ -1140,6 +1164,7 @@ impl Generator {
                 crate::vanilla::sample(climate, &class, x, z, self.seed, &self.params, local_river);
             let pv = crate::vanilla::peaks_valleys(vanilla.w);
             return Ok(SurfaceFields {
+                climate: *climate,
                 class,
                 vanilla,
                 river: local_river,
@@ -1234,7 +1259,38 @@ impl Generator {
             &water,
             &self.params,
         );
+        // К5 (Д-111): биом суши берётся по климату с вычетом температуры по
+        // готовой высоте колонки. Рельеф и вода выше посчитаны по прежнему
+        // климату и от этого шага не зависят.
+        let (climate, class, vanilla) = if is_ocean {
+            (*climate, class, vanilla)
+        } else {
+            // Высота для вычета — крупная форма: без мелких бугров Д-057 и
+            // без вреза русла. Иначе пояс мигал бы на каждом бугре у порога
+            // и шёл тёплой лентой по дну горной долины.
+            let shape_y = crate::height::sample_micro(
+                vanilla.c,
+                vanilla.e,
+                pv_relief,
+                e_km,
+                morpho.values[6],
+                morpho.values[7],
+                0.0,
+                0.0,
+                shore_dist,
+                &self.params,
+            )
+            .surface_y;
+            let cooled = crate::climate::recool(climate, shape_y, &self.params);
+            let recast = classify(&cooled, is_ocean, x, z, self.seed, &self.params);
+            let (t, h) = crate::vanilla::temperature_humidity(&cooled, &recast, &self.params);
+            let base = VanillaSample { t, h, ..base };
+            let vanilla = hydrology::apply_fields(base, local_river, &water, &self.params);
+            let class = hydrology::classify_surface(recast, &water, &cooled, &self.params);
+            (cooled, class, vanilla)
+        };
         Ok(SurfaceFields {
+            climate,
             class,
             vanilla,
             river,
@@ -1743,7 +1799,7 @@ impl Generator {
         };
         let c_value = continentalness(surface.e_km, surface.iota_l, &self.params);
         let is_ocean = c_value < self.params.climate.ocean_c_threshold;
-        let class = classify(&climate, is_ocean, x, z, self.seed, &self.params);
+        let class = self.class_before_height(&climate, is_ocean, x, z);
         let local = local_r(x, z, &surface, self.seed, &self.params);
         let fields = self.surface_fields(
             &climate,
@@ -1755,7 +1811,7 @@ impl Generator {
             Some((&plates, &crust)),
         )?;
         let world = WorldSample {
-            climate,
+            climate: fields.climate,
             class: fields.class,
             vanilla: fields.vanilla,
             river: fields.river,

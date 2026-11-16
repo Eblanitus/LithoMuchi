@@ -751,6 +751,16 @@ pub struct ClimateParams {
     pub t_pole_drop_c: f64,
     pub t_lat_exponent: f64,
     pub lapse_c_per_km: f64,
+    /// К5 (Д-111), только `v1-dev`: высота поверхности в игре, ниже которой
+    /// вычет температуры от высоты не зависит, блоки (y).
+    pub alt_cool_base_y: f64,
+    /// К5 (Д-111), только `v1-dev`: вычет на каждый блок выше
+    /// `alt_cool_base_y`, °C.
+    pub alt_cool_c_per_block: f64,
+    /// К5 (Д-111), только `v1-dev`: постоянный вычет на всей суше, °C —
+    /// средний прежний вычет на суше ниже порога. Без него мир теплеет
+    /// на эту величину и леса уходят в саванну и пустыню.
+    pub alt_cool_land_c: f64,
     pub cont_tropical_c: f64,
     pub cont_polar_c: f64,
     pub amp_base_c: f64,
@@ -1597,6 +1607,9 @@ impl Params {
                 t_pole_drop_c: 52.0,
                 t_lat_exponent: 1.6,
                 lapse_c_per_km: 6.5,
+                alt_cool_base_y: 120.0,
+                alt_cool_c_per_block: 0.2,
+                alt_cool_land_c: 3.5,
                 cont_tropical_c: 2.0,
                 cont_polar_c: 6.0,
                 amp_base_c: 1.0,
@@ -2253,6 +2266,16 @@ impl Params {
             writeln!(w, "height.ocean_y={:?}", hg.ocean_y).unwrap();
             writeln!(w, "height.factor={:?}", hg.factor).unwrap();
             writeln!(w, "height.jaggedness={:?}", hg.jaggedness).unwrap();
+            for (name, value) in [
+                ("climate.alt_cool_base_y", self.climate.alt_cool_base_y),
+                (
+                    "climate.alt_cool_c_per_block",
+                    self.climate.alt_cool_c_per_block,
+                ),
+                ("climate.alt_cool_land_c", self.climate.alt_cool_land_c),
+            ] {
+                writeln!(w, "{name}={value:?}").unwrap();
+            }
             for (name, value) in [
                 ("height.coast_width_c", hg.coast_width_c),
                 ("height.shore_width_blocks", hg.shore_width_blocks),

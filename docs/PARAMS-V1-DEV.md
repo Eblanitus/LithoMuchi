@@ -1,6 +1,6 @@
 # Параметры генератора v1-dev
 
-> **Актуально на 2026-11-16, К4а/часть 2 нового плана — крутизна своей поверхности (Д-110): убран `height.shore_probe_blocks`, `morpho.e_remap_hi` аридной зоны в scientific 0,05 → 0,11; до этого К4 — спуск суши к воде по расстоянию до берега (Д-108); до этого К1 — откат шума границ к `v0` (Д-103); до этого шаг 3 плана T123 (Д-095); до этого шаг 2 T113 (Д-092), T79 (Д-064) и шаг 7
+> **Актуально на 2026-11-16, К5 нового плана — вычет температуры по высоте поверхности в игре (Д-111): добавлены `climate.alt_cool_base_y`, `climate.alt_cool_c_per_block`, `climate.alt_cool_land_c`; до этого К4а/часть 2 — крутизна своей поверхности (Д-110): убран `height.shore_probe_blocks`, `morpho.e_remap_hi` аридной зоны в scientific 0,05 → 0,11; до этого К4 — спуск суши к воде по расстоянию до берега (Д-108); до этого К1 — откат шума границ к `v0` (Д-103); до этого шаг 3 плана T123 (Д-095); до этого шаг 2 T113 (Д-092), T79 (Д-064) и шаг 7
 > (Д-065).** Таблица и хеши
 > сгенерированы из `Params::defaults`; `v0` не менялась. Что изменилось —
 > [archive/T79-LOD-2026-11-12.md](archive/T79-LOD-2026-11-12.md) (дальний рельеф) и
@@ -68,6 +68,9 @@
 | `channels.valley_mountain` | `2.0` | `2.0` |
 | `channels.valley_plain` | `5.0` | `5.0` |
 | `climate.advection_wind_min` | `0.6` | `0.6` |
+| `climate.alt_cool_base_y` | `120.0` | `120.0` |
+| `climate.alt_cool_c_per_block` | `0.2` | `0.2` |
+| `climate.alt_cool_land_c` | `3.5` | `3.5` |
 | `climate.amp_base_c` | `1.0` | `1.0` |
 | `climate.amp_land_factor` | `0.75` | `0.75` |
 | `climate.amp_lat_c` | `24.0` | `24.0` |
@@ -419,4 +422,4 @@
 | `wind.knot7.phi_deg` | `90` | `90` |
 | `wind.knot7.s` | `0.3` | `0.3` |
 
-params_hash: scientific = b657080aab36cf75, gameplay = 5eb1e25cc53c53d5
+params_hash: scientific = 49b8d15148c8d1ff, gameplay = 2bb5c9aa62f4a40d
