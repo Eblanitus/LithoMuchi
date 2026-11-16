@@ -33,6 +33,23 @@ const FIELDS: [&str; 5] = [
 /// v1-dev заменяет PV (`ridges_folded`), offset, factor и jaggedness
 /// (К4а, часть 1, Д-106): игра перестаёт добавлять свой рельеф.
 const I2_FIELDS: [&str; 4] = ["offset", "pv", "factor", "jaggedness"];
+/// К6 (Д-112): в `.hnmod` встраиваются ВСЕ паки, которые собирает xtask
+/// (v0 и v1-dev обоих режимов + smoke). Клиентский хук кладёт их в папку
+/// паков нового мира, поэтому Data Packs видит их без перетаскивания файлов.
+fn embedded_pack_names() -> Vec<String> {
+    let mut names = Vec::new();
+    for version in PACK_VERSIONS {
+        for mode in Mode::ALL {
+            names.push(format!(
+                "litospherity_{}_{}",
+                version.as_str(),
+                mode.as_str()
+            ));
+        }
+    }
+    names.push("litospherity_smoke".to_string());
+    names
+}
 
 fn repo_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
@@ -273,6 +290,65 @@ fn cmd_pack(out: &Path) -> Result<(), String> {
     Ok(())
 }
 
+/// К6 (Д-112): файлы одного пака плоским списком (путь от корня пака, текст).
+fn read_pack_files(
+    dir: &Path,
+    prefix: &str,
+    out: &mut Vec<(String, String)>,
+) -> Result<(), String> {
+    let entries = fs::read_dir(dir).map_err(|e| format!("не читаю {}: {e}", dir.display()))?;
+    let mut paths: Vec<PathBuf> = entries.flatten().map(|entry| entry.path()).collect();
+    paths.sort();
+    for path in paths {
+        let name = path
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let rel = if prefix.is_empty() {
+            name.clone()
+        } else {
+            format!("{prefix}/{name}")
+        };
+        if path.is_dir() {
+            read_pack_files(&path, &rel, out)?;
+        } else {
+            let text = fs::read_to_string(&path)
+                .map_err(|e| format!("не читаю {}: {e}", path.display()))?;
+            out.push((rel, text));
+        }
+    }
+    Ok(())
+}
+
+/// К6 (Д-112): генерирует модуль `litospherity_packs` с паками v1-dev.
+/// Он попадает в `.hnmod` (`glue/packs_data.rs`), а клиентский хук кладёт
+/// паки в папку паков нового мира — Data Packs видит их без перетаскивания.
+fn write_embedded_packs(packs: &Path, target: &Path) -> Result<usize, String> {
+    let mut text = String::from(
+        "// Сгенерировано `xtask bundle` (К6, Д-112). Не редактировать.\n\
+         // Паки v1-dev внутри `.hnmod`: клиентский хук кладёт их в папку\n\
+         // паков нового мира, и Data Packs показывает их без перетаскивания.\n\
+         pub const PACKS: &[(&str, &[(&str, &str)])] = &[\n",
+    );
+    let mut total = 0;
+    for name in embedded_pack_names() {
+        let mut files = Vec::new();
+        read_pack_files(&packs.join(&name), "", &mut files)?;
+        if files.is_empty() {
+            return Err(format!("пак {name} пуст: нечего встраивать"));
+        }
+        text.push_str(&format!("    (\n        {name:?},\n        &[\n"));
+        for (path, contents) in &files {
+            text.push_str(&format!("            ({path:?}, {contents:?}),\n"));
+            total += contents.len();
+        }
+        text.push_str("        ],\n    ),\n");
+    }
+    text.push_str("];\n");
+    write_file(target, &text)?;
+    Ok(total)
+}
+
 fn copy_dir(src: &Path, dst: &Path) -> Result<usize, String> {
     fs::create_dir_all(dst).map_err(|e| format!("не могу создать {}: {e}", dst.display()))?;
     let mut count = 0;
@@ -331,11 +407,17 @@ fn cmd_bundle(out: &Path) -> Result<(), String> {
         &out.join("crates/litho-core"),
     )?;
     cmd_pack(&out.join("packs"))?;
+    let embedded = write_embedded_packs(&out.join("packs"), &out.join("glue/packs_data.rs"))?;
+    println!(
+        "паки в `.hnmod`: {}, {embedded} байт текста",
+        embedded_pack_names().len()
+    );
     write_file(
         &out.join("README.txt"),
         "Бандл собран xtask; план проверен horizon-mixins в CI, но НЕ собран лаунчером.\n\
          Команда на Windows: horizon-launcher native-build <эта папка> --instance <имя> --trust-native-code\n\
-         Smoke: включите только litospherity_smoke, мир должен быть всюду сушей.\n\
+         Все паки (v0, v1-dev обоих режимов и smoke) уже внутри мода: при создании\n\
+         мира они видны в Data Packs, отдельные zip-файлы не нужны (К6, Д-112).\n\
          Тест №2: включите только litospherity_v1-dev_gameplay, запишите сид и номер сборки.\n\
          Актуальное состояние: docs/PLAN.md в репозитории.\n",
     )?;
@@ -458,6 +540,20 @@ fn cmd_bundle_check(out: &Path) -> Result<(), String> {
     let smoke = out.join("packs/litospherity_smoke/pack.mcmeta");
     if !smoke.is_file() {
         return Err("нет smoke-пака (DoD Э2)".into());
+    }
+    // К6 (Д-112): встроенные паки обязаны быть в бандле, иначе `.hnmod`
+    // соберётся без них, а экран Data Packs останется пустым.
+    let embedded = out.join("glue/packs_data.rs");
+    let text = fs::read_to_string(&embedded)
+        .map_err(|e| format!("нет {}: {e}", embedded.display()))?;
+    let names = embedded_pack_names();
+    for name in &names {
+        if !text.contains(&format!("{name:?}")) {
+            return Err(format!("packs_data.rs: нет пака {name}"));
+        }
+    }
+    if text.matches("\"pack.mcmeta\"").count() < names.len() {
+        return Err("packs_data.rs: нет pack.mcmeta у встроенных паков".into());
     }
     let n = check_no_placeholders(out)?;
     println!("Э2: бандл проверен, файлов {n}, плейсхолдеров нет");

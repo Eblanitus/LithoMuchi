@@ -3,8 +3,10 @@
 
 This is the single source of a real ``litospherity.hnmod``: client hooks, the
 injected worldgen manifest, the litho-core crate, glue sources, and every
-generated datapack (smoke, v0 and v1-dev). It validates the pins and the paths
-that horizon-mixins will resolve. Native compilation still happens in CI.
+generated datapack (smoke, v0 and v1-dev), embedded as Rust source (К6, Д-112):
+the client hook copies them into the new world's pack folder, so the Data Packs
+screen shows them without dragging zip files. It validates the pins and the
+paths that horizon-mixins will resolve. Native compilation still happens in CI.
 """
 import argparse
 import json
@@ -48,6 +50,25 @@ def validate_pack(pack: Path) -> None:
         for name in ("ridges_folded", "offset", "factor", "jaggedness"):
             if (df / f"{name}.json").exists() or any(noise.rglob(f"{name}.json")):
                 raise ValueError(f"Замороженный {pack.name} не должен менять {name}")
+
+
+def verify_embedded(hnmod: Path, packs) -> None:
+    """К6 (Д-112): паки обязаны быть внутри архива, а не рядом с ним."""
+    with zipfile.ZipFile(hnmod) as source:
+        try:
+            text = source.read("mixins/litospherity/glue/packs_data.rs").decode("utf-8")
+        except KeyError:
+            raise ValueError(
+                "в .hnmod нет glue/packs_data.rs: паки не встроены"
+            ) from None
+    for pack in packs:
+        if f'"{pack.name}"' not in text:
+            raise ValueError(f"в .hnmod нет встроенного пака {pack.name}")
+        if not (pack / "pack.mcmeta").is_file():
+            raise ValueError(f"нет pack.mcmeta в {pack}")
+    if text.count('"pack.mcmeta"') < len(packs):
+        raise ValueError("packs_data.rs: не у всех паков есть pack.mcmeta")
+    print(f"Паки внутри .hnmod: {len(packs)} (отдельных .zip нет)")
 
 
 def package(bundle, out):
@@ -96,8 +117,8 @@ def package(bundle, out):
     packs = sorted(path for path in (bundle / "packs").iterdir() if path.is_dir())
     for pack in packs:
         validate_pack(pack)
-        archive(pack, out / (pack.name + ".zip"))
-    print(f"Packaged mod and {len(packs)} datapacks: {out}")
+    verify_embedded(out / "litospherity.hnmod", packs)
+    print(f"Packaged mod with {len(packs)} embedded datapacks: {out}")
     print("Horizon / mixins pins: " + PINS["horizon"] + " / " + PINS["horizon_mixins"])
     print("Native compilation and in-game world generation still require Horizon.")
 

@@ -65,3 +65,31 @@ cancellable = true
 target = "horizon_world::worldgen::aquifer::noise_based::<RegistryAquiferBlockStates<'_> as AquiferBlockStates>::is_lava"
 helper = "glue/is_lava_hook.rs"
 bindings = []
+
+# К6 (Д-112): все паки (v0, v1-dev обоих режимов и smoke) внутри `.hnmod`.
+# Клиентский хук кладёт их в папку паков нового мира, поэтому они видны в
+# Data Packs без перетаскивания файлов. Данные генерирует `xtask bundle`
+# из `out/bundle/packs`.
+[[module]]
+id = "packs"
+file = "crates/horizon-client/src/title.rs"
+name = "litospherity_packs"
+source = "glue/packs_data.rs"
+
+[[injection]]
+id = "packs-seed-click"
+kind = "HEAD"
+target = "horizon_client::title::Title::click"
+helper = "glue/packs_seed_hook.rs"
+bindings = [
+  { name = "title", ty = "&mut Title", value = "&mut *self" },
+]
+
+[[injection]]
+id = "packs-seed-key"
+kind = "HEAD"
+target = "horizon_client::title::Title::confirm_key_size"
+helper = "glue/packs_seed_hook.rs"
+bindings = [
+  { name = "title", ty = "&mut Title", value = "&mut *self" },
+]

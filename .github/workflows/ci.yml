@@ -318,6 +318,19 @@ jobs:
           fi
           cat /tmp/litho-deep-lava.log
           grep -E 'v1-dev|vanilla|test result' /tmp/litho-deep-lava.log | sed 's/^/::notice::/'
+      - name: "К6 — клиент Horizon с внедрённым хуком паков собирается"
+        # Хук `Title::click`/`Title::confirm_key_size` — единственное место,
+        # где наш код попадает в клиент. Пока он не скомпилирован, `.hnmod`
+        # нельзя считать собранным, поэтому это настоящий гейт (Д-112).
+        timeout-minutes: 60
+        run: |
+          if ! cargo check --locked --offline --manifest-path /tmp/litho-horizon-staged-ci/Cargo.toml \
+            -p horizon-client > /tmp/litho-client-check.log 2>&1; then
+            tail -80 /tmp/litho-client-check.log
+            grep -E '^error' /tmp/litho-client-check.log | head -20 | sed 's/^/::error::/'
+            exit 1
+          fi
+          tail -5 /tmp/litho-client-check.log
       - name: "К2 — настоящие данные 26.3: depth = 0.375 + offset"
         run: |
           mkdir -p /tmp/litho-horizon-staged-ci/crates/horizon-world/tests
@@ -343,7 +356,7 @@ jobs:
         run: |
           cargo run -q -p xtask -- bundle --out out/bundle
           cargo run -q -p xtask -- bundle-check --out out/bundle
-      - name: Упаковать клиентские хуки, ядро и все паки (v0 + v1-dev + smoke)
+      - name: Упаковать клиентские хуки, ядро и все паки внутрь .hnmod (К6)
         run: python3 tools/package_mod.py --bundle out/bundle --out out/release
       - uses: actions/checkout@v4
         with:
@@ -380,5 +393,4 @@ jobs:
           name: litospherity-hnmod
           path: |
             out/release/litospherity.hnmod
-            out/release/*.zip
             out/native-plan.json
