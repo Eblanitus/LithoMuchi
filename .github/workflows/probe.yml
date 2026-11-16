@@ -85,6 +85,7 @@ jobs:
           offsets = [(0.0, 0.0)] if step <= 0 else [
               (dx * step, dz * step) for dz in (-1.0, 0.0, 1.0) for dx in (-1.0, 0.0, 1.0)
           ]
+          commands = request.get("commands") or []
           for seed in seeds:
               for x, z in points:
                   print(f"## сид {seed}: точка ({x:.0f}, {z:.0f})")
@@ -95,6 +96,16 @@ jobs:
                       px, pz = x + dx, z + dz
                       print(f"| {px:.0f} | {pz:.0f} | {probe(seed, px, pz)} |")
                   print()
+          for argv in commands:
+              argv = [str(a) for a in argv]
+              print(f"## sandbox {argv[0]} {' '.join(argv[1:])}")
+              print()
+              print("```")
+              run = subprocess.run(["./target/release/litho-sandbox"] + argv,
+                                   capture_output=True, text=True)
+              print((run.stdout + run.stderr).rstrip())
+              print("```")
+              print()
           PY
           sed 's/^/::notice::/; s/^::notice::|//' probe.txt | grep -v '^::notice::$' | head -60
       - name: Результат в ветку (docs/probe/<имя>/, без повторного CI)
