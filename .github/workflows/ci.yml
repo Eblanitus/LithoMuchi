@@ -326,7 +326,10 @@ jobs:
         timeout-minutes: 60
         continue-on-error: true
         run: |
-          if ! cargo check --locked --offline --manifest-path .external/horizon/Cargo.toml \
+          # Без `audio` и `controllers`: на Linux им нужны libasound/libudev,
+          # а в Horizon это штатная сборка без звука (`--no-default-features`).
+          if ! cargo check --locked --offline --no-default-features \
+            --manifest-path .external/horizon/Cargo.toml \
             -p horizon-client > /tmp/litho-client-pristine.log 2>&1; then
             python3 - <<'PYTHON'
           lines = open("/tmp/litho-client-pristine.log", errors="replace").read().splitlines()
@@ -345,7 +348,8 @@ jobs:
         if: steps.pristine.outcome == 'success'
         timeout-minutes: 60
         run: |
-          if ! cargo check --locked --offline --manifest-path /tmp/litho-horizon-staged-ci/Cargo.toml \
+          if ! cargo check --locked --offline --no-default-features \
+            --manifest-path /tmp/litho-horizon-staged-ci/Cargo.toml \
             -p horizon-client > /tmp/litho-client-check.log 2>&1; then
             python3 - <<'PYTHON'
           lines = open("/tmp/litho-client-check.log", errors="replace").read().splitlines()
