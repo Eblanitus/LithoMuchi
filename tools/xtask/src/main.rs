@@ -291,49 +291,45 @@ fn cmd_pack(out: &Path) -> Result<(), String> {
 }
 
 /// К6 (Д-112): файлы одного пака плоским списком (путь от корня пака, текст).
-fn read_pack_files(
-    dir: &Path,
-    prefix: &str,
-    out: &mut Vec<(String, String)>,
-) -> Result<(), String> {
+fn read_pack_files(dir: &Path, prefix: &str) -> Result<Vec<(String, String)>, String> {
     let entries = fs::read_dir(dir).map_err(|e| format!("не читаю {}: {e}", dir.display()))?;
     let mut paths: Vec<PathBuf> = entries.flatten().map(|entry| entry.path()).collect();
     paths.sort();
+    let mut out = Vec::new();
     for path in paths {
-        let name = path
-            .file_name()
-            .map(|n| n.to_string_lossy().into_owned())
-            .unwrap_or_default();
+        let name = match path.file_name() {
+            Some(name) => name.to_string_lossy().into_owned(),
+            None => String::new(),
+        };
         let rel = if prefix.is_empty() {
             name.clone()
         } else {
             format!("{prefix}/{name}")
         };
         if path.is_dir() {
-            read_pack_files(&path, &rel, out)?;
+            out.extend(read_pack_files(&path, &rel)?);
         } else {
             let text = fs::read_to_string(&path)
                 .map_err(|e| format!("не читаю {}: {e}", path.display()))?;
             out.push((rel, text));
         }
     }
-    Ok(())
+    Ok(out)
 }
 
-/// К6 (Д-112): генерирует модуль `litospherity_packs` с паками v1-dev.
+/// К6 (Д-112): генерирует модуль `litospherity_packs` со всеми паками.
 /// Он попадает в `.hnmod` (`glue/packs_data.rs`), а клиентский хук кладёт
 /// паки в папку паков нового мира — Data Packs видит их без перетаскивания.
 fn write_embedded_packs(packs: &Path, target: &Path) -> Result<usize, String> {
     let mut text = String::from(
         "// Сгенерировано `xtask bundle` (К6, Д-112). Не редактировать.\n\
-         // Паки v1-dev внутри `.hnmod`: клиентский хук кладёт их в папку\n\
+         // Паки (v0, v1-dev, smoke) внутри `.hnmod`: хук кладёт их в папку\n\
          // паков нового мира, и Data Packs показывает их без перетаскивания.\n\
          pub const PACKS: &[(&str, &[(&str, &str)])] = &[\n",
     );
     let mut total = 0;
     for name in embedded_pack_names() {
-        let mut files = Vec::new();
-        read_pack_files(&packs.join(&name), "", &mut files)?;
+        let files = read_pack_files(&packs.join(&name), "")?;
         if files.is_empty() {
             return Err(format!("пак {name} пуст: нечего встраивать"));
         }
@@ -394,6 +390,7 @@ fn cmd_bundle(out: &Path) -> Result<(), String> {
             "glue/aquifer_reset_hook.rs",
         ),
         ("glue/is_lava_hook.rs.in", "glue/is_lava_hook.rs"),
+        ("glue/packs_seed_hook.rs.in", "glue/packs_seed_hook.rs"),
         ("glue/litospherity_glue.rs.in", "glue/litospherity_glue.rs"),
     ] {
         let text = read_template(src)?;
@@ -407,11 +404,9 @@ fn cmd_bundle(out: &Path) -> Result<(), String> {
         &out.join("crates/litho-core"),
     )?;
     cmd_pack(&out.join("packs"))?;
-    let embedded = write_embedded_packs(&out.join("packs"), &out.join("glue/packs_data.rs"))?;
-    println!(
-        "паки в `.hnmod`: {}, {embedded} байт текста",
-        embedded_pack_names().len()
-    );
+    let embedded =
+        write_embedded_packs(&out.join("packs"), &out.join("glue/packs_data.rs"))?;
+    println!("паки в `.hnmod`: {}, {embedded} байт текста", embedded_pack_names().len());
     write_file(
         &out.join("README.txt"),
         "Бандл собран xtask; план проверен horizon-mixins в CI, но НЕ собран лаунчером.\n\
@@ -435,10 +430,10 @@ fn check_no_placeholders(dir: &Path) -> Result<usize, String> {
             count += check_no_placeholders(&path)?;
             continue;
         }
-        let name = path
-            .file_name()
-            .map(|n| n.to_string_lossy().into_owned())
-            .unwrap_or_default();
+        let name = match path.file_name() {
+            Some(name) => name.to_string_lossy().into_owned(),
+            None => String::new(),
+        };
         if !(name.ends_with(".json")
             || name.ends_with(".toml")
             || name.ends_with(".rs")
@@ -544,8 +539,8 @@ fn cmd_bundle_check(out: &Path) -> Result<(), String> {
     // К6 (Д-112): встроенные паки обязаны быть в бандле, иначе `.hnmod`
     // соберётся без них, а экран Data Packs останется пустым.
     let embedded = out.join("glue/packs_data.rs");
-    let text = fs::read_to_string(&embedded)
-        .map_err(|e| format!("нет {}: {e}", embedded.display()))?;
+    let text =
+        fs::read_to_string(&embedded).map_err(|e| format!("нет {}: {e}", embedded.display()))?;
     let names = embedded_pack_names();
     for name in &names {
         if !text.contains(&format!("{name:?}")) {
