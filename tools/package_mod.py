@@ -3,8 +3,10 @@
 
 This is the single source of a real ``litospherity.hnmod``: client hooks, the
 injected worldgen manifest, the litho-core crate, glue sources, and every
-generated datapack (smoke, v0 and v1-dev). It validates the pins and the paths
-that horizon-mixins will resolve. Native compilation still happens in CI.
+generated datapack (smoke, v0 and v1-dev), embedded as Rust source (К6, Д-112):
+the client hook copies them into the new world's pack folder, so the Data Packs
+screen shows them without dragging zip files. It validates the pins and the
+paths that horizon-mixins will resolve. Native compilation still happens in CI.
 """
 import argparse
 import json
@@ -44,10 +46,106 @@ def validate_pack(pack: Path) -> None:
         for name in ("pv", "offset", "factor", "jaggedness"):
             if not any(noise.rglob(f"{name}.json")):
                 raise ValueError(f"В {pack.name} нет шума {name}")
+    if pack.name == "litospherity_v1-dev_scientific":
+        # К7 (Д-113): научный мир выше ванильного — 512 блоков от -64.
+        dim_path = pack / "data/minecraft/dimension_type/overworld.json"
+        settings_path = pack / "data/minecraft/worldgen/noise_settings/overworld.json"
+        if not dim_path.is_file() or not settings_path.is_file():
+            raise ValueError("К7: в научном паке нет dimension_type/noise_settings")
+        dim = json.loads(dim_path.read_text())
+        settings = json.loads(settings_path.read_text())
+        if dim["min_y"] % 16 or dim["height"] % 16 or dim["height"] < 16:
+            raise ValueError("К7: высота мира не кратна 16")
+        if dim["min_y"] + dim["height"] > 2032:
+            raise ValueError("К7: высота мира за пределом Horizon")
+        if settings["noise"]["height"] != dim["height"]:
+            raise ValueError("К7: высота шума не равна высоте мира")
+        if settings["noise"]["min_y"] != dim["min_y"]:
+            raise ValueError("К7: низ шума не равен низу мира")
+    elif pack.name == "litospherity_v1-dev_gameplay":
+        if (pack / "data/minecraft/dimension_type/overworld.json").exists():
+            raise ValueError("К7: геймплейный пак не меняет высоту мира")
     elif pack.name.startswith("litospherity_v0_"):
         for name in ("ridges_folded", "offset", "factor", "jaggedness"):
             if (df / f"{name}.json").exists() or any(noise.rglob(f"{name}.json")):
                 raise ValueError(f"Замороженный {pack.name} не должен менять {name}")
+
+
+def rust_string(text: str) -> str:
+    """К6: строка Rust для `packs_data.rs` (данные паков едут в исходнике)."""
+    parts = ['"']
+    for char in text:
+        if char == "\\":
+            parts.append("\\\\")
+        elif char == '"':
+            parts.append('\\"')
+        elif char == "\n":
+            parts.append("\\n")
+        elif char == "\r":
+            parts.append("\\r")
+        elif char == "\t":
+            parts.append("\\t")
+        elif ord(char) < 0x20 or ord(char) == 0x7F:
+            raise ValueError(f"управляющий символ {ord(char):#x} в паке")
+        else:
+            parts.append(char)
+    parts.append('"')
+    return "".join(parts)
+
+
+def pack_dirs(bundle: Path) -> list[Path]:
+    return sorted(path for path in (bundle / "packs").iterdir() if path.is_dir())
+
+
+def write_packs_module(bundle: Path, target: Path) -> int:
+    """К6 (Д-112): паки в `.hnmod` как модуль `litospherity_packs`."""
+    packs = pack_dirs(bundle)
+    if not packs:
+        raise ValueError("в бандле нет паков: нечего встраивать")
+    lines = [
+        "// Сгенерировано `tools/package_mod.py` (К6, Д-112). Не редактировать.",
+        "// Все паки уже внутри `.hnmod`: клиентский хук кладёт их в папку паков",
+        "// нового мира, и Data Packs показывает их без перетаскивания файлов.",
+        "pub const PACKS: &[(&str, &[(&str, &str)])] = &[",
+    ]
+    total = 0
+    for pack in packs:
+        files = sorted(path for path in pack.rglob("*") if path.is_file())
+        if not files:
+            raise ValueError(f"пак {pack.name} пуст: нечего встраивать")
+        lines.append("    (")
+        lines.append(f"        {rust_string(pack.name)},")
+        lines.append("        &[")
+        for path in files:
+            relative = path.relative_to(pack).as_posix()
+            text = path.read_text()
+            total += len(text)
+            lines.append(f"            ({rust_string(relative)}, {rust_string(text)}),")
+        lines.append("        ],")
+        lines.append("    ),")
+    lines.append("];")
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text("\n".join(lines) + "\n")
+    return total
+
+
+def verify_embedded(hnmod: Path, packs) -> None:
+    """К6 (Д-112): паки обязаны быть внутри архива, а не рядом с ним."""
+    with zipfile.ZipFile(hnmod) as source:
+        try:
+            text = source.read("mixins/litospherity/glue/packs_data.rs").decode("utf-8")
+        except KeyError:
+            raise ValueError(
+                "в .hnmod нет glue/packs_data.rs: паки не встроены"
+            ) from None
+    for pack in packs:
+        if f'"{pack.name}"' not in text:
+            raise ValueError(f"в .hnmod нет встроенного пака {pack.name}")
+        if not (pack / "pack.mcmeta").is_file():
+            raise ValueError(f"нет pack.mcmeta в {pack}")
+    if text.count('"pack.mcmeta"') < len(packs):
+        raise ValueError("packs_data.rs: не у всех паков есть pack.mcmeta")
+    print(f"Паки внутри .hnmod: {len(packs)} (отдельных .zip нет)")
 
 
 def package(bundle, out):
@@ -77,12 +175,18 @@ def package(bundle, out):
         target = staging / "mixins/litospherity"
         for name in ("glue", "crates"):
             shutil.copytree(bundle / name, target / name, dirs_exist_ok=True)
+        embedded = write_packs_module(bundle, target / "glue/packs_data.rs")
         manifest = target / "horizon-mixin.toml"
         manifest.write_text(manifest.read_text() + "\n" + additions)
         parsed = tomllib.loads(manifest.read_text())
         for entry in parsed.get("module", []):
             if not (target / entry["source"]).is_file():
                 raise ValueError(f"[[module]] {entry['id']}: нет {entry['source']}")
+        if not any(
+            entry["source"] == "glue/packs_data.rs"
+            for entry in parsed.get("module", [])
+        ):
+            raise ValueError("в манифесте нет [[module]] с паками (К6)")
         for entry in parsed.get("injection", []):
             if not (target / entry["helper"]).is_file():
                 raise ValueError(f"[[injection]] {entry['id']}: нет {entry['helper']}")
@@ -96,8 +200,9 @@ def package(bundle, out):
     packs = sorted(path for path in (bundle / "packs").iterdir() if path.is_dir())
     for pack in packs:
         validate_pack(pack)
-        archive(pack, out / (pack.name + ".zip"))
-    print(f"Packaged mod and {len(packs)} datapacks: {out}")
+    verify_embedded(out / "litospherity.hnmod", packs)
+    print(f"Packaged mod with {len(packs)} embedded datapacks: {out}")
+    print(f"Embedded pack text: {embedded} bytes")
     print("Horizon / mixins pins: " + PINS["horizon"] + " / " + PINS["horizon_mixins"])
     print("Native compilation and in-game world generation still require Horizon.")
 

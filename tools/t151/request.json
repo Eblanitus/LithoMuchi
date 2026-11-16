@@ -1,10 +1,9 @@
 {
-  "name": "t123-remap-final2",
-  "note": "Д-095, итоговый замер шага 3 без --set: значения по умолчанию этого коммита, 16 сидов × 2 режима. Отличие от t123-remap-final: полуаридная зона gameplay отдаёт часть плато холмам (y 90–130 у сида 7 было 25.12).",
+  "name": "k9-gp-1",
+  "note": "К9, приёмочный объём 10.1, gameplay: сетка границ 1600 при шаге 32 блока — span 204,8 L (Д-084), 16 сидов, patches 1: как в acceptance-vol-gp-1, но на генераторе после К4а/К5/К7. Научный объём — замер k9-sc-1.",
   "version": "v1-dev",
   "modes": [
-    "gameplay",
-    "scientific"
+    "gameplay"
   ],
   "seeds": [
     -123456789,
@@ -24,5 +23,5 @@
     99999,
     987654321
   ],
-  "args": "--size 160 --patches 5 --relief-size 16 --boundary-size 32"
+  "args": "--size 160 --patches 1 --relief-size 16 --boundary-size 1600"
 }

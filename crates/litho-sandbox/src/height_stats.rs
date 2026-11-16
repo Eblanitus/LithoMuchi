@@ -664,6 +664,11 @@ pub struct HeightStats {
     pub deferred_samples: usize,
     pub gallery_samples: usize,
     pub hyps: [usize; 5],
+    /// К7: самая высокая суша и сколько точек суши стоит на потолке
+    /// `height.max_y` — так видно, упираются ли горы в потолок.
+    pub max_land_y: f64,
+    pub ceiling_y: f64,
+    pub ceiling_land: usize,
     pub erosion: [usize; 7],
     pub valley: usize,
     /// Д-057: суша в полосе `river ≥ 0.5` вне выреза русла — плоский сухой
@@ -1158,6 +1163,9 @@ impl HeightStats {
             deferred_samples: 0,
             gallery_samples: 0,
             hyps: [0; 5],
+            max_land_y: 0.0,
+            ceiling_y: 0.0,
+            ceiling_land: 0,
             erosion: [0; 7],
             valley: 0,
             dry_bank: 0,
@@ -1174,6 +1182,7 @@ impl HeightStats {
         model: &HeightModel,
     ) -> Result<Self, String> {
         let generator = crate::tune::generator(base.seed, base.mode, base.version)?;
+        let ceiling_y = generator.params().height.max_y;
         let step = opts.span_l * base.mode.l_blocks() / opts.size as f64;
         let mut out = Self {
             seed: base.seed,
@@ -1202,6 +1211,9 @@ impl HeightStats {
             deferred_samples: 0,
             gallery_samples: 0,
             hyps: [0; 5],
+            max_land_y: 0.0,
+            ceiling_y: 0.0,
+            ceiling_land: 0,
             erosion: [0; 7],
             valley: 0,
             dry_bank: 0,
@@ -1215,6 +1227,7 @@ impl HeightStats {
             ),
             plan: None,
         };
+        out.ceiling_y = ceiling_y;
         out.plate_area_l2 = (opts.span_l / opts.size as f64).powi(2);
         let land_threshold = generator.params().climate.ocean_c_threshold;
         // 12.4: точка появления. Поиск уже выполнен в `Generator::new`,
@@ -1354,6 +1367,10 @@ impl HeightStats {
                 }
                 out.land += 1;
                 out.hyps[HYPS_EDGES.partition_point(|edge| y >= *edge)] += 1;
+                out.max_land_y = out.max_land_y.max(y);
+                if y >= out.ceiling_y {
+                    out.ceiling_land += 1;
+                }
                 out.erosion[E_EDGES.partition_point(|edge| v.e >= *edge)] += 1;
                 let pv = if base.pv {
                     world.pv
@@ -1558,6 +1575,10 @@ impl HeightStats {
         }
         Ok(out)
     }
+    /// К7: доля суши, стоящей на потолке высоты.
+    fn ceiling_pct(&self) -> f64 {
+        self.pct(self.ceiling_land, self.land)
+    }
     fn pct(&self, count: usize, total: usize) -> f64 {
         if total == 0 {
             0.0
@@ -1638,6 +1659,7 @@ impl HeightStats {
              область={span}×{span} L, шаг={step:.3} блока, точек={samples}, суша без русел={land}\n\
              затопленная суша y<63 {flood:6.2}% (быстрая цель ≤10%, v1 ≤5%)\n\
              гипсометрия <63 / 63–70 / 70–90 / 90–130 / ≥130: {h0:.2} / {h1:.2} / {h2:.2} / {h3:.2} / {h4:.2}%\n\
+             К7: самая высокая суша {max_land:.2} блоков, потолок высоты {cap:.0}, на потолке {ceiling:.2}% суши\n\
              E4 {e4:.2}% (быстрая цель ≤60%); E2+E3 {e23:.2}%; E0+E1 {e01:.2}%; E5+E6 {e56:.2}%\n\
              долина PV<-0.85 {valley:.2}% (v1 ≤8% gameplay / ≤6% scientific)\n\
              окна {window}×{window} блоков: медиана перепада {median:.2} (быстрая цель ≥8), <4 блоков {flat:.2}%, окон={windows}\n\
@@ -1665,6 +1687,9 @@ impl HeightStats {
             h2 = self.pct(self.hyps[2], self.land),
             h3 = self.pct(self.hyps[3], self.land),
             h4 = self.pct(self.hyps[4], self.land),
+            max_land = self.max_land_y,
+            cap = self.ceiling_y,
+            ceiling = self.ceiling_pct(),
             e4 = self.e4(),
             e23 = self.e23(),
             e01 = self.e01(),
@@ -1821,7 +1846,7 @@ impl HeightStats {
             .collect::<Vec<_>>()
             .join(", ");
         format!(
-            "{{\n  \"seed\": {}, \"mode\": {}, \"version\": {}, \"path\": {},\n  \"height_source\": {}, \"height_data_hash\": \"{:016x}\", \"synthetic\": {}, \"pv_field\": {},\n  \"approximation\": {},\n  \"span_l\": {}, \"size\": {}, \"samples\": {}, \"land_samples\": {},\n  \"flooded_land_pct\": {}, \"hyps_pct\": {:?}, \"erosion_pct\": {:?},\n  \"valley_pct\": {}, \"set\": {}, \"params_hash\": \"{:016x}\", \"patches\": {}, \"relief_step\": {}, \"relief_windows\": {}, \"relief_median\": {}, \"flat_windows_pct\": {},\n  \"river_samples\": {}, \"river_water_pct\": {}, \"gallery_samples\": {}, \"gallery_pct\": {},\n  \"boundary\": {{\"size\": {}, \"step\": {}, \"span_l\": {}, \"land\": {}, \"humidity_jump_pct\": {}, \"humidity_jump_pair_pct\": {}, \"humidity_jump_pairs\": {}, \"humidity_pairs\": {}, \"climate_land\": {}, \"climate_humidity_jump_pct\": {}, \"climate_humidity_pair_pct\": {}, \"climate_humidity_jump_pairs\": {}, \"climate_humidity_pairs\": {}, \"humidity_jump_cause_pairs\": {{{}}}, \"field_humidity_jump_pct\": {}, \"field_humidity_jump_pairs\": {}, \"wind_max_deg\": {}, \"wind_pairs\": {}, \"straight_pct\": {}, \"straight_edges\": {}, \"boundary_edges\": {}, \"straight_model\": \"grid-edge-chord-512-deviation-16\", \"thin_pct\": {}, \"min_strip_blocks\": {}, \"acceptance_volume\": {}}},\n  \"climate124\": {},\n  \"plan\": {}\n}}\n",
+            "{{\n  \"seed\": {}, \"mode\": {}, \"version\": {}, \"path\": {},\n  \"height_source\": {}, \"height_data_hash\": \"{:016x}\", \"synthetic\": {}, \"pv_field\": {},\n  \"approximation\": {},\n  \"span_l\": {}, \"size\": {}, \"samples\": {}, \"land_samples\": {},\n  \"flooded_land_pct\": {}, \"hyps_pct\": {:?}, \"max_land_y\": {:.2}, \"ceiling_y\": {:.2}, \"ceiling_land_pct\": {:.2}, \"erosion_pct\": {:?},\n  \"valley_pct\": {}, \"set\": {}, \"params_hash\": \"{:016x}\", \"patches\": {}, \"relief_step\": {}, \"relief_windows\": {}, \"relief_median\": {}, \"flat_windows_pct\": {},\n  \"river_samples\": {}, \"river_water_pct\": {}, \"gallery_samples\": {}, \"gallery_pct\": {},\n  \"boundary\": {{\"size\": {}, \"step\": {}, \"span_l\": {}, \"land\": {}, \"humidity_jump_pct\": {}, \"humidity_jump_pair_pct\": {}, \"humidity_jump_pairs\": {}, \"humidity_pairs\": {}, \"climate_land\": {}, \"climate_humidity_jump_pct\": {}, \"climate_humidity_pair_pct\": {}, \"climate_humidity_jump_pairs\": {}, \"climate_humidity_pairs\": {}, \"humidity_jump_cause_pairs\": {{{}}}, \"field_humidity_jump_pct\": {}, \"field_humidity_jump_pairs\": {}, \"wind_max_deg\": {}, \"wind_pairs\": {}, \"straight_pct\": {}, \"straight_edges\": {}, \"boundary_edges\": {}, \"straight_model\": \"grid-edge-chord-512-deviation-16\", \"thin_pct\": {}, \"min_strip_blocks\": {}, \"acceptance_volume\": {}}},\n  \"climate124\": {},\n  \"plan\": {}\n}}\n",
             self.seed,
             crate::json::quote(self.mode.as_str()),
             crate::json::quote(base.version.as_str()),
@@ -1841,6 +1866,9 @@ impl HeightStats {
             self.land,
             self.flooded(),
             self.hyps.map(|n| self.pct(n, self.land)),
+            self.max_land_y,
+            self.ceiling_y,
+            self.ceiling_pct(),
             self.erosion.map(|n| self.pct(n, self.land)),
             self.valley_pct(),
             crate::json::quote(&crate::tune::label()),

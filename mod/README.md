@@ -49,7 +49,7 @@ packs/noise.json.in          фиктивное определение шума;
 cargo run -q -p xtask -- pack --out out/packs
 cargo run -q -p xtask -- bundle --out out/bundle
 cargo run -q -p xtask -- bundle-check --out out/bundle
-python3 tools/package_mod.py          # .hnmod + ZIP всех паков + native-plan.json
+python3 tools/package_mod.py          # .hnmod со всеми паками внутри
 ```
 
 - `pack` генерирует паки `v0`, `v1-dev` и `smoke`. В паках v0/v1-dev —
@@ -63,9 +63,14 @@ python3 tools/package_mod.py          # .hnmod + ZIP всех паков + nativ
 - `smoke` — тестовый пак из DoD Э2: все пять полей ссылаются на
   `litospherity:smoke/<поле>`, клей возвращает константу, `continents = 0.8`.
 - `bundle` складывает готовый `horizon-mixin.toml`, копию `crates/litho-core`,
-  два glue-файла без `.in` и все паки в одну папку. Архивы `.zip` и сам
-  `.hnmod` собираются `tools/package_mod.py` в CI; артефакт шага 5 —
-  `litospherity-hnmod` id `13857022266` (run `43025888764`), 421527 байт.
+  glue-файлы без `.in` и все паки в одну папку. `tools/package_mod.py` собирает
+  `.hnmod`: паки пишутся в него исходником `glue/packs_data.rs` (модуль
+  `litospherity_packs`), отдельных `.zip` рядом с модом нет (К6, Д-112).
+  Артефакт CI — `litospherity-hnmod` последнего зелёного прогона.
+- Клиентский хук (Д-112) — `glue/packs_seed_hook.rs` на `Title::click` и
+  `Title::confirm_key_size`: при открытии экрана создания мира он кладёт паки в
+  папку паков нового мира, поэтому Data Packs показывает их без перетаскивания
+  файлов. Выбор игрока хук не трогает.
 - `bundle-check` — жёсткая проверка без `|| true`: все файлы на месте, ни одного
   неподставленного `@…@`, JSON начинается и заканчивается фигурной скобкой,
   манифест содержит `dependent = "horizon-core"`, v0 не содержит новых
@@ -81,6 +86,9 @@ python3 tools/package_mod.py          # .hnmod + ZIP всех паков + nativ
 - диапазон фиктивного определения шума: граф берёт его из JSON, а не из
   `range()` экземпляра (5.3), `base_amplitude = 4` выбран с запасом под [−1, 1];
 - хуки написаны под Rust 2024: `gen` зарезервирован, в клее его нет;
+- клиентский хук К6: `cargo check -p horizon-client --no-default-features` на
+  закреплённых исходниках с внедрённым хуком (без `audio`/`controllers` — на
+  раннере нет ALSA/libudev);
 - Windows-лаунчер в песочнице по-прежнему не запускается, но реальные типы
   Horizon, настоящий план mixins и граф 26.3 проверяются отдельными job'ами CI,
   а игру подтвердил автор в тесте №2.
