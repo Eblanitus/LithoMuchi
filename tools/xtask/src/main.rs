@@ -227,7 +227,8 @@ fn make_pack(
 fn write_tall_world(dir: &Path, version: GenVersion, mode: Mode) -> Result<(), String> {
     let params = Params::defaults(version, mode);
     let min_y = params.height.min_y as i32;
-    let height = (params.height.max_y as i32 + 1 - min_y).div_ceil(16) * 16;
+    let raw = params.height.max_y as i32 + 1 - min_y;
+    let height = (raw + 15) / 16 * 16;
     let min_y_text = min_y.to_string();
     let height_text = height.to_string();
     let logical_text = height.min(384).to_string();
