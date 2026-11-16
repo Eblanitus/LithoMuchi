@@ -29,7 +29,7 @@
  },
  "runs": [
   {
-   "_seconds": 461.0,
+   "_seconds": 402.0,
    "_variant": "",
    "approximation": "litho-core owned I2 surface; no vanilla splines",
    "boundary": {
@@ -393,7 +393,7 @@
    "version": "v1-dev"
   },
   {
-   "_seconds": 506.0,
+   "_seconds": 329.0,
    "_variant": "",
    "approximation": "litho-core owned I2 surface; no vanilla splines",
    "boundary": {
@@ -757,7 +757,7 @@
    "version": "v1-dev"
   },
   {
-   "_seconds": 429.0,
+   "_seconds": 501.0,
    "_variant": "",
    "approximation": "litho-core owned I2 surface; no vanilla splines",
    "boundary": {
@@ -1120,7 +1120,7 @@
    "version": "v1-dev"
   },
   {
-   "_seconds": 443.0,
+   "_seconds": 442.0,
    "_variant": "",
    "approximation": "litho-core owned I2 surface; no vanilla splines",
    "boundary": {
@@ -1483,7 +1483,7 @@
    "version": "v1-dev"
   },
   {
-   "_seconds": 499.0,
+   "_seconds": 487.0,
    "_variant": "",
    "approximation": "litho-core owned I2 surface; no vanilla splines",
    "boundary": {
@@ -1847,7 +1847,7 @@
    "version": "v1-dev"
   },
   {
-   "_seconds": 436.0,
+   "_seconds": 329.0,
    "_variant": "",
    "approximation": "litho-core owned I2 surface; no vanilla splines",
    "boundary": {
@@ -2210,7 +2210,7 @@
    "version": "v1-dev"
   },
   {
-   "_seconds": 552.0,
+   "_seconds": 555.0,
    "_variant": "",
    "approximation": "litho-core owned I2 surface; no vanilla splines",
    "boundary": {
@@ -2574,7 +2574,7 @@
    "version": "v1-dev"
   },
   {
-   "_seconds": 528.0,
+   "_seconds": 344.0,
    "_variant": "",
    "approximation": "litho-core owned I2 surface; no vanilla splines",
    "boundary": {
@@ -2938,7 +2938,7 @@
    "version": "v1-dev"
   },
   {
-   "_seconds": 416.0,
+   "_seconds": 352.0,
    "_variant": "",
    "approximation": "litho-core owned I2 surface; no vanilla splines",
    "boundary": {
@@ -3302,7 +3302,7 @@
    "version": "v1-dev"
   },
   {
-   "_seconds": 346.0,
+   "_seconds": 350.0,
    "_variant": "",
    "approximation": "litho-core owned I2 surface; no vanilla splines",
    "boundary": {
@@ -3667,7 +3667,7 @@
    "version": "v1-dev"
   },
   {
-   "_seconds": 308.0,
+   "_seconds": 352.0,
    "_variant": "",
    "approximation": "litho-core owned I2 surface; no vanilla splines",
    "boundary": {
@@ -4031,7 +4031,7 @@
    "version": "v1-dev"
   },
   {
-   "_seconds": 355.0,
+   "_seconds": 313.0,
    "_variant": "",
    "approximation": "litho-core owned I2 surface; no vanilla splines",
    "boundary": {
@@ -4394,7 +4394,7 @@
    "version": "v1-dev"
   },
   {
-   "_seconds": 521.0,
+   "_seconds": 515.0,
    "_variant": "",
    "approximation": "litho-core owned I2 surface; no vanilla splines",
    "boundary": {
@@ -4757,7 +4757,7 @@
    "version": "v1-dev"
   },
   {
-   "_seconds": 327.0,
+   "_seconds": 299.0,
    "_variant": "",
    "approximation": "litho-core owned I2 surface; no vanilla splines",
    "boundary": {
@@ -5120,7 +5120,7 @@
    "version": "v1-dev"
   },
   {
-   "_seconds": 504.0,
+   "_seconds": 349.0,
    "_variant": "",
    "approximation": "litho-core owned I2 surface; no vanilla splines",
    "boundary": {
@@ -5483,7 +5483,7 @@
    "version": "v1-dev"
   },
   {
-   "_seconds": 491.0,
+   "_seconds": 358.0,
    "_variant": "",
    "approximation": "litho-core owned I2 surface; no vanilla splines",
    "boundary": {
@@ -5847,5 +5847,5 @@
    "version": "v1-dev"
   }
  ],
- "sha": "a82648c2439b404f8dcf0e601363ac51e87a6420"
+ "sha": "9edf006148598c804ce993a2e0f53c67ebb2dd49"
 }
