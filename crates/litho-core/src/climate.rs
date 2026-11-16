@@ -264,15 +264,56 @@ pub fn sea_level_temp(phi_deg: f64, params: &Params) -> f64 {
     c.t_equator_c - c.t_pole_drop_c * dpow(lat, c.t_lat_exponent)
 }
 
+/// К5 (Д-111), `v1-dev`: вычет температуры по высоте поверхности в игре,
+/// °C: ниже `alt_cool_base_y` — постоянный `alt_cool_land_c`, от высоты не
+/// зависит; выше прибавляется `alt_cool_c_per_block` на блок.
+pub fn altitude_cooling_c(surface_y: f64, params: &Params) -> f64 {
+    let c = &params.climate;
+    c.alt_cool_land_c + c.alt_cool_c_per_block * (surface_y - c.alt_cool_base_y).max(0.0)
+}
+
+/// К5 (Д-111): климат биомов. Рельеф и вода строятся по климату с прежним
+/// вычетом 6,5 °C на км модельной `e_km` (иначе высота зависела бы от
+/// температуры, а температура от высоты). Когда высота колонки готова,
+/// вычет пересчитывается по ней: модельные километры в игре не видны —
+/// плато 3 км в gameplay стоит равниной на y 100 и раньше было холодным.
+/// Осадки те же; сухость пересчитана по новой температуре.
+pub fn recool(climate: &ClimateSample, surface_y: f64, params: &Params) -> ClimateSample {
+    let mut temperature = temperature_cooled(
+        climate.pole.phi_deg,
+        altitude_cooling_c(surface_y, params),
+        climate.precip.cont,
+        params,
+    );
+    temperature.sst_c = climate.temperature.sst_c;
+    let (pet_mm, ratio) = dryness(temperature.t_bio, climate.precip.p_mm, params);
+    let mut out = *climate;
+    out.temperature = temperature;
+    out.precip.pet_mm = pet_mm;
+    out.precip.ratio = ratio;
+    out
+}
+
 /// Температура с учётом высоты, континентальности и аналитических сезонов (7.5.3).
 pub fn temperature(phi_deg: f64, e_km: f64, cont: f64, params: &Params) -> TemperatureSample {
+    let cooling_c = params.climate.lapse_c_per_km * e_km.max(0.0);
+    temperature_cooled(phi_deg, cooling_c, cont, params)
+}
+
+/// То же с готовым вычетом за высоту.
+pub fn temperature_cooled(
+    phi_deg: f64,
+    cooling_c: f64,
+    cont: f64,
+    params: &Params,
+) -> TemperatureSample {
     let c = &params.climate;
     let t_sl = sea_level_temp(phi_deg, params);
     let cont = clamp01(cont);
     let delta_c = cont
         * (c.cont_tropical_c * (1.0 - smoothstep(25.0, 45.0, phi_deg))
             - c.cont_polar_c * smoothstep(40.0, 70.0, phi_deg));
-    let t_c = t_sl + delta_c - c.lapse_c_per_km * e_km.max(0.0);
+    let t_c = t_sl + delta_c - cooling_c;
     let amp_lat = c.amp_base_c + c.amp_lat_c * smoothstep(5.0, 75.0, phi_deg);
     let amp_c = amp_lat * (c.amp_sea_factor + c.amp_land_factor * cont);
     let (t_bio, t_min) = seasonal(t_c, amp_c, params);

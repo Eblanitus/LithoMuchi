@@ -13,8 +13,24 @@ const LENGTH: i64 = 16_384;
 /// Смещения линий от центра, блоки. Линии идут по обеим осям.
 const OFFSETS: [i64; 4] = [-6000, -2000, 2000, 6000];
 
+/// К5 (Д-111): вычет температуры за высоту по полосам высоты поверхности.
+/// Полосы: ниже порога вычета, до 130 и горы от 130.
+#[derive(Default)]
+struct Altitude {
+    points: [u64; 3],
+    /// Сумма нынешнего вычета по высоте колонки, °C.
+    cooling: [f64; 3],
+    /// Сумма прежнего вычета 6,5 °C на км `e_km`, °C.
+    cooling_km: [f64; 3],
+    /// Смены пояса: выше из двух соседних проб лежит в этой полосе.
+    belt_changes: [u64; 3],
+    /// Пробы с ванильной ступенью T = 0 (снежные биомы).
+    frozen: [u64; 3],
+}
+
 #[derive(Default)]
 struct Tally {
+    altitude: Altitude,
     /// Пары соседних проб суши.
     pairs: u64,
     biome: u64,
@@ -88,6 +104,7 @@ fn line(generator: &Generator, tally: &mut Tally, at: impl Fn(i64) -> (f64, f64)
     let mut all = Runs::default();
     tally.dry.gap();
     let mut previous: Option<(&'static str, u8, u8)> = None;
+    let mut previous_band: Option<usize> = None;
     // Последняя проба суши без реки: (биом, ступень T, ступень H).
     let mut dry_cell: Option<(&'static str, u8, u8)> = None;
     for k in 0..LENGTH / STEP {
@@ -96,16 +113,41 @@ fn line(generator: &Generator, tally: &mut Tally, at: impl Fn(i64) -> (f64, f64)
             .sample(x, z)
             .filter(|sample| !sample.class.is_ocean)
             .map(|sample| {
+                let params = generator.params();
+                let surface = &sample.world.climate.surface;
+                let y = sample.world.height.surface_y;
+                let band = if y < params.climate.alt_cool_base_y {
+                    0
+                } else if y < 130.0 {
+                    1
+                } else {
+                    2
+                };
+                let alt = &mut tally.altitude;
+                alt.points[band] += 1;
+                alt.cooling[band] += litho_core::climate::altitude_cooling_c(y, params);
+                alt.cooling_km[band] += params.climate.lapse_c_per_km * surface.e_km.max(0.0);
+                alt.frozen[band] += u64::from(sample.cell.t == 0 && !is_river(sample.cell.biome));
                 (
                     sample.cell.biome,
                     sample.zone.belt,
                     sample.zone.province,
                     sample.cell.t,
                     sample.cell.h,
+                    band,
                 )
             });
+        let band = current.map(|c| c.5);
         let cell = current.map(|c| (c.0, c.3, c.4));
         let current = current.map(|c| (c.0, c.1, c.2));
+        if let (Some(a), Some(b), Some(band_a), Some(band_b)) =
+            (previous, current, previous_band, band)
+        {
+            if a.1 != b.1 {
+                tally.altitude.belt_changes[band_a.max(band_b)] += 1;
+            }
+        }
+        previous_band = band;
         match cell {
             Some(b) if !is_river(b.0) => {
                 if let Some(a) = dry_cell {
@@ -244,6 +286,28 @@ pub fn run(generator: &Generator, center: (f64, f64)) -> Result<(), String> {
     kinds.sort_by(|a, b| b.1.cmp(a.1));
     for ((a, b), count) in kinds.into_iter().take(5) {
         println!("    {a} ↔ {b}: {count}");
+    }
+    let alt = &tally.altitude;
+    let all: u64 = alt.points.iter().sum();
+    let base = generator.params().climate.alt_cool_base_y;
+    println!("  вычет температуры за высоту (К5), по высоте поверхности; снежные — ступень T = 0:");
+    for (band, name) in [
+        format!("ниже y {base:.0}"),
+        format!("y {base:.0}…130"),
+        "y от 130".to_string(),
+    ]
+    .iter()
+    .enumerate()
+    {
+        let n = alt.points[band].max(1) as f64;
+        println!(
+            "    {name}: {:.1} % суши; вычет в среднем {:.1} °C (по e_km было бы {:.1}); снежных {:.1} %; смен пояса {}",
+            100.0 * alt.points[band] as f64 / all.max(1) as f64,
+            alt.cooling[band] / n,
+            alt.cooling_km[band] / n,
+            100.0 * alt.frozen[band] as f64 / n,
+            alt.belt_changes[band]
+        );
     }
     Ok(())
 }
