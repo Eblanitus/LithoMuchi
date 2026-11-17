@@ -93,7 +93,13 @@ const MIDDLE: [[&str; 5]; 5] = [
 ];
 const MIDDLE_VARIANT: [[Option<&str>; 5]; 5] = [
     [Some("ice_spikes"), None, Some("snowy_taiga"), None, None],
-    [None, None, None, None, Some("old_growth_pine_taiga")],
+    [
+        Some("dappled_forest"),
+        None,
+        None,
+        None,
+        Some("old_growth_pine_taiga"),
+    ],
     [
         Some("sunflower_plains"),
         None,
@@ -125,7 +131,7 @@ const PLATEAU: [[&str; 5]; 5] = [
         "taiga",
         "old_growth_spruce_taiga",
     ],
-    ["meadow", "meadow", "meadow", "meadow", "dark_forest"],
+    ["meadow", "meadow", "meadow", "meadow", "pale_garden"],
     [
         "savanna_plateau",
         "savanna_plateau",
@@ -155,7 +161,7 @@ const PLATEAU_VARIANT: [[Option<&str>; 5]; 5] = [
         Some("cherry_grove"),
         Some("forest"),
         Some("birch_forest"),
-        Some("pale_garden"),
+        None,
     ],
     [None, None, None, None, None],
     [
@@ -447,7 +453,7 @@ impl Builder {
                 v.push((span(COAST, FAR), E[4], middle(t, h, w)));
             }
             v.push((COAST, E[5], shattered_coast(t, h, w)));
-            v.push((NEAR, E[5], windswept_savanna(t, h, w, sh)));
+            v.push((NEAR, E[5], windswept_savanna(t, h, w, middle(t, h, w))));
             v.push((span(MID, FAR), E[5], sh));
             if neg(w) {
                 v.push((COAST, E[6], beach(t)));
@@ -480,8 +486,11 @@ impl Builder {
                 (COAST, span(E[3], E[4]), beach(t)),
                 (span(NEAR, FAR), E[4], middle(t, h, w)),
                 (COAST, E[5], shattered_coast(t, h, w)),
-                (NEAR, E[5], windswept_savanna(t, h, w, middle(t, h, w))),
-                (span(MID, FAR), E[5], shattered(t, h, w)),
+                (
+                    span(NEAR, FAR),
+                    E[5],
+                    windswept_savanna(t, h, w, middle(t, h, w)),
+                ),
                 (COAST, E[6], beach(t)),
             ];
             if t == 0 {

@@ -183,12 +183,14 @@ pub fn check_report(path: &str, samples: usize) -> Result<(), String> {
     let mut mismatches: BTreeMap<(String, &'static str), u64> = BTreeMap::new();
     let mut examples = Vec::new();
     let mut bad = 0;
+    let mut edges = 0;
     for _ in 0..samples {
         let c = -1.2 + 2.2 * next();
         let rest = [next(), next(), next(), next()].map(|u| -1.0 + 2.0 * u);
         let point = [c, rest[0], rest[1], rest[2], rest[3]];
         let mut best = f64::INFINITY;
         let mut want = "";
+        let mut cell = &entries[0];
         for entry in &entries {
             let d: f64 = entry
                 .ranges
@@ -199,27 +201,59 @@ pub fn check_report(path: &str, samples: usize) -> Result<(), String> {
             if d < best {
                 best = d;
                 want = &entry.biome;
+                cell = entry;
             }
         }
+        // У самой границы ячейки отчёт хранит f32, копия — f64: точка в
+        // тысячной от края не считается расхождением.
+        let edge = cell
+            .ranges
+            .iter()
+            .zip(point)
+            .any(|(r, v)| (v - r.0).abs() < 1e-3 || (v - r.1).abs() < 1e-3);
         let got = surface_biome(point[0], point[1], point[2], point[3], point[4]);
-        if got != want {
+        if got != want && edge {
+            edges += 1;
+        } else if got != want {
             bad += 1;
             *mismatches.entry((want.to_owned(), got)).or_default() += 1;
-            if examples.len() < 10 {
+            if examples.len() < 40 {
                 examples.push((point, want.to_owned(), got));
             }
         }
     }
     println!(
-        "Д-118 сверка с отчётом {path}: записей поверхности {}, точек {samples}, расхождений {bad}",
+        "Д-118 сверка с отчётом {path}: записей поверхности {}, точек {samples}, расхождений {bad} (у самой границы ячейки ещё {edges}, не в счёт)",
         entries.len()
     );
     for ((want, got), n) in &mismatches {
         println!("    отчёт {want:<26} копия {got:<26} {n}");
     }
+    let band = |v: f64, edges: &[f64]| edges.iter().filter(|e| v > **e).count();
     for (p, want, got) in &examples {
+        let c = ["coast", "near", "mid", "far"][band(p[0], &[-0.11, 0.03, 0.3]).min(3)];
+        let e = band(p[1], &[-0.78, -0.375, -0.2225, 0.05, 0.45, 0.55]);
+        let w = p[2].abs();
+        let slice = if w < 0.05 {
+            "valley"
+        } else if w < 0.266_666_68 {
+            "low"
+        } else if w < 0.4 {
+            "mid"
+        } else if w < 0.566_666_66 {
+            "high"
+        } else if w < 0.766_666_7 {
+            "peaks"
+        } else if w < 0.933_333_3 {
+            "high"
+        } else {
+            "mid"
+        };
+        let t = band(p[3], &[-0.45, -0.15, 0.2, 0.55]);
+        let h = band(p[4], &[-0.35, -0.1, 0.1, 0.3]);
+        let sign = if p[2] < 0.0 { "−" } else { "+" };
         println!(
-            "    c={:.3} e={:.3} w={:.3} t={:.3} h={:.3}: отчёт {want}, копия {got}",
+            "    {slice}{sign} C {c} E{e} T{t} H{h} (c={:.3} e={:.3} w={:.3} t={:.3} h={:.3}): отчёт {want}, копия {got}",
             p[0], p[1], p[2], p[3], p[4]
         );
     }
