@@ -117,8 +117,10 @@ pub unsafe extern "C" fn litho_lava_aquifer(
         return f64::NAN;
     }
     let generator = unsafe { &*generator };
-    catch_unwind(AssertUnwindSafe(|| generator.lava_aquifer(cell_x, cell_y, cell_z)))
-        .unwrap_or(f64::NAN)
+    catch_unwind(AssertUnwindSafe(|| {
+        generator.lava_aquifer(cell_x, cell_y, cell_z)
+    }))
+    .unwrap_or(f64::NAN)
 }
 
 /// Глубинная лава у стыков: значение ячейки и флаг «суша глубоко».
@@ -139,7 +141,10 @@ pub unsafe extern "C" fn litho_lava_cell(
     }
     let generator = unsafe { &*generator };
     match catch_unwind(AssertUnwindSafe(|| {
-        (generator.lava_cell(cell_x, cell_z), generator.lava_deep_land(cell_x, cell_z))
+        (
+            generator.lava_cell(cell_x, cell_z),
+            generator.lava_deep_land(cell_x, cell_z),
+        )
     })) {
         Ok((v, d)) => {
             unsafe {
@@ -175,8 +180,12 @@ mod tests {
         for (mode, version) in [(0u32, 2u32), (1, 2), (1, 0)] {
             let ffi = litho_generator_new(42, mode, version);
             assert!(!ffi.is_null());
-            let core = Generator::new(42, Mode::ALL[mode as usize], GenVersion::ALL[version as usize])
-                .unwrap();
+            let core = Generator::new(
+                42,
+                Mode::ALL[mode as usize],
+                GenVersion::ALL[version as usize],
+            )
+            .unwrap();
             let n = points.len() / 2;
             let mut out = vec![0f32; n * FIELD_COUNT];
             let code = unsafe { litho_fields_batch(ffi, points.as_ptr(), n, out.as_mut_ptr()) };
@@ -184,7 +193,11 @@ mod tests {
             for (i, pair) in points.chunks_exact(2).enumerate() {
                 for (j, field) in Field::ALL.into_iter().enumerate() {
                     let want = core.field_f32(field, pair[0], 0.0, pair[1]);
-                    assert_eq!(out[i * FIELD_COUNT + j].to_bits(), want.to_bits(), "{field:?} {pair:?}");
+                    assert_eq!(
+                        out[i * FIELD_COUNT + j].to_bits(),
+                        want.to_bits(),
+                        "{field:?} {pair:?}"
+                    );
                 }
             }
             let mut v = 0.0;
@@ -203,6 +216,11 @@ mod tests {
     fn bad_arguments_are_rejected() {
         assert!(litho_generator_new(1, 9, 0).is_null());
         assert!(litho_generator_new(1, 0, 9).is_null());
-        assert_eq!(unsafe { litho_fields_batch(std::ptr::null(), std::ptr::null(), 0, std::ptr::null_mut()) }, -2);
+        assert_eq!(
+            unsafe {
+                litho_fields_batch(std::ptr::null(), std::ptr::null(), 0, std::ptr::null_mut())
+            },
+            -2
+        );
     }
 }
