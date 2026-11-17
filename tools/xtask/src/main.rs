@@ -31,9 +31,13 @@ const FIELDS: [&str; 5] = [
     "temperature",
     "vegetation",
 ];
-/// v1-dev заменяет PV (`ridges_folded`), offset, factor и jaggedness
-/// (К4а, часть 1, Д-106): игра перестаёт добавлять свой рельеф.
-const I2_FIELDS: [&str; 4] = ["offset", "pv", "factor", "jaggedness"];
+/// v1-dev заменяет PV (`ridges_folded`), offset и factor (К4а, часть 1,
+/// Д-106): игра перестаёт добавлять свой рельеф. `jaggedness` остаётся
+/// ванильным (Д-117): наша таблица давала иглы на холмах, ваниль включает
+/// острый шум только на пиках по нашему PV.
+const I2_FIELDS: [&str; 3] = ["offset", "pv", "factor"];
+/// Поля, которые v1-dev НЕ переопределяет (Д-117), и v0 тоже.
+const VANILLA_FIELDS: [&str; 1] = ["jaggedness"];
 
 fn repo_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
@@ -183,7 +187,7 @@ fn make_pack(
         fields.push("pv");
         fields.push("offset");
         fields.push("factor");
-        fields.push("jaggedness");
+        // Д-117: jaggedness не наш — ваниль даёт зубцы только пикам.
     }
     for field in fields {
         // В ванили PV — именованная функция `ridges_folded`, на неё по имени
@@ -488,8 +492,16 @@ fn cmd_bundle_check(out: &Path) -> Result<(), String> {
                         return Err(format!("в паке {} нет I2-поля {field}", pack.display()));
                     }
                 }
+                for field in VANILLA_FIELDS {
+                    if df_path(field).exists() || noise_path(field).exists() {
+                        return Err(format!(
+                            "v1-dev пак {} не должен менять {field} (Д-117)",
+                            pack.display()
+                        ));
+                    }
+                }
             } else {
-                for field in I2_FIELDS {
+                for field in I2_FIELDS.iter().chain(VANILLA_FIELDS.iter()).copied() {
                     let df_name = if field == "pv" {
                         "ridges_folded"
                     } else {

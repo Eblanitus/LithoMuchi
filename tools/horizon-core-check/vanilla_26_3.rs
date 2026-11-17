@@ -1,8 +1,8 @@
 // Executed in the staged real horizon-world, not as part of this workspace.
 // Inputs: generated packs and mcmeta's pinned 26.3-data-json checkout.
 // К2 / шаг 2: depth at y=80 is 0.375 + offset and the encoded surface is
-// y = 128·(1 + offset). К4а/часть 1: factor/jaggedness тоже приходят из
-// litho-core — игра перестаёт добавлять свой рельеф (Д-106).
+// y = 128·(1 + offset). К4а/часть 1: factor тоже приходит из litho-core —
+// игра перестаёт добавлять свой рельеф (Д-106). jaggedness ванильный (Д-117).
 use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::Arc;
@@ -120,16 +120,19 @@ fn v1_dev_pack_reaches_real_26_3_depth_graph() {
     let noise = root.join("data/litospherity/worldgen/noise");
     assert!((df.join("ridges_folded.json")).is_file());
     assert!((df.join("offset.json")).is_file());
-    for field in ["factor", "jaggedness"] {
-        assert!(
-            df.join(format!("{field}.json")).is_file(),
-            "пак обязан переопределять {field} (К4а, часть 1)"
-        );
-        assert!(
-            has_noise(&noise, &format!("{field}.json")),
-            "пак обязан объявлять шум {field} (К4а, часть 1)"
-        );
-    }
+    assert!(
+        df.join("factor.json").is_file(),
+        "пак обязан переопределять factor (К4а, часть 1)"
+    );
+    assert!(
+        has_noise(&noise, "factor.json"),
+        "пак обязан объявлять шум factor (К4а, часть 1)"
+    );
+    // Д-117: jaggedness остаётся ванильным — иначе иглы на холмах.
+    assert!(
+        !df.join("jaggedness.json").exists() && !has_noise(&noise, "jaggedness.json"),
+        "пак не должен переопределять jaggedness (Д-117)"
+    );
 
     let fields = samplers(pack);
     let mut checked_surface = false;
@@ -159,8 +162,9 @@ fn v1_dev_pack_reaches_real_26_3_depth_graph() {
                 expected
             );
             assert!((-2.0..=2.0).contains(&a[4]));
-            // К4а/часть 1: factor/jaggedness приходят из litho-core.
-            for (index, field) in [(5usize, "factor"), (6, "jaggedness")] {
+            // К4а/часть 1: factor приходит из litho-core; jaggedness —
+            // ванильный граф по нашим C/E/PV (Д-117), проверяем только диапазон.
+            for (index, field) in [(5usize, "factor")] {
                 let expected = field_for(
                     1,
                     &format!("litospherity:v1-dev/gameplay/{field}"),
