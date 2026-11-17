@@ -383,11 +383,7 @@ impl Builder {
                 (MID, E[3], middle_or_badlands(t, h, w)),
                 (FAR, E[3], plateau(t, h, w)),
                 (span(COAST, FAR), E[4], middle(t, h, w)),
-                (
-                    span(COAST, NEAR),
-                    E[5],
-                    windswept_savanna(t, h, w, middle(t, h, w)),
-                ),
+                (span(COAST, NEAR), E[5], windswept_savanna(t, h, w, sh)),
                 (span(MID, FAR), E[5], sh),
                 (span(COAST, FAR), E[6], middle(t, h, w)),
             ]
@@ -494,7 +490,8 @@ impl Builder {
                 (COAST, span(E[3], E[4]), beach(t)),
                 (span(NEAR, FAR), E[4], middle(t, h, w)),
                 (COAST, E[5], shattered_coast(t, h, w)),
-                (span(NEAR, FAR), E[5], middle(t, h, w)),
+                (NEAR, E[5], windswept_savanna(t, h, w, middle(t, h, w))),
+                (span(MID, FAR), E[5], middle(t, h, w)),
                 (COAST, E[6], beach(t)),
             ];
             if t == 0 {
