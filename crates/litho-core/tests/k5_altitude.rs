@@ -1,5 +1,6 @@
-//! К5 (Д-111): вычет температуры считается по высоте поверхности в игре,
-//! а не по модельной высоте коры. Проверки идут по линиям настоящего мира.
+//! К5 (Д-111) → К11 (Д-119): вычет температуры суши одинаков на всей суше и
+//! от высоты поверхности не зависит; высота работает только в горной лестнице
+//! биомов (Д-118). Проверки идут по линиям настоящего мира.
 
 use litho_core::climate::{temperature, temperature_cooled};
 use litho_core::version::GenVersion;
@@ -43,54 +44,51 @@ fn check(seed: i64, mode: Mode) {
     let base = p.climate.alt_cool_base_y;
     let rate = p.climate.alt_cool_c_per_block;
     let flat_c = p.climate.alt_cool_land_c;
-    // Вычет идёт по крупной форме, без мелких бугров; запас — их размах.
-    let bumps = p
-        .height
-        .micro_amp_blocks
-        .iter()
-        .fold(0.0_f64, |a, b| a.max(*b))
-        * 3.0;
+    // К11 / Д-119: высота пояс больше не двигает. Вычет один на всей суше —
+    // ровно `alt_cool_land_c`, и на холме, и на горе.
+    assert_eq!(rate, 0.0, "v1-dev: вычет по высоте должен быть выключен");
     let points = dry_land(&g, &LINES);
     assert!(points.len() > 500, "мало суши: {}", points.len());
-
-    // Холмы ниже порога пояс не меняют: вычет там один и тот же на всей
-    // суше, хотя модельная высота под ними разная.
-    let low: Vec<_> = points.iter().filter(|q| q.0 < base - bumps).collect();
-    assert!(low.len() > 300);
-    let worst = low
+    let worst = points
         .iter()
         .map(|q| (q.1 - flat_c).abs())
         .fold(0.0_f64, f64::max);
-    assert!(worst < 1e-9, "вычет ниже порога гуляет на {worst} °C");
-    let old_spread = low.iter().map(|q| q.2).fold(0.0_f64, f64::max)
-        - low.iter().map(|q| q.2).fold(f64::INFINITY, f64::min);
+    assert!(worst < 1e-9, "вычет суши гуляет на {worst} °C");
+    // Прежний вычет по модельной коре рос с высотой — на нём и держался К5.
+    let old_spread = points.iter().map(|q| q.2).fold(0.0_f64, f64::max)
+        - points.iter().map(|q| q.2).fold(f64::INFINITY, f64::min);
     assert!(
         old_spread > 3.0,
-        "прежний вычет на низкой суше гулял на {old_spread:.1} °C"
+        "прежний вычет гулял на {old_spread:.1} °C"
     );
 
-    // Каждая точка: вычет следует высоте поверхности.
-    for q in &points {
-        let want = flat_c + rate * (q.0 - base).max(0.0);
+    // Горы различаются высотой, но не вычетом: у самой высокой точки он тот
+    // же, что у подножия. Холод на горе даёт ванильная горная лестница
+    // (`mountain_biome_y`, Д-118), а не смена пояса.
+    let highest = points
+        .iter()
+        .fold(None::<&(f64, f64, f64)>, |acc, q| match acc {
+            Some(best) if best.0 >= q.0 => Some(best),
+            _ => Some(q),
+        })
+        .copied()
+        .expect("суша есть");
+    assert!(highest.0 > base, "нет гор выше порога: {}", highest.0);
+    assert!(
+        (highest.1 - flat_c).abs() < 1e-9,
+        "на горе y {:.0} вычет {:.2} °C вместо {flat_c:.2}",
+        highest.0,
+        highest.1
+    );
+    let high: Vec<_> = points.iter().filter(|q| q.0 >= base).collect();
+    if !high.is_empty() {
+        let now = high.iter().map(|q| q.1).sum::<f64>() / high.len() as f64;
+        let before = high.iter().map(|q| q.2).sum::<f64>() / high.len() as f64;
         assert!(
-            (q.1 - want).abs() <= rate * bumps + 1e-9,
-            "y {:.1}: вычет {:.2} °C, по высоте {:.2}",
-            q.0,
-            q.1,
-            want
+            (now - flat_c).abs() < 1e-9,
+            "горы: вычет {now:.2} °C вместо {flat_c:.2} (было по высоте {before:.1} °C)"
         );
     }
-
-    // Горы (от y 130) холодны как раньше: средний вычет в пределах
-    // от половины до полутора прежнего.
-    let high: Vec<_> = points.iter().filter(|q| q.0 >= 130.0).collect();
-    assert!(high.len() > 20, "мало гор: {}", high.len());
-    let now = high.iter().map(|q| q.1).sum::<f64>() / high.len() as f64;
-    let before = high.iter().map(|q| q.2).sum::<f64>() / high.len() as f64;
-    assert!(
-        now > 0.5 * before && now < 1.5 * before,
-        "горы: вычет {now:.1} °C, прежний {before:.1} °C"
-    );
 }
 
 #[test]
