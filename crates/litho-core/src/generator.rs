@@ -1286,6 +1286,14 @@ impl Generator {
             let (t, h) = crate::vanilla::temperature_humidity(&cooled, &recast, &self.params);
             let base = VanillaSample { t, h, ..base };
             let vanilla = hydrology::apply_fields(base, local_river, &water, &self.params);
+            // Д-118: снежные склоны и пики — только в снежном биоме или на
+            // высокой горе; холм остаётся своим биомом.
+            let vanilla = crate::vanilla_biome::guard_mountain_biomes(
+                vanilla,
+                recast.cell.t == 0,
+                shape_y,
+                &self.params,
+            );
             let class = hydrology::classify_surface(recast, &water, &cooled, &self.params);
             (cooled, class, vanilla)
         };

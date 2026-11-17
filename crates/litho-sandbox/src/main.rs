@@ -11,6 +11,7 @@ mod png;
 mod render;
 mod shores;
 mod tune;
+mod vanilla_biomes;
 mod walls;
 
 use std::path::Path;
@@ -438,6 +439,23 @@ fn cmd_biomes(args: &[String]) -> Result<(), String> {
     let opts = options_from(args)?;
     let generator = generator(&opts)?;
     biome_lines::run(&generator, (opts.center_x, opts.center_z))
+}
+
+/// Д-118: биом игры по копии ванильной таблицы против нашего; с
+/// `--report ПУТЬ` — сверка копии с отчётом datagen 26.3.
+fn cmd_vanilla_biomes(args: &[String]) -> Result<(), String> {
+    if let Some(report) = value(args, "--report") {
+        let samples = match value(args, "--samples") {
+            Some(text) => text
+                .parse::<usize>()
+                .map_err(|e| format!("--samples: {e}"))?,
+            None => 200_000,
+        };
+        return vanilla_biomes::check_report(&report, samples);
+    }
+    let opts = options_from(args)?;
+    let generator = generator(&opts)?;
+    vanilla_biomes::run(&generator, (opts.center_x, opts.center_z))
 }
 
 /// К4: доля берегов океана с сушей выше моря на 10+ в 4 блоках от воды.
@@ -1784,6 +1802,8 @@ fn usage() -> &'static str {
        hash         хеши параметров для замка v0\n\
        biomes       как часто меняется биом вдоль линий и размер пятен (К1)
        shores       доля берегов с сушей выше моря на 10+ в 4 блоках от воды (К4)\n\
+vanilla-biomes биом игры (копия ванильной таблицы) против нашего, горы на холмах (Д-118);\n\
+             --report ПУТЬ: сверка копии с отчётом datagen biome_parameters\n\
        checkpoints  10 точек вокруг точки появления\n\
        sweep        16 сидов × 2 режима + HTML-атлас\n\
        atlas        пересобрать только HTML-атлас\n\
@@ -1824,6 +1844,7 @@ fn main() -> Result<(), String> {
         "biomes" => cmd_biomes(&args[1..]),
         "shores" => cmd_shores(&args[1..]),
         "walls" => cmd_walls(&args[1..]),
+        "vanilla-biomes" => cmd_vanilla_biomes(&args[1..]),
         "paths" => cmd_paths(&args[1..]),
         "drainage" => cmd_drainage(&args[1..]),
         "bench" => cmd_bench(&args[1..]),

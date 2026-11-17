@@ -188,6 +188,35 @@ jobs:
           cargo run -q -p xtask -- bundle --out /tmp/litho-bundle
           cargo run -q -p xtask -- bundle-check --out /tmp/litho-bundle
 
+  vanilla-biomes:
+    name: "Д-118 · копия ванильной таблицы биомов против datagen 26.3"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "25"
+      # Отчёт biome_parameters генерирует сам сервер 26.3 (datagen --reports).
+      # Ни сервер, ни отчёт в репозиторий не попадают.
+      - name: datagen 26.3 — отчёт biome_parameters
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/mc && cd /tmp/mc
+          curl -fsSL https://piston-meta.mojang.com/mc/game/version_manifest_v2.json -o manifest.json
+          url=$(python3 -c "import json;print(next(v['url'] for v in json.load(open('manifest.json'))['versions'] if v['id']=='26.3'))")
+          curl -fsSL "$url" -o version.json
+          server=$(python3 -c "import json;print(json.load(open('version.json'))['downloads']['server']['url'])")
+          curl -fsSL "$server" -o server.jar
+          java -DbundlerMainClass=net.minecraft.data.Main -jar server.jar --reports --output gen > datagen.log 2>&1 || (tail -40 datagen.log; exit 1)
+          ls -la gen/reports/biome_parameters/minecraft/
+      - name: сверка копии таблицы с отчётом (гейт)
+        run: cargo run -q -p litho-sandbox --release -- vanilla-biomes --report /tmp/mc/gen/reports/biome_parameters/minecraft/overworld.json --samples 300000
+      - name: биом игры против нашего, горы на холмах (замер, не гейт)
+        run: |
+          cargo run -q -p litho-sandbox --release -- vanilla-biomes --seed 42 --mode gameplay --version v1-dev
+          cargo run -q -p litho-sandbox --release -- vanilla-biomes --seed 42 --mode scientific --version v1-dev
+
   msrv:
     name: Linux · MSRV 1.85
     runs-on: ubuntu-latest
