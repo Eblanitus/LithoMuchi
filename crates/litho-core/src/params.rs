@@ -761,6 +761,13 @@ pub struct ClimateParams {
     /// средний прежний вычет на суше ниже порога. Без него мир теплеет
     /// на эту величину и леса уходят в саванну и пустыню.
     pub alt_cool_land_c: f64,
+    /// Д-118, только `v1-dev`: ниже этой высоты крупной формы (y) модуль W
+    /// ограничен срезом low — горных биомов ванили (снежные склоны, роща,
+    /// пики) нет, кроме снежных склонов в снежном поясе.
+    pub mountain_biome_y: f64,
+    /// Д-118: от этой высоты W без ограничения; между порогами предел
+    /// растёт плавно (W непрерывен).
+    pub mountain_biome_full_y: f64,
     pub cont_tropical_c: f64,
     pub cont_polar_c: f64,
     pub amp_base_c: f64,
@@ -1610,6 +1617,8 @@ impl Params {
                 alt_cool_base_y: 120.0,
                 alt_cool_c_per_block: 0.2,
                 alt_cool_land_c: 3.5,
+                mountain_biome_y: 150.0,
+                mountain_biome_full_y: 250.0,
                 cont_tropical_c: 2.0,
                 cont_polar_c: 6.0,
                 amp_base_c: 1.0,
@@ -2279,6 +2288,11 @@ impl Params {
                     self.climate.alt_cool_c_per_block,
                 ),
                 ("climate.alt_cool_land_c", self.climate.alt_cool_land_c),
+                ("climate.mountain_biome_y", self.climate.mountain_biome_y),
+                (
+                    "climate.mountain_biome_full_y",
+                    self.climate.mountain_biome_full_y,
+                ),
             ] {
                 writeln!(w, "{name}={value:?}").unwrap();
             }

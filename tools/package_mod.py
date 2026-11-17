@@ -38,14 +38,16 @@ def validate_pack(pack: Path) -> None:
     df = pack / "data/minecraft/worldgen/density_function/overworld"
     noise = pack / "data/litospherity/worldgen/noise"
     if pack.name.startswith("litospherity_v1-dev_"):
-        # К4а/часть 1: полная I2 — offset, pv и теперь factor/jaggedness
-        # из ядра, чтобы игра не добавляла свой рельеф (Д-106).
-        for name in ("ridges_folded", "offset", "factor", "jaggedness"):
+        # К4а/часть 1: полная I2 — offset, pv и factor из ядра, чтобы игра
+        # не добавляла свой рельеф (Д-106). jaggedness ванильный (Д-117).
+        for name in ("ridges_folded", "offset", "factor"):
             if not (df / f"{name}.json").is_file():
                 raise ValueError(f"В {pack.name} нет I2-поля {name}")
-        for name in ("pv", "offset", "factor", "jaggedness"):
+        for name in ("pv", "offset", "factor"):
             if not any(noise.rglob(f"{name}.json")):
                 raise ValueError(f"В {pack.name} нет шума {name}")
+        if (df / "jaggedness.json").exists() or any(noise.rglob("jaggedness.json")):
+            raise ValueError(f"{pack.name} не должен менять jaggedness (Д-117)")
     if pack.name == "litospherity_v1-dev_scientific":
         # К7 (Д-113): научный мир выше ванильного — 512 блоков от -64.
         dim_path = pack / "data/minecraft/dimension_type/overworld.json"

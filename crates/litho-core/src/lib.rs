@@ -38,6 +38,7 @@ pub mod runoff;
 pub mod seed;
 pub mod spawn;
 pub mod vanilla;
+pub mod vanilla_biome;
 pub mod version;
 
 pub use classify::{ClassSample, LifeZone, VanillaCell};
