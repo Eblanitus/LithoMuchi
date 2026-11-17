@@ -163,6 +163,14 @@ jobs:
           set -o pipefail
           cargo run -q -p litho-sandbox --release -- biomes --seed 42 --mode gameplay --version v1-dev | python3 tools/ci_annotations.py report
           cargo run -q -p litho-sandbox --release -- biomes --seed 42 --mode scientific --version v1-dev | python3 tools/ci_annotations.py report
+      - name: "К11 — биом против пояса: L1 ≤ 1 % суши, лёд только в П0–П1 (гейт)"
+        run: |
+          set -o pipefail
+          for mode in gameplay scientific; do
+            for seed in 42 7; do
+              cargo run -q -p litho-sandbox --release -- belts --seed $seed --mode $mode --version v1-dev --gate | python3 tools/ci_annotations.py report
+            done
+          done
       - name: "Э3.5 — T110–T122 drainage/lakes/hydrology/relief smoke (R1 + галерейные леса + A/зоны)"
         run: |
           set -o pipefail

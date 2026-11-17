@@ -806,7 +806,12 @@ pub struct ClimateParams {
     pub advection_wind_min: f64,
     pub local_fraction_equator: f64,
     pub local_fraction_width_deg: f64,
+    /// Пороги поясов П0–П6 по биотемпературе — только `v0`.
     pub belt_edges_c: [f64; 6],
+    /// К11 (Д-119), только `v1-dev`: пороги поясов по средней годовой
+    /// температуре `t_c`. Считаются по ней же, а не по биотемпературе, чтобы
+    /// «летняя» обрезка месяцев ниже 0 °C не поднимала пояс в глубине материка.
+    pub belt_edges_mean_c: [f64; 6],
     pub province_edges_r: [f64; 5],
     pub winter_boreal_c: f64,
     pub winter_temperate_c: f64,
@@ -1662,6 +1667,9 @@ impl Params {
                 local_fraction_equator: 0.55,
                 local_fraction_width_deg: 15.0,
                 belt_edges_c: [1.5, 3.0, 6.0, 12.0, 18.0, 24.0],
+                // К11 / Д-119: старт — те же числа, что у `belt_edges_c`;
+                // подбор под среднюю температуру — отдельным шагом.
+                belt_edges_mean_c: [1.5, 3.0, 6.0, 12.0, 18.0, 24.0],
                 province_edges_r: [0.5, 1.0, 2.0, 4.0, 8.0],
                 winter_boreal_c: -12.0,
                 winter_temperate_c: -8.0,
@@ -1783,6 +1791,10 @@ impl Params {
                 [0.04, -0.11, -0.21, -0.44, -0.46, -0.18, -0.75, -0.70]
             };
             p.morpho.sigma_e = [0.12, 0.15, 0.18, 0.15, 0.12, 0.18, 0.15, 0.15];
+            // К11 / Д-119: высота пояс не меняет. Холод на горе даёт горная
+            // лестница Д-118 по `shape_y`, а не вычет за высоту на холме.
+            // Постоянный вычет суши `alt_cool_land_c` = 3,5 °C остаётся.
+            c.alt_cool_c_per_block = 0.0;
             // Д-095 (T123): климат перекладывает сушу между плато (E2),
             // холмами (E3) и равнинами (E4). Холодные и влажные зоны теряют
             // плато и становятся ровнее; аридная получает столовые земли.
@@ -2099,6 +2111,14 @@ impl Params {
                 w,
                 "climate.w_sign_epsilon={v}",
                 v = self.climate.w_sign_epsilon
+            )
+            .unwrap();
+            // К11 / Д-119: пояс `v1-dev` считается по средней температуре,
+            // поэтому свои пороги живут только в записи `v1-dev`.
+            writeln!(
+                w,
+                "climate.belt_edges_mean_c={:?}",
+                self.climate.belt_edges_mean_c
             )
             .unwrap();
             writeln!(w, "noise.amplitude_units=sigma").unwrap();

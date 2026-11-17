@@ -6,7 +6,9 @@
 //! сохраняется честно помеченный запасной путь «сухая котловина / болото».
 
 use crate::channel::{ChannelQuery, ReachEnd};
-use crate::classify::{ClassSample, VanillaCell, ocean_cell, step_toward};
+use crate::classify::{
+    ClassSample, VanillaCell, allowed_rows, middle_cell, ocean_cell, step_toward,
+};
 use crate::climate::ClimateSample;
 use crate::drainage::RiverNetError;
 use crate::lake::{LakeKind, LakeQuery};
@@ -219,7 +221,9 @@ pub fn classify_surface(
             // Сильный коридор получает лесную ячейку; слабая кромка только
             // плавно поднимает H (и опускает t4 к t3 ниже, в apply_fields).
             // К2 / Д-104: не дальше одной ступени от биома вокруг.
-            Some(match base.zone.belt {
+            // К11 / Д-119: строка T остаётся в допустимых для пояса.
+            let (lo, hi) = allowed_rows(base.mean_belt);
+            let cell = match base.zone.belt {
                 0..=1 => base.cell,
                 2 => step_toward(
                     base.cell,
@@ -237,7 +241,8 @@ pub fn classify_surface(
                         biome: "forest",
                     },
                 ),
-            })
+            };
+            Some(middle_cell(cell.t.clamp(lo, hi), cell.h))
         }
         SurfaceKind::Land
         | SurfaceKind::River
@@ -246,38 +251,54 @@ pub fn classify_surface(
         | SurfaceKind::DeferredWater
             if hydrology.river > 0.0 && hydrology.swamp == 0.0 =>
         {
-            Some(
-                if base.cell.t == 0 || climate.temperature.t_min <= params.lakes.frozen_t_min_c {
-                    VanillaCell {
-                        t: 0,
-                        h: 0,
-                        biome: "frozen_river",
-                    }
-                } else {
-                    VanillaCell {
-                        t: base.cell.t,
-                        h: 0,
-                        biome: "river",
-                    }
-                },
-            )
+            // К11 / Д-119: лёд на воде — только в холодном поясе (строка t0,
+            // П0–П1). В `v1-dev` `t_min` воду больше не замораживает: в
+            // бореальном и умеренном поясе река остаётся рекой.
+            let frozen = if params.version.is_water_relief_dev() {
+                base.cell.t == 0
+            } else {
+                base.cell.t == 0 || climate.temperature.t_min <= params.lakes.frozen_t_min_c
+            };
+            Some(if frozen {
+                VanillaCell {
+                    t: 0,
+                    h: 0,
+                    biome: "frozen_river",
+                }
+            } else {
+                VanillaCell {
+                    t: base.cell.t,
+                    h: 0,
+                    biome: "river",
+                }
+            })
         }
         SurfaceKind::Swamp | SurfaceKind::DeferredWater if hydrology.swamp > 0.0 => {
             // К2 / Д-104: болото в ванили выбирается эрозией и температурой
             // при любой влажности, поэтому H остаётся как у биома вокруг.
-            Some(if base.cell.t >= 3 {
-                VanillaCell {
-                    t: base.cell.t,
-                    h: base.cell.h,
-                    biome: "mangrove_swamp",
-                }
+            // К11 / Д-119: строка T не выходит из допустимых для пояса и
+            // болотом в полярном поясе (t0) не ставится.
+            let (lo, hi) = allowed_rows(base.mean_belt);
+            if hi == 0 {
+                // К11: болото возможно только от строки t1; в полярном поясе
+                // (t0) его нет — остаётся биом вокруг.
+                Some(base.cell)
             } else {
-                VanillaCell {
-                    t: base.cell.t.clamp(1, 2),
-                    h: base.cell.h,
-                    biome: "swamp",
-                }
-            })
+                let t = base.cell.t.clamp(lo.max(1), hi);
+                Some(if t >= 3 {
+                    VanillaCell {
+                        t,
+                        h: base.cell.h,
+                        biome: "mangrove_swamp",
+                    }
+                } else {
+                    VanillaCell {
+                        t,
+                        h: base.cell.h,
+                        biome: "swamp",
+                    }
+                })
+            }
         }
         SurfaceKind::DryBasin if hydrology.dry_basin > 0.0 => {
             // К2 / Д-104: сухая котловина на одну ступень суше биома вокруг,
@@ -612,7 +633,9 @@ mod tests {
         assert_eq!((savanna.cell.t, savanna.cell.h), (3, 1));
         let forest = classify_surface(savanna, &h, &c, &p);
         assert_eq!(forest.cell.biome, "forest");
-        assert_eq!((forest.cell.t, forest.cell.h), (2, 2));
+        // К11 / Д-119: строка T остаётся строкой пояса (П6 → t3), галерея
+        // поднимает только влажность — t3/h2, лес.
+        assert_eq!((forest.cell.t, forest.cell.h), (3, 2));
         let mut numbers = base();
         numbers.t = p.climate.t_centers[4];
         numbers.h = p.climate.h_centers[0];
