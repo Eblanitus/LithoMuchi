@@ -1137,7 +1137,8 @@ impl Generator {
         z: f64,
     ) -> crate::classify::ClassSample {
         if self.params.version.is_water_relief_dev() && !is_ocean {
-            crate::classify::classify_inputs(
+            crate::classify::classify_inputs_at(
+                climate.temperature.t_c,
                 climate.temperature.t_bio,
                 climate.precip.ratio,
                 climate.temperature.t_min,
@@ -1262,7 +1263,15 @@ impl Generator {
         // К5 (Д-111): биом суши берётся по климату с вычетом температуры по
         // готовой высоте колонки. Рельеф и вода выше посчитаны по прежнему
         // климату и от этого шага не зависят.
-        let (climate, class, vanilla) = if is_ocean {
+        //
+        // К11 / Д-119 (Ш5): «устья у моря» — точки, где C ниже порога океана,
+        // а колонка на самом деле суша, — считаются тем же путём, что и
+        // остальная суша. Раньше они оставались с океанским поясом и на
+        // 3,5 °C теплее соседей, и река в них выходила со строкой океана.
+        // Фактическая вода — колонка ниже уровня моря; точка с C ниже порога,
+        // но с сушей над водой, остаётся сушей и идёт обычным путём.
+        let is_water = is_ocean && class.is_ocean;
+        let (climate, class, vanilla) = if is_water {
             (*climate, class, vanilla)
         } else {
             // Высота для вычета — крупная форма: без мелких бугров Д-057 и
@@ -1282,7 +1291,10 @@ impl Generator {
             )
             .surface_y;
             let cooled = crate::climate::recool(climate, shape_y, &self.params);
-            let recast = classify(&cooled, is_ocean, x, z, self.seed, &self.params);
+            // К11 / Д-119 (Ш5): «устье у моря» — C ниже порога океана, но
+            // колонка суша (`class.is_ocean` ложно). Такую точку считаем
+            // сушей, иначе она получает океанскую строку T и теплее соседей.
+            let recast = classify(&cooled, false, x, z, self.seed, &self.params);
             let (t, h) = crate::vanilla::temperature_humidity(&cooled, &recast, &self.params);
             let base = VanillaSample { t, h, ..base };
             let vanilla = hydrology::apply_fields(base, local_river, &water, &self.params);

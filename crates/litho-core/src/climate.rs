@@ -264,12 +264,19 @@ pub fn sea_level_temp(phi_deg: f64, params: &Params) -> f64 {
     c.t_equator_c - c.t_pole_drop_c * dpow(lat, c.t_lat_exponent)
 }
 
-/// К5 (Д-111), `v1-dev`: вычет температуры по высоте поверхности в игре,
-/// °C: ниже `alt_cool_base_y` — постоянный `alt_cool_land_c`, от высоты не
-/// зависит; выше прибавляется `alt_cool_c_per_block` на блок.
+/// К5 (Д-111) и К11 (Д-119), `v1-dev`: вычет температуры суши, °C.
+/// Постоянный `alt_cool_land_c` одинаков на всей суше — он только сдвигает
+/// границы поясов на суше. Высота пояс не двигает: `alt_cool_c_per_block`
+/// в `v1-dev` равен 0, холод на горе даёт ванильная горная лестница по
+/// нашей высоте (`mountain_biome_y`), а не смена пояса на холме.
 pub fn altitude_cooling_c(surface_y: f64, params: &Params) -> f64 {
     let c = &params.climate;
     c.alt_cool_land_c + c.alt_cool_c_per_block * (surface_y - c.alt_cool_base_y).max(0.0)
+}
+
+/// К11 / Д-119: то же без высоты — ровно постоянный вычет суши.
+pub fn land_cooling_c(params: &Params) -> f64 {
+    params.climate.alt_cool_land_c
 }
 
 /// К5 (Д-111): климат биомов. Рельеф и вода строятся по климату с прежним
@@ -278,10 +285,14 @@ pub fn altitude_cooling_c(surface_y: f64, params: &Params) -> f64 {
 /// вычет пересчитывается по ней: модельные километры в игре не видны —
 /// плато 3 км в gameplay стоит равниной на y 100 и раньше было холодным.
 /// Осадки те же; сухость пересчитана по новой температуре.
+///
+/// К11 / Д-119: при `alt_cool_c_per_block = 0` высота входа не влияет —
+/// вычет один на всей суше, и «устья у моря» больше не теплее соседей.
 pub fn recool(climate: &ClimateSample, surface_y: f64, params: &Params) -> ClimateSample {
+    let _ = surface_y;
     let mut temperature = temperature_cooled(
         climate.pole.phi_deg,
-        altitude_cooling_c(surface_y, params),
+        land_cooling_c(params),
         climate.precip.cont,
         params,
     );
