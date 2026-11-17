@@ -634,40 +634,29 @@ pub fn is_mountain(biome: &str) -> bool {
     is_cold_mountain(biome) || biome == "stony_peaks"
 }
 
-/// Д-118: горный биом ванили на холме. Снежные склоны, роща и ледяные пики
-/// допустимы только в нашем снежном биоме или на высокой горе; каменные
-/// пики — только на высокой горе. Иначе W (в `v1-dev` он решает только
-/// выбор биома: PV и высота свои) переносится в срез, где ваниль ставит
-/// обычный биом; если не хватает — E поднимается до ступени 2.
+/// Верх среза low: при |W| не выше этого ваниль на суше не ставит горных
+/// биомов, кроме снежных склонов в снежном поясе (T ступени 0).
+pub const LOW_SLICE_W: f64 = 0.25;
+
+/// Д-118: горные биомы ванили (снежные склоны, роща, пики) только на высокой
+/// горе. W в `v1-dev` решает только выбор биома (PV и высота свои), поэтому
+/// его модуль ограничивается сверху: ниже `mountain_biome_y` — срезом low,
+/// где ваниль ставит обычный биом (а снежному поясу — снежные склоны при
+/// низкой E), выше `mountain_biome_full_y` — без ограничения. Между ними
+/// предел растёт плавно, чтобы W оставался непрерывным (гейт seams 0,02).
 pub fn guard_mountain_biomes(
     v: crate::vanilla::VanillaSample,
-    snowy: bool,
     shape_y: f64,
     params: &crate::params::Params,
 ) -> crate::vanilla::VanillaSample {
-    let high = shape_y >= params.climate.mountain_biome_y;
-    let forbidden = |v: &crate::vanilla::VanillaSample| {
-        let b = surface_biome(v.c, v.e, v.w, v.t, v.h);
-        (is_cold_mountain(b) && !(snowy || high)) || (b == "stony_peaks" && !high)
-    };
-    if !forbidden(&v) {
+    let c = &params.climate;
+    let s = crate::math::smoothstep(c.mountain_biome_y, c.mountain_biome_full_y, shape_y);
+    let cap = LOW_SLICE_W + (1.0 - LOW_SLICE_W) * s;
+    if v.w.abs() <= cap {
         return v;
     }
-    let sign = if v.w < 0.0 { -1.0 } else { 1.0 };
-    // Середины срезов low и mid.
-    let ws = [sign * 0.16, sign * 0.333];
-    let es = [v.e, v.e.max(-0.30)];
-    for e in es {
-        for w in ws {
-            let candidate = crate::vanilla::VanillaSample { e, w, ..v };
-            if !forbidden(&candidate) {
-                return candidate;
-            }
-        }
-    }
     crate::vanilla::VanillaSample {
-        e: v.e.max(-0.30),
-        w: sign * 0.16,
+        w: v.w.signum() * cap,
         ..v
     }
 }
@@ -707,14 +696,27 @@ mod tests {
             t: 0.0,
             h: 0.0,
         };
-        let hill = guard_mountain_biomes(ridge, false, 140.0, &p);
+        let hill = guard_mountain_biomes(ridge, 140.0, &p);
         let b = surface_biome(hill.c, hill.e, hill.w, hill.t, hill.h);
         assert!(!is_mountain(b), "холм стал {b}");
-        assert_eq!(hill.t, ridge.t);
-        assert_eq!(hill.h, ridge.h);
-        // На высокой горе и в снежном биоме ваниль решает сама.
-        assert_eq!(guard_mountain_biomes(ridge, false, 200.0, &p), ridge);
-        assert_eq!(guard_mountain_biomes(ridge, true, 140.0, &p), ridge);
+        assert_eq!(
+            (hill.c, hill.e, hill.t, hill.h),
+            (ridge.c, ridge.e, ridge.t, ridge.h)
+        );
+        // Снежный пояс на холме при низкой E — снежные склоны остаются.
+        let snowy = VanillaSample { t: -0.7, ..hill };
+        let b = surface_biome(snowy.c, snowy.e, snowy.w, snowy.t, snowy.h);
+        assert!(is_cold_mountain(b), "снежный пояс стал {b}");
+        // На высокой горе ваниль решает сама.
+        let top = p.climate.mountain_biome_full_y;
+        assert_eq!(guard_mountain_biomes(ridge, top, &p), ridge);
+        // Непрерывность: предел меняется плавно с высотой.
+        let mut prev = guard_mountain_biomes(VanillaSample { w: 0.9, ..ridge }, 0.0, &p).w;
+        for y in 1..400 {
+            let w = guard_mountain_biomes(VanillaSample { w: 0.9, ..ridge }, y as f64, &p).w;
+            assert!((w - prev).abs() < 0.012, "скачок W на y={y}");
+            prev = w;
+        }
     }
 
     #[test]
