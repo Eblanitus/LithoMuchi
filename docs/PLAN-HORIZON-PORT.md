@@ -233,7 +233,17 @@ hmod/
 исходников при сборке); свои типы фич (I-3) просит и порт Biomes O' Plenty. Отправлять по одному, I-1 первым: без него остальное
 не нужно. Тексты на английском, готовы к копированию. Номера после отправки вписать сюда.
 
+Похожие запросы других (проверено 2026-11-18):
+- I-1: horizon#12432 (порт Tectonic: 29 своих density functions на Java), horizon#13637 (TerraForged).
+  Сослаться на них комментарием в #18281.
+- I-3: отдельного issue нет; Biomes O' Plenty просит то же в #13637. Близкое: horizon#18285 (свои типы модификаторов биомов).
+- I-4: уже есть horizon#16424 → отдельный issue не слать, написать комментарий туда.
+- Путь Б: высоту структур на своём рельефе даёт PR horizon#17596 (Logic-tec, открыт). LOD от мода был в старом API
+  (хук `native_lod_column`, horizon#14643), в SDK 0b14f8a его нет; при пути Б просить вернуть, со ссылкой на #14643.
+
 ### I-1. mod API: custom density function types for worldgen
+
+**Отправлен 2026-11-18: horizon#18281.**
 
 > **Use case.** Litospherity is a world-generation mod: tectonic plates drive continentalness, erosion,
 > ridges, temperature, humidity and the terrain offset/factor of the Overworld router. On pin 66f3981 we
