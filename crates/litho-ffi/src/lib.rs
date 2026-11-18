@@ -122,8 +122,13 @@ pub unsafe extern "C" fn litho_water_batch(
     out_bed: *mut i32,
     out_kind: *mut u8,
 ) -> i32 {
-    if generator.is_null() || (n > 0 && (xs.is_null() || zs.is_null() || out_level.is_null()
-        || out_bed.is_null() || out_kind.is_null()))
+    if generator.is_null()
+        || (n > 0
+            && (xs.is_null()
+                || zs.is_null()
+                || out_level.is_null()
+                || out_bed.is_null()
+                || out_kind.is_null()))
     {
         return -2;
     }
@@ -133,7 +138,9 @@ pub unsafe extern "C" fn litho_water_batch(
     let level = unsafe { std::slice::from_raw_parts_mut(out_level, n) };
     let bed = unsafe { std::slice::from_raw_parts_mut(out_bed, n) };
     let kind = unsafe { std::slice::from_raw_parts_mut(out_kind, n) };
-    let result = catch_unwind(AssertUnwindSafe(|| fill_water(generator, xs, zs, level, bed, kind)));
+    let result = catch_unwind(AssertUnwindSafe(|| {
+        fill_water(generator, xs, zs, level, bed, kind)
+    }));
     if result.is_err() {
         level.fill(litho_core::WaterColumn::NONE);
         bed.fill(litho_core::WaterColumn::NONE);

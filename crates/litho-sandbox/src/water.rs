@@ -128,7 +128,10 @@ const CLUSTER: i64 = 512;
 const SEGMENT_PROBES: i64 = 4;
 
 fn cluster(x: f64, z: f64) -> (i64, i64) {
-    ((x as i64).div_euclid(CLUSTER), (z as i64).div_euclid(CLUSTER))
+    (
+        (x as i64).div_euclid(CLUSTER),
+        (z as i64).div_euclid(CLUSTER),
+    )
 }
 
 /// До 20 мест: центры высоких озёр, ступени рек и устья рек в озёра.
@@ -167,15 +170,13 @@ fn points_at(generator: &Generator, center: (f64, f64), radius_l: f64) -> Vec<Wa
             let z = (lake.center.z - shift.z) * l;
             let column = generator.water_column(x, z);
             if column.has_water() && column.level >= HIGH_LAKE_LEVEL {
-                lakes
-                    .entry(cluster(x, z))
-                    .or_insert(WaterPoint {
-                        x: x as i64,
-                        z: z as i64,
-                        level: column.level,
-                        kind: lake.kind.as_str(),
-                        note: "high_lake",
-                    });
+                lakes.entry(cluster(x, z)).or_insert(WaterPoint {
+                    x: x as i64,
+                    z: z as i64,
+                    level: column.level,
+                    kind: lake.kind.as_str(),
+                    note: "high_lake",
+                });
             }
         }
         let channels = net.channels();
@@ -240,7 +241,10 @@ mod tests {
         let r2 = Generator::new(42, Mode::Gameplay, GenVersion::V1DevR2).unwrap();
         // Опорная точка высокого озера из тестов ядра (там же ищется по сети).
         let found = points(&r2, (-35098.064436977, 8022.221972733), 8.0);
-        assert!(!found.is_empty(), "на сиде 42 не нашлось ни одного места с водой");
+        assert!(
+            !found.is_empty(),
+            "на сиде 42 не нашлось ни одного места с водой"
+        );
         // Три места и небольшое окно: тест проверяет инвариант, а не объём.
         for point in found.iter().take(3) {
             let leaks = leaks(&r2, (point.x as f64, point.z as f64), 64, 4);

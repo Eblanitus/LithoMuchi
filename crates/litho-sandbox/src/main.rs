@@ -508,7 +508,11 @@ fn cmd_water_leaks(args: &[String]) -> Result<(), String> {
         Some(text) => text.parse::<i64>().map_err(|e| format!("--step: {e}"))?,
         None => 4,
     };
-    let centers = [(opts.center_x, opts.center_z), (12000.0, -8000.0), (-16000.0, 9000.0)];
+    let centers = [
+        (opts.center_x, opts.center_z),
+        (12000.0, -8000.0),
+        (-16000.0, 9000.0),
+    ];
     let mut total = water::Leaks::default();
     for (x, z) in centers {
         let leaks = water::leaks(&generator, (x, z), size, step);
@@ -551,7 +555,9 @@ fn cmd_water_points(args: &[String]) -> Result<(), String> {
         ));
     }
     let radius_l = match value(args, "--radius-l") {
-        Some(text) => text.parse::<f64>().map_err(|e| format!("--radius-l: {e}"))?,
+        Some(text) => text
+            .parse::<f64>()
+            .map_err(|e| format!("--radius-l: {e}"))?,
         None => 32.0,
     };
     let points = water::points(&generator, (opts.center_x, opts.center_z), radius_l);
