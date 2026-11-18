@@ -1211,12 +1211,7 @@ impl Generator {
     ) -> Result<PlateLevels, RiverNetError> {
         let l = self.params.block.l_blocks;
         let shift = self.spawn_shift;
-        let to_blocks = |p: Vec2| {
-            (
-                (p.x - shift.x) * l,
-                (p.z - shift.z) * l,
-            )
-        };
+        let to_blocks = |p: Vec2| ((p.x - shift.x) * l, (p.z - shift.z) * l);
         let mut levels = PlateLevels::default();
         // --- Озёра (§4, п. 1)
         let lakes = net.lakes().lakes();

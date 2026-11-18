@@ -305,7 +305,9 @@ fn raise_bank(
     let l = params.block.l_blocks;
     let mut target = land_y;
     let mut consider = |level: f64, distance_blocks: f64| {
-        if !level.is_finite() || !distance_blocks.is_finite() || distance_blocks > h.bank_raise_blocks
+        if !level.is_finite()
+            || !distance_blocks.is_finite()
+            || distance_blocks > h.bank_raise_blocks
         {
             return;
         }
@@ -403,7 +405,11 @@ mod tests {
         Params::defaults(GenVersion::V1DevR2, mode)
     }
 
-    fn channel_level(mirror_y: f64, depth_blocks: f64, level: Option<f64>) -> crate::channel::ChannelHit {
+    fn channel_level(
+        mirror_y: f64,
+        depth_blocks: f64,
+        level: Option<f64>,
+    ) -> crate::channel::ChannelHit {
         let mut hit = channel_hit(mirror_y, depth_blocks);
         hit.level_blocks = level;
         hit
@@ -424,8 +430,15 @@ mod tests {
         hydro.channels.nearest = Some(channel_level(120.0, 2.0, Some(80.0)));
         // Суша 100: вырез опускает дно под зеркало, но не выше суши.
         let cut = with_water(base_at(100.0), &hydro, &p);
-        assert_eq!(cut.water_y, 80.0, "уровень взят от берегов, а не из километров");
-        assert!(cut.surface_y <= 79.0, "дно {:?} не ниже зеркала", cut.surface_y);
+        assert_eq!(
+            cut.water_y, 80.0,
+            "уровень взят от берегов, а не из километров"
+        );
+        assert!(
+            cut.surface_y <= 79.0,
+            "дно {:?} не ниже зеркала",
+            cut.surface_y
+        );
         assert!(cut.surface_y <= 100.0, "вырез поднял рельеф");
         // Суша 70 ниже зеркала: R2 не наливает воду выше суши.
         let low = with_water(base_at(70.0), &hydro, &p);
