@@ -64,20 +64,6 @@ jobs:
           find fabric/src/generated/resources -type f
       - uses: actions/setup-java@v4
         with: { distribution: temurin, java-version: "25" }
-      - name: API 26.3 (диагностика)
-        run: |
-          cd out && mkdir -p srv && cd srv && unzip -q -o ../server.jar && j=$(ls META-INF/versions/*/*.jar)
-          unzip -l "$j" | awk '{print $4}' | grep -E '^net/minecraft/world/level/levelgen/densityfunction/[^/$]*\.class$|^net/minecraft/world/level/levelgen/densityfunction/generator/[^$]*\.class$'
-          P=net.minecraft.world.level.levelgen.densityfunction
-          javap -cp "$j" -p $P.DensitySampler $P.SamplerContext $P.ContextBoundSampler $P.DfRewriteRule net.minecraft.util.Interval $P.generator.NoiseFunction $P.generator.ConstantFunction 'net.minecraft.world.level.levelgen.RandomState$1' 'net.minecraft.world.level.levelgen.RandomState$2' $P.DensityFunctions || true
-          javap -cp "$j" -p -c $P.generator.ConstantFunction | grep -A40 'compileSampler\|codec()' | head -120 || true
-          javap -cp "$j" -p -c $P.DensityFunctions | grep -B2 -A3 'Registry\|register' | head -60 || true
-          javap -cp "$j" net.minecraft.core.registries.BuiltInRegistries | grep -i dens || true
-          unzip -p "$j" data/minecraft/worldgen/noise_settings/overworld.json | python3 -c "import json,sys;d=json.load(sys.stdin);print(list(d));print(d['noise']);print(json.dumps(d['noise_router']));print(json.dumps(d.get('aquifers')))" || true
-          unzip -p "$j" data/minecraft/worldgen/density_function/overworld/continents.json || true
-          unzip -p "$j" data/minecraft/dimension_type/overworld.json || true
-          unzip -p "$j" data/minecraft/worldgen/world_preset/normal.json | head -c 900 || true
-          unzip -l "$j" | grep -c 'data/minecraft/worldgen/world_preset/' || true
       - uses: actions/setup-java@v4
         with: { distribution: temurin, java-version: "25" }
       - uses: gradle/actions/setup-gradle@v4
