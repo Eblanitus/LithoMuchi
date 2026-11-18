@@ -1,0 +1,71 @@
+# Ф2 (docs/PLAN-FABRIC.md): нативы litho-ffi под 3 ОС + jar мода Fabric с ними внутри.
+# Готовый jar — артефакт `litospherity-fabric-jar` этого workflow.
+name: fabric
+on:
+  push:
+    paths: ["crates/litho-core/**", "crates/litho-ffi/**", "fabric/**", ".github/workflows/fabric.yml"]
+  pull_request:
+    paths: ["crates/litho-core/**", "crates/litho-ffi/**", "fabric/**", ".github/workflows/fabric.yml"]
+  workflow_dispatch:
+concurrency:
+  group: fabric-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  natives:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: windows-latest, platform: windows-x86_64, lib: litho_ffi.dll }
+          - { os: ubuntu-latest, platform: linux-x86_64, lib: liblitho_ffi.so }
+          - { os: macos-latest, platform: macos-aarch64, lib: liblitho_ffi.dylib }
+          - { os: macos-13, platform: macos-x86_64, lib: liblitho_ffi.dylib }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo test -p litho-ffi --release
+      - run: cargo build -p litho-ffi --release
+      - shell: bash
+        run: mkdir -p out/${{ matrix.platform }} && cp target/release/${{ matrix.lib }} out/${{ matrix.platform }}/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: natives-${{ matrix.platform }}
+          path: out
+  jar:
+    needs: natives
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: natives-*
+          merge-multiple: true
+          path: fabric/src/main/resources/natives
+      - run: find fabric/src/main/resources/natives -type f
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: "25" }
+      - uses: gradle/actions/setup-gradle@v4
+        with: { gradle-version: current }
+      - name: Свежие версии Fabric для 26.3
+        id: v
+        run: |
+          set -e
+          mv=$(grep '^minecraft_version=' fabric/gradle.properties | cut -d= -f2)
+          loader=$(curl -fsS https://meta.fabricmc.net/v2/versions/loader | jq -r '[.[]|select(.stable)][0].version')
+          api=$(curl -fsS https://maven.fabricmc.net/net/fabricmc/fabric-api/fabric-api/maven-metadata.xml \
+                | grep -o "<version>[^<]*+${mv}</version>" | sed 's/<[^>]*>//g' | tail -1)
+          loom=$(curl -fsS https://maven.fabricmc.net/net/fabricmc/fabric-loom/net.fabricmc.fabric-loom.gradle.plugin/maven-metadata.xml \
+                | grep -o '<version>[^<]*</version>' | sed 's/<[^>]*>//g' | grep -v -- '-' | tail -1 || true)
+          args=""
+          [ -n "$loader" ] && args="$args -Ploader_version=$loader"
+          [ -n "$api" ] && args="$args -Pfabric_api_version=$api"
+          [ -n "$loom" ] && args="$args -Ploom_version=$loom"
+          echo "versions: mc=$mv loader=$loader api=$api loom=$loom"
+          echo "args=$args" >> "$GITHUB_OUTPUT"
+      - working-directory: fabric
+        run: gradle build --stacktrace ${{ steps.v.outputs.args }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: litospherity-fabric-jar
+          path: fabric/build/libs/*.jar

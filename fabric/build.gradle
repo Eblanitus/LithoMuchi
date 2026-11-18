@@ -1,0 +1,32 @@
+// Minecraft 26.x идёт без обфускации: Loom без маппингов и без ремапа.
+plugins {
+    id 'net.fabricmc.fabric-loom'
+}
+
+version = project.mod_version
+group = 'dev.litospherity'
+base { archivesName = 'litospherity' }
+
+repositories { mavenCentral() }
+
+dependencies {
+    minecraft "com.mojang:minecraft:${project.minecraft_version}"
+    implementation "net.fabricmc:fabric-loader:${project.loader_version}"
+    implementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_api_version}"
+}
+
+java {
+    toolchain { languageVersion = JavaLanguageVersion.of(25) }
+}
+
+tasks.withType(JavaCompile).configureEach { it.options.release = 25 }
+
+processResources {
+    inputs.property 'version', project.version
+    inputs.property 'minecraft_version', project.minecraft_version
+    filesMatching('fabric.mod.json') {
+        expand version: project.version, minecraft_version: project.minecraft_version
+    }
+}
+
+// Нативные библиотеки litho-ffi кладёт CI в src/main/resources/natives/<os>-<arch>/.
