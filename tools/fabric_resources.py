@@ -4,7 +4,7 @@
     python3 tools/fabric_resources.py <пак litospherity_v1-dev_gameplay> <server.jar 26.3> <out>
 
 - density_function/overworld/* пака Horizon → те же файлы, узел шума litospherity:* заменён на
-  {"type": "litospherity:field", "field": ...}; "minecraft:cache" → "minecraft:cache_2d".
+  {"type": "litospherity:field", "field": ...}; обёртка minecraft:cache та же (формат 26.3 = Horizon).
 - noise_settings litospherity:gameplay / scientific = ванильный overworld; aquifers.lava → litospherity:lava_aquifer;
   научный: высота 512 от y −64 (Д-113), свой dimension_type.
 - world_preset litospherity:gameplay / scientific (кнопка «Тип мира») + тег normal.
@@ -24,10 +24,7 @@ def convert(node):
     if isinstance(node, dict):
         if node.get("type") == "minecraft:noise" and str(node.get("noise", "")).startswith("litospherity:"):
             return {"type": "litospherity:field", "field": node["noise"].rsplit("/", 1)[1]}
-        out = {k: convert(v) for k, v in node.items()}
-        if out.get("type") == "minecraft:cache":
-            out["type"] = "minecraft:cache_2d"
-        return out
+        return {k: convert(v) for k, v in node.items()}
     if isinstance(node, list):
         return [convert(v) for v in node]
     return node
