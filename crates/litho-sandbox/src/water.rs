@@ -59,10 +59,6 @@ impl Leaks {
 /// Проверка инварианта §4 на квадрате `size` блоков вокруг `center` с шагом
 /// `step`. Соседи проверяются по блокам (±1), а не по шагу сетки: инвариант
 /// сформулирован для соседних блоков.
-pub fn leaks(generator: &Generator, center: (f64, f64), size: i64, step: i64) -> Leaks {
-    leaks_against(generator, None, center, size, step)
-}
-
 /// То же с эталонным генератором для п. 5 §4: рельеф `v1-dev-r2` не выше
 /// `v1-dev` больше чем на 3 блока. `None` — п. 5 не проверяется.
 pub fn leaks_against(
@@ -283,7 +279,7 @@ mod tests {
         );
         // Три места и небольшое окно: тест проверяет инвариант, а не объём.
         for point in found.iter().take(3) {
-            let leaks = leaks(&r2, (point.x as f64, point.z as f64), 64, 4);
+            let leaks = leaks_against(&r2, None, (point.x as f64, point.z as f64), 64, 4);
             assert!(
                 leaks.water > 0,
                 "место {point:?} без воды выше моря: {leaks:?}"
@@ -301,7 +297,7 @@ mod tests {
     #[test]
     fn v1_dev_has_no_water_above_the_sea() {
         let dev = Generator::new(42, Mode::Gameplay, GenVersion::V1Dev).unwrap();
-        let leaks = leaks(&dev, (0.0, 0.0), 256, 8);
+        let leaks = leaks_against(&dev, None, (0.0, 0.0), 256, 8);
         assert_eq!(leaks.water, 0);
     }
 
