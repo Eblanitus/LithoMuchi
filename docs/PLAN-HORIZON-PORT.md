@@ -249,6 +249,9 @@ hmod/
 > **Why not a marker.** `#[replaceable]` on `SeededContext::noise` alone does not help: the helper must
 > return `Arc<dyn horizon_core::noise::Noise>`, which a mod crate cannot implement.
 >
+> Not only us: TerraForged-Horizon registers its own density nodes (`reterraforged:cell`, `reterraforged:noise`,
+> `reterraforged:clamp_to_nearest_unit`) through a mixin on the density registry (its
+> docs/horizon/host-density-registry.md), so it hits the same wall on the new SDK.
 > Related: #13637 (opt-in native worldgen APIs for TerraForged) — this is a smaller, separate piece.
 
 ### I-2. mod API: write blocks after the noise fill of `minecraft:noise` levels
