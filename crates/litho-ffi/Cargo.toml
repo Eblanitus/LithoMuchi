@@ -1,0 +1,16 @@
+# Ф1 (docs/PLAN-FABRIC.md): C-интерфейс к litho-core для мода Fabric (Java 25, Panama FFM).
+# Horizon этот крейт не использует.
+[package]
+name = "litho-ffi"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+description = "C-интерфейс ядра Litospherity для Fabric (Panama FFM)"
+publish = false
+license = "MIT OR Apache-2.0"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+litho-core = { path = "../litho-core" }

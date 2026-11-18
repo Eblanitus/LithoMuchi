@@ -1,0 +1,129 @@
+# Ф2 (docs/PLAN-FABRIC.md): нативы litho-ffi под 3 ОС + jar мода Fabric с ними внутри.
+# Готовый jar — артефакт `litospherity-fabric-jar` этого workflow.
+name: fabric
+on:
+  push:
+    paths: ["crates/litho-core/**", "crates/litho-ffi/**", "fabric/**", ".github/workflows/fabric.yml"]
+  pull_request:
+    paths: ["crates/litho-core/**", "crates/litho-ffi/**", "fabric/**", ".github/workflows/fabric.yml"]
+  workflow_dispatch:
+concurrency:
+  group: fabric-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  natives:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: windows-latest, platform: windows-x86_64, lib: litho_ffi.dll }
+          - { os: ubuntu-latest, platform: linux-x86_64, lib: liblitho_ffi.so }
+          - { os: macos-latest, platform: macos-aarch64, lib: liblitho_ffi.dylib }
+          - { os: macos-latest, platform: macos-x86_64, lib: liblitho_ffi.dylib, target: x86_64-apple-darwin }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with: { targets: "${{ matrix.target }}" }
+      # Раннер macos-13 (Intel) снят: x86_64 собирается кросс-компиляцией на arm64.
+      - if: ${{ !matrix.target }}
+        run: cargo test -p litho-ffi --release
+      - shell: bash
+        run: |
+          if [ -n "${{ matrix.target }}" ]; then
+            cargo build -p litho-ffi --release --target ${{ matrix.target }}; dir=target/${{ matrix.target }}/release
+          else
+            cargo build -p litho-ffi --release; dir=target/release
+          fi
+          mkdir -p out/${{ matrix.platform }} && cp $dir/${{ matrix.lib }} out/${{ matrix.platform }}/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: natives-${{ matrix.platform }}
+          path: out
+  jar:
+    needs: natives
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: natives-*
+          merge-multiple: true
+          path: fabric/src/main/resources/natives
+      - run: find fabric/src/main/resources/natives -type f
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Ресурсы мода из пака v1-dev и ванильного 26.3 (Ф3)
+        run: |
+          set -e
+          cargo run -q -p xtask -- pack --out out/packs
+          mv=$(grep '^minecraft_version=' fabric/gradle.properties | cut -d= -f2)
+          url=$(curl -fsS https://piston-meta.mojang.com/mc/game/version_manifest_v2.json | jq -r --arg v "$mv" '.versions[]|select(.id==$v).url')
+          srv=$(curl -fsS "$url" | jq -r '.downloads.server.url')
+          curl -fsS -o out/server.jar "$srv"
+          python3 tools/fabric_resources.py out/packs/litospherity_v1-dev_gameplay out/server.jar fabric/src/generated/resources
+          find fabric/src/generated/resources -type f
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: "25" }
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: "25" }
+      - uses: gradle/actions/setup-gradle@v4
+        with: { gradle-version: current }
+      - name: Свежие версии Fabric для 26.3
+        id: v
+        run: |
+          set -e
+          mv=$(grep '^minecraft_version=' fabric/gradle.properties | cut -d= -f2)
+          loader=$(curl -fsS https://meta.fabricmc.net/v2/versions/loader | jq -r '[.[]|select(.stable)][0].version')
+          api=$(curl -fsS https://maven.fabricmc.net/net/fabricmc/fabric-api/fabric-api/maven-metadata.xml \
+                | grep -o "<version>[^<]*+${mv}</version>" | sed 's/<[^>]*>//g' | tail -1)
+          loom=$(curl -fsS https://maven.fabricmc.net/net/fabricmc/fabric-loom/net.fabricmc.fabric-loom.gradle.plugin/maven-metadata.xml \
+                | grep -o '<version>[^<]*</version>' | sed 's/<[^>]*>//g' | grep -v -- '-' | tail -1 || true)
+          args=""
+          [ -n "$loader" ] && args="$args -Ploader_version=$loader"
+          [ -n "$api" ] && args="$args -Pfabric_api_version=$api"
+          [ -n "$loom" ] && args="$args -Ploom_version=$loom"
+          echo "versions: mc=$mv loader=$loader api=$api loom=$loom"
+          echo "args=$args" >> "$GITHUB_OUTPUT"
+      - working-directory: fabric
+        run: gradle build --stacktrace ${{ steps.v.outputs.args }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: litospherity-fabric-jar
+          path: fabric/build/libs/*.jar
+  server:
+    # Ф4 (паритет полей мира с ядром) и Ф5 (скорость) на headless-сервере Fabric.
+    needs: natives
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        mode: [gameplay, scientific]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: natives-*
+          merge-multiple: true
+          path: fabric/src/main/resources/natives
+      - uses: dtolnay/rust-toolchain@stable
+      - run: |
+          set -e
+          cargo run -q -p xtask -- pack --out out/packs
+          mv=$(grep '^minecraft_version=' fabric/gradle.properties | cut -d= -f2)
+          url=$(curl -fsS https://piston-meta.mojang.com/mc/game/version_manifest_v2.json | jq -r --arg v "$mv" '.versions[]|select(.id==$v).url')
+          curl -fsS -o out/server.jar "$(curl -fsS "$url" | jq -r '.downloads.server.url')"
+          python3 tools/fabric_resources.py out/packs/litospherity_v1-dev_gameplay out/server.jar fabric/src/generated/resources
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: "25" }
+      - uses: gradle/actions/setup-gradle@v4
+        with: { gradle-version: current }
+      - name: Сервер с пресетом litospherity:${{ matrix.mode }}
+        working-directory: fabric
+        run: |
+          mkdir -p run
+          echo "eula=true" > run/eula.txt
+          printf 'level-seed=42\nlevel-type=litospherity\\:%s\nonline-mode=false\n' "${{ matrix.mode }}" > run/server.properties
+          timeout 1500 gradle runServer --args=nogui -Dorg.gradle.jvmargs=-Xmx3G \
+            -Plitospherity_ci=${{ matrix.mode }} || true
+          cat run/litospherity-ci.txt
+          grep -q "RESULT: PASS" run/litospherity-ci.txt

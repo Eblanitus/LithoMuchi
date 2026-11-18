@@ -1,0 +1,11 @@
+// Ф2 (docs/PLAN-FABRIC.md): мод Litospherity под Fabric. Версии — в gradle.properties.
+pluginManagement {
+    repositories {
+        maven { url = 'https://maven.fabricmc.net/' }
+        gradlePluginPortal()
+    }
+    plugins {
+        id 'net.fabricmc.fabric-loom' version providers.gradleProperty('loom_version').get()
+    }
+}
+rootProject.name = 'litospherity-fabric'

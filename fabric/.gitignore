@@ -1,0 +1,5 @@
+.gradle/
+build/
+run/
+src/main/resources/natives/
+src/generated/
