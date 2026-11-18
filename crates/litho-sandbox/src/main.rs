@@ -553,7 +553,12 @@ fn cmd_water_leaks(args: &[String]) -> Result<(), String> {
         if let Some(hit) = water.channels.nearest {
             println!(
                 "  русло: расстояние {:.3} L, core {:.3} L, глубина {:.2}, зеркало T145 {:.1}, уровень R2 {:?}, along {:.3}",
-                hit.distance_l, hit.core_l, hit.depth_blocks, hit.mirror_y, hit.level_blocks, hit.along
+                hit.distance_l,
+                hit.core_l,
+                hit.depth_blocks,
+                hit.mirror_y,
+                hit.level_blocks,
+                hit.along
             );
         }
         if let Some(hit) = water.lakes.water_hit {
