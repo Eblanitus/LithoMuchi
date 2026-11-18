@@ -88,6 +88,9 @@ jobs:
         working-directory: fabric
         run: |
           set -o pipefail
+          # `bash -e` у GitHub Actions: без `set +e` шаг выходит на упавшей
+          # сборке и аннотация не печатается вовсе.
+          set +e
           mkdir -p ../out
           # Сырые логи CI недоступны, поэтому ошибки компиляции уходят
           # аннотациями: иначе падение сборки видно только как exit code 1.
