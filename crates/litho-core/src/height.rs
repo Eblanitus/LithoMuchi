@@ -186,30 +186,42 @@ pub fn with_water(
     let mut best = 0.0_f64;
     let mut water_y = SEA_LEVEL;
     let mut bed_y = land_y;
+    // Поверхность после выреза у выбранной воды: у реки вырез ограничен
+    // глубиной русла, у озера — нет (котловина и есть вырез).
+    let mut carve_y: Option<f64> = None;
     if let Some(hit) = hydrology.channels.nearest {
         // Д-057: вода и вырез — по узкому берегу русла, а не по широкому
         // переходу C/E/W. Долину вокруг даёт PV→−1 и таблица высот.
         let cut = clamp01(hydrology.channels.bank);
-        if cut > 0.0 {
-            // R2 (§4, п. 2): уровень вершины русла — низший берег минус 1,
-            // монотонно вниз по течению. Уровень считается от сухой
-            // поверхности `S`, поэтому зажим `min(суша − 1)` больше не нужен.
-            // Нет уровня (вода не выше моря) — R2 здесь воду не ставит.
-            let mirror = if r2 {
-                hit.level_blocks
-            } else {
-                Some(hit.mirror_y.round().min(land_y - 1.0))
-            };
-            if let Some(mirror) = mirror.filter(|mirror| *mirror >= h.min_y) {
+        // R2 (§4, п. 2): уровень вершины русла — низший берег минус 1,
+        // монотонно вниз по течению. Нет уровня (вода не выше моря) — R2
+        // здесь воду не ставит.
+        let mirror = if r2 {
+            hit.level_blocks
+        } else {
+            Some(hit.mirror_y.round().min(land_y - 1.0))
+        };
+        if let Some(mirror) = mirror.filter(|mirror| *mirror >= h.min_y) {
+            if cut > 0.0 {
                 let depth = hit.depth_blocks.max(1.0);
                 let bed = (mirror - depth).max(h.min_y);
-                // §4, п. 3: колонка выше зеркала остаётся сушей (острова,
-                // прирусловой вал), вырез её не касается.
-                let wet = !r2 || land_y < mirror;
+                let carve = if r2 {
+                    // §4, п. 3: вырез не глубже русла под сушу. Иначе зеркало
+                    // с километровым уровнем выкапывало бы каньон в 30 блоков
+                    // (баг К3), а зеркало теперь берётся от берегов.
+                    lerp(land_y, bed, cut)
+                        .max(land_y - depth)
+                        .min(land_y)
+                } else {
+                    lerp(land_y, bed, cut)
+                };
+                // Вода стоит только там, где вырез опустил дно ниже зеркала.
+                let wet = !r2 || carve < mirror - 0.5;
                 if cut > best && wet {
                     best = cut;
                     water_y = mirror;
                     bed_y = bed;
+                    carve_y = Some(carve);
                 }
             }
         }
@@ -220,6 +232,7 @@ pub fn with_water(
         if r2 {
             if let Some(mirror) = hit.level_blocks.filter(|level| *level >= h.min_y) {
                 let cut = clamp01(hit.water_strength);
+                // Колонка выше зеркала — остров или берег: её не режем.
                 if cut > 0.0 && land_y < mirror {
                     let depth = clamp(
                         hit.max_depth_km * h.water_km_to_blocks,
@@ -227,10 +240,12 @@ pub fn with_water(
                         h.lake_depth_max_blocks,
                     );
                     let bed = (mirror - depth).max(h.min_y);
-                    if cut > best || (cut == best && bed < bed_y) {
+                    let carve = lerp(land_y, bed, cut).min(land_y);
+                    if (cut > best || (cut == best && bed < bed_y)) && carve < mirror - 0.5 {
                         best = cut;
                         water_y = mirror;
                         bed_y = bed;
+                        carve_y = Some(carve);
                     }
                 }
             }
@@ -242,7 +257,6 @@ pub fn with_water(
                 if cut > 0.0 {
                     // К3: в R1 зеркало не выше локального берега, как у рек, —
                     // дно не может встать плоским столом над сушей.
-                    // R2: зеркало плоское на всей площади озера (п. 3 §4).
                     let raw = (SEA_LEVEL + level.max(0.0) * h.water_km_to_blocks).round();
                     let mirror = raw.min(land_y - 1.0);
                     if mirror >= h.min_y {
@@ -252,25 +266,24 @@ pub fn with_water(
                             h.lake_depth_max_blocks,
                         );
                         let bed = (mirror - depth).max(h.min_y);
+                        let carve = lerp(land_y, bed, cut);
                         if cut > best || (cut == best && bed < bed_y) {
                             best = cut;
                             water_y = mirror;
                             bed_y = bed;
+                            carve_y = Some(carve);
                         }
                     }
                 }
             }
         }
     }
-    if best > 0.0 {
-        let cut_y = lerp(land_y, bed_y, best);
-        // R2: вода стоит на `water_y − 1`, значит, дно обязано быть ниже
-        // (инвариант §4, п. 1). В R1 это уже даёт зажим зеркала.
+    if let Some(carve) = carve_y.filter(|_| best > 0.0) {
+        // §4, пп. 1 и 3: вырез только вниз (`min(S, вырез)`), дно ниже зеркала.
         height.surface_y = if r2 {
-            // §4, пп. 1 и 3: вырез только вниз (`min(S)`), дно ниже зеркала.
-            cut_y.min(land_y).min(water_y - 1.0)
+            carve.min(land_y).min(water_y - 1.0)
         } else {
-            cut_y
+            carve
         };
         height.water_y = water_y;
         height.bed_y = bed_y;
@@ -445,6 +458,26 @@ mod tests {
         let high = with_water(base_at(90.0), &hydro, &p);
         assert_eq!(high.water_strength, 0.0, "вода встала над сушей");
         assert_eq!(high.surface_y, 90.0);
+    }
+
+    /// §4, п. 3: река не выкапывает каньон под зеркало, которого на
+    /// поверхности нет. Суша 90, зеркало 62 — разница 28 блоков, это не
+    /// русло: колонка остаётся сушей, уровень считается ошибкой, а не вырезом.
+    #[test]
+    fn r2_river_does_not_dig_a_canyon_to_the_mirror() {
+        let p = params_r2(Mode::Gameplay);
+        let mut hydro = HydrologySample::default();
+        hydro.channels.core = 1.0;
+        hydro.channels.bank = 1.0;
+        hydro.channels.nearest = Some(channel_level(120.0, 2.0, Some(62.0)));
+        let column = with_water(base_at(90.0), &hydro, &p);
+        assert_eq!(column.water_strength, 0.0, "вырыт каньон под зеркало");
+        assert_eq!(column.surface_y, 90.0);
+        // Суша 70 при зеркале 71 и глубине 2: дно 69, вода стоит.
+        hydro.channels.nearest = Some(channel_level(120.0, 2.0, Some(71.0)));
+        let shallow = with_water(base_at(70.0), &hydro, &p);
+        assert_eq!(shallow.water_y, 71.0);
+        assert!(shallow.surface_y <= 70.0, "дно {:?}", shallow.surface_y);
     }
 
     #[test]

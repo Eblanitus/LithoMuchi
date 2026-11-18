@@ -569,25 +569,42 @@ fn cmd_water_leaks(args: &[String]) -> Result<(), String> {
         }
         return Ok(());
     }
+    // §4, п. 6: широкая сетка шагом 8 проскакивает русло шириной 4–6 блоков
+    // (в окне 1024 получалось 6 колонок с водой вместо сотен). Поэтому каждый
+    // центр дополнительно считается плотным окном с шагом 1 — по нему и
+    // набирается минимум колонок с водой, а нарушения считаются суммарно.
+    let dense = match value(args, "--dense") {
+        Some(text) => text.parse::<i64>().map_err(|e| format!("--dense: {e}"))?,
+        None => 96,
+    };
     // П. 5 §4 сравнивает рельеф с v1-dev: там вода выше моря не ставится вовсе.
     let reference = Generator::new(opts.seed, opts.mode, GenVersion::V1Dev)
         .map_err(|error| error.to_string())?;
     let mut total = water::Leaks::default();
     for (x, z) in centers {
-        let leaks = water::leaks_against(&generator, Some(&reference), (x, z), size, step);
+        let coarse = water::leaks_against(&generator, Some(&reference), (x, z), size, step);
+        // Плотное окно — только про воду (п. 6): сравнение с эталоном на
+        // каждом блоке стоило бы десятки минут на приёмочном прогоне.
+        let dense_leaks = if dense > 0 {
+            water::leaks_against(&generator, None, (x, z), dense, 1)
+        } else {
+            water::Leaks::default()
+        };
         println!(
-            "  центр ({x}, {z}): колонок {}, с водой {}, дно выше зеркала {}, берег ниже зеркала/ступень {}, рельеф поднят {}",
-            leaks.columns, leaks.water, leaks.deep_bed, leaks.spill, leaks.raised
+            "  центр ({x}, {z}): широкое окно {size} шагом {step} — колонок {}, с водой {}; плотное {dense} шагом 1 — с водой {}; нарушений {} (дно {}, сосед {}, рельеф {})",
+            coarse.columns,
+            coarse.water,
+            dense_leaks.water,
+            coarse.violations() + dense_leaks.violations(),
+            coarse.deep_bed + dense_leaks.deep_bed,
+            coarse.spill + dense_leaks.spill,
+            coarse.raised + dense_leaks.raised
         );
-        for example in &leaks.examples {
+        for example in coarse.examples.iter().chain(dense_leaks.examples.iter()) {
             println!("    {example}");
         }
-        total.columns += leaks.columns;
-        total.water += leaks.water;
-        total.deep_bed += leaks.deep_bed;
-        total.spill += leaks.spill;
-        total.raised += leaks.raised;
-        total.examples.extend(leaks.examples);
+        total.merge(&coarse);
+        total.merge(&dense_leaks);
     }
     println!(
         "water-leaks: всего колонок {}, с водой выше моря {}, нарушений {} (п.1 {}, п.2 {}, п.5 {})",

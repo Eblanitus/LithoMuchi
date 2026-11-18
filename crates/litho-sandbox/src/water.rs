@@ -45,6 +45,19 @@ pub const RAISE_LIMIT_BLOCKS: f64 = 3.0;
 pub const MIN_WATER_COLUMNS: u64 = 200;
 
 impl Leaks {
+    /// Суммирует окна: широкое и плотное считаются отдельно, а гейт —
+    /// по сумме.
+    pub fn merge(&mut self, other: &Self) {
+        self.columns += other.columns;
+        self.water += other.water;
+        self.deep_bed += other.deep_bed;
+        self.spill += other.spill;
+        self.raised += other.raised;
+        for example in &other.examples {
+            self.example(example.clone());
+        }
+    }
+
     pub fn violations(&self) -> u64 {
         self.deep_bed + self.spill + self.raised
     }
@@ -82,15 +95,18 @@ pub fn leaks_against(
             if let Some(reference) = reference {
                 // §4, п. 5: `v1-dev-r2` только опускает рельеф и добивает
                 // берег на 1–2 блока. Всё, что выше эталона на 3 блока, —
-                // насыпь, то есть ошибка уровня.
-                if let Ok(Some(full)) = reference.try_sample(x as f64, z as f64) {
-                    let base = full.world.height.surface_y;
+                // насыпь, то есть ошибка уровня. Сравниваем с **сухой**
+                // поверхностью эталона: сам `v1-dev` режет русло под
+                // километровый уровень, и его готовая поверхность в тех же
+                // колонках стоянки на 20–30 блоков ниже (баг К3), так что
+                // сравнение с ней ловило бы вырез `v1-dev`, а не насыпь.
+                if let Ok(Some(base)) = reference.dry_surface_at(x as f64, z as f64) {
                     if column.surface != WaterColumn::NONE
                         && column.surface as f64 > base + RAISE_LIMIT_BLOCKS
                     {
                         out.raised += 1;
                         out.example(format!(
-                            "рельеф поднят: ({x}, {z}) {} против {base:.1} у v1-dev",
+                            "рельеф поднят: ({x}, {z}) {} против суши {base:.1} у v1-dev",
                             column.surface
                         ));
                     }
