@@ -152,8 +152,7 @@ pub fn resolve(
         SurfaceKind::InlandSea
     } else if lakes.river_lake > 0.0
         || inside.is_some_and(|hit| {
-            hit.kind == LakeKind::Lake
-                && hit.level_km.is_some_and(|level| level <= r1_max_km)
+            hit.kind == LakeKind::Lake && hit.level_km.is_some_and(|level| level <= r1_max_km)
         })
     {
         SurfaceKind::Lake

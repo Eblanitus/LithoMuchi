@@ -2346,12 +2346,7 @@ impl Params {
             // R2 (Ф6-В1): ключ только у своей версии — хеши `v0`, `v1` и
             // `v1-dev` не меняются (критерий «готово» шага В1).
             if self.version.is_water_relief_r2() {
-                writeln!(
-                    w,
-                    "height.bank_raise_blocks={:?}",
-                    hg.bank_raise_blocks
-                )
-                .unwrap();
+                writeln!(w, "height.bank_raise_blocks={:?}", hg.bank_raise_blocks).unwrap();
             }
             let bd = &self.boundaries;
             for (name, value) in [

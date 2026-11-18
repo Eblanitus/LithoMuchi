@@ -62,6 +62,11 @@ mod tests {
         assert!(!GenVersion::V1Dev.is_water_relief_r2());
         assert!(GenVersion::V1DevR2.is_water_relief_r2());
         // Индекс в `litho_generator_new` (Ф6-В2): ABI не меняется, R2 — 3.
-        assert_eq!(GenVersion::ALL.iter().position(|v| *v == GenVersion::V1DevR2), Some(3));
+        assert_eq!(
+            GenVersion::ALL
+                .iter()
+                .position(|v| *v == GenVersion::V1DevR2),
+            Some(3)
+        );
     }
 }
