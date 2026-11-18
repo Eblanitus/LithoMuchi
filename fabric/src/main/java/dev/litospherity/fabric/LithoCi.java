@@ -8,7 +8,9 @@ import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.level.chunk.status.ChunkStatus;
-import net.minecraft.world.level.levelgen.DensityFunction;
+import net.minecraft.world.level.levelgen.RandomState;
+import net.minecraft.world.level.levelgen.densityfunction.DensityFunction;
+import net.minecraft.world.level.levelgen.NoiseBasedChunkGenerator;
 import net.minecraft.world.level.levelgen.NoiseRouter;
 
 /**
@@ -34,7 +36,10 @@ final class LithoCi {
             int m = mode.equals("scientific") ? 0 : 1;
             report.add("mode=" + mode + " seed=" + seed + " height=" + level.getHeight());
             if ((m == 0) != (level.getHeight() >= 512)) { ok = false; report.add("FAIL: высота мира не та для режима"); }
-            NoiseRouter r = level.getChunkSource().randomState().router();
+            RandomState rs = level.getChunkSource().randomState();
+            if (!(level.getChunkSource().getGenerator() instanceof NoiseBasedChunkGenerator noise))
+                throw new IllegalStateException("генератор мира не шумовой");
+            NoiseRouter r = noise.generatorSettings().value().noiseRouter();
             DensityFunction[] fns = {r.continents(), r.erosion(), r.ridges(), r.temperature(), r.vegetation()};
             String[] names = {"continents", "erosion", "ridges", "temperature", "vegetation"};
             LithoNative.Generator gen = LithoFields.generator(new LithoFields.Binding(seed, m));
@@ -43,7 +48,7 @@ final class LithoCi {
                 int x = (int) Math.floorMod(i * 7919L, 40000) - 20000;
                 int z = (int) Math.floorMod(i * 104729L, 40000) - 20000;
                 for (int f = 0; f < fns.length; f++) {
-                    double got = fns[f].compute(new DensityFunction.SinglePointContext(x, 64, z));
+                    double got = rs.sampleBlockValueUncached(fns[f], x, 64, z);
                     double want = gen.field(f, x, z);
                     if (Math.abs(got - want) > 1e-6) {
                         if (bad++ < 20) report.add("FAIL " + names[f] + " (" + x + "," + z + "): мир " + got + " ядро " + want);

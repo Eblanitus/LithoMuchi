@@ -1,19 +1,30 @@
 package dev.litospherity.fabric;
 
 import com.mojang.serialization.Codec;
+import com.mojang.serialization.DataResult;
 import com.mojang.serialization.MapCodec;
+import java.lang.reflect.Field;
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
+import java.util.WeakHashMap;
 import java.util.concurrent.ConcurrentHashMap;
-import net.minecraft.util.KeyDispatchDataCodec;
-import net.minecraft.world.level.levelgen.DensityFunction;
+import net.minecraft.resources.Identifier;
+import net.minecraft.util.Interval;
+import net.minecraft.world.level.levelgen.RandomState;
+import net.minecraft.world.level.levelgen.densityfunction.DensityBuffer;
+import net.minecraft.world.level.levelgen.densityfunction.DensityFunction;
+import net.minecraft.world.level.levelgen.densityfunction.DensitySampler;
+import net.minecraft.world.level.levelgen.densityfunction.DensityVolume;
+import net.minecraft.world.level.levelgen.densityfunction.DfRewriteRule;
+import net.minecraft.world.level.levelgen.densityfunction.SamplerContext;
 
 /**
- * Ф3: функции плотности Litospherity.
+ * Ф3: функции плотности Litospherity для Minecraft 26.3 (компилируемые сэмплеры).
  *
- * <p>В датапаке узел без сида: {@code {"type":"litospherity:field","field":"continents"}}. Сид и режим
- * приходят при создании {@code RandomState} (миксин {@code RandomStateMixin}), и в {@code mapAll} узел
- * заменяется связанным с генератором ядра. Значение то же, что в Horizon: {@code field_f32(x, z)}.
+ * <p>Узел датапака: {@code {"type":"litospherity:field","field":"continents"}} — то же, что шум
+ * {@code litospherity:v1-dev/<режим>/<поле>} в Horizon: {@code field_f32(x, z)} ядра. Сид берётся из
+ * {@code RandomState} при компиляции сэмплера, режим — из высоты мира (миксин {@code RandomStateMixin}).
  */
 public final class LithoFields {
     private LithoFields() {}
@@ -26,10 +37,10 @@ public final class LithoFields {
     /** Версия генератора: 2 = v1-dev (как паки Horizon). */
     public static final int VERSION = 2;
 
-    /** Сид и режим текущего создаваемого RandomState (0 научный, 1 геймплейный). */
     public record Binding(long seed, int mode) {}
 
-    public static final ThreadLocal<Binding> CURRENT = new ThreadLocal<>();
+    /** Режим мира по RandomState (0 научный, 1 геймплейный); заполняет миксин. */
+    public static final Map<RandomState, Integer> MODES = Collections.synchronizedMap(new WeakHashMap<>());
 
     private static final Map<Binding, LithoNative.Generator> GENERATORS = new ConcurrentHashMap<>();
 
@@ -41,57 +52,74 @@ public final class LithoFields {
         });
     }
 
+    /** Сид и режим из контекста компиляции (анонимный класс RandomState хранит ссылку на него). */
+    static Binding binding(DensityFunction.CompileContext ctx) {
+        try {
+            Field outer = ctx.getClass().getDeclaredField("this$0");
+            outer.setAccessible(true);
+            RandomState state = (RandomState) outer.get(ctx);
+            return new Binding(state.seed(), MODES.getOrDefault(state, 1));
+        } catch (ReflectiveOperationException | ClassCastException e) {
+            long seed = ctx.createRandom(Identifier.fromNamespaceAndPath(LithoMod.MOD_ID, "seed")).nextLong();
+            LithoMod.LOG.warn("Litospherity: сид мира недоступен ({}), беру производный {}", e, seed);
+            return new Binding(seed, 1);
+        }
+    }
+
+    private abstract static class Sampler implements DensitySampler {
+        @Override
+        public void sampleVolume(SamplerContext ctx, DensityBuffer buffer, DensityVolume volume) {
+            DensitySampler.sampleVolumeNaive(ctx, buffer, volume, this);
+        }
+    }
+
     /** Поле ядра в колонке (x, z). */
-    public record Field(String name, LithoNative.Generator generator) implements DensityFunction.SimpleFunction {
-        public static final MapCodec<Field> MAP_CODEC = Codec.STRING
-                .validate(n -> FIELDS.contains(n)
-                        ? com.mojang.serialization.DataResult.success(n)
-                        : com.mojang.serialization.DataResult.error(() -> "неизвестное поле Litospherity: " + n))
+    public record ColumnField(String name) implements DensityFunction {
+        public static final MapCodec<ColumnField> CODEC = Codec.STRING
+                .validate(n -> FIELDS.contains(n) ? DataResult.success(n)
+                        : DataResult.error(() -> "неизвестное поле Litospherity: " + n))
                 .fieldOf("field")
-                .xmap(n -> new Field(n, null), Field::name);
-        public static final KeyDispatchDataCodec<Field> CODEC = KeyDispatchDataCodec.of(MAP_CODEC);
+                .xmap(ColumnField::new, ColumnField::name);
 
         @Override
-        public double compute(FunctionContext ctx) {
-            if (generator == null) return 0.0;
-            return generator.field(FIELDS.indexOf(name), ctx.blockX(), ctx.blockZ());
+        public DensitySampler compileSampler(CompileContext ctx) {
+            LithoNative.Generator gen = generator(binding(ctx));
+            int index = FIELDS.indexOf(name);
+            return new Sampler() {
+                @Override
+                public float sampleValue(SamplerContext c, int x, int y, int z) {
+                    return (float) gen.field(index, x, z);
+                }
+            };
         }
 
-        @Override
-        public DensityFunction mapAll(Visitor visitor) {
-            Binding b = CURRENT.get();
-            if (generator == null && b != null) return visitor.apply(new Field(name, generator(b)));
-            return visitor.apply(this);
-        }
-
-        @Override public double minValue() { return -64.0; }
-        @Override public double maxValue() { return 64.0; }
-        @Override public KeyDispatchDataCodec<? extends DensityFunction> codec() { return CODEC; }
+        @Override public DensityFunction rewriteChildren(DfRewriteRule rule) { return this; }
+        @Override public Interval range() { return Interval.of(-64f, 64f); }
+        @Override public int domainAxes() { return AXIS_X | AXIS_Z; }
+        @Override public MapCodec<? extends DensityFunction> codec() { return CODEC; }
     }
 
     /**
-     * Лава аквифера (Д-097): роутер {@code lava} зовётся в координатах ячейки аквифера
+     * Лава аквифера (Д-097): {@code aquifers.lava} зовётся в координатах ячейки аквифера
      * (64 × 40 × 64), как хук Horizon на {@code minecraft:aquifer_lava}.
      */
-    public record LavaAquifer(LithoNative.Generator generator) implements DensityFunction.SimpleFunction {
-        public static final MapCodec<LavaAquifer> MAP_CODEC = MapCodec.unit(() -> new LavaAquifer(null));
-        public static final KeyDispatchDataCodec<LavaAquifer> CODEC = KeyDispatchDataCodec.of(MAP_CODEC);
+    public record LavaAquifer() implements DensityFunction {
+        public static final MapCodec<LavaAquifer> CODEC = MapCodec.unit(LavaAquifer::new);
 
         @Override
-        public double compute(FunctionContext ctx) {
-            if (generator == null) return 0.0;
-            return generator.lavaAquifer(ctx.blockX(), ctx.blockY(), ctx.blockZ());
+        public DensitySampler compileSampler(CompileContext ctx) {
+            LithoNative.Generator gen = generator(binding(ctx));
+            return new Sampler() {
+                @Override
+                public float sampleValue(SamplerContext c, int x, int y, int z) {
+                    return (float) gen.lavaAquifer(x, y, z);
+                }
+            };
         }
 
-        @Override
-        public DensityFunction mapAll(Visitor visitor) {
-            Binding b = CURRENT.get();
-            if (generator == null && b != null) return visitor.apply(new LavaAquifer(generator(b)));
-            return visitor.apply(this);
-        }
-
-        @Override public double minValue() { return -4.0; }
-        @Override public double maxValue() { return 4.0; }
-        @Override public KeyDispatchDataCodec<? extends DensityFunction> codec() { return CODEC; }
+        @Override public DensityFunction rewriteChildren(DfRewriteRule rule) { return this; }
+        @Override public Interval range() { return Interval.of(-4f, 4f); }
+        @Override public int domainAxes() { return AXIS_X | AXIS_Y | AXIS_Z; }
+        @Override public MapCodec<? extends DensityFunction> codec() { return CODEC; }
     }
 }

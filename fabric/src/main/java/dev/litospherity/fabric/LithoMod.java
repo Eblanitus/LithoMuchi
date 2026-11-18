@@ -20,9 +20,9 @@ public final class LithoMod implements ModInitializer {
             LOG.info("Litospherity: ядро {} (ABI {}), полей {}, платформа {}",
                     core.coreVersion(), core.abiVersion(), core.fieldCount(), LithoNative.platform());
             Registry.register(BuiltInRegistries.DENSITY_FUNCTION_TYPE,
-                    Identifier.fromNamespaceAndPath(MOD_ID, "field"), LithoFields.Field.MAP_CODEC);
+                    Identifier.fromNamespaceAndPath(MOD_ID, "field"), LithoFields.ColumnField.CODEC);
             Registry.register(BuiltInRegistries.DENSITY_FUNCTION_TYPE,
-                    Identifier.fromNamespaceAndPath(MOD_ID, "lava_aquifer"), LithoFields.LavaAquifer.MAP_CODEC);
+                    Identifier.fromNamespaceAndPath(MOD_ID, "lava_aquifer"), LithoFields.LavaAquifer.CODEC);
             try (LithoNative.Generator probe = core.newGenerator(42L, 1, 2)) {
                 float[] f = probe.fields(new double[] {0.0, 0.0});
                 LOG.info("Litospherity: проба сид 42 gameplay v1-dev (0,0): C={} E={} W={} T={} H={}",

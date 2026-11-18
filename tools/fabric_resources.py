@@ -5,7 +5,7 @@
 
 - density_function/overworld/* пака Horizon → те же файлы, узел шума litospherity:* заменён на
   {"type": "litospherity:field", "field": ...}; "minecraft:cache" → "minecraft:cache_2d".
-- noise_settings litospherity:gameplay / scientific = ванильный overworld; lava роутера → litospherity:lava_aquifer;
+- noise_settings litospherity:gameplay / scientific = ванильный overworld; aquifers.lava → litospherity:lava_aquifer;
   научный: высота 512 от y −64 (Д-113), свой dimension_type.
 - world_preset litospherity:gameplay / scientific (кнопка «Тип мира») + тег normal.
 Файлы Mojang в репозиторий не кладутся: берутся из server.jar при сборке.
@@ -49,11 +49,8 @@ def main(pack, jar, out):
     preset = get("worldgen/world_preset/normal.json")
     for mode in ("gameplay", "scientific"):
         s = json.loads(json.dumps(settings))
-        s["noise_router"]["lava"] = {"type": "litospherity:lava_aquifer"}
-        # В ванили temperature/vegetation роутера записаны прямо в noise_settings: ведём их на наши файлы.
-        for key in ("temperature", "vegetation"):
-            if (df / f"overworld/{key}.json").exists():
-                s["noise_router"][key] = f"minecraft:overworld/{key}"
+        # Д-097: лава аквифера по ячейке, как хук Horizon на minecraft:aquifer_lava.
+        s["aquifers"]["lava"] = {"type": "litospherity:lava_aquifer"}
         if mode == "scientific":
             s["noise"]["min_y"], s["noise"]["height"] = -64, 512
         write(out, f"data/litospherity/worldgen/noise_settings/{mode}.json", s)
