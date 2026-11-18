@@ -94,8 +94,12 @@ jobs:
           gradle build --stacktrace ${{ steps.v.outputs.args }} 2>&1 \
             | tee ../out/gradle-build.log
           status=$?
-          grep -E "error:|error\\]|What went wrong|Caused by:|^FAILURE" ../out/gradle-build.log \
-            | head -40 | python3 ../tools/ci_annotations.py report || true
+          {
+            grep -nE "error:|error\\]|What went wrong|Caused by:|^FAILURE|command not found|Could not|Execution failed|> Task .*FAILED" \
+              ../out/gradle-build.log | head -40 || true
+            echo "--- хвост лога сборки ---"
+            tail -n 40 ../out/gradle-build.log || true
+          } | python3 ../tools/ci_annotations.py report || true
           exit $status
       - uses: actions/upload-artifact@v4
         with:
