@@ -1,11 +1,10 @@
 name: fmt-and-clippy-report
-# ВРЕМЕННЫЙ workflow: в среде разработки нет rustfmt/clippy, а логи job'ов
+# ВРЕМЕННЫЙ workflow (запускается на каждый push, пока идёт отладка): в среде разработки нет rustfmt/clippy, а логи job'ов
 # недоступны, поэтому дифф форматирования и ошибки clippy отдаются аннотациями
 # (api.github.com). Удаляется после правки.
 on:
   workflow_dispatch:
   push:
-    paths: [".github/workflows/fmt-and-clippy-report.yml"]
 jobs:
   report:
     runs-on: ubuntu-latest
