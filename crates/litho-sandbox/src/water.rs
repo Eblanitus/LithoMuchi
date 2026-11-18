@@ -32,6 +32,11 @@ pub struct Leaks {
     pub spill: u64,
     /// Нарушения п. 5: рельеф поднят больше чем на 3 блока против `v1-dev`.
     pub raised: u64,
+    /// Сухие колонки ниже зеркала на кромке водопада: сосед принадлежит
+    /// другому руслу, которое уже упало до моря. Это §4, п. 3 (водопад),
+    /// а не протечка п. 2: отвесная стена у водопада и должна быть ниже
+    /// верхнего зеркала.
+    pub falls: u64,
     /// Ступени воды больше блока: по §4, п. 3 это водопады, а не нарушение —
     /// считаются метрикой. Печатаются с примерами: рост числа означает, что
     /// уровень где-то посчитан неверно.
@@ -60,6 +65,7 @@ impl Leaks {
         self.spill += other.spill;
         self.raised += other.raised;
         self.waterfalls += other.waterfalls;
+        self.falls += other.falls;
         for coord in &other.coords {
             if self.coords.len() < EXAMPLE_LIMIT {
                 self.coords.push(*coord);
@@ -141,6 +147,34 @@ pub fn leaks_against(
     out
 }
 
+/// §4, п. 3: сосед ниже зеркала на кромке водопада — не протечка. Признак:
+/// его собственное русло или озеро уже упало на два блока и больше (или эта
+/// ветвь дошла до моря, `level_blocks = None`). Тогда отвесная сухая стена
+/// рядом с верхним зеркалом — это и есть водопад.
+fn belongs_to_a_fall(generator: &Generator, x: i64, z: i64, level: i32) -> bool {
+    let Ok(hydrology) = generator.hydrology_levels_at(x as f64, z as f64) else {
+        return false;
+    };
+    if let Some(hit) = hydrology.channels.nearest {
+        match hit.level_blocks {
+            None => return true,
+            Some(own) => {
+                if own <= level as f64 - 2.0 {
+                    return true;
+                }
+            }
+        }
+    }
+    if let Some(hit) = hydrology.lakes.water_hit.filter(|hit| hit.inside) {
+        if let Some(own) = hit.level_blocks {
+            if own <= level as f64 - 2.0 {
+                return true;
+            }
+        }
+    }
+    false
+}
+
 fn check_column(generator: &Generator, column: &WaterColumn, x: i64, z: i64, out: &mut Leaks) {
     if column.surface > column.level - 1 {
         out.deep_bed += 1;
@@ -169,6 +203,11 @@ fn check_column(generator: &Generator, column: &WaterColumn, x: i64, z: i64, out
         {
             // Сосед ниже уровня моря — это море, а не суша: игра наливает
             // там воду до 63, и ступень считается от неё.
+            if belongs_to_a_fall(generator, x + dx, z + dz, column.level) {
+                // §4, п. 3: отвесная стена на кромке водопада — не протечка.
+                out.falls += 1;
+                continue;
+            }
             out.spill += 1;
             // Разбор — по сухой колонке: у неё своё русло и свой уровень.
             out.coord(x + dx, z + dz);

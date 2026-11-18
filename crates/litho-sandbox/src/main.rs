@@ -571,6 +571,11 @@ fn cmd_water_leaks(args: &[String]) -> Result<(), String> {
             coarse.raised + dense_leaks.raised,
             coarse.waterfalls + dense_leaks.waterfalls
         );
+        println!(
+            "    кромка водопадов: {} сухих колонок ниже зеркала (§4, п. 3), ступени вода-вода: {}",
+            coarse.falls + dense_leaks.falls,
+            coarse.waterfalls + dense_leaks.waterfalls
+        );
         for example in coarse.examples.iter().chain(dense_leaks.examples.iter()) {
             println!("    {example}");
         }
@@ -578,13 +583,15 @@ fn cmd_water_leaks(args: &[String]) -> Result<(), String> {
         total.merge(&dense_leaks);
     }
     println!(
-        "water-leaks: всего колонок {}, с водой выше моря {}, нарушений {} (п.1 {}, п.2 {}, п.5 {}), водопадов {}",
+        "water-leaks: всего колонок {}, с водой выше моря {}, нарушений {} (п.1 {}, п.2 {}, п.5 {}), водопадов {} (кромка {} + ступени {})",
         total.columns,
         total.water,
         total.violations(),
         total.deep_bed,
         total.spill,
         total.raised,
+        total.waterfalls + total.falls,
+        total.falls,
         total.waterfalls
     );
     if total.water < water::MIN_WATER_COLUMNS {
