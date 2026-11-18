@@ -170,7 +170,8 @@ fn check_column(generator: &Generator, column: &WaterColumn, x: i64, z: i64, out
             // Сосед ниже уровня моря — это море, а не суша: игра наливает
             // там воду до 63, и ступень считается от неё.
             out.spill += 1;
-            out.coord(x, z);
+            // Разбор — по сухой колонке: у неё своё русло и свой уровень.
+            out.coord(x + dx, z + dz);
             out.example(format!(
                 "берег ниже зеркала: ({}, {}) суша {} зеркало {} в ({x}, {z})",
                 x + dx,
