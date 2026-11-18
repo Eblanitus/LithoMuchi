@@ -425,6 +425,9 @@
 - строка 10.1 «озёр на 100 L²»;
 - доработка рек.
 
+> **2026-11-18:** #16422 влит, но на новом мод-SDK (Nightly 0b14f8a) функции `horizon_world` миксином
+> не перехватываются. Перенос мода и воды на новый Horizon — [PLAN-HORIZON-PORT.md](PLAN-HORIZON-PORT.md).
+
 **Когда возвращаемся.** Когда в Horizon появится именованный параметр
 `position: [i32; 3]` в `<GlobalFluidPicker as FluidPicker>::compute`
 (issue `horizon-rust/horizon#16388`, открыт).

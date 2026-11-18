@@ -7,6 +7,7 @@
 | План до v1 (состояние, оставшиеся шаги, правила) | [PLAN.md](PLAN.md) |
 | Переход на Fabric (Ф0–Ф7) | [PLAN-FABRIC.md](PLAN-FABRIC.md) |
 | Вода выше уровня моря на Fabric (Ф6-В0…В7) | [PLAN-WATER-FABRIC.md](PLAN-WATER-FABRIC.md) |
+| Перенос на новый Horizon (.hmod) и воды из Java в Horizon (Г0–Г8) | [PLAN-HORIZON-PORT.md](PLAN-HORIZON-PORT.md) |
 | Спецификация: формулы и критерии v1 (план v1.0 и пересмотр v1.1) | [spec/](spec/) |
 | Справочник: как устроен мир сейчас, по темам | [wiki/](wiki/README.md) |
 | Журнал решений Д-001… (только дописывается) | [DECISIONS.md](DECISIONS.md) |
