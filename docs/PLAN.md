@@ -398,8 +398,8 @@
 **Fabric** идёт параллельно, не дожидаясь К10 (слово автора 2026-11-17): [PLAN-FABRIC.md](PLAN-FABRIC.md).
 
 **Вода выше моря на Fabric (Ф6).** 2026-11-18 написаны шаги В1–В5 плана
-[PLAN-WATER-FABRIC.md](PLAN-WATER-FABRIC.md): версия ядра `v1-dev-r2` (плоское зеркало озера,
-подъём берега, `water_column`, песочница `water-leaks`/`water-points`), пакет воды в FFI
+[PLAN-WATER-FABRIC.md](PLAN-WATER-FABRIC.md): версия ядра `v1-dev-r2` (уровень воды от сухой
+поверхности колонки, `water_column`, песочница `water-leaks`/`water-points`), пакет воды в FFI
 (ABI 2), фича `litospherity:water` на шаге `RAW_GENERATION` (заливка и герметизация),
 CI-режим `water-<режим>` и job `water`. Шаги В6 (живые перекаты, TPS) и В7 (холодные пруды,
 строки 10.1) открыты. Миры Horizon этим не меняются: `v1-dev-r2` создаётся только пресетами
