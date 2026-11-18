@@ -16,6 +16,7 @@ public final class LithoMod implements ModInitializer {
     public void onInitialize() {
         try {
             LithoNative core = LithoNative.get();
+            LithoCi.register();
             LOG.info("Litospherity: ядро {} (ABI {}), полей {}, платформа {}",
                     core.coreVersion(), core.abiVersion(), core.fieldCount(), LithoNative.platform());
             Registry.register(BuiltInRegistries.DENSITY_FUNCTION_TYPE,

@@ -33,3 +33,14 @@ processResources {
 sourceSets.main.resources.srcDir 'src/generated/resources'
 
 // Нативные библиотеки litho-ffi кладёт CI в src/main/resources/natives/<os>-<arch>/.
+
+// CI: Ф4/Ф5 на headless-сервере (-Plitospherity_ci=<режим>).
+loom {
+    runs {
+        server {
+            if (project.hasProperty('litospherity_ci')) {
+                vmArg "-Dlitospherity.ci=${project.litospherity_ci}"
+            }
+        }
+    }
+}
