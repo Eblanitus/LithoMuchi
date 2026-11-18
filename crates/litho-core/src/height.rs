@@ -335,7 +335,7 @@ fn raise_bank(
     height
 }
 
-fn validate(params: &Params) -> Result<(), &'static str> {
+pub fn validate(params: &Params) -> Result<(), &'static str> {
     let h = &params.height;
     let increasing = |xs: &[f64]| xs.windows(2).all(|w| w[0].is_finite() && w[1] > w[0]);
     if !increasing(&h.e_knots) || !increasing(&h.pv_knots) || !increasing(&h.ocean_c) {
