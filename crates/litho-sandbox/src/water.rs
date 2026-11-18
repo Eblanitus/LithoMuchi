@@ -32,6 +32,10 @@ pub struct Leaks {
     pub spill: u64,
     /// Нарушения п. 5: рельеф поднят больше чем на 3 блока против `v1-dev`.
     pub raised: u64,
+    /// Ступени воды больше блока: по §4, п. 3 это водопады, а не нарушение —
+    /// считаются метрикой. Печатаются с примерами: рост числа означает, что
+    /// уровень где-то посчитан неверно.
+    pub waterfalls: u64,
     /// Первые примеры нарушений, не больше `EXAMPLE_LIMIT`.
     pub examples: Vec<String>,
 }
@@ -53,6 +57,7 @@ impl Leaks {
         self.deep_bed += other.deep_bed;
         self.spill += other.spill;
         self.raised += other.raised;
+        self.waterfalls += other.waterfalls;
         for example in &other.examples {
             self.example(example.clone());
         }
@@ -135,9 +140,12 @@ fn check_column(generator: &Generator, column: &WaterColumn, x: i64, z: i64, out
         let neighbor = generator.water_column((x + dx) as f64, (z + dz) as f64);
         if neighbor.has_water() {
             if neighbor.level < column.level - 1 {
-                out.spill += 1;
+                // §4, п. 3: вода-вода с перепадом больше блока — водопад.
+                // Он в метрики, а не в нарушения: вода не уходит в сушу,
+                // а падает в соседнюю воду.
+                out.waterfalls += 1;
                 out.example(format!(
-                    "ступень воды: ({x}, {z}) {} против {} у соседа",
+                    "водопад: ({x}, {z}) {} против {} у соседа",
                     column.level, neighbor.level
                 ));
             }
