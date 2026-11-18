@@ -1,6 +1,7 @@
 //! Песочница Litospherity: карты, метрики, атлас и пробы (план 12.2).
 
 mod acceptance;
+mod belts;
 mod biome_lines;
 mod height;
 mod height_stats;
@@ -435,6 +436,26 @@ fn cmd_paths(args: &[String]) -> Result<(), String> {
 
 /// T77: подсчёт лавы аквиферов по выборке ячеек 64×40×64. Доля лавовых
 /// ячеек у стыков плит (λ ≥ 0.5) против ячеек вдали (λ равна фону).
+/// К11 / Д-119 (Ш1): счётчик «биом против пояса» по средней температуре.
+fn cmd_belts(args: &[String]) -> Result<(), String> {
+    let gate = args.iter().any(|a| a == "--gate");
+    let all = args.iter().any(|a| a == "--all");
+    let rest: Vec<String> = args
+        .iter()
+        .filter(|a| *a != "--gate" && *a != "--all")
+        .cloned()
+        .collect();
+    let opts = options_from(&rest)?;
+    if all {
+        // Ш8: 16 приёмочных сидов × оба режима.
+        let seeds = SWEEP_SEEDS;
+        let modes = [Mode::Gameplay, Mode::Scientific];
+        return belts::run_sweep(&seeds, &modes, opts.version);
+    }
+    let generator = generator(&opts)?;
+    belts::run(&generator, gate)
+}
+
 fn cmd_biomes(args: &[String]) -> Result<(), String> {
     let opts = options_from(args)?;
     let generator = generator(&opts)?;
@@ -1800,7 +1821,10 @@ fn usage() -> &'static str {
                     --strides 4,8,16,32,64,128 --tiles 3 --json\n\
        profile      разбивка времени по слоям\n\
        hash         хеши параметров для замка v0\n\
-       biomes       как часто меняется биом вдоль линий и размер пятен (К1)
+       biomes       как часто меняется биом вдоль линий и размер пятен (К1)\n\
+       belts        К11: биом против пояса (L1, матрица, лёд, горы);\n\
+                    --gate — порог CI L1 ≤ 1 % и лёд только в t0,\n\
+                    --all — 16 приёмочных сидов × оба режима (Ш8)\n\
        shores       доля берегов с сушей выше моря на 10+ в 4 блоках от воды (К4)\n\
 vanilla-biomes биом игры (копия ванильной таблицы) против нашего, горы на холмах (Д-118);\n\
              --report ПУТЬ: сверка копии с отчётом datagen biome_parameters\n\
@@ -1842,6 +1866,7 @@ fn main() -> Result<(), String> {
         "seams" => cmd_seams(&args[1..]),
         "lava" => cmd_lava(&args[1..]),
         "biomes" => cmd_biomes(&args[1..]),
+        "belts" => cmd_belts(&args[1..]),
         "shores" => cmd_shores(&args[1..]),
         "walls" => cmd_walls(&args[1..]),
         "vanilla-biomes" => cmd_vanilla_biomes(&args[1..]),

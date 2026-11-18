@@ -123,6 +123,8 @@ fn set(p: &mut Params, key: &str, value: f64) -> Result<(), String> {
         "climate.alt_cool_base_y" => Some(&mut p.climate.alt_cool_base_y),
         "climate.alt_cool_c_per_block" => Some(&mut p.climate.alt_cool_c_per_block),
         "climate.alt_cool_land_c" => Some(&mut p.climate.alt_cool_land_c),
+        "climate.winter_temperate_c" => Some(&mut p.climate.winter_temperate_c),
+        "climate.winter_boreal_c" => Some(&mut p.climate.winter_boreal_c),
         "relief.land_e_gradient_km_per_block" => Some(&mut p.relief.land_e_gradient_km_per_block),
         _ => None,
     };
@@ -141,6 +143,7 @@ fn set(p: &mut Params, key: &str, value: f64) -> Result<(), String> {
         "morpho.e_remap_hi" => Some(&mut p.morpho.e_remap_hi),
         "morpho.sigma_pv" => Some(&mut p.morpho.sigma_pv),
         "height.micro_amp_blocks" => Some(&mut p.height.micro_amp_blocks),
+        "climate.belt_edges_mean_c" => Some(&mut p.climate.belt_edges_mean_c),
         _ => None,
     };
     if let Some(row) = row {

@@ -1,16 +1,22 @@
 # Параметры генератора v1-dev
 
-> **Актуально на 2026-11-16, К7 нового плана — научный мир выше ванильного (Д-113):
-> `height.max_y` в scientific 319 → 447 (высота уровня 512, пак несёт
-> `dimension_type` и `noise_settings`); до этого К5 — вычет температуры по высоте
-> поверхности в игре (Д-111): добавлены `climate.alt_cool_base_y`, `climate.alt_cool_c_per_block`, `climate.alt_cool_land_c`; до этого К4а/часть 2 — крутизна своей поверхности (Д-110): убран `height.shore_probe_blocks`, `morpho.e_remap_hi` аридной зоны в scientific 0,05 → 0,11; до этого К4 — спуск суши к воде по расстоянию до берега (Д-108); до этого К1 — откат шума границ к `v0` (Д-103); до этого шаг 3 плана T123 (Д-095); до этого шаг 2 T113 (Д-092), T79 (Д-064) и шаг 7
-> (Д-065).** Таблица и хеши
-> сгенерированы из `Params::defaults`; `v0` не менялась. Что изменилось —
-> [archive/T79-LOD-2026-11-12.md](archive/T79-LOD-2026-11-12.md) (дальний рельеф) и
-> `docs/t151/` (подбор по 16 сидам); прежние отчёты —
-> [archive/STEP5-RELIEF-2026-11-11.md](archive/STEP5-RELIEF-2026-11-11.md) и
-> [archive/STEP6-SPEED-2026-11-11.md](archive/STEP6-SPEED-2026-11-11.md), карта документов —
-> [docs/README.md](README.md).
+> **Актуально на 2026-11-17, К11 — биом от пояса (Д-119, план
+> `docs/spec/PLAN-BELTS-2026-11-17.md`): пояс П0–П6 считается по средней годовой
+> `t_c`, строка T биома берётся только от пояса. Добавлен
+> `climate.belt_edges_mean_c = [1.5, 3.0, 6.0, 12.0, 18.0, 24.0]` (подбор по долям
+> строк на сидах 42 и 7, оба режима, — `belts`), `climate.alt_cool_c_per_block`
+> 0,2 → `0`, `climate.alt_cool_land_c` остаётся `3.5`. В `v1-dev` не читаются
+> `climate.winter_temperate_c`, `climate.winter_boreal_c`, `climate.cold_desert_*`
+> и `lakes.frozen_t_min_c` — это `v0`. До этого К7 нового плана — научный мир выше
+> ванильного (Д-113): `height.max_y` в scientific 319 → 447; до этого К5 — вычет
+> температуры по высоте поверхности в игре (Д-111): добавлены
+> `climate.alt_cool_base_y`, `climate.alt_cool_c_per_block`, `climate.alt_cool_land_c`;
+> до этого К4а/часть 2 — крутизна своей поверхности (Д-110); до этого К4 — спуск
+> суши к воде по расстоянию до берега (Д-108); до этого К1 — откат шума границ к
+> `v0` (Д-103); до этого шаг 3 плана T123 (Д-095); до этого шаг 2 T113 (Д-092),
+> T79 (Д-064) и шаг 7 (Д-065).** Таблица и хеши сгенерированы из
+> `Params::defaults`; `v0` не менялась. Карта документов — [docs/README.md](README.md).
+
 
 Сгенерировано `cargo run -p xtask -- params-doc --version v1-dev > docs/PARAMS-V1-DEV.md`.
 Источник правды — `Params::defaults` в `crates/litho-core/src/params.rs`.
@@ -72,13 +78,14 @@
 | `channels.valley_plain` | `5.0` | `5.0` |
 | `climate.advection_wind_min` | `0.6` | `0.6` |
 | `climate.alt_cool_base_y` | `120.0` | `120.0` |
-| `climate.alt_cool_c_per_block` | `0.2` | `0.2` |
+| `climate.alt_cool_c_per_block` | `0.0` | `0.0` |
 | `climate.alt_cool_land_c` | `3.5` | `3.5` |
 | `climate.amp_base_c` | `1.0` | `1.0` |
 | `climate.amp_land_factor` | `0.75` | `0.75` |
 | `climate.amp_lat_c` | `24.0` | `24.0` |
 | `climate.amp_sea_factor` | `0.25` | `0.25` |
 | `climate.belt_edges_c` | `[1.5, 3.0, 6.0, 12.0, 18.0, 24.0]` | `[1.5, 3.0, 6.0, 12.0, 18.0, 24.0]` |
+| `climate.belt_edges_mean_c` | `[1.5, 3.0, 6.0, 12.0, 18.0, 24.0]` | `[1.5, 3.0, 6.0, 12.0, 18.0, 24.0]` |
 | `climate.belt_polar_deg` | `[68.0, 78.0]` | `[68.0, 78.0]` |
 | `climate.belt_trade_deg` | `[25.0, 35.0]` | `[25.0, 35.0]` |
 | `climate.belt_west_deg` | `[25.0, 35.0]` | `[25.0, 35.0]` |
@@ -115,6 +122,8 @@
 | `climate.local_fraction_width_deg` | `15.0` | `15.0` |
 | `climate.m_e_hi` | `0.7` | `1.0` |
 | `climate.m_e_lo` | `0.05` | `0.05` |
+| `climate.mountain_biome_full_y` | `250.0` | `250.0` |
+| `climate.mountain_biome_y` | `150.0` | `150.0` |
 | `climate.ocean_c_threshold` | `-0.19` | `-0.19` |
 | `climate.p_min_mm` | `10.0` | `10.0` |
 | `climate.pet_per_bio_c` | `58.93` | `58.93` |
@@ -425,4 +434,4 @@
 | `wind.knot7.phi_deg` | `90` | `90` |
 | `wind.knot7.s` | `0.3` | `0.3` |
 
-params_hash: scientific = 780210442e7917b9, gameplay = 2bb5c9aa62f4a40d
+params_hash: scientific = 35f888f82f3ba603, gameplay = 9cbf72e5fb90b9b7

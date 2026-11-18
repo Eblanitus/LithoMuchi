@@ -35,12 +35,29 @@ pub struct ClassSample {
     pub is_ocean: bool,
     pub t_bio: f64,
     pub ratio: f64,
+    /// К11 / Д-119: пояс по средней годовой температуре, без сезонов и
+    /// высоты. Строка T биома не выходит за его допустимые строки; `v0`
+    /// это поле не читает (там пояс остаётся по биотемпературе в `zone`).
+    pub mean_belt: u8,
 }
 
-fn belt_of(t_bio: f64, params: &Params) -> u8 {
+/// Пояс по биотемпературе (как в `v0`).
+fn belt_of_bio(t_bio: f64, params: &Params) -> u8 {
+    belt_edges(t_bio, params.climate.belt_edges_c)
+}
+
+/// К11 / Д-119: пояс `v1-dev` — по средней годовой температуре `t_c`.
+/// Биотемпература «летняя» (месяцы ниже 0 °C считаются за 0 °C) поднимала
+/// пояс в глубине материка, и правило зимы возвращало биом назад: два
+/// правила гасили друг друга. Пояс — одна температура, без сезонов.
+fn belt_of_mean(t_c: f64, params: &Params) -> u8 {
+    belt_edges(t_c, params.climate.belt_edges_mean_c)
+}
+
+fn belt_edges(t: f64, edges: [f64; 6]) -> u8 {
     let mut belt = 0_u8;
-    for edge in params.climate.belt_edges_c {
-        if t_bio >= edge {
+    for edge in edges {
+        if t >= edge {
             belt += 1;
         } else {
             break;
@@ -61,9 +78,12 @@ fn province_of(ratio: f64, params: &Params) -> u8 {
 }
 
 fn desert(t_min: f64, params: &Params) -> VanillaCell {
-    // Правило ⚑ [ПО СИТУАЦИИ]: в игре нет холодной пустыни. Песок ставим
-    // только там, где зима не уходит в мороз; сухие места с морозной зимой
-    // (Гоби, Большой Бассейн) становятся сухими равнинами (Д-014).
+    // К11 / Д-119: в `v1-dev` зима биом не выбирает — песок ставится по
+    // поясу (П4 и теплее) и сухости. В `v0` правило Д-014
+    // (`cold_desert_winter_c`) остаётся как было.
+    if params.version.is_water_relief_dev() {
+        return cell(4, 0, "desert");
+    }
     if params.climate.cold_desert_sand && t_min >= params.climate.cold_desert_winter_c {
         cell(4, 0, "desert")
     } else {
@@ -71,6 +91,9 @@ fn desert(t_min: f64, params: &Params) -> VanillaCell {
     }
 }
 
+/// Правило суровой зимы — только `v0`. К11 / Д-119 убрал его из `v1-dev`:
+/// в 92 % случаев оно гасило подъём пояса от «летней» биотемпературы, и
+/// пояс с биомом говорили разное.
 fn severe_winter(belt: u8, t_min: f64, params: &Params) -> bool {
     match belt {
         2 => t_min < params.climate.winter_boreal_c,
@@ -79,51 +102,28 @@ fn severe_winter(belt: u8, t_min: f64, params: &Params) -> bool {
     }
 }
 
-/// К2 / Д-104: кайма пустыни в `v1-dev`. Песок — ванильная ступень t4, а его
-/// соседи в таблице стоят на t1…t3, поэтому пустыня набирает ступени по одной:
-/// у холодного края (низ пояса П3), у порога сухости и у порога морозной зимы
-/// идут сухие равнины (t2), затем саванна (t3), и только потом песок (t4).
-/// Ширина одной ступени каймы по биотемпературе, °C.
-const DESERT_RIM_T_C: f64 = 2.0;
+/// К2 / Д-104, К11 / Д-119: кайма пустыни в `v1-dev`. Песок — ванильная
+/// ступень t4, его соседи стоят на t1…t3, поэтому пустыня набирает ступени
+/// по одной: у низкого края пояса (t2) и у порога сухости идёт саванна
+/// (t3), и только потом песок (t4). Зима в кайме больше не участвует.
 /// Ширина одной ступени каймы по сухости, log2 R.
 const DESERT_RIM_LOG2_R: f64 = 0.5;
-/// Ширина одной ступени каймы по температуре холодного месяца, °C.
-const DESERT_RIM_WINTER_C: f64 = 2.0;
+/// Ширина одной ступени каймы по температуре, °C.
+const DESERT_RIM_C: f64 = 1.5;
 
-fn desert_with_rim(belt: u8, t_bio: f64, ratio: f64, t_min: f64, params: &Params) -> VanillaCell {
+fn desert_with_rim(belt: u8, t_bio: f64, ratio: f64, params: &Params) -> VanillaCell {
     let c = &params.climate;
-    if !c.cold_desert_sand || t_min < c.cold_desert_winter_c {
-        // Морозная зима: сухие равнины, на ступень холоднее соседней по
-        // сухости клетки K3 того же пояса (t2 в П3, t3 или t2 в П4, t3 выше).
-        let warm = match belt {
-            0..=3 => false,
-            4 => t_min >= c.winter_temperate_c,
-            _ => true,
-        };
-        return if warm {
-            cell(2, 1, "plains")
-        } else {
-            cell(1, 0, "plains")
-        };
-    }
-    // Каждая «высота» непрерывна по своему входу, поэтому ступень t меняется
-    // по одной. На краях значения подобраны под соседей таблицы: П2 сухой —
-    // t1, K3 в П3 — t2, K3 в П4+ — t3, морозная сторона — t1.
-    let by_belt = if belt <= 3 {
-        2.0 + (t_bio - c.belt_edges_c[2]) / DESERT_RIM_T_C
-    } else {
-        4.0
-    };
     // Порог K3/K2: суше него таблица ставит пустыню.
     let dry_edge = dln(c.province_edges_r[3].max(1e-9)) / LN_2;
     let by_dryness = 3.0 + (dln(ratio.max(1e-9)) / LN_2 - dry_edge).max(0.0) / DESERT_RIM_LOG2_R;
-    let by_winter = 2.0 + (t_min - c.cold_desert_winter_c) / DESERT_RIM_WINTER_C;
-    match by_belt
-        .min(by_dryness)
-        .min(by_winter)
-        .clamp(2.0, 4.0)
-        .floor() as u8
-    {
+    // Ступень по температуре — от нижнего края П4 (порог `belt_edges_mean_c[3]`):
+    // у края t2 (сухие равнины), дальше по одной на `DESERT_RIM_C` градуса.
+    // Без неё на границе П3/П4 сухая точка прыгала с t2 сразу на песок t4.
+    let by_warmth = 2.0 + (t_bio - c.belt_edges_mean_c[3]) / DESERT_RIM_C;
+    // В П4 низ пояса даёт t2 (сухие равнины), П5–П6 весь диапазон t3…t4.
+    let lo = if belt <= 4 { 2.0 } else { 3.0 };
+    let rim = by_dryness.min(by_warmth);
+    match rim.clamp(lo, 4.0).floor() as u8 {
         2 => cell(2, 1, "plains"),
         3 => cell(3, 0, "savanna"),
         _ => cell(4, 0, "desert"),
@@ -261,7 +261,7 @@ fn biome_cell_ladder(
     province: u8,
     t_bio: f64,
     ratio: f64,
-    t_min: f64,
+    _t_min: f64,
     params: &Params,
 ) -> VanillaCell {
     let belt = belt.min(6);
@@ -282,39 +282,31 @@ fn biome_cell_ladder(
         _ => 4,
     };
     let h = wet.min(cap);
-    let cold = severe_winter(belt, t_min, params);
+    // К11 / Д-119: строка T — только от пояса. Зима (`t_min`) и «летняя»
+    // биотемпература строку больше не двигают: П2 — всегда t1, П3 — всегда
+    // t2, П4 — t2…t4 по сухости, П5–П6 — t3…t4. Снег и лёд остаются в
+    // П0–П1 (строка t0), в остальных поясах их ставит только ванильная
+    // горная лестница по нашей высоте (Д-118).
     let t = match belt {
         0 | 1 => 0_u8,
-        2 => {
-            if cold {
-                0
-            } else {
-                1
-            }
-        }
+        2 => 1,
         3 => {
             if province <= 2 {
-                // Правило ⚑ холодной пустыни как в v0, плюс кайма (Д-104).
-                return desert_with_rim(belt, t_bio, ratio, t_min, params);
+                // К11: в П3 сухо — сухие равнины t2 (саванна и песок только
+                // с П4), без ветки морозной зимы.
+                return cell(2, 1, "plains");
             }
-            if cold { 1 } else { 2 }
+            2
         }
         4 => {
             if province <= 2 {
-                return desert_with_rim(belt, t_bio, ratio, t_min, params);
+                return desert_with_rim(belt, t_bio, ratio, params);
             }
-            // Тёплый умеренный: сухо — саванна, влажно — лиственный лес.
-            // К2 / Д-104: при суровой зиме саванны нет (t2): иначе холодный
-            // П3 (t1) вставал к ней через ступень.
-            if province >= 5 || t_min < params.climate.winter_temperate_c {
-                2
-            } else {
-                3
-            }
+            if province >= 5 { 2 } else { 3 }
         }
         _ => {
             if province <= 2 {
-                return desert_with_rim(belt, t_bio, ratio, t_min, params);
+                return desert_with_rim(belt, t_bio, ratio, params);
             }
             3
         }
@@ -340,8 +332,26 @@ pub fn ocean_cell(sst_c: f64, params: &Params) -> VanillaCell {
 
 /// Классификация на прямых входах, без дрожания границ (контрольные точки).
 pub fn classify_inputs(t_bio: f64, ratio: f64, t_min: f64, params: &Params) -> ClassSample {
+    classify_inputs_at(t_bio, t_bio, ratio, t_min, params)
+}
+
+/// К11 / Д-119: то же плюс средняя годовая температура `t_c`, по которой
+/// `v1-dev` считает пояс. `v0` `t_c` не читает.
+pub fn classify_inputs_at(
+    t_c: f64,
+    t_bio: f64,
+    ratio: f64,
+    t_min: f64,
+    params: &Params,
+) -> ClassSample {
+    let by_mean = params.version.is_water_relief_dev();
+    let belt = if by_mean {
+        belt_of_mean(t_c, params)
+    } else {
+        belt_of_bio(t_bio, params)
+    };
     let zone = LifeZone {
-        belt: belt_of(t_bio, params),
+        belt,
         province: province_of(ratio, params),
     };
     ClassSample {
@@ -350,6 +360,20 @@ pub fn classify_inputs(t_bio: f64, ratio: f64, t_min: f64, params: &Params) -> C
         is_ocean: false,
         t_bio,
         ratio,
+        mean_belt: belt,
+    }
+}
+
+/// К11 / Д-119: допустимые строки ванильной температуры для пояса. В этих
+/// пределах биом и должен стоять; проверка живёт в `litho-core` и в
+/// песочнице (`belts`).
+pub const fn allowed_rows(belt: u8) -> (u8, u8) {
+    match belt {
+        0 | 1 => (0, 0),
+        2 => (1, 1),
+        3 => (2, 2),
+        4 => (2, 4),
+        _ => (3, 4),
     }
 }
 
@@ -385,7 +409,10 @@ pub fn classify(
         10.0,
     );
     let ratio = dexp(LN_2 * log2_r);
-    let mut result = classify_inputs(t_bio, ratio, climate.temperature.t_min, params);
+    // К11 / Д-119: в `v1-dev` пояс считается по средней температуре `t_c`
+    // (плюс то же дрожание границ); `t_bio` остаётся для `v0`, сухости и каймы.
+    let t_c = climate.temperature.t_c + params.block.jitter_t_c * jitter_t;
+    let mut result = classify_inputs_at(t_c, t_bio, ratio, climate.temperature.t_min, params);
     if params.version.is_water_relief_dev() && !is_ocean {
         result.cell = ecotone_cell(
             result,
@@ -403,6 +430,7 @@ pub fn classify(
             belt: result.cell.t,
             province: 1,
         };
+        result.mean_belt = result.cell.t;
         result.is_ocean = true;
     }
     result
@@ -485,7 +513,8 @@ fn ecotone_cell(
     middle_cell(base.cell.t, h)
 }
 
-fn middle_cell(t: u8, h: u8) -> VanillaCell {
+/// Имя биома по ванильной ячейке `(t, h)` — средняя таблица A.2.
+pub(crate) fn middle_cell(t: u8, h: u8) -> VanillaCell {
     let name = match (t.min(4), h.min(4)) {
         (0, 0 | 1) => "snowy_plains",
         (0, 2) => "snowy_taiga",

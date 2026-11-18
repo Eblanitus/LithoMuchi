@@ -82,6 +82,22 @@ test_core() {
   fi
   run "$OUT/t-core.wasm" "$@"
 }
+# Интеграционные тесты крейта (crates/litho-core/tests/*.rs): CI гоняет их через
+# `cargo test --workspace`, поэтому и здесь — иначе падения ловятся только в CI.
+test_core_integration() {
+  build_core
+  for src in "$CORE"/tests/*.rs; do
+    [ -e "$src" ] || continue
+    name=$(basename "$src" .rs)
+    out="$OUT/t-core-$name.wasm"
+    if stale "$out" "$CORE/tests" "$OUT/liblitho_core.rlib"; then
+      echo "· интеграционные тесты litho-core ($name)" >&2
+      rustc "${TESTOPT[@]}" --test --crate-name "$name" "$src" \
+        --extern "litho_core=$OUT/liblitho_core.rlib" -o "$out"
+    fi
+    run "$out"
+  done
+}
 test_sandbox() {
   build_core
   if stale "$OUT/t-sandbox.wasm" "$SBX/src" "$OUT/liblitho_core.rlib"; then
@@ -143,11 +159,12 @@ case "$cmd" in
   test)
     what=${1:-all}; [ $# -gt 0 ] && shift
     case "$what" in
-      core) test_core "$@" ;;
+      core) test_core "$@"; test_core_integration ;;
+      integration) test_core_integration ;;
       sandbox) test_sandbox "$@" ;;
       tests) test_tests "$@" ;;
       xtask) test_xtask "$@" ;;
-      all) test_core "$@"; test_sandbox "$@"; test_xtask "$@"; test_tests "$@" ;;
+      all) test_core "$@"; test_core_integration; test_sandbox "$@"; test_xtask "$@"; test_tests "$@" ;;
       *) echo "неизвестный набор тестов: $what" >&2; exit 2 ;;
     esac
     ;;
