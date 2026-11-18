@@ -125,7 +125,12 @@ fn check_column(generator: &Generator, column: &WaterColumn, x: i64, z: i64, out
                     column.level, neighbor.level
                 ));
             }
-        } else if neighbor.surface != WaterColumn::NONE && neighbor.surface < column.level {
+        } else if neighbor.surface != WaterColumn::NONE
+            && neighbor.surface < column.level
+            && neighbor.surface > SEA
+        {
+            // Сосед ниже уровня моря — это море, а не суша: игра наливает
+            // там воду до 63, и ступень считается от неё.
             out.spill += 1;
             out.example(format!(
                 "берег ниже зеркала: ({}, {}) суша {} зеркало {} в ({x}, {z})",

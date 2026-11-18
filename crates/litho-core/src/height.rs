@@ -428,8 +428,9 @@ mod tests {
         hydro.channels.core = 1.0;
         hydro.channels.bank = 1.0;
         hydro.channels.nearest = Some(channel_level(120.0, 2.0, Some(80.0)));
-        // Суша 100: вырез опускает дно под зеркало, но не выше суши.
-        let cut = with_water(base_at(100.0), &hydro, &p);
+        // Суша 79 при зеркале 80 и глубине 2: вырез опускает дно до 78,
+        // но не выше суши (79) и не выше зеркала минус блок.
+        let cut = with_water(base_at(79.0), &hydro, &p);
         assert_eq!(
             cut.water_y, 80.0,
             "уровень взят от берегов, а не из километров"
@@ -439,7 +440,7 @@ mod tests {
             "дно {:?} не ниже зеркала",
             cut.surface_y
         );
-        assert!(cut.surface_y <= 100.0, "вырез поднял рельеф");
+        assert!(cut.surface_y <= 79.0, "вырез поднял рельеф");
         // Суша 90 выше зеркала 80: колонка остаётся сушей (§4, п. 3).
         let high = with_water(base_at(90.0), &hydro, &p);
         assert_eq!(high.water_strength, 0.0, "вода встала над сушей");
