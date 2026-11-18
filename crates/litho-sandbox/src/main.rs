@@ -1912,6 +1912,10 @@ fn usage() -> &'static str {
                     --gate — порог CI L1 ≤ 1 % и лёд только в t0,\n\
                     --all — 16 приёмочных сидов × оба режима (Ш8)\n\
        shores       доля берегов с сушей выше моря на 10+ в 4 блоках от воды (К4)\n\
+       water-leaks  R2: инвариант «вода не уходит за берега» (v1-dev-r2),\n\
+                    --size 2048 --step 4, три центра\n\
+       water-points R2: до 20 мест с водой выше моря для CI и автора (v1-dev-r2),\n\
+                    --radius-l 32\n\
 vanilla-biomes биом игры (копия ванильной таблицы) против нашего, горы на холмах (Д-118);\n\
              --report ПУТЬ: сверка копии с отчётом datagen biome_parameters\n\
        checkpoints  10 точек вокруг точки появления\n\
@@ -1919,7 +1923,7 @@ vanilla-biomes биом игры (копия ванильной таблицы) 
        atlas        пересобрать только HTML-атлас\n\
        help         эта справка\n\n\
      Общие флаги: --seed N (42), --mode scientific|gameplay (gameplay),\n\
-       --version v0|v1|v1-dev (v0), --center x,z (0,0), --size N (512),\n\
+       --version v0|v1|v1-dev|v1-dev-r2 (v0), --center x,z (0,0), --size N (512),\n\
        --bpp N, --path reference|fast,\n\
        --layers plates|all|список через запятую, --out ПАПКА\n\
      Слои: шум/плиты/кора, климат, зоны, биомы, пять ванильных чисел,\n\

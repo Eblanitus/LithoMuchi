@@ -1,0 +1,27 @@
+name: fmt-and-clippy-report
+# ВРЕМЕННЫЙ workflow: в среде разработки нет rustfmt/clippy, поэтому диффом
+# форматирования и предупреждениями делится CI. Удаляется после правки.
+on:
+  workflow_dispatch:
+  push:
+    paths: [".github/workflows/fmt-and-clippy-report.yml"]
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - name: rustfmt diff
+        run: |
+          cargo fmt --all
+          git --no-pager diff > /tmp/fmt.diff || true
+          echo "===== FMT DIFF START ====="
+          cat /tmp/fmt.diff
+          echo "===== FMT DIFF END ====="
+      - name: clippy
+        run: |
+          echo "===== CLIPPY START ====="
+          cargo clippy --workspace --all-targets -- -D warnings 2>&1 | grep -E "^(error|warning)" -A 6 | head -300 || true
+          echo "===== CLIPPY END ====="

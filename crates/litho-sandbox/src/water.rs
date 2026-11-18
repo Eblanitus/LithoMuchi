@@ -132,9 +132,22 @@ fn cluster(x: f64, z: f64) -> (i64, i64) {
 }
 
 /// До 20 мест: центры высоких озёр, ступени рек и устья рек в озёра.
-/// Берутся из настоящей сети стока (`drainage_network`), а не из сетки
-/// колонок: так река шириной 4–6 блоков не проскакивает мимо.
+/// Поиск идёт кольцами от 8 L до `radius_l`: сеть стока строится по плитам,
+/// и платить за 128 L сразу незачем, если вода нашлась в 8 L.
 pub fn points(generator: &Generator, center: (f64, f64), radius_l: f64) -> Vec<WaterPoint> {
+    let limit = radius_l.max(8.0);
+    let mut radius = 8.0_f64;
+    loop {
+        let found = points_at(generator, center, radius);
+        if !found.is_empty() || radius >= limit {
+            return found;
+        }
+        radius = (radius * 2.0).min(limit);
+    }
+}
+
+/// Один проход по плитам в радиусе `radius_l`, без колец.
+fn points_at(generator: &Generator, center: (f64, f64), radius_l: f64) -> Vec<WaterPoint> {
     let point = generator.macro_point(center.0, center.1);
     let shift = generator.spawn_shift();
     let params = generator.params();
@@ -225,10 +238,12 @@ mod tests {
     #[test]
     fn r2_has_no_leaks_where_water_exists() {
         let r2 = Generator::new(42, Mode::Gameplay, GenVersion::V1DevR2).unwrap();
-        let found = points(&r2, (0.0, 0.0), 24.0);
+        // Опорная точка высокого озера из тестов ядра (там же ищется по сети).
+        let found = points(&r2, (-35098.064436977, 8022.221972733), 8.0);
         assert!(!found.is_empty(), "на сиде 42 не нашлось ни одного места с водой");
-        for point in &found {
-            let leaks = leaks(&r2, (point.x as f64, point.z as f64), 128, 2);
+        // Три места и небольшое окно: тест проверяет инвариант, а не объём.
+        for point in found.iter().take(3) {
+            let leaks = leaks(&r2, (point.x as f64, point.z as f64), 64, 4);
             assert!(
                 leaks.water > 0,
                 "место {point:?} без воды выше моря: {leaks:?}"

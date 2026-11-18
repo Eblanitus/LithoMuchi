@@ -9,7 +9,6 @@ import net.minecraft.core.registries.Registries;
 import net.minecraft.resources.Identifier;
 import net.minecraft.resources.ResourceKey;
 import net.minecraft.world.level.levelgen.GenerationStep;
-import net.minecraft.world.level.levelgen.feature.configurations.NoneFeatureConfiguration;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -36,7 +35,7 @@ public final class LithoMod implements ModInitializer {
                     Identifier.fromNamespaceAndPath(MOD_ID, "lava_aquifer"), LithoFields.LavaAquifer.CODEC);
             Registry.register(BuiltInRegistries.FEATURE,
                     Identifier.fromNamespaceAndPath(MOD_ID, "water"),
-                    new LithoWaterFeature(NoneFeatureConfiguration.CODEC));
+                    new LithoWaterFeature());
             BiomeModifications.addFeature(BiomeSelectors.foundInOverworld(),
                     GenerationStep.Decoration.RAW_GENERATION,
                     ResourceKey.create(Registries.PLACED_FEATURE,

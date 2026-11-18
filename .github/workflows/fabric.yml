@@ -158,8 +158,14 @@ jobs:
         run: |
           set -e
           mkdir -p fabric/run
+          # Опорная точка высокого озера — та же, что в тестах ядра (сид 42,
+          # геймплейный); в научном мире она в 4 раза дальше по блокам.
+          case "${{ matrix.mode }}" in
+            gameplay) at=-35098,8022 ;;
+            *) at=-140392,32089 ;;
+          esac
           cargo run -q -p litho-sandbox --release -- water-points \
-            --seed 42 --mode ${{ matrix.mode }} --version v1-dev-r2 --radius-l 32 \
+            --seed 42 --mode ${{ matrix.mode }} --version v1-dev-r2 --radius-l 32 --at "$at" \
             | tee fabric/run/water-points.txt
       - uses: actions/setup-java@v4
         with: { distribution: temurin, java-version: "25" }

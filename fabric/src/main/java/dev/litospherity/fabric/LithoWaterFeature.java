@@ -1,6 +1,5 @@
 package dev.litospherity.fabric;
 
-import com.mojang.serialization.Codec;
 import java.util.concurrent.atomic.AtomicLong;
 import net.minecraft.core.BlockPos;
 import net.minecraft.world.level.WorldGenLevel;
@@ -43,8 +42,10 @@ public final class LithoWaterFeature extends Feature<NoneFeatureConfiguration> {
     /** Колонок, где вода выше моря поставлена. */
     public static final AtomicLong COLUMNS = new AtomicLong();
 
-    public LithoWaterFeature(Codec<NoneFeatureConfiguration> codec) {
-        super(codec);
+    /** Кодек конфигурации берётся у {@link NoneFeatureConfiguration}: тип параметра
+     *  зависит от версии игры (Codec или MapCodec), поэтому конструктор без параметров. */
+    public LithoWaterFeature() {
+        super(NoneFeatureConfiguration.CODEC);
     }
 
     @Override
@@ -65,7 +66,24 @@ public final class LithoWaterFeature extends Feature<NoneFeatureConfiguration> {
             }
         }
         // Генератор общий и потокобезопасный (Ф1): не закрываем его здесь.
-        LithoNative.WaterColumns water = LithoFields.generator(binding).water(xs, zs);
+        LithoNative.Generator generator = LithoFields.generator(binding);
+        // Дешёвая проба: 4x4 колонки через 5 блоков. Чанк без воды выше моря
+        // не платит за полный пакет 18x18 (цена колонки ядра — десятки мкс).
+        double[] probeX = new double[16];
+        double[] probeZ = new double[16];
+        for (int j = 0; j < 4; j++) {
+            for (int i = 0; i < 4; i++) {
+                probeX[j * 4 + i] = x0 + i * 5;
+                probeZ[j * 4 + i] = z0 + j * 5;
+            }
+        }
+        LithoNative.WaterColumns probe = generator.water(probeX, probeZ);
+        boolean any = false;
+        for (int level : probe.level()) {
+            if (level != LithoNative.WaterColumns.NONE && level > SEA_LEVEL) any = true;
+        }
+        if (!any) return false;
+        LithoNative.WaterColumns water = generator.water(xs, zs);
         int minY = level.getMinY();
         int maxY = level.getMaxY();
         int placed = 0;
