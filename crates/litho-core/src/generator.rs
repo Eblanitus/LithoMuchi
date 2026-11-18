@@ -200,6 +200,51 @@ pub struct WorldSample {
     pub height: crate::height::HeightSample,
 }
 
+/// R2 (Ф6-В1, PLAN-WATER-FABRIC §5): вода колонки для заливки в игре.
+/// `level` — верхний блок воды + 1 (вода стоит на `level − 1`), `bed` — дно
+/// под зеркалом. `level = i32::MIN` значит «воды выше моря нет».
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct WaterColumn {
+    pub level: i32,
+    pub bed: i32,
+    /// Поверхность колонки после выреза (дно под водой, §4 инварианта).
+    pub surface: i32,
+    pub kind: crate::hydrology::SurfaceKind,
+}
+
+impl WaterColumn {
+    /// Метка «воды выше моря нет»: так же, как `i32::MIN` в соглашении FFI.
+    pub const NONE: i32 = i32::MIN;
+
+    pub const fn has_water(self) -> bool {
+        self.level != Self::NONE
+    }
+
+    /// Код вида воды для FFI и Java (Ф6-В2): без строк на каждый блок.
+    pub const fn kind_code(self) -> u8 {
+        match self.kind {
+            crate::hydrology::SurfaceKind::Land => 0,
+            crate::hydrology::SurfaceKind::River => 1,
+            crate::hydrology::SurfaceKind::Lake => 2,
+            crate::hydrology::SurfaceKind::InlandSea => 3,
+            crate::hydrology::SurfaceKind::Swamp => 4,
+            crate::hydrology::SurfaceKind::DryBasin => 5,
+            crate::hydrology::SurfaceKind::DeferredWater => 6,
+        }
+    }
+}
+
+impl Default for WaterColumn {
+    fn default() -> Self {
+        Self {
+            level: Self::NONE,
+            bed: Self::NONE,
+            surface: Self::NONE,
+            kind: crate::hydrology::SurfaceKind::Land,
+        }
+    }
+}
+
 /// Результат перевода колонки в игровые поля (T115/T122/T141/T144).
 struct SurfaceFields {
     /// К5 (Д-111): климат биомов — с вычетом температуры по высоте колонки.
@@ -285,7 +330,7 @@ impl Generator {
     pub fn with_params(seed: i64, mut params: Params) -> Result<Self, GenError> {
         let version = params.version;
         match version {
-            GenVersion::V0 | GenVersion::V1Dev => {}
+            GenVersion::V0 | GenVersion::V1Dev | GenVersion::V1DevR2 => {}
             GenVersion::V1 => return Err(GenError::UnsupportedVersion(version)),
         }
         // Ключ кэшей плит обязан соответствовать фактическим параметрам.
@@ -2124,6 +2169,41 @@ impl Generator {
     /// Значение на колонку `(x, z)` для `add_to_volume` (10.3).
     pub fn field_column(&self, field: Field, x: f64, z: f64) -> f64 {
         self.field(field, x, 0.0, z)
+    }
+
+    /// R2 (Ф6-В1): вода колонки для заливки в игре. Уровень и дно берутся из
+    /// того же `cached_full`, что и поля, поэтому вода и рельеф согласованы.
+    /// Вода ниже уровня моря сюда не входит: её ставит сама игра.
+    pub fn water_column(&self, x: f64, z: f64) -> WaterColumn {
+        let Ok(Some(full)) = self.cached_full(x, z) else {
+            return WaterColumn::default();
+        };
+        let height = &full.world.height;
+        // Поверхность нужна и без воды: по ней проверяется инвариант «берег
+        // не ниже зеркала» (§4, п. 2) и считается «сухое русло» в CI.
+        let surface = height.surface_y.round() as i32;
+        let kind = full.world.hydrology.kind;
+        if height.water_strength <= 0.0 {
+            return WaterColumn {
+                surface,
+                kind,
+                ..WaterColumn::default()
+            };
+        }
+        let level = height.water_y.round();
+        if !(level > crate::height::SEA_LEVEL) || !level.is_finite() {
+            return WaterColumn {
+                surface,
+                kind,
+                ..WaterColumn::default()
+            };
+        }
+        WaterColumn {
+            level: level as i32,
+            bed: height.bed_y.round() as i32,
+            surface,
+            kind,
+        }
     }
 
     /// Граница с Horizon: внутри ядра всё `f64`, наружу отдаётся `f32`.

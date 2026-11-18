@@ -380,7 +380,8 @@ impl LakeNetwork {
             lakes,
             baskets,
             field_fade_l: params.hydrology.field_fade_l,
-            r1_max_level_km: params.hydrology.r1_max_level_km,
+            // R2 (Ф6-В1): предела нет — вода выше моря считается водой.
+            r1_max_level_km: crate::hydrology::r1_max_level_km(params),
         };
         net.check()?;
         Ok(net)

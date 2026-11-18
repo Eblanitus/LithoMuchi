@@ -14,6 +14,7 @@ mod shores;
 mod tune;
 mod vanilla_biomes;
 mod walls;
+mod water;
 
 use std::path::Path;
 use std::time::Instant;
@@ -487,6 +488,91 @@ fn cmd_shores(args: &[String]) -> Result<(), String> {
 }
 
 /// К3/К4а: крутые ступени на суше по линиям, с разбивкой по причинам.
+/// R2 (Ф6-В1, PLAN-WATER-FABRIC §5): инвариант «вода не уходит за берега».
+/// Квадрат 2048 блоков вокруг трёх центров с шагом 4 — это ~260k колонок,
+/// столько же, сколько у `walls`. Ненулевое число нарушений — ошибка команды.
+fn cmd_water_leaks(args: &[String]) -> Result<(), String> {
+    let opts = options_from(args)?;
+    let generator = generator(&opts)?;
+    if !opts.version.is_water_relief_r2() {
+        return Err(format!(
+            "water-leaks считает только v1-dev-r2 (сейчас {}): в v1-dev воды выше моря нет",
+            opts.version.as_str()
+        ));
+    }
+    let size = match value(args, "--size") {
+        Some(text) => text.parse::<i64>().map_err(|e| format!("--size: {e}"))?,
+        None => 2048,
+    };
+    let step = match value(args, "--step") {
+        Some(text) => text.parse::<i64>().map_err(|e| format!("--step: {e}"))?,
+        None => 4,
+    };
+    let centers = [(opts.center_x, opts.center_z), (12000.0, -8000.0), (-16000.0, 9000.0)];
+    let mut total = water::Leaks::default();
+    for (x, z) in centers {
+        let leaks = water::leaks(&generator, (x, z), size, step);
+        println!(
+            "  центр ({x}, {z}): колонок {}, с водой {}, дно выше зеркала {}, берег ниже зеркала/ступень {}",
+            leaks.columns, leaks.water, leaks.deep_bed, leaks.spill
+        );
+        for example in &leaks.examples {
+            println!("    {example}");
+        }
+        total.columns += leaks.columns;
+        total.water += leaks.water;
+        total.deep_bed += leaks.deep_bed;
+        total.spill += leaks.spill;
+        total.examples.extend(leaks.examples);
+    }
+    println!(
+        "water-leaks: всего колонок {}, с водой выше моря {}, нарушений {} (п.1 {}, п.2 {})",
+        total.columns,
+        total.water,
+        total.violations(),
+        total.deep_bed,
+        total.spill
+    );
+    if total.violations() > 0 {
+        return Err(format!("нарушений инварианта §4: {}", total.violations()));
+    }
+    Ok(())
+}
+
+/// R2 (Ф6-В5): до 20 мест для CI и автора — высокие озёра, ступени рек,
+/// устья рек в озёра. `--radius-l` ограничивает обход плит вокруг центра.
+fn cmd_water_points(args: &[String]) -> Result<(), String> {
+    let opts = options_from(args)?;
+    let generator = generator(&opts)?;
+    if !opts.version.is_water_relief_r2() {
+        return Err(format!(
+            "water-points считает только v1-dev-r2 (сейчас {}): в v1-dev воды выше моря нет",
+            opts.version.as_str()
+        ));
+    }
+    let radius_l = match value(args, "--radius-l") {
+        Some(text) => text.parse::<f64>().map_err(|e| format!("--radius-l: {e}"))?,
+        None => 32.0,
+    };
+    let points = water::points(&generator, (opts.center_x, opts.center_z), radius_l);
+    println!(
+        "water-points: {} мест (сид {}, режим {}, радиус {radius_l} L)",
+        points.len(),
+        opts.seed,
+        opts.mode.as_str()
+    );
+    for point in &points {
+        println!(
+            "  x={} z={} level={} вид={} ({})",
+            point.x, point.z, point.level, point.kind, point.note
+        );
+    }
+    if points.is_empty() {
+        return Err("мест с водой выше моря не нашлось: увеличьте --radius-l".into());
+    }
+    Ok(())
+}
+
 fn cmd_walls(args: &[String]) -> Result<(), String> {
     let opts = options_from(args)?;
     let generator = generator(&opts)?;
@@ -1869,6 +1955,8 @@ fn main() -> Result<(), String> {
         "belts" => cmd_belts(&args[1..]),
         "shores" => cmd_shores(&args[1..]),
         "walls" => cmd_walls(&args[1..]),
+        "water-leaks" => cmd_water_leaks(&args[1..]),
+        "water-points" => cmd_water_points(&args[1..]),
         "vanilla-biomes" => cmd_vanilla_biomes(&args[1..]),
         "paths" => cmd_paths(&args[1..]),
         "drainage" => cmd_drainage(&args[1..]),

@@ -63,6 +63,17 @@ pub struct HydrologySample {
     pub networks_considered: usize,
 }
 
+/// Предел уровня озера, который R1 считает водой на море. В R2 (`v1-dev-r2`,
+/// PLAN-WATER-FABRIC §5) предела нет: вода стоит и выше моря, поэтому
+/// `DeferredWater` не возникает, а вид воды выбирается как у R1.
+pub fn r1_max_level_km(params: &Params) -> f64 {
+    if params.version.is_water_relief_r2() {
+        f64::INFINITY
+    } else {
+        params.hydrology.r1_max_level_km
+    }
+}
+
 pub fn validate(params: &Params) -> Result<(), RiverNetError> {
     let h = &params.hydrology;
     let values = [
@@ -131,16 +142,18 @@ pub fn resolve(
     out.dry_basin = lakes.dry_basin;
     out.r2_deferred = lakes.deferred_water;
     let inside = lakes.water_hit.filter(|hit| hit.inside);
+    // R2: у всех озёр с водой предел снят, вид воды — как у R1 (В1).
+    let r1_max_km = r1_max_level_km(params);
     out.kind = if lakes.inland_sea > 0.0
         || inside.is_some_and(|hit| {
             matches!(hit.kind, LakeKind::InlandSea | LakeKind::SeaConnected)
-                && hit.level_km.is_some_and(|level| level <= h.r1_max_level_km)
+                && hit.level_km.is_some_and(|level| level <= r1_max_km)
         }) {
         SurfaceKind::InlandSea
     } else if lakes.river_lake > 0.0
         || inside.is_some_and(|hit| {
             hit.kind == LakeKind::Lake
-                && hit.level_km.is_some_and(|level| level <= h.r1_max_level_km)
+                && hit.level_km.is_some_and(|level| level <= r1_max_km)
         })
     {
         SurfaceKind::Lake

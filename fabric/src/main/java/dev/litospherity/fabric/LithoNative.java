@@ -19,11 +19,12 @@ import java.util.Locale;
  * Библиотека лежит в jar: natives/&lt;os&gt;-&lt;arch&gt;/&lt;имя&gt;, при запуске копируется во временный файл.
  */
 public final class LithoNative {
-    public static final int EXPECTED_ABI = 1;
+    public static final int EXPECTED_ABI = 2;
     private static volatile LithoNative instance;
 
     private final int fieldCount;
     private final MethodHandle abiVersion, fieldCountH, coreVersion, genNew, genFree, fieldsBatch, lavaAquifer;
+    private final MethodHandle waterBatch;
 
     public static LithoNative get() {
         LithoNative local = instance;
@@ -77,6 +78,10 @@ public final class LithoNative {
                 FunctionDescriptor.of(ValueLayout.JAVA_INT, ValueLayout.ADDRESS, ValueLayout.ADDRESS, ValueLayout.JAVA_LONG, ValueLayout.ADDRESS));
         lavaAquifer = linker.downcallHandle(lib.findOrThrow("litho_lava_aquifer"),
                 FunctionDescriptor.of(ValueLayout.JAVA_DOUBLE, ValueLayout.ADDRESS, ValueLayout.JAVA_LONG, ValueLayout.JAVA_LONG, ValueLayout.JAVA_LONG));
+        // Ф6-В2: вода выше уровня моря, пакет по колонкам.
+        waterBatch = linker.downcallHandle(lib.findOrThrow("litho_water_batch"),
+                FunctionDescriptor.of(ValueLayout.JAVA_INT, ValueLayout.ADDRESS, ValueLayout.ADDRESS, ValueLayout.ADDRESS,
+                        ValueLayout.JAVA_LONG, ValueLayout.ADDRESS, ValueLayout.ADDRESS, ValueLayout.ADDRESS));
         int abi = abiVersion();
         if (abi != EXPECTED_ABI) throw new IllegalStateException("ABI ядра " + abi + ", ожидался " + EXPECTED_ABI);
         try {
@@ -99,7 +104,7 @@ public final class LithoNative {
         } catch (Throwable t) { throw new IllegalStateException(t); }
     }
 
-    /** mode: 0 научный, 1 геймплейный; version: 0 v0, 1 v1, 2 v1-dev. */
+    /** mode: 0 научный, 1 геймплейный; version: 0 v0, 1 v1, 2 v1-dev, 3 v1-dev-r2. */
     public Generator newGenerator(long seed, int mode, int version) {
         try {
             MemorySegment p = (MemorySegment) genNew.invokeExact(seed, mode, version);
@@ -151,6 +156,31 @@ public final class LithoNative {
             return c.out.getAtIndex(ValueLayout.JAVA_FLOAT, index);
         }
 
+        /**
+         * Ф6-В2: вода колонок (x, z). Ответ — уровень (верхний блок воды + 1,
+         * {@code Integer.MIN_VALUE} — воды выше моря нет), дно и код вида.
+         */
+        public WaterColumns water(double[] xs, double[] zs) {
+            int n = xs.length;
+            try (Arena arena = Arena.ofConfined()) {
+                MemorySegment inX = arena.allocateFrom(ValueLayout.JAVA_DOUBLE, xs);
+                MemorySegment inZ = arena.allocateFrom(ValueLayout.JAVA_DOUBLE, zs);
+                MemorySegment level = arena.allocate(ValueLayout.JAVA_INT, n);
+                MemorySegment bed = arena.allocate(ValueLayout.JAVA_INT, n);
+                MemorySegment kind = arena.allocate(ValueLayout.JAVA_BYTE, n);
+                int code = (int) waterBatch.invokeExact(ptr, inX, inZ, (long) n, level, bed, kind);
+                if (code != 0) throw new IllegalStateException("litho_water_batch вернул " + code);
+                return new WaterColumns(
+                        level.toArray(ValueLayout.JAVA_INT),
+                        bed.toArray(ValueLayout.JAVA_INT),
+                        kind.toArray(ValueLayout.JAVA_BYTE));
+            } catch (RuntimeException e) {
+                throw e;
+            } catch (Throwable t) {
+                throw new IllegalStateException(t);
+            }
+        }
+
         /** Лава в ячейке аквифера; 0 при ошибке ядра. */
         public double lavaAquifer(int cx, int cy, int cz) {
             try {
@@ -165,5 +195,11 @@ public final class LithoNative {
             try { genFree.invokeExact(ptr); } catch (Throwable t) { throw new IllegalStateException(t); }
             ptr = null;
         }
+    }
+
+    /** Ф6-В2: ответ {@code litho_water_batch} по колонкам пакета. */
+    public record WaterColumns(int[] level, int[] bed, byte[] kind) {
+        /** Воды выше моря нет. */
+        public static final int NONE = Integer.MIN_VALUE;
     }
 }

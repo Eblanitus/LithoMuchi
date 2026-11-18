@@ -15,7 +15,8 @@ use litho_core::mode::Mode;
 use litho_core::version::GenVersion;
 
 /// Версия C-интерфейса. Java сверяет её при загрузке.
-pub const ABI_VERSION: u32 = 1;
+/// 2 — Ф6-В2: добавлен `litho_water_batch` (вода выше уровня моря).
+pub const ABI_VERSION: u32 = 2;
 
 /// Число полей в пакетном ответе, порядок как `Field::ALL`:
 /// continents, erosion, ridges, temperature, vegetation, lava, offset, pv, factor, jaggedness.
@@ -39,7 +40,8 @@ pub extern "C" fn litho_core_version() -> *const c_char {
     CORE_VERSION.as_ptr().cast()
 }
 
-/// mode: 0 = scientific, 1 = gameplay. version: 0 = v0, 1 = v1, 2 = v1-dev.
+/// mode: 0 = scientific, 1 = gameplay. version: 0 = v0, 1 = v1, 2 = v1-dev,
+/// 3 = v1-dev-r2 (вода выше уровня моря, PLAN-WATER-FABRIC §5).
 /// Ноль (null) при ошибке.
 #[unsafe(no_mangle)]
 pub extern "C" fn litho_generator_new(seed: i64, mode: u32, version: u32) -> *mut Generator {
@@ -99,6 +101,61 @@ pub fn fill_fields(generator: &Generator, xz: &[f64], out: &mut [f32]) {
         for (slot, field) in row.iter_mut().zip(Field::ALL) {
             *slot = generator.field_f32(field, pair[0], 0.0, pair[1]);
         }
+    }
+}
+
+/// R2 (Ф6-В2): вода колонок. `xs`/`zs` — `n` координат в блоках; ответ —
+/// `out_level` (верхний блок воды + 1, `i32::MIN` — воды выше моря нет),
+/// `out_bed` (дно под зеркалом) и `out_kind` (код вида воды, как
+/// `WaterColumn::kind_code`). Возвращает 0 или −1 при панике (тогда везде
+/// «воды нет»). Один вызов на чанк: 18×18 колонок с кэшем в Java.
+///
+/// # Safety
+/// Указатели валидны на `n` элементов каждый.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn litho_water_batch(
+    generator: *const Generator,
+    xs: *const f64,
+    zs: *const f64,
+    n: usize,
+    out_level: *mut i32,
+    out_bed: *mut i32,
+    out_kind: *mut u8,
+) -> i32 {
+    if generator.is_null() || (n > 0 && (xs.is_null() || zs.is_null() || out_level.is_null()
+        || out_bed.is_null() || out_kind.is_null()))
+    {
+        return -2;
+    }
+    let generator = unsafe { &*generator };
+    let xs = unsafe { std::slice::from_raw_parts(xs, n) };
+    let zs = unsafe { std::slice::from_raw_parts(zs, n) };
+    let level = unsafe { std::slice::from_raw_parts_mut(out_level, n) };
+    let bed = unsafe { std::slice::from_raw_parts_mut(out_bed, n) };
+    let kind = unsafe { std::slice::from_raw_parts_mut(out_kind, n) };
+    let result = catch_unwind(AssertUnwindSafe(|| fill_water(generator, xs, zs, level, bed, kind)));
+    if result.is_err() {
+        level.fill(litho_core::WaterColumn::NONE);
+        bed.fill(litho_core::WaterColumn::NONE);
+        kind.fill(0);
+        return -1;
+    }
+    0
+}
+
+pub fn fill_water(
+    generator: &Generator,
+    xs: &[f64],
+    zs: &[f64],
+    level: &mut [i32],
+    bed: &mut [i32],
+    kind: &mut [u8],
+) {
+    for (i, (&x, &z)) in xs.iter().zip(zs).enumerate() {
+        let column = generator.water_column(x, z);
+        level[i] = column.level;
+        bed[i] = column.bed;
+        kind[i] = column.kind_code();
     }
 }
 
@@ -208,6 +265,53 @@ mod tests {
                 unsafe { litho_lava_aquifer(ffi, 1, -4, 2) }.to_bits(),
                 core.lava_aquifer(1, -4, 2).to_bits()
             );
+            unsafe { litho_generator_free(ffi) };
+        }
+    }
+
+    /// Ф6-В2: пакет воды совпадает с `Generator::water_column` побитно.
+    #[test]
+    fn water_batch_matches_core_bitwise() {
+        let points: Vec<(f64, f64)> = (0..64)
+            .map(|i| {
+                let x = (i as f64 * 7919.0).rem_euclid(40_000.0) - 20_000.0;
+                let z = (i as f64 * 104_729.0).rem_euclid(40_000.0) - 20_000.0;
+                (x, z)
+            })
+            .collect();
+        for (mode, version) in [(0u32, 3u32), (1, 3)] {
+            let ffi = litho_generator_new(42, mode, version);
+            assert!(!ffi.is_null());
+            let core = Generator::new(
+                42,
+                Mode::ALL[mode as usize],
+                GenVersion::ALL[version as usize],
+            )
+            .unwrap();
+            let n = points.len();
+            let xs: Vec<f64> = points.iter().map(|p| p.0).collect();
+            let zs: Vec<f64> = points.iter().map(|p| p.1).collect();
+            let mut level = vec![0i32; n];
+            let mut bed = vec![0i32; n];
+            let mut kind = vec![0u8; n];
+            let code = unsafe {
+                litho_water_batch(
+                    ffi,
+                    xs.as_ptr(),
+                    zs.as_ptr(),
+                    n,
+                    level.as_mut_ptr(),
+                    bed.as_mut_ptr(),
+                    kind.as_mut_ptr(),
+                )
+            };
+            assert_eq!(code, 0);
+            for (i, (x, z)) in points.iter().enumerate() {
+                let want = core.water_column(*x, *z);
+                assert_eq!(level[i], want.level, "level ({x}, {z})");
+                assert_eq!(bed[i], want.bed, "bed ({x}, {z})");
+                assert_eq!(kind[i], want.kind_code(), "kind ({x}, {z})");
+            }
             unsafe { litho_generator_free(ffi) };
         }
     }

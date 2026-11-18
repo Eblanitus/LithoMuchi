@@ -28,6 +28,10 @@ final class LithoCi {
     }
 
     private static void run(MinecraftServer server, String mode) {
+        if (mode.startsWith("water-")) {
+            LithoCiWater.run(server, mode.substring("water-".length()));
+            return;
+        }
         List<String> report = new ArrayList<>();
         boolean ok = true;
         try {
@@ -42,7 +46,7 @@ final class LithoCi {
             NoiseRouter r = noise.generatorSettings().value().noiseRouter();
             DensityFunction[] fns = {r.continents(), r.erosion(), r.ridges(), r.temperature(), r.vegetation()};
             String[] names = {"continents", "erosion", "ridges", "temperature", "vegetation"};
-            LithoNative.Generator gen = LithoFields.generator(new LithoFields.Binding(seed, m));
+            LithoNative.Generator gen = LithoFields.generator(LithoFields.binding(rs));
             int bad = 0;
             for (int i = 0; i < 1000; i++) {
                 int x = (int) Math.floorMod(i * 7919L, 40000) - 20000;

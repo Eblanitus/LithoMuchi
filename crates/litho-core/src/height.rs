@@ -163,7 +163,12 @@ pub fn sample_micro(
 /// T145: вырез русел/котловин под зеркало воды (§5.9). Река берёт монотонное
 /// зеркало T145 из ChannelHit и не поднимается выше локального берега −1.
 /// Озеро стоит плоским зеркалом на уровне перелива; дно = зеркало − глубина.
-/// Это своя высота для предпросмотра/будущего R2; игра ставит воду через T143.
+/// Это своя высота для предпросмотра; игра ставит воду через T143.
+///
+/// R2 (`v1-dev-r2`, PLAN-WATER-FABRIC §4): вода не опускается, берег
+/// поднимается. Зеркало не зажимается локальной сушей, предел
+/// `hydrology.r1_max_level_km` снимается, а полоса берега шириной
+/// `height.bank_raise_blocks` доводится до зеркала.
 pub fn with_water(
     mut height: HeightSample,
     hydrology: &HydrologySample,
@@ -171,6 +176,13 @@ pub fn with_water(
 ) -> HeightSample {
     let h = &params.height;
     let land_y = height.surface_y;
+    let r2 = params.version.is_water_relief_r2();
+    // R2: все озёра с водой режутся и наливаются, `DeferredWater` не нужен.
+    let r1_limit_km = if r2 {
+        f64::INFINITY
+    } else {
+        params.hydrology.r1_max_level_km
+    };
     let mut best = 0.0_f64;
     let mut water_y = SEA_LEVEL;
     let mut bed_y = land_y;
@@ -179,7 +191,13 @@ pub fn with_water(
         // переходу C/E/W. Долину вокруг даёт PV→−1 и таблица высот.
         let cut = clamp01(hydrology.channels.bank);
         if cut > 0.0 {
-            let mirror = hit.mirror_y.round().min(land_y - 1.0);
+            // R2: зеркало реки не зажимается берегом — уровень в сечении
+            // один (инвариант §4, п. 4), берег поднимается ниже.
+            let mirror = if r2 {
+                hit.mirror_y.round()
+            } else {
+                hit.mirror_y.round().min(land_y - 1.0)
+            };
             if mirror >= h.min_y {
                 let depth = hit.depth_blocks.max(1.0);
                 let bed = (mirror - depth).max(h.min_y);
@@ -193,16 +211,16 @@ pub fn with_water(
     }
     if let Some(hit) = hydrology.lakes.water_hit.filter(|hit| hit.inside) {
         if let Some(level) = hit.level_km {
-            // К3: вода выше R1 отложена до R2 (DeferredWater) — рельеф не
+            // К3: до R2 вода выше R1 отложена (DeferredWater) — рельеф не
             // вырезать и не поднимать, котловина остаётся сухой сушёй.
-            if level <= params.hydrology.r1_max_level_km {
+            if level <= r1_limit_km {
                 let cut = clamp01(hit.water_strength);
                 if cut > 0.0 {
-                    // К3: зеркало не выше локального берега, как у рек, —
+                    // К3: в R1 зеркало не выше локального берега, как у рек, —
                     // дно не может встать плоским столом над сушей.
-                    let mirror = (SEA_LEVEL + level.max(0.0) * h.water_km_to_blocks)
-                        .round()
-                        .min(land_y - 1.0);
+                    // R2: зеркало плоское на всей площади озера (п. 3 §4).
+                    let raw = (SEA_LEVEL + level.max(0.0) * h.water_km_to_blocks).round();
+                    let mirror = if r2 { raw } else { raw.min(land_y - 1.0) };
                     if mirror >= h.min_y {
                         let depth = clamp(
                             hit.max_depth_km * h.water_km_to_blocks,
@@ -221,11 +239,63 @@ pub fn with_water(
         }
     }
     if best > 0.0 {
-        height.surface_y = lerp(land_y, bed_y, best);
+        let cut_y = lerp(land_y, bed_y, best);
+        // R2: вода стоит на `water_y − 1`, значит, дно обязано быть ниже
+        // (инвариант §4, п. 1). В R1 это уже даёт зажим зеркала.
+        height.surface_y = if r2 { cut_y.min(water_y - 1.0) } else { cut_y };
         height.water_y = water_y;
         height.bed_y = bed_y;
         height.water_strength = best;
         height.offset = (height.surface_y - SURFACE_BASE) / OFFSET_SCALE;
+    }
+    if r2 {
+        height = raise_bank(height, hydrology, params, best);
+    }
+    height
+}
+
+/// R2 (PLAN-WATER-FABRIC §4): правило «не опускать воду, а поднимать берег».
+/// Колонки берега шириной `height.bank_raise_blocks` вокруг контура озера и
+/// вдоль русла доводятся до зеркала и плавно сходят к исходной суше.
+fn raise_bank(
+    mut height: HeightSample,
+    hydrology: &HydrologySample,
+    params: &Params,
+    cut: f64,
+) -> HeightSample {
+    let h = &params.height;
+    if cut > 0.0 || h.bank_raise_blocks <= 0.0 {
+        return height;
+    }
+    let land_y = height.surface_y;
+    let l = params.block.l_blocks;
+    let mut target = land_y;
+    let mut consider = |level: f64, distance_l: f64| {
+        if !(level > SEA_LEVEL) || !distance_l.is_finite() {
+            return;
+        }
+        let blocks = distance_l * l;
+        if blocks <= h.bank_raise_blocks {
+            let k = 1.0 - smoothstep(0.0, h.bank_raise_blocks, blocks);
+            target = target.max(lerp(land_y, level, k));
+        }
+    };
+    if let Some(hit) = hydrology.channels.nearest {
+        consider(hit.mirror_y.round(), hit.distance_l);
+    }
+    if let Some(hit) = hydrology.lakes.nearest {
+        if hit.kind.has_water() {
+            if let Some(level_km) = hit.level_km {
+                consider(
+                    (SEA_LEVEL + level_km.max(0.0) * h.water_km_to_blocks).round(),
+                    hit.distance_l,
+                );
+            }
+        }
+    }
+    if target > land_y {
+        height.surface_y = target;
+        height.offset = (target - SURFACE_BASE) / OFFSET_SCALE;
     }
     height
 }
@@ -275,6 +345,8 @@ pub fn validate(params: &Params) -> Result<(), &'static str> {
         || h.water_km_to_blocks <= 0.0
         || !h.lake_depth_max_blocks.is_finite()
         || h.lake_depth_max_blocks < 1.0
+        || !h.bank_raise_blocks.is_finite()
+        || !(0.0..=256.0).contains(&h.bank_raise_blocks)
     {
         return Err("height: переход берега/вертикальный масштаб/пределы некорректны");
     }

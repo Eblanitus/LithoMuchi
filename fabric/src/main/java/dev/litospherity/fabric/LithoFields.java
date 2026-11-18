@@ -35,20 +35,39 @@ public final class LithoFields {
             "lava", "offset", "pv", "factor", "jaggedness");
 
     /** Версия генератора: 2 = v1-dev (как паки Horizon). */
-    public static final int VERSION = 2;
+    public static final int VERSION_V1_DEV = 2;
+    /** Ф6-В1: вода выше уровня моря; пресеты Litospherity на Fabric. */
+    public static final int VERSION_R2 = 3;
 
-    public record Binding(long seed, int mode) {}
+    /** Сид, режим (0 научный, 1 геймплейный) и версия генератора ядра. */
+    public record Binding(long seed, int mode, int version) {}
 
     /** Режим мира по RandomState (0 научный, 1 геймплейный); заполняет миксин. */
     public static final Map<RandomState, Integer> MODES = Collections.synchronizedMap(new WeakHashMap<>());
+
+    /** Ф6-В1: версия генератора по RandomState; заполняет {@link LithoWorlds}. */
+    public static final Map<RandomState, Integer> VERSIONS = Collections.synchronizedMap(new WeakHashMap<>());
+
+    /** Привязка Overworld для фич (Ф6-В3/В4): у сервера один такой мир. */
+    private static volatile Binding world;
+
+    static void setWorld(Binding binding) {
+        world = binding;
+    }
+
+    /** Привязка мира для фич; {@code null} до загрузки Overworld. */
+    public static Binding world() {
+        return world;
+    }
 
     private static final Map<Binding, LithoNative.Generator> GENERATORS = new ConcurrentHashMap<>();
 
     static LithoNative.Generator generator(Binding b) {
         return GENERATORS.computeIfAbsent(b, k -> {
-            LithoMod.LOG.info("Litospherity: генератор сид {} режим {} версия v1-dev",
-                    k.seed(), k.mode() == 0 ? "scientific" : "gameplay");
-            return LithoNative.get().newGenerator(k.seed(), k.mode(), VERSION);
+            LithoMod.LOG.info("Litospherity: генератор сид {} режим {} версия {}",
+                    k.seed(), k.mode() == 0 ? "scientific" : "gameplay",
+                    k.version() == VERSION_R2 ? "v1-dev-r2" : "v1-dev");
+            return LithoNative.get().newGenerator(k.seed(), k.mode(), k.version());
         });
     }
 
@@ -58,12 +77,19 @@ public final class LithoFields {
             Field outer = ctx.getClass().getDeclaredField("this$0");
             outer.setAccessible(true);
             RandomState state = (RandomState) outer.get(ctx);
-            return new Binding(state.seed(), MODES.getOrDefault(state, 1));
+            return binding(state);
         } catch (ReflectiveOperationException | ClassCastException e) {
             long seed = ctx.createRandom(Identifier.fromNamespaceAndPath(LithoMod.MOD_ID, "seed")).nextLong();
             LithoMod.LOG.warn("Litospherity: сид мира недоступен ({}), беру производный {}", e, seed);
-            return new Binding(seed, 1);
+            return new Binding(seed, 1, VERSION_V1_DEV);
         }
+    }
+
+    /** Привязка по RandomState: режим из миксина, версия — из {@link LithoWorlds}. */
+    public static Binding binding(RandomState state) {
+        int mode = MODES.getOrDefault(state, 1);
+        int version = VERSIONS.getOrDefault(state, VERSION_V1_DEV);
+        return new Binding(state.seed(), mode, version);
     }
 
     private abstract static class Sampler implements DensitySampler {

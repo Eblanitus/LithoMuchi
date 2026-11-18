@@ -1,0 +1,265 @@
+//! R2 (Ф6-В1/В5, PLAN-WATER-FABRIC §4–5): инвариант «вода не уходит за
+//! берега» и точки для игровой проверки.
+//!
+//! `water-leaks` — проверка на сетке колонок: дно ниже зеркала, у каждого из
+//! четырёх соседей либо вода со ступенью не больше блока, либо суша не ниже
+//! зеркала. `water-points` — до 20 мест для CI и автора: центры высоких озёр,
+//! ступени рек и устья рек в озёра.
+//!
+//! Замер идёт только по генератору `v1-dev-r2`: в `v1-dev` воды выше моря нет,
+//! и команда честно об этом скажет.
+
+use std::collections::BTreeMap;
+
+use litho_core::Generator;
+use litho_core::channel::ReachEnd;
+use litho_core::generator::WaterColumn;
+use litho_core::height::SEA_LEVEL;
+
+/// Уровень моря в блоках: вода выше него — предмет R2.
+const SEA: i32 = SEA_LEVEL as i32;
+
+/// Итог `water-leaks`.
+#[derive(Debug, Default)]
+pub struct Leaks {
+    /// Колонок проверено.
+    pub columns: u64,
+    /// Из них с водой выше моря.
+    pub water: u64,
+    /// Нарушения п. 1: поверхность не ниже зеркала (воды не видно).
+    pub deep_bed: u64,
+    /// Нарушения п. 2: сосед-суша ниже зеркала или вода со ступенью > 1.
+    pub spill: u64,
+    /// Первые примеры нарушений, не больше `EXAMPLE_LIMIT`.
+    pub examples: Vec<String>,
+}
+
+/// Сколько примеров печатать.
+const EXAMPLE_LIMIT: usize = 10;
+
+impl Leaks {
+    pub fn violations(&self) -> u64 {
+        self.deep_bed + self.spill
+    }
+
+    fn example(&mut self, text: String) {
+        if self.examples.len() < EXAMPLE_LIMIT {
+            self.examples.push(text);
+        }
+    }
+}
+
+/// Проверка инварианта §4 на квадрате `size` блоков вокруг `center` с шагом
+/// `step`. Соседи проверяются по блокам (±1), а не по шагу сетки: инвариант
+/// сформулирован для соседних блоков.
+pub fn leaks(generator: &Generator, center: (f64, f64), size: i64, step: i64) -> Leaks {
+    let step = step.max(1);
+    let half = size.max(step) / 2;
+    let mut out = Leaks::default();
+    let x0 = center.0 as i64 - half;
+    let z0 = center.1 as i64 - half;
+    let mut z = z0;
+    while z <= z0 + 2 * half {
+        let mut x = x0;
+        while x <= x0 + 2 * half {
+            out.columns += 1;
+            let column = generator.water_column(x as f64, z as f64);
+            if column.has_water() {
+                out.water += 1;
+                check_column(generator, &column, x, z, &mut out);
+            }
+            x += step;
+        }
+        z += step;
+    }
+    out
+}
+
+fn check_column(generator: &Generator, column: &WaterColumn, x: i64, z: i64, out: &mut Leaks) {
+    if column.surface > column.level - 1 {
+        out.deep_bed += 1;
+        out.example(format!(
+            "дно выше зеркала: ({x}, {z}) поверхность {} зеркало {}",
+            column.surface, column.level
+        ));
+    }
+    for (dx, dz) in [(1_i64, 0_i64), (-1, 0), (0, 1), (0, -1)] {
+        let neighbor = generator.water_column((x + dx) as f64, (z + dz) as f64);
+        if neighbor.has_water() {
+            if neighbor.level < column.level - 1 {
+                out.spill += 1;
+                out.example(format!(
+                    "ступень воды: ({x}, {z}) {} против {} у соседа",
+                    column.level, neighbor.level
+                ));
+            }
+        } else if neighbor.surface != WaterColumn::NONE && neighbor.surface < column.level {
+            out.spill += 1;
+            out.example(format!(
+                "берег ниже зеркала: ({}, {}) суша {} зеркало {} в ({x}, {z})",
+                x + dx,
+                z + dz,
+                neighbor.surface,
+                column.level
+            ));
+        }
+    }
+}
+
+/// Место для игровой проверки и CI.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WaterPoint {
+    pub x: i64,
+    pub z: i64,
+    pub level: i32,
+    pub kind: &'static str,
+    pub note: &'static str,
+}
+
+/// Сколько точек каждого вида искать (в сумме не больше 20, как в плане).
+const LAKE_LIMIT: usize = 10;
+const STEP_LIMIT: usize = 5;
+const MOUTH_LIMIT: usize = 5;
+/// Порог «высокого озера» из плана (строка 10.1: озёра на высоте 80 и выше).
+pub const HIGH_LAKE_LEVEL: i32 = 80;
+/// Сторона ячейки, по которой схлопываются кандидаты одного озера/реки.
+const CLUSTER: i64 = 512;
+/// Сколько проб на отрезок русла при поиске ступеней.
+const SEGMENT_PROBES: i64 = 4;
+
+fn cluster(x: f64, z: f64) -> (i64, i64) {
+    ((x as i64).div_euclid(CLUSTER), (z as i64).div_euclid(CLUSTER))
+}
+
+/// До 20 мест: центры высоких озёр, ступени рек и устья рек в озёра.
+/// Берутся из настоящей сети стока (`drainage_network`), а не из сетки
+/// колонок: так река шириной 4–6 блоков не проскакивает мимо.
+pub fn points(generator: &Generator, center: (f64, f64), radius_l: f64) -> Vec<WaterPoint> {
+    let point = generator.macro_point(center.0, center.1);
+    let shift = generator.spawn_shift();
+    let params = generator.params();
+    let l = params.block.l_blocks;
+    let mut lakes: BTreeMap<(i64, i64), WaterPoint> = BTreeMap::new();
+    let mut steps: BTreeMap<(i64, i64), WaterPoint> = BTreeMap::new();
+    let mut mouths: BTreeMap<(i64, i64), WaterPoint> = BTreeMap::new();
+    for plate in litho_core::plates::plates_near(point, radius_l, generator.seed(), params) {
+        let Ok(net) = generator.drainage_network(&plate) else {
+            continue;
+        };
+        for lake in net.lakes().lakes() {
+            if !lake.kind.has_water() || lake.level_km.is_none() {
+                continue;
+            }
+            let x = (lake.center.x - shift.x) * l;
+            let z = (lake.center.z - shift.z) * l;
+            let column = generator.water_column(x, z);
+            if column.has_water() && column.level >= HIGH_LAKE_LEVEL {
+                lakes
+                    .entry(cluster(x, z))
+                    .or_insert(WaterPoint {
+                        x: x as i64,
+                        z: z as i64,
+                        level: column.level,
+                        kind: lake.kind.as_str(),
+                        note: "high_lake",
+                    });
+            }
+        }
+        let channels = net.channels();
+        for segment in channels.segments() {
+            let reach = &channels.reaches()[segment.reach];
+            let ax = (segment.a.point.x - shift.x) * l;
+            let az = (segment.a.point.z - shift.z) * l;
+            let bx = (segment.b.point.x - shift.x) * l;
+            let bz = (segment.b.point.z - shift.z) * l;
+            let mut previous: Option<i32> = None;
+            for k in 0..=SEGMENT_PROBES {
+                let t = k as f64 / SEGMENT_PROBES as f64;
+                let x = ax + (bx - ax) * t;
+                let z = az + (bz - az) * t;
+                let column = generator.water_column(x, z);
+                if !column.has_water() {
+                    previous = None;
+                    continue;
+                }
+                // Ступень: зеркало меняется на блок и больше на коротком шаге.
+                if let Some(prev) = previous {
+                    if (column.level - prev).abs() >= 1 {
+                        steps.entry(cluster(x, z)).or_insert(WaterPoint {
+                            x: x as i64,
+                            z: z as i64,
+                            level: column.level,
+                            kind: "river",
+                            note: "step",
+                        });
+                    }
+                }
+                // Устье в озеро: конец русла — озеро, вода ещё выше моря.
+                if reach.end == ReachEnd::Lake && column.level > SEA {
+                    mouths.entry(cluster(x, z)).or_insert(WaterPoint {
+                        x: x as i64,
+                        z: z as i64,
+                        level: column.level,
+                        kind: "river",
+                        note: "mouth",
+                    });
+                }
+                previous = Some(column.level);
+            }
+        }
+    }
+    let mut out: Vec<WaterPoint> = lakes.into_values().take(LAKE_LIMIT).collect();
+    out.extend(steps.into_values().take(STEP_LIMIT));
+    out.extend(mouths.into_values().take(MOUTH_LIMIT));
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use litho_core::mode::Mode;
+    use litho_core::version::GenVersion;
+
+    /// R2: инвариант держится там, где вода вообще есть. Точку берём из
+    /// `points`, чтобы тест не зависел от того, что попадёт в квадрат у нуля.
+    #[test]
+    fn r2_has_no_leaks_where_water_exists() {
+        let r2 = Generator::new(42, Mode::Gameplay, GenVersion::V1DevR2).unwrap();
+        let found = points(&r2, (0.0, 0.0), 24.0);
+        assert!(!found.is_empty(), "на сиде 42 не нашлось ни одного места с водой");
+        for point in &found {
+            let leaks = leaks(&r2, (point.x as f64, point.z as f64), 128, 2);
+            assert!(
+                leaks.water > 0,
+                "место {point:?} без воды выше моря: {leaks:?}"
+            );
+            assert_eq!(
+                leaks.violations(),
+                0,
+                "нарушения у {point:?}: {:?}",
+                leaks.examples
+            );
+        }
+    }
+
+    /// До R2 (и в v1-dev) воды выше моря нет: котловины сухие.
+    #[test]
+    fn v1_dev_has_no_water_above_the_sea() {
+        let dev = Generator::new(42, Mode::Gameplay, GenVersion::V1Dev).unwrap();
+        let leaks = leaks(&dev, (0.0, 0.0), 256, 8);
+        assert_eq!(leaks.water, 0);
+    }
+
+    #[test]
+    fn points_are_capped_and_above_the_sea() {
+        let r2 = Generator::new(42, Mode::Gameplay, GenVersion::V1DevR2).unwrap();
+        let found = points(&r2, (0.0, 0.0), 8.0);
+        assert!(found.len() <= LAKE_LIMIT + STEP_LIMIT + MOUTH_LIMIT);
+        for point in &found {
+            assert!(point.level > SEA, "{point:?}");
+            if point.note == "high_lake" {
+                assert!(point.level >= HIGH_LAKE_LEVEL, "{point:?}");
+            }
+        }
+    }
+}
