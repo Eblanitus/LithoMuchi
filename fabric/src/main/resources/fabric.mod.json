@@ -5,13 +5,22 @@
   "name": "Litospherity",
   "description": "Генерация мира от литосферных плит. Ядро на Rust (litho-core) через Panama FFM.",
   "license": "MIT OR Apache-2.0",
-  "contact": { "sources": "https://github.com/Eblanitus/LithoMuchi" },
+  "contact": {
+    "sources": "https://github.com/Eblanitus/LithoMuchi"
+  },
   "environment": "*",
-  "entrypoints": { "main": ["dev.litospherity.fabric.LithoMod"] },
+  "entrypoints": {
+    "main": [
+      "dev.litospherity.fabric.LithoMod"
+    ]
+  },
   "depends": {
     "fabricloader": ">=0.17",
     "fabric-api": "*",
     "minecraft": "~${minecraft_version}",
     "java": ">=25"
-  }
+  },
+  "mixins": [
+    "litospherity.mixins.json"
+  ]
 }

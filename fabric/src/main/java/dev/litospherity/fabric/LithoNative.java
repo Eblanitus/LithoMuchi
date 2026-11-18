@@ -23,7 +23,7 @@ public final class LithoNative {
     private static volatile LithoNative instance;
 
     private final int fieldCount;
-    private final MethodHandle abiVersion, fieldCountH, coreVersion, genNew, genFree, fieldsBatch;
+    private final MethodHandle abiVersion, fieldCountH, coreVersion, genNew, genFree, fieldsBatch, lavaAquifer;
 
     public static LithoNative get() {
         LithoNative local = instance;
@@ -75,6 +75,8 @@ public final class LithoNative {
         genFree = linker.downcallHandle(lib.findOrThrow("litho_generator_free"), FunctionDescriptor.ofVoid(ValueLayout.ADDRESS));
         fieldsBatch = linker.downcallHandle(lib.findOrThrow("litho_fields_batch"),
                 FunctionDescriptor.of(ValueLayout.JAVA_INT, ValueLayout.ADDRESS, ValueLayout.ADDRESS, ValueLayout.JAVA_LONG, ValueLayout.ADDRESS));
+        lavaAquifer = linker.downcallHandle(lib.findOrThrow("litho_lava_aquifer"),
+                FunctionDescriptor.of(ValueLayout.JAVA_DOUBLE, ValueLayout.ADDRESS, ValueLayout.JAVA_LONG, ValueLayout.JAVA_LONG, ValueLayout.JAVA_LONG));
         int abi = abiVersion();
         if (abi != EXPECTED_ABI) throw new IllegalStateException("ABI ядра " + abi + ", ожидался " + EXPECTED_ABI);
         try {
@@ -121,6 +123,40 @@ public final class LithoNative {
                 if (code != 0) throw new IllegalStateException("litho_fields_batch вернул " + code);
                 return out.toArray(ValueLayout.JAVA_FLOAT);
             } catch (RuntimeException e) { throw e; } catch (Throwable t) { throw new IllegalStateException(t); }
+        }
+
+        /** Кэш последней колонки на поток: игра спрашивает несколько полей подряд в одной колонке. */
+        private final ThreadLocal<Column> column = ThreadLocal.withInitial(Column::new);
+
+        private final class Column {
+            final MemorySegment in = Arena.ofAuto().allocate(ValueLayout.JAVA_DOUBLE, 2);
+            final MemorySegment out = Arena.ofAuto().allocate(ValueLayout.JAVA_FLOAT, fieldCount);
+            int x = Integer.MIN_VALUE, z = Integer.MIN_VALUE;
+            boolean valid;
+        }
+
+        /** Одно поле (индекс как Field::ALL) в колонке блока (x, z). */
+        public double field(int index, int x, int z) {
+            Column c = column.get();
+            if (!c.valid || c.x != x || c.z != z) {
+                c.in.setAtIndex(ValueLayout.JAVA_DOUBLE, 0, x);
+                c.in.setAtIndex(ValueLayout.JAVA_DOUBLE, 1, z);
+                int code;
+                try {
+                    code = (int) fieldsBatch.invokeExact(ptr, c.in, 1L, c.out);
+                } catch (Throwable t) { throw new IllegalStateException(t); }
+                if (code != 0) return 0.0;
+                c.x = x; c.z = z; c.valid = true;
+            }
+            return c.out.getAtIndex(ValueLayout.JAVA_FLOAT, index);
+        }
+
+        /** Лава в ячейке аквифера; 0 при ошибке ядра. */
+        public double lavaAquifer(int cx, int cy, int cz) {
+            try {
+                double v = (double) lavaAquifer.invokeExact(ptr, (long) cx, (long) cy, (long) cz);
+                return Double.isNaN(v) ? 0.0 : v;
+            } catch (Throwable t) { throw new IllegalStateException(t); }
         }
 
         @Override

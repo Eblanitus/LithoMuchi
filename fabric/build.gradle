@@ -29,4 +29,7 @@ processResources {
     }
 }
 
+// Ресурсы из пака Horizon и ванильных JSON кладёт CI (tools/fabric_resources.py).
+sourceSets.main.resources.srcDir 'src/generated/resources'
+
 // Нативные библиотеки litho-ffi кладёт CI в src/main/resources/natives/<os>-<arch>/.
