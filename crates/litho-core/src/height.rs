@@ -209,9 +209,7 @@ pub fn with_water(
                     // §4, п. 3: вырез не глубже русла под сушу. Иначе зеркало
                     // с километровым уровнем выкапывало бы каньон в 30 блоков
                     // (баг К3), а зеркало теперь берётся от берегов.
-                    lerp(land_y, bed, cut)
-                        .max(land_y - depth)
-                        .min(land_y)
+                    lerp(land_y, bed, cut).max(land_y - depth).min(land_y)
                 } else {
                     lerp(land_y, bed, cut)
                 };
