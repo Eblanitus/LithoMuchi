@@ -126,6 +126,8 @@ jobs:
           timeout 1500 gradle runServer --args=nogui -Dorg.gradle.jvmargs=-Xmx3G \
             -Plitospherity_ci=${{ matrix.mode }} || true
           cat run/litospherity-ci.txt
+          # Отчёт сервера тоже уходит аннотацией: сырые логи CI недоступны.
+          python3 ../tools/ci_annotations.py report < run/litospherity-ci.txt
           grep -q "RESULT: PASS" run/litospherity-ci.txt
 
   water:
@@ -166,7 +168,7 @@ jobs:
           esac
           cargo run -q -p litho-sandbox --release -- water-points \
             --seed 42 --mode ${{ matrix.mode }} --version v1-dev-r2 --radius-l 32 --at "$at" \
-            | tee fabric/run/water-points.txt
+            | tee fabric/run/water-points.txt | python3 tools/ci_annotations.py report
       - uses: actions/setup-java@v4
         with: { distribution: temurin, java-version: "25" }
       - uses: gradle/actions/setup-gradle@v4
@@ -181,4 +183,6 @@ jobs:
           timeout 2400 gradle runServer --args=nogui -Dorg.gradle.jvmargs=-Xmx3G \
             -Plitospherity_ci=water-${{ matrix.mode }} || true
           cat run/litospherity-ci.txt
+          # Отчёт сервера тоже уходит аннотацией: сырые логи CI недоступны.
+          python3 ../tools/ci_annotations.py report < run/litospherity-ci.txt
           grep -q "RESULT: PASS" run/litospherity-ci.txt

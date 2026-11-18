@@ -2191,7 +2191,9 @@ impl Generator {
             };
         }
         let level = height.water_y.round();
-        if !(level > crate::height::SEA_LEVEL) || !level.is_finite() {
+        // NaN и «не выше моря» — одно и то же: колонка остаётся сушей (clippy:
+        // neg_cmp_op_on_partial_ord не даёт писать `!(level > SEA_LEVEL)`).
+        if !level.is_finite() || level <= crate::height::SEA_LEVEL {
             return WaterColumn {
                 surface,
                 kind,

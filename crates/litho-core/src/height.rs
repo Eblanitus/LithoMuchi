@@ -271,7 +271,11 @@ fn raise_bank(
     let l = params.block.l_blocks;
     let mut target = land_y;
     let mut consider = |level: f64, distance_l: f64| {
-        if !(level > SEA_LEVEL) || !distance_l.is_finite() {
+        // Не `!(level > SEA_LEVEL)`: NaN тоже должен уходить сюда, но clippy
+        // (neg_cmp_op_on_partial_ord) требует явного сравнения с порядком.
+        if level.partial_cmp(&SEA_LEVEL) != Some(std::cmp::Ordering::Greater)
+            || !distance_l.is_finite()
+        {
             return;
         }
         let blocks = distance_l * l;
