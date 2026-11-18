@@ -440,10 +440,10 @@ mod tests {
             cut.surface_y
         );
         assert!(cut.surface_y <= 100.0, "вырез поднял рельеф");
-        // Суша 70 ниже зеркала: R2 не наливает воду выше суши.
-        let low = with_water(base_at(70.0), &hydro, &p);
-        assert_eq!(low.water_strength, 0.0, "вода поднялась над сушей");
-        assert_eq!(low.surface_y, 70.0);
+        // Суша 90 выше зеркала 80: колонка остаётся сушей (§4, п. 3).
+        let high = with_water(base_at(90.0), &hydro, &p);
+        assert_eq!(high.water_strength, 0.0, "вода встала над сушей");
+        assert_eq!(high.surface_y, 90.0);
     }
 
     #[test]
