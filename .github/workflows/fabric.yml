@@ -19,15 +19,23 @@ jobs:
           - { os: windows-latest, platform: windows-x86_64, lib: litho_ffi.dll }
           - { os: ubuntu-latest, platform: linux-x86_64, lib: liblitho_ffi.so }
           - { os: macos-latest, platform: macos-aarch64, lib: liblitho_ffi.dylib }
-          - { os: macos-13, platform: macos-x86_64, lib: liblitho_ffi.dylib }
+          - { os: macos-latest, platform: macos-x86_64, lib: liblitho_ffi.dylib, target: x86_64-apple-darwin }
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - run: cargo test -p litho-ffi --release
-      - run: cargo build -p litho-ffi --release
+        with: { targets: "${{ matrix.target }}" }
+      # Раннер macos-13 (Intel) снят: x86_64 собирается кросс-компиляцией на arm64.
+      - if: ${{ !matrix.target }}
+        run: cargo test -p litho-ffi --release
       - shell: bash
-        run: mkdir -p out/${{ matrix.platform }} && cp target/release/${{ matrix.lib }} out/${{ matrix.platform }}/
+        run: |
+          if [ -n "${{ matrix.target }}" ]; then
+            cargo build -p litho-ffi --release --target ${{ matrix.target }}; dir=target/${{ matrix.target }}/release
+          else
+            cargo build -p litho-ffi --release; dir=target/release
+          fi
+          mkdir -p out/${{ matrix.platform }} && cp $dir/${{ matrix.lib }} out/${{ matrix.platform }}/
       - uses: actions/upload-artifact@v4
         with:
           name: natives-${{ matrix.platform }}
