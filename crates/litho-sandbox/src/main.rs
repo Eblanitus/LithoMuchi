@@ -532,6 +532,38 @@ fn cmd_water_leaks(args: &[String]) -> Result<(), String> {
             "нет мест с водой выше моря в радиусе {radius_l} L: увеличьте --radius-l"
         ));
     }
+    // `--explain x,z` — разбор одной колонки: уровень, сухая поверхность,
+    // ближайшее русло и озеро. Нужен, чтобы читать нарушения §4 по адресу.
+    if let Some(text) = value(args, "--explain") {
+        let (x, z) = parse_pair(&text)?;
+        let column = generator.water_column(x, z);
+        let dry = generator
+            .dry_surface_at(x, z)
+            .map_err(|error| error.to_string())?;
+        println!(
+            "колонка ({x}, {z}): вода level={} bed={} surface={} вид={} сухая S={dry:?}",
+            column.level,
+            column.bed,
+            column.surface,
+            column.kind.as_str()
+        );
+        let water = generator
+            .hydrology_levels_at(x, z)
+            .map_err(|error| error.to_string())?;
+        if let Some(hit) = water.channels.nearest {
+            println!(
+                "  русло: расстояние {:.3} L, core {:.3} L, глубина {:.2}, зеркало T145 {:.1}, уровень R2 {:?}, along {:.3}",
+                hit.distance_l, hit.core_l, hit.depth_blocks, hit.mirror_y, hit.level_blocks, hit.along
+            );
+        }
+        if let Some(hit) = water.lakes.water_hit {
+            println!(
+                "  озеро: внутри {}, расстояние {:.3} L, level_km {:?}, уровень R2 {:?}, вид {:?}",
+                hit.inside, hit.distance_l, hit.level_km, hit.level_blocks, hit.kind
+            );
+        }
+        return Ok(());
+    }
     // П. 5 §4 сравнивает рельеф с v1-dev: там вода выше моря не ставится вовсе.
     let reference = Generator::new(opts.seed, opts.mode, GenVersion::V1Dev)
         .map_err(|error| error.to_string())?;

@@ -1330,6 +1330,26 @@ impl Generator {
         ))
     }
 
+    /// Гидрология с уровнями воды R2 (§4) — для диагностики и проверок.
+    /// `hydrology_at` остаётся сырым: по нему считается `S`, и уровни в нём
+    /// замкнули бы «уровень → `S` → уровень».
+    pub fn hydrology_levels_at(&self, x: f64, z: f64) -> Result<HydrologySample, RiverNetError> {
+        if !self.params.version.is_water_relief_dev() {
+            return Err(RiverNetError::UnsupportedVersion(self.params.version));
+        }
+        hydrology::validate(&self.params)?;
+        let climate = self
+            .climate_sample(x, z)
+            .ok_or(RiverNetError::InvalidInput { cell: (0, 0) })?;
+        let geometry = self.cached_hydrology_queries(x, z, true)?;
+        Ok(hydrology::resolve(
+            geometry.channels,
+            geometry.lakes,
+            &climate,
+            &self.params,
+        ))
+    }
+
     fn cached_hydrology_queries(
         &self,
         x: f64,
