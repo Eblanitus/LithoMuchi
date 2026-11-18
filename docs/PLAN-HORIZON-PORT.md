@@ -248,6 +248,8 @@ hmod/
 >
 > **Why not a marker.** `#[replaceable]` on `SeededContext::noise` alone does not help: the helper must
 > return `Arc<dyn horizon_core::noise::Noise>`, which a mod crate cannot implement.
+>
+> Related: #13637 (opt-in native worldgen APIs for TerraForged) — this is a smaller, separate piece.
 
 ### I-2. mod API: write blocks after the noise fill of `minecraft:noise` levels
 
