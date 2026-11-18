@@ -87,11 +87,6 @@ fn options_from(args: &[String]) -> Result<RenderOptions, String> {
         Some(text) => parse_pair(&text)?,
         None => (0.0, 0.0),
     };
-    if let Some(text) = value(args, "--explain") {
-        let (x, z) = parse_pair(&text)?;
-        explain_column(&generator, x, z)?;
-        return Ok(());
-    }
     let size = match value(args, "--size") {
         Some(text) => text.parse::<usize>().map_err(|e| format!("--size: {e}"))?,
         None => 512,
@@ -494,11 +489,18 @@ fn cmd_shores(args: &[String]) -> Result<(), String> {
 
 /// К3/К4а: крутые ступени на суше по линиям, с разбивкой по причинам.
 /// R2 (Ф6-В1, PLAN-WATER-FABRIC §5): инвариант «вода не уходит за берега».
-/// Квадрат 2048 блоков вокруг трёх центров с шагом 4 — это ~260k колонок,
-/// столько же, сколько у `walls`. Ненулевое число нарушений — ошибка команды.
+/// Три центра из `water-points`; каждый считается широким окном (`--size`,
+/// `--step`) и плотным (`--dense`, шаг 1) — узкое русло 4–6 блоков широкая
+/// сетка проскакивает. Ненулевое число нарушений — ошибка команды.
 fn cmd_water_leaks(args: &[String]) -> Result<(), String> {
     let opts = options_from(args)?;
     let generator = generator(&opts)?;
+    // `--explain x,z` — разбор одной колонки, работает и без поиска центров.
+    if let Some(text) = value(args, "--explain") {
+        let (x, z) = parse_pair(&text)?;
+        explain_column(&generator, x, z)?;
+        return Ok(());
+    }
     if !opts.version.is_water_relief_r2() {
         return Err(format!(
             "water-leaks считает только v1-dev-r2 (сейчас {}): в v1-dev воды выше моря нет",
