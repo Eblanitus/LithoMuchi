@@ -87,6 +87,11 @@ fn options_from(args: &[String]) -> Result<RenderOptions, String> {
         Some(text) => parse_pair(&text)?,
         None => (0.0, 0.0),
     };
+    if let Some(text) = value(args, "--explain") {
+        let (x, z) = parse_pair(&text)?;
+        explain_column(&generator, x, z)?;
+        return Ok(());
+    }
     let size = match value(args, "--size") {
         Some(text) => text.parse::<usize>().map_err(|e| format!("--size: {e}"))?,
         None => 512,
@@ -532,43 +537,6 @@ fn cmd_water_leaks(args: &[String]) -> Result<(), String> {
             "нет мест с водой выше моря в радиусе {radius_l} L: увеличьте --radius-l"
         ));
     }
-    // `--explain x,z` — разбор одной колонки: уровень, сухая поверхность,
-    // ближайшее русло и озеро. Нужен, чтобы читать нарушения §4 по адресу.
-    if let Some(text) = value(args, "--explain") {
-        let (x, z) = parse_pair(&text)?;
-        let column = generator.water_column(x, z);
-        let dry = generator
-            .dry_surface_at(x, z)
-            .map_err(|error| error.to_string())?;
-        println!(
-            "колонка ({x}, {z}): вода level={} bed={} surface={} вид={} сухая S={dry:?}",
-            column.level,
-            column.bed,
-            column.surface,
-            column.kind.as_str()
-        );
-        let water = generator
-            .hydrology_levels_at(x, z)
-            .map_err(|error| error.to_string())?;
-        if let Some(hit) = water.channels.nearest {
-            println!(
-                "  русло: расстояние {:.3} L, core {:.3} L, глубина {:.2}, зеркало T145 {:.1}, уровень R2 {:?}, along {:.3}",
-                hit.distance_l,
-                hit.core_l,
-                hit.depth_blocks,
-                hit.mirror_y,
-                hit.level_blocks,
-                hit.along
-            );
-        }
-        if let Some(hit) = water.lakes.water_hit {
-            println!(
-                "  озеро: внутри {}, расстояние {:.3} L, level_km {:?}, уровень R2 {:?}, вид {:?}",
-                hit.inside, hit.distance_l, hit.level_km, hit.level_blocks, hit.kind
-            );
-        }
-        return Ok(());
-    }
     // §4, п. 6: широкая сетка шагом 8 проскакивает русло шириной 4–6 блоков
     // (в окне 1024 получалось 6 колонок с водой вместо сотен). Поэтому каждый
     // центр дополнительно считается плотным окном с шагом 1 — по нему и
@@ -625,6 +593,11 @@ fn cmd_water_leaks(args: &[String]) -> Result<(), String> {
         ));
     }
     if total.violations() > 0 {
+        // Читать нарушения по адресу: первые три колонки разбираются целиком
+        // (`--explain`), чтобы правка уровня не ждала нового прогона.
+        for (x, z) in total.coords.iter().take(3) {
+            explain_column(&generator, *x as f64, *z as f64)?;
+        }
         return Err(format!("нарушений инварианта §4: {}", total.violations()));
     }
     Ok(())
@@ -632,6 +605,38 @@ fn cmd_water_leaks(args: &[String]) -> Result<(), String> {
 
 /// R2 (Ф6-В5): до 20 мест для CI и автора — высокие озёра, ступени рек,
 /// устья рек в озёра. `--radius-l` ограничивает обход плит вокруг центра.
+/// Разбор одной колонки: уровень, сухая поверхность, ближайшее русло и озеро.
+/// Нужен, чтобы читать нарушения §4 по адресу.
+fn explain_column(generator: &Generator, x: f64, z: f64) -> Result<(), String> {
+    let column = generator.water_column(x, z);
+    let dry = generator
+        .dry_surface_at(x, z)
+        .map_err(|error| error.to_string())?;
+    println!(
+        "колонка ({x}, {z}): вода level={} bed={} surface={} вид={} сухая S={dry:?}",
+        column.level,
+        column.bed,
+        column.surface,
+        column.kind.as_str()
+    );
+    let water = generator
+        .hydrology_levels_at(x, z)
+        .map_err(|error| error.to_string())?;
+    if let Some(hit) = water.channels.nearest {
+        println!(
+            "  русло: расстояние {:.3} L, core {:.3} L, глубина {:.2}, зеркало T145 {:.1}, уровень R2 {:?}, along {:.3}",
+            hit.distance_l, hit.core_l, hit.depth_blocks, hit.mirror_y, hit.level_blocks, hit.along
+        );
+    }
+    if let Some(hit) = water.lakes.water_hit {
+        println!(
+            "  озеро: внутри {}, расстояние {:.3} L, level_km {:?}, уровень R2 {:?}, вид {:?}",
+            hit.inside, hit.distance_l, hit.level_km, hit.level_blocks, hit.kind
+        );
+    }
+    Ok(())
+}
+
 fn cmd_water_points(args: &[String]) -> Result<(), String> {
     let opts = options_from(args)?;
     let generator = generator(&opts)?;

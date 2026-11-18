@@ -1277,27 +1277,15 @@ impl Generator {
                 });
                 if due && direction.len() > 1e-12 {
                     last_sample = Some(b.point);
-                    // Низший берег сечения: `core/2 + 1` и `core/2 + 2` блока
-                    // от оси, по обе стороны и по соседним блокам вдоль русла.
-                    // Одно кольцо мало: рядом с кромкой бывает яма, и вода
-                    // оказывается выше сухого соседа (§4, п. 2 — протечка).
-                    let unit = direction.normalized();
-                    let normal = unit.perp();
-                    let base_l = 0.5 * b.core_l * l;
+                    // Низший из двух берегов сечения: `core/2 + 1` блок от оси.
+                    let normal = direction.normalized().perp();
+                    let offset_l = (0.5 * b.core_l * l + 1.0) / l;
                     let mut bank: Option<f64> = None;
                     for side in [1.0, -1.0] {
-                        for extra in [1.0, 2.0] {
-                            let offset_l = (base_l + extra) / l;
-                            for step in [0.0, -1.0, 1.0] {
-                                let probe = b
-                                    .point
-                                    .add(normal.scale(side * offset_l))
-                                    .add(unit.scale(step / l));
-                                let (px, pz) = to_blocks(probe);
-                                if let Some(s) = self.dry_surface_at(px, pz)? {
-                                    bank = Some(bank.map_or(s, |old: f64| old.min(s)));
-                                }
-                            }
+                        let probe = b.point.add(normal.scale(side * offset_l));
+                        let (px, pz) = to_blocks(probe);
+                        if let Some(s) = self.dry_surface_at(px, pz)? {
+                            bank = Some(bank.map_or(s, |old: f64| old.min(s)));
                         }
                     }
                     if let Some(bank) = bank {

@@ -38,6 +38,8 @@ pub struct Leaks {
     pub waterfalls: u64,
     /// Первые примеры нарушений, не больше `EXAMPLE_LIMIT`.
     pub examples: Vec<String>,
+    /// Координаты первых нарушений — по ним печатается разбор колонки.
+    pub coords: Vec<(i64, i64)>,
 }
 
 /// Сколько примеров печатать.
@@ -58,6 +60,11 @@ impl Leaks {
         self.spill += other.spill;
         self.raised += other.raised;
         self.waterfalls += other.waterfalls;
+        for coord in &other.coords {
+            if self.coords.len() < EXAMPLE_LIMIT {
+                self.coords.push(*coord);
+            }
+        }
         for example in &other.examples {
             self.example(example.clone());
         }
@@ -65,6 +72,12 @@ impl Leaks {
 
     pub fn violations(&self) -> u64 {
         self.deep_bed + self.spill + self.raised
+    }
+
+    fn coord(&mut self, x: i64, z: i64) {
+        if self.coords.len() < EXAMPLE_LIMIT {
+            self.coords.push((x, z));
+        }
     }
 
     fn example(&mut self, text: String) {
@@ -131,6 +144,7 @@ pub fn leaks_against(
 fn check_column(generator: &Generator, column: &WaterColumn, x: i64, z: i64, out: &mut Leaks) {
     if column.surface > column.level - 1 {
         out.deep_bed += 1;
+        out.coord(x, z);
         out.example(format!(
             "дно выше зеркала: ({x}, {z}) поверхность {} зеркало {}",
             column.surface, column.level
@@ -156,6 +170,7 @@ fn check_column(generator: &Generator, column: &WaterColumn, x: i64, z: i64, out
             // Сосед ниже уровня моря — это море, а не суша: игра наливает
             // там воду до 63, и ступень считается от неё.
             out.spill += 1;
+            out.coord(x, z);
             out.example(format!(
                 "берег ниже зеркала: ({}, {}) суша {} зеркало {} в ({x}, {z})",
                 x + dx,
