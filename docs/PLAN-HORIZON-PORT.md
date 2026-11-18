@@ -288,6 +288,10 @@ hmod/
 > `#[replaceable]` mark or an API it cannot be used from a mod on 0b14f8a. Please also land the #16424
 > items: no `i32::MAX` probes in `noise_based.rs:274–276`, `skip_above_y` respecting a per-column level,
 > and far-terrain bands that reach water above `sea_level + 64`.
+>
+> **Cheapest variant:** mark `<GlobalFluidPicker as FluidPicker>::compute` (`horizon-world/src/worldgen/aquifer.rs`)
+> `#[horizon_mod_api_macros::replaceable]`. Unlike the noise case, a helper can build the returned `FluidStatus`
+> itself, so a mod could then answer per column, and `lod_grid` would show the water.
 
 ## 6. Риски
 
