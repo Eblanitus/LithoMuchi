@@ -62,10 +62,19 @@ jobs:
           curl -fsS -o out/server.jar "$srv"
           python3 tools/fabric_resources.py out/packs/litospherity_v1-dev_gameplay out/server.jar fabric/src/generated/resources
           find fabric/src/generated/resources -type f
-      - name: Имена классов 26.3 (диагностика)
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: "25" }
+      - name: API 26.3 (диагностика)
         run: |
-          cd out && mkdir -p srv && cd srv && unzip -q -o ../server.jar && j=$(ls META-INF/versions/*/*.jar) && \
-          unzip -l "$j" | grep -E 'DensityFunction\.class|DensityFunction\$|KeyDispatch|NormalNoise|/RandomState|/NoiseRouter\.|/ChunkStatus\.|SinglePointContext|NoiseGeneratorSettings\.class|/Identifier\.class|ResourceLocation' | awk '{print $4}' | head -80
+          cd out && mkdir -p srv && cd srv && unzip -q -o ../server.jar && j=$(ls META-INF/versions/*/*.jar)
+          unzip -l "$j" | awk '{print $4}' | grep -E '^net/minecraft/world/level/levelgen/densityfunction/[^/$]*\.class$|^net/minecraft/world/level/levelgen/densityfunction/generator/[^$]*\.class$'
+          javap -cp "$j" -p net.minecraft.world.level.levelgen.densityfunction.DensityFunction \
+            'net.minecraft.world.level.levelgen.densityfunction.DensityFunction$CompileContext' \
+            net.minecraft.world.level.levelgen.densityfunction.generator.SimpleDensityFunction \
+            net.minecraft.world.level.levelgen.RandomState net.minecraft.world.level.levelgen.NoiseRouter \
+            'net.minecraft.world.level.levelgen.synth.NormalNoise$Parameters'
+          javap -cp "$j" -p -c net.minecraft.world.level.levelgen.densityfunction.generator.SimpleDensityFunction | head -80
+          grep -l DENSITY_FUNCTION_TYPE -r . 2>/dev/null | head -0; javap -cp "$j" net.minecraft.core.registries.BuiltInRegistries | grep -i density
       - uses: actions/setup-java@v4
         with: { distribution: temurin, java-version: "25" }
       - uses: gradle/actions/setup-gradle@v4
