@@ -508,17 +508,39 @@ fn cmd_water_leaks(args: &[String]) -> Result<(), String> {
         Some(text) => text.parse::<i64>().map_err(|e| format!("--step: {e}"))?,
         None => 4,
     };
-    let centers = [
-        (opts.center_x, opts.center_z),
-        (12000.0, -8000.0),
-        (-16000.0, 9000.0),
-    ];
+    // §4, п. 6: окна берутся там, где вода есть. В научном режиме у (0,0) её
+    // нет, и прежние фиксированные центры давали пустой гейт.
+    let radius_l = match value(args, "--radius-l") {
+        Some(text) => text
+            .parse::<f64>()
+            .map_err(|e| format!("--radius-l: {e}"))?,
+        None => 32.0,
+    };
+    let centers: Vec<(f64, f64)> = if value(args, "--center").is_some() {
+        vec![(opts.center_x, opts.center_z)]
+    } else {
+        let mut seen = std::collections::BTreeSet::new();
+        water::points(&generator, (opts.center_x, opts.center_z), radius_l)
+            .into_iter()
+            .filter(|point| seen.insert((point.x.div_euclid(512), point.z.div_euclid(512))))
+            .take(3)
+            .map(|point| (point.x as f64, point.z as f64))
+            .collect()
+    };
+    if centers.is_empty() {
+        return Err(format!(
+            "нет мест с водой выше моря в радиусе {radius_l} L: увеличьте --radius-l"
+        ));
+    }
+    // П. 5 §4 сравнивает рельеф с v1-dev: там вода выше моря не ставится вовсе.
+    let reference = Generator::new(opts.seed, opts.mode, GenVersion::V1Dev)
+        .map_err(|error| error.to_string())?;
     let mut total = water::Leaks::default();
     for (x, z) in centers {
-        let leaks = water::leaks(&generator, (x, z), size, step);
+        let leaks = water::leaks_against(&generator, Some(&reference), (x, z), size, step);
         println!(
-            "  центр ({x}, {z}): колонок {}, с водой {}, дно выше зеркала {}, берег ниже зеркала/ступень {}",
-            leaks.columns, leaks.water, leaks.deep_bed, leaks.spill
+            "  центр ({x}, {z}): колонок {}, с водой {}, дно выше зеркала {}, берег ниже зеркала/ступень {}, рельеф поднят {}",
+            leaks.columns, leaks.water, leaks.deep_bed, leaks.spill, leaks.raised
         );
         for example in &leaks.examples {
             println!("    {example}");
@@ -527,16 +549,25 @@ fn cmd_water_leaks(args: &[String]) -> Result<(), String> {
         total.water += leaks.water;
         total.deep_bed += leaks.deep_bed;
         total.spill += leaks.spill;
+        total.raised += leaks.raised;
         total.examples.extend(leaks.examples);
     }
     println!(
-        "water-leaks: всего колонок {}, с водой выше моря {}, нарушений {} (п.1 {}, п.2 {})",
+        "water-leaks: всего колонок {}, с водой выше моря {}, нарушений {} (п.1 {}, п.2 {}, п.5 {})",
         total.columns,
         total.water,
         total.violations(),
         total.deep_bed,
-        total.spill
+        total.spill,
+        total.raised
     );
+    if total.water < water::MIN_WATER_COLUMNS {
+        return Err(format!(
+            "гейт пустой: колонок с водой {} меньше {} (§4, п. 6)",
+            total.water,
+            water::MIN_WATER_COLUMNS
+        ));
+    }
     if total.violations() > 0 {
         return Err(format!("нарушений инварианта §4: {}", total.violations()));
     }

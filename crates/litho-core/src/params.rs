@@ -1143,9 +1143,13 @@ pub struct HeightParams {
     /// T145: предел глубины озера под зеркалом, блоки.
     pub lake_depth_max_blocks: f64,
     /// R2 (Ф6-В1, PLAN-WATER-FABRIC §4): ширина полосы берега, где суша
-    /// поднимается до зеркала воды. Вода не опускается, берег поднимается.
+    /// добивается до зеркала воды. Уровень теперь берётся от поверхности,
+    /// поэтому берег правится только на добор.
     /// Действует только в `v1-dev-r2`, в хеш входит только там же.
     pub bank_raise_blocks: f64,
+    /// R2 (§4, п. 4): берег поднимается до уровня воды, только если ему не
+    /// хватает не больше этого числа блоков. Больше — ошибка в уровне.
+    pub bank_raise_max_blocks: f64,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -1561,9 +1565,12 @@ impl Params {
                 },
                 lake_depth_max_blocks: 64.0,
                 // R2 (Ф6-В1): восемь блоков — уже полосы берега в
-                // `hydrology.bank_min_blocks`, поэтому берег успевает подняться
+                // `hydrology.bank_min_blocks`, поэтому берег успевает добрать
                 // до зеркала раньше, чем кончится зона запроса озера.
                 bank_raise_blocks: 8.0,
+                // §4, п. 4: добивка только на 1–2 блока. Нехватка больше —
+                // признак ошибки уровня, а не берега.
+                bank_raise_max_blocks: 2.0,
             },
             boundaries: BoundaryParams {
                 // σ=6° даёт типичные ±6° и хвосты до ±18°, без тонких октав:
@@ -2347,6 +2354,12 @@ impl Params {
             // `v1-dev` не меняются (критерий «готово» шага В1).
             if self.version.is_water_relief_r2() {
                 writeln!(w, "height.bank_raise_blocks={:?}", hg.bank_raise_blocks).unwrap();
+                writeln!(
+                    w,
+                    "height.bank_raise_max_blocks={:?}",
+                    hg.bank_raise_max_blocks
+                )
+                .unwrap();
             }
             let bd = &self.boundaries;
             for (name, value) in [

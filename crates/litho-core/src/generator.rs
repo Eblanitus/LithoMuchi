@@ -268,6 +268,12 @@ pub struct Generator {
     /// узлы привязаны к мировым блокам, эталон считает ту же решётку.
     morpho: Arc<crate::cache::ShardedCache<(i64, i64), MorphoWeights>>,
     drainage: Arc<RiverNetCache>,
+    /// R2 (§4): уровни воды плиты от сухой поверхности. Отдельный кэш, потому
+    /// что для их счёта нужна `S`, а `S` не зависит от уровней.
+    r2_levels: Arc<PlateCache<PlateLevels>>,
+    /// R2 (§4): гидрология с уровнями воды. Кэш отдельный от сырого: сырой
+    /// нужен счёту `S`, и в него уровни не попадают.
+    hydrology_levels: Arc<crate::cache::ShardedCache<(i64, i64), Arc<HydrologySample>>>,
     /// Шаг 2 плана (T113): первая фаза сети плиты — топография без соседей.
     drainage_topo: Arc<PlateCache<PlateTopo>>,
     /// Шаг 2 плана (T113): вторая фаза — топография, связанная с соседями.
@@ -307,6 +313,27 @@ pub struct Generator {
 /// К4а/часть 2 (Д-110): ячейки кромки океана одного квадрата `SHORE_BLOCK` —
 /// номера ячеек 4×4 внутри квадрата.
 type ShoreEdge = Arc<Vec<[u8; 2]>>;
+
+/// R2 (PLAN-WATER-FABRIC §4): уровни воды плиты в блоках. Кэш плиты, потому
+/// что в них входит сухая поверхность `S` в точках контура и берегов.
+#[derive(Debug, Default)]
+struct PlateLevels {
+    /// По индексу `LakeNetwork::lakes()`: зеркало озера, блоки.
+    lakes: Vec<Option<f64>>,
+    /// По индексу `ChannelNetwork::segments()`: зеркало в начале и в конце
+    /// сегмента, блоки. Уровень между ними интерполируется: так ступень
+    /// остаётся не больше блока на блок русла.
+    segments: Vec<Option<(f64, f64)>>,
+}
+
+/// §4, п. 1: точки контура озера берутся не реже чем через 2 блока.
+const LAKE_RING_STEP_BLOCKS: f64 = 2.0;
+/// Потолок числа точек кольца: чаще шага всё равно не нужно.
+const LAKE_RING_MAX_SAMPLES: usize = 384;
+/// §4, п. 2 и Д-090: запасной шаг вершин русла — 8 блоков.
+const RIVER_LEVEL_STRIDE_BLOCKS: f64 = 8.0;
+/// Д-090: сеть плиты с уровнями не дольше 200 мс; на уровни — не больше 120.
+const RIVER_LEVEL_BUDGET_MS: u128 = 120;
 
 /// К4: сторона ячейки, в центре которой берётся континентальность берега.
 const SHORE_CELL: f64 = 4.0;
@@ -359,6 +386,8 @@ impl Generator {
                 shards,
                 crate::drainage::NET_CACHE_CAPACITY,
             )),
+            r2_levels: Arc::new(PlateCache::new(shards, crate::drainage::NET_CACHE_CAPACITY)),
+            hydrology_levels: Arc::new(crate::cache::ShardedCache::new(shards, 4096)),
             drainage_topo: Arc::new(PlateCache::new(shards, crate::drainage::NET_CACHE_CAPACITY)),
             drainage_routing: Arc::new(PlateCache::new(
                 shards,
@@ -663,8 +692,17 @@ impl Generator {
                 &self.rivers,
             )
         };
-        let fields =
-            self.surface_fields(&climate, class, is_ocean, x, z, local.max(traced), None)?;
+        // Эталонный путь: колонка с водой, как в игре (`apply_water = true`).
+        let fields = self.surface_fields(
+            &climate,
+            class,
+            is_ocean,
+            x,
+            z,
+            local.max(traced),
+            None,
+            true,
+        )?;
         Ok(Some(WorldSample {
             climate: fields.climate,
             class: fields.class,
@@ -1084,12 +1122,16 @@ impl Generator {
         if !self.params.version.is_water_relief_dev() {
             return Err(RiverNetError::UnsupportedVersion(self.params.version));
         }
-        self.hydrology_queries(self.macro_point(x, z))
+        self.hydrology_queries(self.macro_point(x, z), false)
     }
 
+    /// `with_levels` — R2 (§4): дописать в попадания уровни воды из сухой
+    /// поверхности. Счёт `S` идёт с `false`, иначе уровни и `S` ссылались бы
+    /// друг на друга.
     fn hydrology_queries(
         &self,
         point: Vec2,
+        with_levels: bool,
     ) -> Result<(crate::channel::ChannelQuery, crate::lake::LakeQuery), RiverNetError> {
         let radius = crate::channel::max_query_radius_l(&self.params);
         let mut channels = crate::channel::ChannelQuery::default();
@@ -1122,10 +1164,155 @@ impl Generator {
                 }
             }
             let net = self.drainage_network(&plate)?;
-            channels.merge(net.channels().query(point));
-            lakes.merge(net.lakes().query(point));
+            let levels = if with_levels && self.params.version.is_water_relief_r2() {
+                Some(self.r2_plate_levels(&plate, &net)?)
+            } else {
+                None
+            };
+            let mut channels_here = net.channels().query(point);
+            let mut lakes_here = net.lakes().query(point);
+            if let Some(levels) = levels {
+                if let Some(hit) = channels_here.nearest.as_mut() {
+                    hit.level_blocks = levels
+                        .segments
+                        .get(hit.segment)
+                        .copied()
+                        .flatten()
+                        .map(|(up, down)| up + (down - up) * hit.along);
+                }
+                if let Some(hit) = lakes_here.water_hit.as_mut() {
+                    hit.level_blocks = levels.lakes.get(hit.lake).copied().flatten();
+                }
+            }
+            channels.merge(channels_here);
+            lakes.merge(lakes_here);
         }
         Ok((channels, lakes))
+    }
+
+    /// R2 (PLAN-WATER-FABRIC §4): уровни воды плиты в блоках от сухой
+    /// поверхности `S`. Один раз на плиту, вместе с кэшем сети.
+    fn r2_plate_levels(
+        &self,
+        plate: &Plate,
+        net: &crate::drainage::RiverNet,
+    ) -> Result<Arc<PlateLevels>, RiverNetError> {
+        self.r2_levels
+            .get_or_build(plate.id, || self.build_r2_levels(net))
+    }
+
+    /// §4, пп. 1–2: зеркало озера — `min(S)` по контуру минус 1 (плоское на
+    /// всей площади), уровень русла — низший берег сечения минус 1, только
+    /// вниз по течению. Оба считаются в блоках, а не в километрах: таблица
+    /// высот игры с километрами не связана.
+    fn build_r2_levels(
+        &self,
+        net: &crate::drainage::RiverNet,
+    ) -> Result<PlateLevels, RiverNetError> {
+        let l = self.params.block.l_blocks;
+        let shift = self.spawn_shift;
+        let to_blocks = |p: Vec2| {
+            (
+                (p.x - shift.x) * l,
+                (p.z - shift.z) * l,
+            )
+        };
+        let mut levels = PlateLevels::default();
+        // --- Озёра (§4, п. 1)
+        let lakes = net.lakes().lakes();
+        levels.lakes.reserve(lakes.len());
+        for lake in lakes {
+            let mut level = None;
+            if lake.kind.has_water() && lake.level_km.is_some() {
+                if let Some(ring) = lake.rings.first() {
+                    let mut lowest: Option<f64> = None;
+                    let mut last: Option<(f64, f64)> = None;
+                    let mut taken = 0_usize;
+                    for &point in ring {
+                        let here = to_blocks(point);
+                        let due = last.is_none_or(|(px, pz)| {
+                            let dx = here.0 - px;
+                            let dz = here.1 - pz;
+                            (dx * dx + dz * dz).sqrt() >= LAKE_RING_STEP_BLOCKS
+                        });
+                        if !due {
+                            continue;
+                        }
+                        last = Some(here);
+                        taken += 1;
+                        if let Some(s) = self.dry_surface_at(here.0, here.1)? {
+                            lowest = Some(lowest.map_or(s, |old: f64| old.min(s)));
+                        }
+                        if taken >= LAKE_RING_MAX_SAMPLES {
+                            break;
+                        }
+                    }
+                    // Зеркало ниже самой низкой точки берега на блок: вода
+                    // стоит на `level − 1`, и берег не оказывается под водой.
+                    level = lowest
+                        .map(|s| (s - 1.0).floor())
+                        .filter(|value| *value > crate::height::SEA_LEVEL);
+                }
+            }
+            levels.lakes.push(level);
+        }
+        // --- Русла (§4, п. 2)
+        let channels = net.channels();
+        levels.segments = vec![None; channels.segments().len()];
+        let started = std::time::Instant::now();
+        let stride_l = RIVER_LEVEL_STRIDE_BLOCKS / l;
+        for reach in 0..channels.reaches().len() {
+            let first = channels.reach_first_segment(reach);
+            // Уровень вершины — низший берег минус 1; вниз по течению только
+            // убывает, но не быстрее блока на блок русла.
+            let mut current: Option<f64> = None;
+            let mut target: Option<f64> = None;
+            let mut last_sample: Option<Vec2> = None;
+            for (offset, segment) in channels.reach_segments(reach).iter().enumerate() {
+                let k = first + offset;
+                let a = segment.a;
+                let b = segment.b;
+                let direction = b.point.sub(a.point);
+                // Запасной режим (Д-090): вершины реже, через 8 блоков, уровень
+                // между ними держится прежним и остаётся монотонным.
+                let slow = started.elapsed().as_millis() > RIVER_LEVEL_BUDGET_MS;
+                let due = last_sample.is_none_or(|last| {
+                    let step = if slow { stride_l } else { 0.0 };
+                    b.point.sub(last).len() >= step
+                });
+                if due && direction.len() > 1e-12 {
+                    last_sample = Some(b.point);
+                    // Низший из двух берегов сечения: `core/2 + 1` блок от оси.
+                    let normal = direction.normalized().perp();
+                    let offset_l = (0.5 * b.core_l * l + 1.0) / l;
+                    let mut bank: Option<f64> = None;
+                    for side in [1.0, -1.0] {
+                        let probe = b.point.add(normal.scale(side * offset_l));
+                        let (px, pz) = to_blocks(probe);
+                        if let Some(s) = self.dry_surface_at(px, pz)? {
+                            bank = Some(bank.map_or(s, |old: f64| old.min(s)));
+                        }
+                    }
+                    if let Some(bank) = bank {
+                        target = Some((bank - 1.0).floor());
+                    }
+                }
+                let start = current.or(target).unwrap_or(crate::height::SEA_LEVEL);
+                let desired = target.map_or(start, |level| start.min(level));
+                // Падение внутри сегмента размазано по его длине (уровень
+                // интерполируется по `along`), поэтому ступень между соседними
+                // блоками — не больше блока на блок. Быстрее рельеф падает
+                // только на водопадах; их считают метрики (§4, п. 2).
+                let end = desired.min(start);
+                current = Some(end);
+                levels.segments[k] = if start > crate::height::SEA_LEVEL {
+                    Some((start, end))
+                } else {
+                    None
+                };
+            }
+        }
+        Ok(levels)
     }
 
     /// Эффективная гидрология T115 в блочной точке. Кэш точной колонки не
@@ -1139,7 +1326,7 @@ impl Generator {
         let climate = self
             .climate_sample(x, z)
             .ok_or(RiverNetError::InvalidInput { cell: (0, 0) })?;
-        let geometry = self.cached_hydrology_queries(x, z)?;
+        let geometry = self.cached_hydrology_queries(x, z, false)?;
         Ok(hydrology::resolve(
             geometry.channels,
             geometry.lakes,
@@ -1148,17 +1335,27 @@ impl Generator {
         ))
     }
 
-    fn cached_hydrology_queries(&self, x: f64, z: f64) -> Result<HydrologySample, RiverNetError> {
+    fn cached_hydrology_queries(
+        &self,
+        x: f64,
+        z: f64,
+        with_levels: bool,
+    ) -> Result<HydrologySample, RiverNetError> {
         // Сначала проверяем версию/параметры, затем строим сети вне замков.
         if !self.params.version.is_water_relief_dev() {
             return Err(RiverNetError::UnsupportedVersion(self.params.version));
         }
         hydrology::validate(&self.params)?;
         let key = (x.to_bits() as i64, z.to_bits() as i64);
-        if let Some(hit) = self.hydrology.get(key) {
+        let cache = if with_levels {
+            &self.hydrology_levels
+        } else {
+            &self.hydrology
+        };
+        if let Some(hit) = cache.get(key) {
             return Ok(*hit);
         }
-        let (channels, lakes) = self.hydrology_queries(self.macro_point(x, z))?;
+        let (channels, lakes) = self.hydrology_queries(self.macro_point(x, z), with_levels)?;
         // Климат зависит от пути (reference/fast), поэтому кэшируем только
         // геометрию. Хранение готового kind здесь смешало бы два пути.
         let geometry = HydrologySample {
@@ -1167,7 +1364,7 @@ impl Generator {
             networks_considered: channels.networks_considered,
             ..HydrologySample::default()
         };
-        self.hydrology.get_or_insert(key, || Arc::new(geometry));
+        cache.get_or_insert(key, || Arc::new(geometry));
         Ok(geometry)
     }
 
@@ -1204,6 +1401,7 @@ impl Generator {
         z: f64,
         local_river: f64,
         known: Option<(&PlateSample, &CrustSample)>,
+        apply_water: bool,
     ) -> Result<SurfaceFields, RiverNetError> {
         if !self.params.version.is_water_relief_dev() {
             let vanilla =
@@ -1220,7 +1418,7 @@ impl Generator {
                 height: crate::height::HeightSample::default(),
             });
         }
-        let geometry = self.cached_hydrology_queries(x, z)?;
+        let geometry = self.cached_hydrology_queries(x, z, apply_water)?;
         let water = hydrology::resolve(geometry.channels, geometry.lakes, climate, &self.params);
         // T122: потенциал A и морфоклиматические зоны переводятся в C/E/W до
         // гидрологии T115/T116, чтобы русла/болота/дельты сохранили приоритет.
@@ -1289,22 +1487,25 @@ impl Generator {
         } else {
             shore_dist
         };
-        let height = crate::height::with_water(
-            crate::height::sample_micro(
-                vanilla.c,
-                vanilla.e,
-                pv,
-                e_valley_km,
-                morpho.values[6],
-                morpho.values[7],
-                micro,
-                1.0 - crate::math::clamp01(river),
-                shore_dist,
-                &self.params,
-            ),
-            &water,
+        // R2 (§4): `S` — сухая поверхность колонки. Уровень воды считается от
+        // неё (`dry_surface_at`), поэтому вырез только опускает рельеф.
+        let dry = crate::height::sample_micro(
+            vanilla.c,
+            vanilla.e,
+            pv,
+            e_valley_km,
+            morpho.values[6],
+            morpho.values[7],
+            micro,
+            1.0 - crate::math::clamp01(river),
+            shore_dist,
             &self.params,
         );
+        let height = if apply_water {
+            crate::height::with_water(dry, &water, &self.params)
+        } else {
+            dry
+        };
         // К5 (Д-111): биом суши берётся по климату с вычетом температуры по
         // готовой высоте колонки. Рельеф и вода выше посчитаны по прежнему
         // климату и от этого шага не зависят.
@@ -1771,6 +1972,26 @@ impl Generator {
 
     /// Быстрый путь с явной ошибкой сети для песочницы и регрессий.
     pub fn try_sample(&self, x: f64, z: f64) -> Result<Option<FullSample>, RiverNetError> {
+        self.try_sample_with(x, z, true)
+    }
+
+    /// R2 (§4): сухая поверхность `S` колонки в блоках — высота до выреза
+    /// воды. Самой воде она не нужна, а уровням нужна: зеркало озера и
+    /// берега русла считаются от неё, поэтому цикл «уровень → `S`» разорван
+    /// флагом `apply_water = false`.
+    pub fn dry_surface_at(&self, x: f64, z: f64) -> Result<Option<f64>, RiverNetError> {
+        Ok(self
+            .try_sample_with(x, z, false)?
+            .map(|full| full.world.height.surface_y))
+    }
+
+    /// `apply_water = false` — колонка без выреза воды (сухая поверхность `S`).
+    fn try_sample_with(
+        &self,
+        x: f64,
+        z: f64,
+        apply_water: bool,
+    ) -> Result<Option<FullSample>, RiverNetError> {
         let Some(plates) = self.plate_sample(x, z) else {
             return Ok(None);
         };
@@ -1870,6 +2091,7 @@ impl Generator {
             z,
             local,
             Some((&plates, &crust)),
+            apply_water,
         )?;
         let world = WorldSample {
             climate: fields.climate,

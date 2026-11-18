@@ -30,16 +30,23 @@ pub struct Leaks {
     pub deep_bed: u64,
     /// Нарушения п. 2: сосед-суша ниже зеркала или вода со ступенью > 1.
     pub spill: u64,
+    /// Нарушения п. 5: рельеф поднят больше чем на 3 блока против `v1-dev`.
+    pub raised: u64,
     /// Первые примеры нарушений, не больше `EXAMPLE_LIMIT`.
     pub examples: Vec<String>,
 }
 
 /// Сколько примеров печатать.
 const EXAMPLE_LIMIT: usize = 10;
+/// §4, п. 5: допустимый подъём рельефа против `v1-dev`, блоки.
+pub const RAISE_LIMIT_BLOCKS: f64 = 3.0;
+/// §4, п. 6: в окне каждого режима должно быть не меньше стольких колонок
+/// с водой выше моря, иначе гейт проходит впустую.
+pub const MIN_WATER_COLUMNS: u64 = 200;
 
 impl Leaks {
     pub fn violations(&self) -> u64 {
-        self.deep_bed + self.spill
+        self.deep_bed + self.spill + self.raised
     }
 
     fn example(&mut self, text: String) {
@@ -53,6 +60,18 @@ impl Leaks {
 /// `step`. Соседи проверяются по блокам (±1), а не по шагу сетки: инвариант
 /// сформулирован для соседних блоков.
 pub fn leaks(generator: &Generator, center: (f64, f64), size: i64, step: i64) -> Leaks {
+    leaks_against(generator, None, center, size, step)
+}
+
+/// То же с эталонным генератором для п. 5 §4: рельеф `v1-dev-r2` не выше
+/// `v1-dev` больше чем на 3 блока. `None` — п. 5 не проверяется.
+pub fn leaks_against(
+    generator: &Generator,
+    reference: Option<&Generator>,
+    center: (f64, f64),
+    size: i64,
+    step: i64,
+) -> Leaks {
     let step = step.max(1);
     let half = size.max(step) / 2;
     let mut out = Leaks::default();
@@ -64,6 +83,23 @@ pub fn leaks(generator: &Generator, center: (f64, f64), size: i64, step: i64) ->
         while x <= x0 + 2 * half {
             out.columns += 1;
             let column = generator.water_column(x as f64, z as f64);
+            if let Some(reference) = reference {
+                // §4, п. 5: `v1-dev-r2` только опускает рельеф и добивает
+                // берег на 1–2 блока. Всё, что выше эталона на 3 блока, —
+                // насыпь, то есть ошибка уровня.
+                if let Ok(Some(full)) = reference.try_sample(x as f64, z as f64) {
+                    let base = full.world.height.surface_y;
+                    if column.surface != WaterColumn::NONE
+                        && column.surface as f64 > base + RAISE_LIMIT_BLOCKS
+                    {
+                        out.raised += 1;
+                        out.example(format!(
+                            "рельеф поднят: ({x}, {z}) {} против {base:.1} у v1-dev",
+                            column.surface
+                        ));
+                    }
+                }
+            }
             if column.has_water() {
                 out.water += 1;
                 check_column(generator, &column, x, z, &mut out);

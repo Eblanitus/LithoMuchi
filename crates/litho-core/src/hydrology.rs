@@ -438,6 +438,7 @@ mod tests {
             high: level > 0.0,
             water_strength: 1.0,
             shore_strength: 1.0,
+            level_blocks: None,
         }
     }
 
@@ -505,6 +506,8 @@ mod tests {
             delta_strength: 0.0,
             end: ReachEnd::Confluence,
             mouth_distance_l: 1.0,
+            level_blocks: None,
+            along: 0.0,
         };
         let q = ChannelQuery {
             core: 1.0,
@@ -605,6 +608,8 @@ mod tests {
             delta_strength: 0.0,
             end: ReachEnd::Sea,
             mouth_distance_l: 0.0,
+            level_blocks: None,
+            along: 0.0,
         };
         let q = ChannelQuery {
             core: 1.0,

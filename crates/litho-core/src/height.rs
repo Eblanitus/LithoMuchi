@@ -165,10 +165,10 @@ pub fn sample_micro(
 /// Озеро стоит плоским зеркалом на уровне перелива; дно = зеркало − глубина.
 /// Это своя высота для предпросмотра; игра ставит воду через T143.
 ///
-/// R2 (`v1-dev-r2`, PLAN-WATER-FABRIC §4): вода не опускается, берег
-/// поднимается. Зеркало не зажимается локальной сушей, предел
-/// `hydrology.r1_max_level_km` снимается, а полоса берега шириной
-/// `height.bank_raise_blocks` доводится до зеркала.
+/// R2 (`v1-dev-r2`, PLAN-WATER-FABRIC §4): уровень берётся от игровой
+/// поверхности, а вырез рельеф только опускает. Предел
+/// `hydrology.r1_max_level_km` снимается, дно гарантированно ниже зеркала,
+/// и только нехватку ≤ `height.bank_raise_max_blocks` добивает берег.
 pub fn with_water(
     mut height: HeightSample,
     hydrology: &HydrologySample,
@@ -191,17 +191,22 @@ pub fn with_water(
         // переходу C/E/W. Долину вокруг даёт PV→−1 и таблица высот.
         let cut = clamp01(hydrology.channels.bank);
         if cut > 0.0 {
-            // R2: зеркало реки не зажимается берегом — уровень в сечении
-            // один (инвариант §4, п. 4), берег поднимается ниже.
+            // R2 (§4, п. 2): уровень вершины русла — низший берег минус 1,
+            // монотонно вниз по течению. Уровень считается от сухой
+            // поверхности `S`, поэтому зажим `min(суша − 1)` больше не нужен.
+            // Нет уровня (вода не выше моря) — R2 здесь воду не ставит.
             let mirror = if r2 {
-                hit.mirror_y.round()
+                hit.level_blocks
             } else {
-                hit.mirror_y.round().min(land_y - 1.0)
+                Some(hit.mirror_y.round().min(land_y - 1.0))
             };
-            if mirror >= h.min_y {
+            if let Some(mirror) = mirror.filter(|mirror| *mirror >= h.min_y) {
                 let depth = hit.depth_blocks.max(1.0);
                 let bed = (mirror - depth).max(h.min_y);
-                if cut > best {
+                // §4, п. 3: колонка выше зеркала остаётся сушей (острова,
+                // прирусловой вал), вырез её не касается.
+                let wet = !r2 || land_y < mirror;
+                if cut > best && wet {
                     best = cut;
                     water_y = mirror;
                     bed_y = bed;
@@ -210,7 +215,26 @@ pub fn with_water(
         }
     }
     if let Some(hit) = hydrology.lakes.water_hit.filter(|hit| hit.inside) {
-        if let Some(level) = hit.level_km {
+        // R2 (§4, п. 1): плоское зеркало = min(S) по контуру минус 1, блоки.
+        // `level_km` модели нужен только для решения о воде и для контура.
+        if r2 {
+            if let Some(mirror) = hit.level_blocks.filter(|level| *level >= h.min_y) {
+                let cut = clamp01(hit.water_strength);
+                if cut > 0.0 && land_y < mirror {
+                    let depth = clamp(
+                        hit.max_depth_km * h.water_km_to_blocks,
+                        1.0,
+                        h.lake_depth_max_blocks,
+                    );
+                    let bed = (mirror - depth).max(h.min_y);
+                    if cut > best || (cut == best && bed < bed_y) {
+                        best = cut;
+                        water_y = mirror;
+                        bed_y = bed;
+                    }
+                }
+            }
+        } else if let Some(level) = hit.level_km {
             // К3: до R2 вода выше R1 отложена (DeferredWater) — рельеф не
             // вырезать и не поднимать, котловина остаётся сухой сушёй.
             if level <= r1_limit_km {
@@ -220,7 +244,7 @@ pub fn with_water(
                     // дно не может встать плоским столом над сушей.
                     // R2: зеркало плоское на всей площади озера (п. 3 §4).
                     let raw = (SEA_LEVEL + level.max(0.0) * h.water_km_to_blocks).round();
-                    let mirror = if r2 { raw } else { raw.min(land_y - 1.0) };
+                    let mirror = raw.min(land_y - 1.0);
                     if mirror >= h.min_y {
                         let depth = clamp(
                             hit.max_depth_km * h.water_km_to_blocks,
@@ -242,7 +266,12 @@ pub fn with_water(
         let cut_y = lerp(land_y, bed_y, best);
         // R2: вода стоит на `water_y − 1`, значит, дно обязано быть ниже
         // (инвариант §4, п. 1). В R1 это уже даёт зажим зеркала.
-        height.surface_y = if r2 { cut_y.min(water_y - 1.0) } else { cut_y };
+        height.surface_y = if r2 {
+            // §4, пп. 1 и 3: вырез только вниз (`min(S)`), дно ниже зеркала.
+            cut_y.min(land_y).min(water_y - 1.0)
+        } else {
+            cut_y
+        };
         height.water_y = water_y;
         height.bed_y = bed_y;
         height.water_strength = best;
@@ -254,9 +283,14 @@ pub fn with_water(
     height
 }
 
-/// R2 (PLAN-WATER-FABRIC §4): правило «не опускать воду, а поднимать берег».
-/// Колонки берега шириной `height.bank_raise_blocks` вокруг контура озера и
-/// вдоль русла доводятся до зеркала и плавно сходят к исходной суше.
+/// R2 (PLAN-WATER-FABRIC §4, п. 4): берег — только добивка.
+///
+/// Уровень воды считается от сухой поверхности `S`, поэтому вода и суша
+/// почти всегда сходятся сами. Поднимать берег нужно ровно там, где до
+/// зеркала не хватает одного-двух блоков (`height.bank_raise_max_blocks`):
+/// у самой кромки суша встаёт ровно на уровень воды, без плавного спада.
+/// Нехватка больше — это ошибка уровня (пп. 1–2), а не берега, и такой
+/// берег не трогаем: иначе возвращаются насыпи и озёра-столы.
 fn raise_bank(
     mut height: HeightSample,
     hydrology: &HydrologySample,
@@ -264,37 +298,32 @@ fn raise_bank(
     cut: f64,
 ) -> HeightSample {
     let h = &params.height;
-    if cut > 0.0 || h.bank_raise_blocks <= 0.0 {
+    if cut > 0.0 || h.bank_raise_blocks < 0.0 || h.bank_raise_max_blocks <= 0.0 {
         return height;
     }
     let land_y = height.surface_y;
     let l = params.block.l_blocks;
     let mut target = land_y;
-    let mut consider = |level: f64, distance_l: f64| {
-        // Не `!(level > SEA_LEVEL)`: NaN тоже должен уходить сюда, но clippy
-        // (neg_cmp_op_on_partial_ord) требует явного сравнения с порядком.
-        if level.partial_cmp(&SEA_LEVEL) != Some(std::cmp::Ordering::Greater)
-            || !distance_l.is_finite()
+    let mut consider = |level: f64, distance_blocks: f64| {
+        if !level.is_finite() || !distance_blocks.is_finite() || distance_blocks > h.bank_raise_blocks
         {
             return;
         }
-        let blocks = distance_l * l;
-        if blocks <= h.bank_raise_blocks {
-            let k = 1.0 - smoothstep(0.0, h.bank_raise_blocks, blocks);
-            target = target.max(lerp(land_y, level, k));
+        let shortfall = level - land_y;
+        if shortfall > 0.0 && shortfall <= h.bank_raise_max_blocks {
+            target = target.max(level);
         }
     };
     if let Some(hit) = hydrology.channels.nearest {
-        consider(hit.mirror_y.round(), hit.distance_l);
+        if let Some(level) = hit.level_blocks {
+            // Расстояние — от кромки воды, у реки это `core/2` от оси.
+            let edge = 0.5 * hit.core_l * l;
+            consider(level, (hit.distance_l * l - edge).max(0.0));
+        }
     }
-    if let Some(hit) = hydrology.lakes.nearest {
-        if hit.kind.has_water() {
-            if let Some(level_km) = hit.level_km {
-                consider(
-                    (SEA_LEVEL + level_km.max(0.0) * h.water_km_to_blocks).round(),
-                    hit.distance_l,
-                );
-            }
+    if let Some(hit) = hydrology.lakes.water_hit.filter(|hit| hit.inside) {
+        if let Some(level) = hit.level_blocks {
+            consider(level, hit.distance_l * l);
         }
     }
     if target > land_y {
@@ -304,7 +333,7 @@ fn raise_bank(
     height
 }
 
-pub fn validate(params: &Params) -> Result<(), &'static str> {
+fn validate(params: &Params) -> Result<(), &'static str> {
     let h = &params.height;
     let increasing = |xs: &[f64]| xs.windows(2).all(|w| w[0].is_finite() && w[1] > w[0]);
     if !increasing(&h.e_knots) || !increasing(&h.pv_knots) || !increasing(&h.ocean_c) {
@@ -351,6 +380,8 @@ pub fn validate(params: &Params) -> Result<(), &'static str> {
         || h.lake_depth_max_blocks < 1.0
         || !h.bank_raise_blocks.is_finite()
         || !(0.0..=256.0).contains(&h.bank_raise_blocks)
+        || !h.bank_raise_max_blocks.is_finite()
+        || !(0.0..=256.0).contains(&h.bank_raise_max_blocks)
     {
         return Err("height: переход берега/вертикальный масштаб/пределы некорректны");
     }
@@ -365,6 +396,82 @@ mod tests {
 
     fn params(mode: Mode) -> Params {
         Params::defaults(GenVersion::V1Dev, mode)
+    }
+
+    /// R2 (§4): уровень воды считается от сухой поверхности, вырез только вниз.
+    fn params_r2(mode: Mode) -> Params {
+        Params::defaults(GenVersion::V1DevR2, mode)
+    }
+
+    fn channel_level(mirror_y: f64, depth_blocks: f64, level: Option<f64>) -> crate::channel::ChannelHit {
+        let mut hit = channel_hit(mirror_y, depth_blocks);
+        hit.level_blocks = level;
+        hit
+    }
+
+    fn lake_level(level_km: f64, max_depth_km: f64, level: Option<f64>) -> crate::lake::LakeHit {
+        let mut hit = lake_hit(level_km, max_depth_km);
+        hit.level_blocks = level;
+        hit
+    }
+
+    #[test]
+    fn r2_river_takes_level_from_banks_and_cuts_only_down() {
+        let p = params_r2(Mode::Gameplay);
+        let mut hydro = HydrologySample::default();
+        hydro.channels.core = 1.0;
+        hydro.channels.bank = 1.0;
+        hydro.channels.nearest = Some(channel_level(120.0, 2.0, Some(80.0)));
+        // Суша 100: вырез опускает дно под зеркало, но не выше суши.
+        let cut = with_water(base_at(100.0), &hydro, &p);
+        assert_eq!(cut.water_y, 80.0, "уровень взят от берегов, а не из километров");
+        assert!(cut.surface_y <= 79.0, "дно {:?} не ниже зеркала", cut.surface_y);
+        assert!(cut.surface_y <= 100.0, "вырез поднял рельеф");
+        // Суша 70 ниже зеркала: R2 не наливает воду выше суши.
+        let low = with_water(base_at(70.0), &hydro, &p);
+        assert_eq!(low.water_strength, 0.0, "вода поднялась над сушей");
+        assert_eq!(low.surface_y, 70.0);
+    }
+
+    #[test]
+    fn r2_without_surface_level_gives_no_water_above_sea() {
+        let p = params_r2(Mode::Gameplay);
+        let mut hydro = HydrologySample::default();
+        hydro.channels.core = 1.0;
+        hydro.channels.bank = 1.0;
+        hydro.channels.nearest = Some(channel_level(120.0, 2.0, None));
+        let out = with_water(base_at(100.0), &hydro, &p);
+        assert_eq!(out.water_strength, 0.0);
+        assert_eq!(out.surface_y, 100.0);
+        assert_eq!(out.water_y, SEA_LEVEL);
+    }
+
+    #[test]
+    fn r2_lake_keeps_columns_above_the_mirror_as_land() {
+        let p = params_r2(Mode::Gameplay);
+        let mut hydro = HydrologySample::default();
+        hydro.lakes.water_hit = Some(lake_level(0.5, 0.05, Some(90.0)));
+        // Остров внутри контура: суша выше зеркала — остаётся сушей.
+        let island = with_water(base_at(95.0), &hydro, &p);
+        assert_eq!(island.water_strength, 0.0);
+        assert_eq!(island.surface_y, 95.0);
+        // Котловина: дно ниже зеркала и ниже исходной поверхности.
+        let basin = with_water(base_at(88.0), &hydro, &p);
+        assert_eq!(basin.water_y, 90.0);
+        assert!(basin.surface_y <= 89.0);
+        assert!(basin.surface_y <= 88.0);
+    }
+
+    #[test]
+    fn r2_bank_fill_is_only_a_two_block_top_up() {
+        let p = params_r2(Mode::Gameplay);
+        let mut hydro = HydrologySample::default();
+        hydro.channels.nearest = Some(channel_level(0.0, 2.0, Some(80.0)));
+        // Нехватка 1 блок — добивка; 3 блока — уже ошибка уровня, не берега.
+        let near = with_water(base_at(79.0), &hydro, &p);
+        assert_eq!(near.surface_y, 80.0, "нехватку в блок берег не добрал");
+        let far = with_water(base_at(77.0), &hydro, &p);
+        assert_eq!(far.surface_y, 77.0, "берег поднят больше чем на 2 блока");
     }
 
     #[test]
@@ -503,6 +610,8 @@ mod tests {
             end: crate::channel::ReachEnd::Confluence,
             mouth_distance_l: 1.0,
             mirror_y,
+            level_blocks: None,
+            along: 0.0,
         }
     }
 
@@ -539,6 +648,7 @@ mod tests {
             high: level_km > 0.0,
             water_strength: 1.0,
             shore_strength: 1.0,
+            level_blocks: None,
         }
     }
 
