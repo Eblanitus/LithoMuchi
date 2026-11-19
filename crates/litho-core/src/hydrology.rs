@@ -124,6 +124,21 @@ pub fn resolve(
     climate: &ClimateSample,
     params: &Params,
 ) -> HydrologySample {
+    resolve_with_limit(channels, lakes, climate, params, r1_max_level_km(params))
+}
+
+/// То же, что [`resolve`], но с явным пределом уровня озера. Нужен разделу 4
+/// (Д-127): рельеф и поля `v1-dev-r2` обязаны совпадать с `v1-dev` побитово,
+/// поэтому C/E/W/T/H считаются по гидрологии с пределом R1, а сам слой воды —
+/// по версии. Иначе озеро выше предела меняло бы сушу, и паритет Ф4 давал
+/// 20 расхождений из 5000.
+pub fn resolve_with_limit(
+    channels: ChannelQuery,
+    lakes: LakeQuery,
+    climate: &ClimateSample,
+    params: &Params,
+    r1_max_km: f64,
+) -> HydrologySample {
     let h = &params.hydrology;
     let mut out = HydrologySample {
         channels,
@@ -143,7 +158,6 @@ pub fn resolve(
     out.r2_deferred = lakes.deferred_water;
     let inside = lakes.water_hit.filter(|hit| hit.inside);
     // R2: у всех озёр с водой предел снят, вид воды — как у R1 (В1).
-    let r1_max_km = r1_max_level_km(params);
     out.kind = if lakes.inland_sea > 0.0
         || inside.is_some_and(|hit| {
             matches!(hit.kind, LakeKind::InlandSea | LakeKind::SeaConnected)

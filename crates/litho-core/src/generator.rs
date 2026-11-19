@@ -1469,6 +1469,20 @@ impl Generator {
         }
         let geometry = self.cached_hydrology_queries(x, z, apply_water)?;
         let water = hydrology::resolve(geometry.channels, geometry.lakes, climate, &self.params);
+        // §4, п. 5 (Д-127): `v1-dev-r2` меняет только слой воды. Поля и рельеф
+        // считаются по гидрологии с пределом R1, иначе налившееся озеро меняло
+        // бы C/E/W против `v1-dev` и земля уходила бы из-под воды.
+        let terrain_water = if self.params.version.is_water_relief_r2() {
+            hydrology::resolve_with_limit(
+                geometry.channels,
+                geometry.lakes,
+                climate,
+                &self.params,
+                self.params.hydrology.r1_max_level_km,
+            )
+        } else {
+            water
+        };
         // T122: потенциал A и морфоклиматические зоны переводятся в C/E/W до
         // гидрологии T115/T116, чтобы русла/болота/дельты сохранили приоритет.
         let point = self.macro_point(x, z);
@@ -1505,9 +1519,9 @@ impl Generator {
             self.seed,
             &self.params,
         );
-        let vanilla = hydrology::apply_fields(base, local_river, &water, &self.params);
-        let class = hydrology::classify_surface(class, &water, climate, &self.params);
-        let river = local_river.max(water.river);
+        let vanilla = hydrology::apply_fields(base, local_river, &terrain_water, &self.params);
+        let class = hydrology::classify_surface(class, &terrain_water, climate, &self.params);
+        let river = local_river.max(terrain_water.river);
         // I2-lite: долины режут русла/низкие озёра, а не каждая смена знака W.
         let pv = crate::math::lerp(pv_relief, -1.0, crate::math::clamp01(river));
         // Д-057: в долине реки прибавка макровысоты (научный режим) гаснет,
@@ -1592,12 +1606,12 @@ impl Generator {
             let recast = classify(&cooled, false, x, z, self.seed, &self.params);
             let (t, h) = crate::vanilla::temperature_humidity(&cooled, &recast, &self.params);
             let base = VanillaSample { t, h, ..base };
-            let vanilla = hydrology::apply_fields(base, local_river, &water, &self.params);
+            let vanilla = hydrology::apply_fields(base, local_river, &terrain_water, &self.params);
             // Д-118: горные биомы ванили — только на высокой горе (и снежные
             // склоны в снежном поясе); холм остаётся своим биомом.
             let vanilla =
                 crate::vanilla_biome::guard_mountain_biomes(vanilla, shape_y, &self.params);
-            let class = hydrology::classify_surface(recast, &water, &cooled, &self.params);
+            let class = hydrology::classify_surface(recast, &terrain_water, &cooled, &self.params);
             (cooled, class, vanilla)
         };
         Ok(SurfaceFields {
