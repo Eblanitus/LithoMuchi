@@ -132,10 +132,12 @@ public final class LithoWaterFeature implements Feature {
                     if (level.getBlockState(pos).isAir()) continue;
                     level.setBlock(pos, Blocks.AIR.defaultBlockState(), 2);
                 }
-                // Над зеркалом тоже вынимаем: 3D-шум игры ставит над водой бугры
-                // и крышки, которых у ядра нет, и река уходит под землю. Не выше
-                // UP_CLEAR блоков: дальше это уже склон, а не русло.
-                for (int y = from + 1; y <= Math.min(from + UP_CLEAR, maxY); y++) {
+                // Русло у моря: над зеркалом тоже вынимаем. 3D-шум игры ставит над
+                // водой бугры и крышки, которых у ядра нет, и река уходит под
+                // землю. Не выше UP_CLEAR блоков: дальше это уже склон. Только у
+                // моря: там вода не выше 62 и протечь вверх не может; у русел R2
+                // вскрытие берега давало протечки (CI water scientific 9 → 27).
+                for (int y = from + 1; surface == SEA_LEVEL && y <= Math.min(from + UP_CLEAR, maxY); y++) {
                     BlockPos pos = new BlockPos(x, y, z);
                     BlockState above = level.getBlockState(pos);
                     if (above.isAir() || above.is(Blocks.WATER)) break;
