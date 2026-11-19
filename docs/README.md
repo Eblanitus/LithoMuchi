@@ -7,7 +7,7 @@
 | План до v1 (состояние, оставшиеся шаги, правила) | [PLAN.md](PLAN.md) |
 | Переход на Fabric (Ф0–Ф7) | [PLAN-FABRIC.md](PLAN-FABRIC.md) |
 | Вода выше уровня моря на Fabric (Ф6-В0…В7) | [PLAN-WATER-FABRIC.md](PLAN-WATER-FABRIC.md) |
-| Водное обновление: типы водоёмов, вода выше моря от `S0` (ВО0–ВО9, ждёт решения автора) | [PLAN-WATER-UPDATE.md](PLAN-WATER-UPDATE.md) |
+| Водное обновление: типы водоёмов, вода выше моря от `S0` (ВО0–ВО9, принят автором, Д-129) | [PLAN-WATER-UPDATE.md](PLAN-WATER-UPDATE.md) |
 | Сверка кода 26.3 и выбранная точка внедрения (Ф6-В0) | [FABRIC-WATER-NOTES.md](FABRIC-WATER-NOTES.md) |
 | Спецификация: формулы и критерии v1 (план v1.0 и пересмотр v1.1) | [spec/](spec/) |
 | Справочник: как устроен мир сейчас, по темам | [wiki/](wiki/README.md) |
