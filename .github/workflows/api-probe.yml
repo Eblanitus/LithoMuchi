@@ -28,25 +28,23 @@ jobs:
           [ -n "$api" ] && args="$args -Pfabric_api_version=$api"
           [ -n "$loom" ] && args="$args -Ploom_version=$loom"
           echo "args=$args" >> "$GITHUB_OUTPUT"
-      - name: Классы feature-API и сигнатуры
+      - name: Сигнатуры, короткий отчёт
         working-directory: fabric
         run: |
           set +e
           mkdir -p ../out
-          gradle probeApi --console=plain ${{ steps.v.outputs.args }} 2>&1 | tee ../out/probe.log
+          gradle probeApi --console=plain ${{ steps.v.outputs.args }} > ../out/probe.log 2>&1
+          jar=$(grep -oE "^PROBEJAR .*" ../out/probe.log | head -1 | sed 's/^PROBEJAR //')
           {
-            grep -E "^PROBEJAR" ../out/probe.log | head -3
-            jar=$(grep -oE "^PROBEJAR .*" ../out/probe.log | head -1 | sed 's/^PROBEJAR //')
-            echo "PROBE jar=[$jar]"
-            ls -l "$jar" 2>&1 | head -3
-            for c in net.minecraft.world.level.levelgen.feature.LakeFeature \
-                     net.minecraft.world.level.levelgen.feature.Feature \
-                     net.minecraft.core.registries.BuiltInRegistries \
-                     net.minecraft.world.level.levelgen.NoiseBasedChunkGenerator \
-                     net.minecraft.server.level.ServerChunkCache; do
-              echo "=== javap $c"
-              javap -classpath "$jar" "$c" 2>&1 | head -30
-            done
-            echo "=== jars в кеше loom с sources"
-            find ~/.gradle -name "*.jar" -path "*minecraft*" 2>/dev/null | head -10
+            echo "JAR $(basename "$jar")"
+            echo "--- BuiltInRegistries.FEATURE"
+            javap -classpath "$jar" net.minecraft.core.registries.BuiltInRegistries 2>&1 | grep -iE "FEATURE" | head -5
+            echo "--- NoiseBasedChunkGenerator"
+            javap -classpath "$jar" net.minecraft.world.level.levelgen.NoiseBasedChunkGenerator 2>&1 | grep -iE "settings|getCodec" | head -8
+            echo "--- ServerChunkCache"
+            javap -classpath "$jar" net.minecraft.server.level.ServerChunkCache 2>&1 | grep -iE "loaded|getChunk" | head -8
+            echo "--- MapCodec.unit"
+            javap -classpath "$jar" com.mojang.serialization.MapCodec 2>&1 | grep -iE "unit" | head -4
+            echo "--- Registry.register"
+            javap -classpath "$jar" net.minecraft.core.Registry 2>&1 | grep -iE "register" | head -4
           } | python3 ../tools/ci_annotations.py report || true
