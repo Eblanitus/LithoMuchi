@@ -100,17 +100,56 @@ final class LithoCiWater {
             // чтобы разбирать рост по адресу (ядро считается локально).
             Set<Long> flowingAfterSet = new LinkedHashSet<>();
             collectFlowing(level, flowingAfterSet);
-            int shown = 0;
-            for (long key : flowingAfterSet) {
-                if (FLOWING_BEFORE.contains(key)) continue;
-                if (shown++ >= 12) break;
-                BlockPos pos = BlockPos.of(key);
-                StringBuilder line = new StringBuilder(String.format("новая текущая: (%d, %d, %d)", pos.getX(), pos.getY(), pos.getZ()));
+            // Группы новой текущей воды (связность по 6 соседям): размер, рамка и
+            // верхняя точка с ядром колонки и блоками вокруг. Источник роста ищется
+            // у верхней точки группы, а первые 12 мест показывали одну группу.
+            Set<Long> fresh = new LinkedHashSet<>();
+            for (long key : flowingAfterSet) if (!FLOWING_BEFORE.contains(key)) fresh.add(key);
+            java.util.List<long[]> groups = new java.util.ArrayList<>();
+            Set<Long> seen = new java.util.HashSet<>();
+            for (long key : fresh) {
+                if (!seen.add(key)) continue;
+                java.util.ArrayDeque<Long> queue = new java.util.ArrayDeque<>();
+                queue.add(key);
+                long size = 0;
+                int minX = Integer.MAX_VALUE, minY = Integer.MAX_VALUE, minZ = Integer.MAX_VALUE;
+                int maxX = Integer.MIN_VALUE, maxYb = Integer.MIN_VALUE, maxZ = Integer.MIN_VALUE;
+                long topKey = key;
+                while (!queue.isEmpty()) {
+                    long cur = queue.poll();
+                    size++;
+                    BlockPos p = BlockPos.of(cur);
+                    minX = Math.min(minX, p.getX()); maxX = Math.max(maxX, p.getX());
+                    minY = Math.min(minY, p.getY());
+                    minZ = Math.min(minZ, p.getZ()); maxZ = Math.max(maxZ, p.getZ());
+                    if (p.getY() > maxYb) { maxYb = p.getY(); topKey = cur; }
+                    for (BlockPos n : new BlockPos[] {p.above(), p.below(), p.east(), p.west(), p.north(), p.south()}) {
+                        long nk = n.asLong();
+                        if (fresh.contains(nk) && seen.add(nk)) queue.add(nk);
+                    }
+                }
+                groups.add(new long[] {size, topKey, minX, minY, minZ, maxX, maxYb, maxZ});
+            }
+            groups.sort((a, b) -> Long.compare(b[0], a[0]));
+            report.add(String.format("новая текущая: %d блоков, групп %d", fresh.size(), groups.size()));
+            for (int g = 0; g < Math.min(10, groups.size()); g++) {
+                long[] gr = groups.get(g);
+                BlockPos top = BlockPos.of(gr[1]);
+                StringBuilder line = new StringBuilder(String.format(
+                        "группа %d: %d блоков, x %d..%d y %d..%d z %d..%d, верх (%d, %d, %d)",
+                        g + 1, gr[0], gr[2], gr[5], gr[3], gr[6], gr[4], gr[7], top.getX(), top.getY(), top.getZ()));
                 for (int[] d : new int[][] {{0, 0}, {1, 0}, {-1, 0}, {0, 1}, {0, -1}}) {
-                    LithoNative.WaterColumns c = gen.water(new double[] {pos.getX() + d[0]}, new double[] {pos.getZ() + d[1]});
+                    LithoNative.WaterColumns c = gen.water(new double[] {top.getX() + d[0]}, new double[] {top.getZ() + d[1]});
                     int lv = c.level()[0];
-                    line.append(String.format(" [%d,%d] level=%s bed=%d kind=%d", d[0], d[1],
-                            lv == LithoNative.WaterColumns.NONE ? "-" : Integer.toString(lv), c.bed()[0], c.kind()[0]));
+                    line.append(String.format(" [%d,%d] level=%s kind=%d", d[0], d[1],
+                            lv == LithoNative.WaterColumns.NONE ? "-" : Integer.toString(lv), c.kind()[0]));
+                }
+                line.append(" | вокруг верха:");
+                for (BlockPos n : new BlockPos[] {top.above(), top.east(), top.west(), top.south(), top.north()}) {
+                    BlockState st = level.getBlockState(n);
+                    String name = st.is(Blocks.WATER) ? (st.getFluidState().isSource() ? "water-src" : "water-flow" + st.getFluidState().getAmount())
+                            : net.minecraft.core.registries.BuiltInRegistries.BLOCK.getKey(st.getBlock()).getPath();
+                    line.append(' ').append(name);
                 }
                 report.add(line.toString());
             }
