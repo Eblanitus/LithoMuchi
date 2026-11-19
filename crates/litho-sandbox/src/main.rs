@@ -1811,6 +1811,77 @@ fn cmd_sweep(args: &[String]) -> Result<(), String> {
 /// `--mode` ограничивает режим, `--seed` — один сид, `--seeds 0,42,7` — список.
 /// Итоговый вердикт `NO-VOLUME` означает «числа в порядке, но объём не тот»:
 /// неполный скан не доказывает выполнение 10.1.
+/// Замер строки 10.1 «озёра выше моря: на 16 сидах есть озёра на высоте 80 и выше».
+/// Сетка `grid × grid` точек по квадрату `span_l` L вокруг (0, 0). Берётся уровень
+/// воды R2 в блоках (`LakeHit::level_blocks`) для водоёмов `LakeKind::Lake`.
+/// Озеро ловится, только если в сетке попала его вода: это нижняя оценка.
+fn cmd_lake_levels(args: &[String]) -> Result<(), String> {
+    let opts = options_from(args)?;
+    let span_l = match value(args, "--span-l") {
+        Some(text) => text.parse::<f64>().map_err(|e| format!("--span-l: {e}"))?,
+        None => 200.0,
+    };
+    let grid = match value(args, "--grid") {
+        Some(text) => text.parse::<usize>().map_err(|e| format!("--grid: {e}"))?,
+        None => 200,
+    };
+    if !(span_l > 0.0 && span_l.is_finite()) || grid == 0 {
+        return Err("--span-l > 0, --grid ≥ 1".into());
+    }
+    let generator =
+        Generator::new(opts.seed, opts.mode, opts.version).map_err(|e| e.to_string())?;
+    let side = span_l * opts.mode.l_blocks();
+    let step = side / grid as f64;
+    let threshold = 80.0_f64;
+    let mut water_points = 0usize;
+    let mut max_level = f64::NEG_INFINITY;
+    let mut lakes_seen = std::collections::BTreeSet::new();
+    let mut lakes_high = std::collections::BTreeSet::new();
+    for j in 0..grid {
+        for i in 0..grid {
+            let x = -side / 2.0 + (i as f64 + 0.5) * step;
+            let z = -side / 2.0 + (j as f64 + 0.5) * step;
+            let sample = generator
+                .hydrology_levels_at(x, z)
+                .map_err(|error| error.to_string())?;
+            let Some(hit) = sample.lakes.water_hit else {
+                continue;
+            };
+            if hit.kind != LakeKind::Lake {
+                continue;
+            }
+            let Some(level) = hit.level_blocks else {
+                continue;
+            };
+            water_points += 1;
+            max_level = max_level.max(level);
+            lakes_seen.insert((hit.plate_id, hit.lake));
+            if level >= threshold {
+                lakes_high.insert((hit.plate_id, hit.lake));
+            }
+        }
+    }
+    let verdict = if lakes_high.is_empty() {
+        "НЕТ"
+    } else {
+        "ЕСТЬ"
+    };
+    let max_text = if max_level.is_finite() {
+        format!("{max_level:.1}")
+    } else {
+        "нет".to_string()
+    };
+    println!(
+        "сид={} режим={} сетка={grid}×{grid} span={span_l} L: точек воды озёр {water_points}, \
+         озёр в сетке {}, макс. уровень {max_text} блоков, озёр ≥{threshold:.0}: {} → {verdict}",
+        opts.seed,
+        opts.mode.as_str(),
+        lakes_seen.len(),
+        lakes_high.len(),
+    );
+    Ok(())
+}
+
 fn cmd_acceptance(args: &[String]) -> Result<(), String> {
     let base = options_from(args)?;
     let Some(model) = height_model_for(args, &base)? else {
@@ -2060,6 +2131,7 @@ fn main() -> Result<(), String> {
         "stats" => cmd_stats(&args[1..]),
         "stats-all" => cmd_stats_all(&args[1..]),
         "acceptance" => cmd_acceptance(&args[1..]),
+        "lake-levels" => cmd_lake_levels(&args[1..]),
         "seams" => cmd_seams(&args[1..]),
         "lava" => cmd_lava(&args[1..]),
         "biomes" => cmd_biomes(&args[1..]),
