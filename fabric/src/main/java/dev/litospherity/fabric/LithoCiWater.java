@@ -31,6 +31,10 @@ final class LithoCiWater {
 
     /** Сгенерированные чанки окна: пары (x, z) в одной long. */
     private static final Set<Long> CHUNKS = new LinkedHashSet<>();
+    /** Блоки, где вода поставлена ядром и фичей: x, y, z. */
+    private static final List<int[]> OURS = new ArrayList<>();
+    /** Ядро в научном мире ставит воду и само (аквиферы, реки), поэтому метрики
+     *  считаются только по колонкам, где уровень воды задал ядро (§4). */
 
     static void run(MinecraftServer server, String mode) {
         List<String> report = new ArrayList<>();
@@ -101,6 +105,10 @@ final class LithoCiWater {
                         LithoNative.WaterColumns core = gen.water(new double[] {x}, new double[] {z});
                         int top = core.level()[0];
                         if (top == LithoNative.WaterColumns.NONE || top <= LithoWaterFeature.SEA_LEVEL) continue;
+                        int bed = core.bed()[0];
+                        for (int yy = Math.max(bed, top - 4); yy <= top - 1; yy++) {
+                            OURS.add(new int[] {x, yy, z});
+                        }
                         int y = top - 1;
                         BlockState state = level.getBlockState(new BlockPos(x, y, z));
                         if (state.is(Blocks.WATER)) {
@@ -146,21 +154,13 @@ final class LithoCiWater {
         finish(server, report, ok);
     }
 
-    /** Вода выше моря в загруженных чанках: источники или текущая. */
+    /** Вода выше моря в наших колонках: источники или текущая. */
     private static long countWater(ServerLevel level, boolean sources) {
         long count = 0;
-        for (net.minecraft.world.level.chunk.LevelChunk chunk : loadedChunks(level)) {
-            for (int x = 0; x < 16; x++) {
-                for (int z = 0; z < 16; z++) {
-                    for (int y = LithoWaterFeature.SEA_LEVEL + 1; y < level.getMaxY(); y++) {
-                        BlockState state = chunk.getBlockState(new BlockPos(
-                                chunk.getPos().getMinBlockX() + x, y, chunk.getPos().getMinBlockZ() + z));
-                        if (!state.is(Blocks.WATER)) continue;
-                        boolean source = state.getFluidState().isSource();
-                        if (source == sources) count++;
-                    }
-                }
-            }
+        for (int[] at : OURS) {
+            BlockState state = level.getBlockState(new BlockPos(at[0], at[1], at[2]));
+            if (!state.is(Blocks.WATER)) continue;
+            if (state.getFluidState().isSource() == sources) count++;
         }
         return count;
     }
