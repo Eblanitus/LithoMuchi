@@ -146,8 +146,8 @@ fn r2_never_puts_water_biome_where_v1_dev_has_land() {
             continue;
         };
         let land_before = a.world.vanilla.c >= v1.params().climate.ocean_c_threshold
-            && !WATER_BIOMES.contains(&a.world.class.cell.biome.as_str());
-        let water_after = WATER_BIOMES.contains(&b.world.class.cell.biome.as_str());
+            && !WATER_BIOMES.contains(&a.world.class.cell.biome);
+        let water_after = WATER_BIOMES.contains(&b.world.class.cell.biome);
         if land_before && water_after {
             panic!(
                 "({x}, {z}): v1-dev суша «{}», v1-dev-r2 вода «{}»\n v1: {}\n r2: {}",
