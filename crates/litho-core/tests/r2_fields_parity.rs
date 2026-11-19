@@ -38,10 +38,34 @@ fn r2_fields_match_v1_dev_when_both_live_in_one_thread() {
         for field in FIELDS {
             let a = v1.field(field, x, 64.0, z);
             let b = r2.field(field, x, 64.0, z);
-            assert!(
-                (a - b).abs() < 1e-9,
-                "{field:?} в ({x}, {z}): v1-dev {a}, v1-dev-r2 {b}"
-            );
+            if (a - b).abs() >= 1e-9 {
+                // Диагностика: что ещё отличается в этой точке.
+                let dump = |g: &Generator| {
+                    g.sample(x, z).map_or_else(
+                        || "нет сэмпла".to_string(),
+                        |s| {
+                            format!(
+                                "c={} e={} w={} t={} h={} ocean={} river={:.3} surface={:.2} pv={:.3} kind={:?}",
+                                s.world.vanilla.c,
+                                s.world.vanilla.e,
+                                s.world.vanilla.w,
+                                s.world.vanilla.t,
+                                s.world.vanilla.h,
+                                s.world.is_ocean,
+                                s.world.river,
+                                s.world.height.surface_y,
+                                s.world.pv,
+                                s.world.hydrology.kind,
+                            )
+                        },
+                    )
+                };
+                panic!(
+                    "{field:?} в ({x}, {z}): v1-dev {a}, v1-dev-r2 {b}\n v1: {}\n r2: {}",
+                    dump(&v1),
+                    dump(&r2)
+                );
+            }
         }
     }
 }
