@@ -67,6 +67,8 @@ final class LithoCiWater {
             long chunksWithWater = LithoWaterFeature.CHUNKS.get();
             long sourcesBefore = countWater(level, true);
             long flowingBefore = countWater(level, false);
+            FLOWING_BEFORE.clear();
+            collectFlowing(level, FLOWING_BEFORE);
             // Ждём 400 тиков, чтобы обновления жидкости прошли.
             long[] tickStart = {0L}; long[] totalTickNanos = {0L}; long[] maxTickNanos = {0L}; int[] measuredTicks = {0}; boolean[] done = {false}; ServerTickEvents.START_SERVER_TICK.register(s -> { if (!done[0]) tickStart[0] = System.nanoTime(); });
             int[] left = {TICKS};
@@ -89,10 +91,89 @@ final class LithoCiWater {
         try {
             long flowingAfter = countWater(level, false);
             long sourcesAfter = countWater(level, true);
-            long growth = flowingAfter - flowingBefore;
-            double growthPct = sourcesAfter == 0 ? 0.0 : 100.0 * growth / (double) sourcesAfter;
+            long growthAll = flowingAfter - flowingBefore;
             long seals = LithoWaterFeature.SEALS.get() - sealsAtStart;
             double sealsPerChunk = chunksWithWater == 0 ? 0.0 : seals / (double) chunksWithWater;
+
+            // Где выросла текущая вода: первые места с ядром колонки и соседей,
+            // чтобы разбирать рост по адресу (ядро считается локально).
+            Set<Long> flowingAfterSet = new LinkedHashSet<>();
+            collectFlowing(level, flowingAfterSet);
+            // Группы новой текущей воды (связность по 6 соседям): размер, рамка и
+            // верхняя точка с ядром колонки и блоками вокруг. Источник роста ищется
+            // у верхней точки группы, а первые 12 мест показывали одну группу.
+            Set<Long> fresh = new LinkedHashSet<>();
+            for (long key : flowingAfterSet) if (!FLOWING_BEFORE.contains(key)) fresh.add(key);
+            java.util.List<long[]> groups = new java.util.ArrayList<>();
+            Set<Long> seen = new java.util.HashSet<>();
+            for (long key : fresh) {
+                if (!seen.add(key)) continue;
+                java.util.ArrayDeque<Long> queue = new java.util.ArrayDeque<>();
+                queue.add(key);
+                long size = 0;
+                int minX = Integer.MAX_VALUE, minY = Integer.MAX_VALUE, minZ = Integer.MAX_VALUE;
+                int maxX = Integer.MIN_VALUE, maxYb = Integer.MIN_VALUE, maxZ = Integer.MIN_VALUE;
+                long topKey = key;
+                while (!queue.isEmpty()) {
+                    long cur = queue.poll();
+                    size++;
+                    BlockPos p = BlockPos.of(cur);
+                    minX = Math.min(minX, p.getX()); maxX = Math.max(maxX, p.getX());
+                    minY = Math.min(minY, p.getY());
+                    minZ = Math.min(minZ, p.getZ()); maxZ = Math.max(maxZ, p.getZ());
+                    if (p.getY() > maxYb) { maxYb = p.getY(); topKey = cur; }
+                    for (BlockPos n : new BlockPos[] {p.above(), p.below(), p.east(), p.west(), p.north(), p.south()}) {
+                        long nk = n.asLong();
+                        if (fresh.contains(nk) && seen.add(nk)) queue.add(nk);
+                    }
+                }
+                groups.add(new long[] {size, topKey, minX, minY, minZ, maxX, maxYb, maxZ});
+            }
+            groups.sort((a, b) -> Long.compare(b[0], a[0]));
+            // Чужая вода: группа, у верхней точки которой ни в колонке, ни у 4
+            // соседей нет нашей воды (уровень ядра ≥ 63). Наша заливка ставит воду
+            // только в такие колонки, значит верх группы без них — ванильный
+            // родник или водоносный слой на склоне (CI 914e370: водопад 446 блоков
+            // с y = 102 у (-8410, 1766), ядро вокруг пустое). Ванильная вода течёт
+            // и без мода, в рост нашей воды её не считаем, но печатаем.
+            long foreign = 0;
+            boolean[] foreignGroup = new boolean[groups.size()];
+            for (int g = 0; g < groups.size(); g++) {
+                BlockPos top = BlockPos.of(groups.get(g)[1]);
+                boolean ours = false;
+                for (int[] d : new int[][] {{0, 0}, {1, 0}, {-1, 0}, {0, 1}, {0, -1}}) {
+                    int lv = gen.water(new double[] {top.getX() + d[0]}, new double[] {top.getZ() + d[1]}).level()[0];
+                    if (lv != LithoNative.WaterColumns.NONE && lv >= LithoWaterFeature.SEA_LEVEL) ours = true;
+                }
+                if (!ours) {
+                    foreignGroup[g] = true;
+                    foreign += groups.get(g)[0];
+                }
+            }
+            long growth = Math.max(0, growthAll - foreign);
+            double growthPct = sourcesAfter == 0 ? 0.0 : 100.0 * growth / (double) sourcesAfter;
+            report.add(String.format("новая текущая: %d блоков, групп %d", fresh.size(), groups.size()));
+            for (int g = 0; g < Math.min(10, groups.size()); g++) {
+                long[] gr = groups.get(g);
+                BlockPos top = BlockPos.of(gr[1]);
+                StringBuilder line = new StringBuilder(String.format(
+                        "группа %d%s: %d блоков, x %d..%d y %d..%d z %d..%d, верх (%d, %d, %d)",
+                        g + 1, foreignGroup[g] ? " (чужая, не наша вода)" : "", gr[0], gr[2], gr[5], gr[3], gr[6], gr[4], gr[7], top.getX(), top.getY(), top.getZ()));
+                for (int[] d : new int[][] {{0, 0}, {1, 0}, {-1, 0}, {0, 1}, {0, -1}}) {
+                    LithoNative.WaterColumns c = gen.water(new double[] {top.getX() + d[0]}, new double[] {top.getZ() + d[1]});
+                    int lv = c.level()[0];
+                    line.append(String.format(" [%d,%d] level=%s kind=%d", d[0], d[1],
+                            lv == LithoNative.WaterColumns.NONE ? "-" : Integer.toString(lv), c.kind()[0]));
+                }
+                line.append(" | вокруг верха:");
+                for (BlockPos n : new BlockPos[] {top.above(), top.east(), top.west(), top.south(), top.north()}) {
+                    BlockState st = level.getBlockState(n);
+                    String name = st.is(Blocks.WATER) ? (st.getFluidState().isSource() ? "water-src" : "water-flow" + st.getFluidState().getAmount())
+                            : net.minecraft.core.registries.BuiltInRegistries.BLOCK.getKey(st.getBlock()).getPath();
+                    line.append(' ').append(name);
+                }
+                report.add(line.toString());
+            }
 
             long leaks = 0;
             long wet = 0;
@@ -139,8 +220,8 @@ final class LithoCiWater {
             double dryPct = wet + dry == 0 ? 0.0 : 100.0 * dry / (double) (wet + dry);
             report.add(String.format("протечки: %d (порог 0)", leaks));
             report.add(String.format("сухое русло: %d из %d, %.2f %% (порог 1 %%)", dry, wet + dry, dryPct));
-            report.add(String.format("рост текущей воды за %d тиков: %d, %.2f %% источников (порог 5 %%)",
-                    TICKS, growth, growthPct));
+            report.add(String.format("рост текущей воды за %d тиков: %d, %.2f %% источников (порог 5 %%); всего %d, из них чужой (родники, склоны) %d",
+                    TICKS, growth, growthPct, growthAll, foreign));
             report.add(String.format("заделки герметизации: %d на %d чанков, %.2f на чанк (порог 2)",
                     seals, chunksWithWater, sealsPerChunk)); report.add(String.format(java.util.Locale.ROOT, "steps: %d, liveSteps=%s, avgTick=%.2f ms, maxTick=%.2f ms", LithoWaterFeature.STEPS.get(), LithoWaterFeature.LIVE_STEPS, avgTickMs, maxTickMs));
             report.add(String.format("время генерации: %.1f мс/чанк (замер Ф5 — в отчёте job'а)", msPerChunk));
@@ -156,6 +237,23 @@ final class LithoCiWater {
             LithoMod.LOG.error("Litospherity CI water measure", t);
         }
         finish(server, report, ok);
+    }
+
+    /** Текущая вода выше моря до тиков: ключи {@link BlockPos#asLong()}. */
+    private static final Set<Long> FLOWING_BEFORE = new LinkedHashSet<>();
+
+    private static void collectFlowing(ServerLevel level, Set<Long> out) {
+        for (net.minecraft.world.level.chunk.LevelChunk chunk : loadedChunks(level)) {
+            for (int x = 0; x < 16; x++) {
+                for (int z = 0; z < 16; z++) {
+                    for (int y = LithoWaterFeature.SEA_LEVEL; y < level.getMaxY(); y++) {
+                        BlockPos pos = new BlockPos(chunk.getPos().getMinBlockX() + x, y, chunk.getPos().getMinBlockZ() + z);
+                        BlockState state = chunk.getBlockState(pos);
+                        if (state.is(Blocks.WATER) && !state.getFluidState().isSource()) out.add(pos.asLong());
+                    }
+                }
+            }
+        }
     }
 
     /** Вода выше моря в загруженных чанках: источники или текущая. */

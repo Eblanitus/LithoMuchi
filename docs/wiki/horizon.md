@@ -42,7 +42,7 @@
   плана** — релиз v1 его не ждёт (см. «Решение по R2» ниже). Технический разбор спайка
   в архиве остаётся верным.
 - Холодные озёра ждут этого механизма (Д-070).
-- На Fabric вода выше моря делается без Horizon: [../PLAN-WATER-FABRIC.md](../PLAN-WATER-FABRIC.md).
+- На Fabric вода выше моря делается без Horizon: [../PLAN-WATER-UPDATE.md](../PLAN-WATER-UPDATE.md) (прежний [../PLAN-WATER-FABRIC.md](../PLAN-WATER-FABRIC.md) заменён). В Horizon вода придёт после horizon#18350.
 
 ### Разведка T142-бис: миксин-хук на пине невозможен (Д-088)
 
@@ -71,6 +71,36 @@
 Состояние 2026-11-15: правка — PR `horizon-rust/horizon#16422` (открыт, не влит); оговорки к ней —
 issue `horizon-rust/horizon#16424` (заливка выше `skip_above_y`, пробы `i32::MAX`, LOD до моря +64),
 подробности в PLAN.md, раздел 6.
+
+Сначала доделываем остальные шаги плана (LOD T79, T113, T123, T77, метрики, игровые тесты,
+выпуск v1). По завершении — смотрим, принял ли Horizon именованный параметр `position` в
+`<GlobalFluidPicker as FluidPicker>::compute`: открытый issue
+[horizon-rust/horizon#16388](https://github.com/horizon-rust/horizon/issues/16388)
+(поведение не меняется; пин также должен включить horizon-mixins ≥ #24). Принял — обновить
+пин и делать R2 cancellable HEAD-хуком с биндингом `position: [i32; 3]`; нет — форк Horizon.
+Строка приёмки «озёр на 100 L²» (10.3) уходит вместе с R2 и v1 не блокирует.
+
+### Разведка T142-бис: миксин-хук на пине невозможен (Д-088)
+
+Попытка повесить cancellable HEAD на вердикт воды `<GlobalFluidPicker as FluidPicker>::compute`
+отклонена CI (run 43587773951, маркер удалён, после уборки CI 43589348842 — 7/7):
+
+- id трейт-impl метода — `crate::module::<Type as Trait>::function`; плэйсхолдером без
+  `<… as …>` не резолвится (E_TARGET_NOT_FOUND в пинном `resolve()`);
+- пинный horizon-mixins `5a64af9` безусловно отклоняет деструктурированный параметр
+  `compute(&self, [_, y, _]: [i32; 3])` (E_INVALID_BINDING, `parameters()`), до любых
+  биндингов; смёрженный 2026-11-09 [#24](https://github.com/horizon-rust/horizon-mixins/pull/24)
+  эту ошибку снимает для именованных частей паттерна (`y`), но не для `position`, и в пин
+  не входит (пин 2026-11-05, отставание на 3 коммита от main mixins);
+- типово-generic кандидаты (`NoiseBasedAquifer::compute_substance`,
+  `DisabledAquifer::compute_substance`, `fill_noise`) идут в E_UNSUPPORTED_SIGNATURE
+  (`validate_target`); вопрос — открытая [horizon-mixins #16](https://github.com/horizon-rust/horizon-mixins/issues/16);
+- `const fn` (`FluidStatus::at`, `GlobalFluidPicker::new`) — тоже E_UNSUPPORTED_SIGNATURE.
+
+Итог: на пине 66f3981 / mixins 5a64af9 хук на любой воде-решатель Horizon невозможен;
+маркер не фичей не является.
+
+### Решение по R2 (Д-088)
 
 Сначала доделываем остальные шаги плана (LOD T79, T113, T123, T77, метрики, игровые тесты,
 выпуск v1). По завершении — смотрим, принял ли Horizon именованный параметр `position` в
