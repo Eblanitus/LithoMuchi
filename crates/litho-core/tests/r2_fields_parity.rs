@@ -32,36 +32,41 @@ fn points() -> Vec<(f64, f64)> {
 
 #[test]
 fn r2_fields_match_v1_dev_when_both_live_in_one_thread() {
+    let points = points();
     let v1 = Generator::new(42, Mode::Gameplay, GenVersion::V1Dev).expect("v1-dev");
     let r2 = Generator::new(42, Mode::Gameplay, GenVersion::V1DevR2).expect("v1-dev-r2");
-    for (x, z) in points() {
-        for field in FIELDS {
-            let a = v1.field(field, x, 64.0, z);
-            let b = r2.field(field, x, 64.0, z);
+    // Сначала R2 в чистом потоке: если он один считает верно, дело в потоковой
+    // памяти, а не в формулах.
+    let mut alone: Vec<Vec<f64>> = Vec::with_capacity(points.len());
+    for (x, z) in &points {
+        alone.push(FIELDS.iter().map(|f| r2.field(*f, *x, 64.0, *z)).collect());
+    }
+    for (k, (x, z)) in points.iter().enumerate() {
+        for (n, field) in FIELDS.iter().enumerate() {
+            let a = v1.field(*field, *x, 64.0, *z);
+            let b = r2.field(*field, *x, 64.0, *z);
             if (a - b).abs() >= 1e-9 {
-                // Диагностика: что ещё отличается в этой точке.
                 let dump = |g: &Generator| {
-                    g.sample(x, z).map_or_else(
+                    g.sample(*x, *z).map_or_else(
                         || "нет сэмпла".to_string(),
                         |s| {
                             format!(
-                                "c={} e={} w={} t={} h={} ocean={} river={:.3} surface={:.2} pv={:.3} kind={:?}",
+                                "c={} e={} w={} ocean={} surface={:.2} pv={:.3} e_km={:.5} kind={:?}",
                                 s.world.vanilla.c,
                                 s.world.vanilla.e,
                                 s.world.vanilla.w,
-                                s.world.vanilla.t,
-                                s.world.vanilla.h,
                                 s.world.is_ocean,
-                                s.world.river,
                                 s.world.height.surface_y,
                                 s.world.pv,
+                                s.world.climate.surface.e_km,
                                 s.world.hydrology.kind,
                             )
                         },
                     )
                 };
                 panic!(
-                    "{field:?} в ({x}, {z}): v1-dev {a}, v1-dev-r2 {b}\n v1: {}\n r2: {}",
+                    "{field:?} в ({x}, {z}): v1-dev {a}, v1-dev-r2 {b}, r2-чистый {}\n v1: {}\n r2: {}",
+                    alone[k][n],
                     dump(&v1),
                     dump(&r2)
                 );
