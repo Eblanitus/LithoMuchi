@@ -936,3 +936,15 @@ Job `water` в `fabric.yml` — для `v1-dev-w`, по окнам из `water-p
   `dry_surface_at` (37 тыс. точек за 15–20 с).
 
 База `water-stats` на `v1-dev-r2` и числа разведок ВО0-4 и ВО0-5 дописываются сюда в ВО0.
+
+### Что уже проверено CI (2026-11-19)
+
+На ветке `arena/4e4f066f-lithomuchi` временный прогон `diag` (та же сборка, что в `ci.yml`: rustfmt,
+clippy `-D warnings`, `cargo test --workspace --no-fail-fast`) на коммите с ВО1-1/ВО1-3 дал: fmt, clippy
+и сборка чистые; тесты падают только там же, где на `main` (`hydrology.rs:436`, `r2_fields_parity.rs:98`,
+`:122`, `:152`). Фабричный прогон (`fabric`) на `main` красный так же, как здесь. Хеши `v0`, `v1`,
+`v1-dev`, `v1-dev-r2` не двигаются по построению: все правки ВО1 закрыты `is_water_update()`.
+
+**Ждёт прогона (нужен Rust или CI):** база `water-stats` на `v1-dev-r2` (сиды 42, 1, 7 × оба режима) и
+числа `s0-node-cost` (ВО0-5). Обе команды готовы, запуск: 
+`litho-sandbox water-stats 42 gameplay --json` и `litho-sandbox s0-node-cost 42 gameplay --json`.
