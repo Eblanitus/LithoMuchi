@@ -24,13 +24,7 @@ pub enum GenVersion {
 }
 
 impl GenVersion {
-    pub const ALL: [Self; 5] = [
-        Self::V0,
-        Self::V1,
-        Self::V1Dev,
-        Self::V1DevR2,
-        Self::V1DevW,
-    ];
+    pub const ALL: [Self; 5] = [Self::V0, Self::V1, Self::V1Dev, Self::V1DevR2, Self::V1DevW];
 
     pub const fn as_str(self) -> &'static str {
         match self {

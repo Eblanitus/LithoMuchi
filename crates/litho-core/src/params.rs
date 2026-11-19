@@ -1152,7 +1152,6 @@ pub struct HeightParams {
     pub bank_raise_max_blocks: f64,
 }
 
-
 /// Водное обновление (ВО0-1, [PLAN-WATER-UPDATE](../../docs/PLAN-WATER-UPDATE.md)
 /// §6.9): числа нового механизма воды `S0`. Раздел входит в
 /// `canonical_text()` только у `GenVersion::V1DevW`, поэтому хеши `v0`, `v1`,
@@ -1662,31 +1661,14 @@ impl Params {
                 terrace_height_blocks: if game { 6.0 } else { 10.0 },
                 terrace_width_blocks: if game { 4.0 } else { 8.0 },
                 terrace_gorge_blocks: if game { 12.0 } else { 20.0 },
-                gate_blocks: if game {
-                    [4.0, 16.0]
-                } else {
-                    [6.0, 32.0]
-                },
-                calm_blocks: if game {
-                    [4.0, 16.0]
-                } else {
-                    [8.0, 32.0]
-                },
+                gate_blocks: if game { [4.0, 16.0] } else { [6.0, 32.0] },
+                calm_blocks: if game { [4.0, 16.0] } else { [8.0, 32.0] },
                 lake_calm_pad_blocks: if game { 8.0 } else { 12.0 },
                 route_tau_blocks_per_km: 2.0,
                 // §6.2: полярная и бореальная 1, умеренная, влажная
                 // тропическая и холодные горы 2, полусухая и тёплые горы 3,
                 // сухая не переливается (сначала сухо, ВО8 — плайя).
-                depression_min_depth_blocks: [
-                    1.0,
-                    1.0,
-                    2.0,
-                    3.0,
-                    f64::INFINITY,
-                    2.0,
-                    2.0,
-                    3.0,
-                ],
+                depression_min_depth_blocks: [1.0, 1.0, 2.0, 3.0, f64::INFINITY, 2.0, 2.0, 3.0],
                 lake_area_max_fraction: 0.06,
                 beach_blocks: if game { 3.0 } else { 4.0 },
                 clear_above_blocks: 6.0,
