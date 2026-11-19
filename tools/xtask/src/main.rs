@@ -6,6 +6,7 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use litho_core::height::SEA_LEVEL;
 use litho_core::{GenVersion, Mode, Params};
 
 /// Версия генератора, для которой сейчас собираются паки (план 6.8).
@@ -19,10 +20,10 @@ const MOD_VERSION: &str = "0.1.0";
 const HORIZON_REV: &str = "66f3981f522b24c250b21523a70080965b940424";
 /// Пять полей, которые подменяем в MVP (точка №2 плана 10.1).
 /// v1-dev дополнительно переопределяет `overworld/ridges_folded` полем `pv`
-/// (T141/I2-lite) и `offset` своей высотой (T144/полная I2). `factor` и
-/// `jaggedness` на первый тест НЕ переопределяются (шаг 2): ваниль посчитает
-/// их сама из наших C/E/PV. Свою таблицу в шкале ванили вернуть позже.
-/// v0 остаётся ровно с пятью полями.
+/// (T141/I2-lite), `offset` своей высотой (T144/полная I2) и — с К4а/часть 1 —
+/// `factor` и `jaggedness` из тех же таблиц ядра (Д-106): ванильный 3D-шум
+/// больше не сдвигает поверхность относительно нашей. v0 остаётся ровно
+/// с пятью полями.
 const FIELDS: [&str; 5] = [
     "continents",
     "erosion",
@@ -30,10 +31,13 @@ const FIELDS: [&str; 5] = [
     "temperature",
     "vegetation",
 ];
-/// v1-dev заменяет PV (`ridges_folded`) и offset; factor/jaggedness считает
-/// сама ваниль на первом тесте в игре (К2, шаг 2 плана готовности).
-const I2_FIELDS: [&str; 2] = ["offset", "pv"];
-const VANILLA_COMPUTED_FIELDS: [&str; 2] = ["factor", "jaggedness"];
+/// v1-dev заменяет PV (`ridges_folded`), offset и factor (К4а, часть 1,
+/// Д-106): игра перестаёт добавлять свой рельеф. `jaggedness` остаётся
+/// ванильным (Д-117): наша таблица давала иглы на холмах, ваниль включает
+/// острый шум только на пиках по нашему PV.
+const I2_FIELDS: [&str; 3] = ["offset", "pv", "factor"];
+/// Поля, которые v1-dev НЕ переопределяет (Д-117), и v0 тоже.
+const VANILLA_FIELDS: [&str; 1] = ["jaggedness"];
 
 fn repo_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
@@ -149,11 +153,12 @@ fn write_file(path: &Path, text: &str) -> Result<(), String> {
 }
 
 /// Один датапак: метаданные, переопределения density_function и фиктивные
-/// шумы. v0/smoke — пять полей; v1-dev добавляет pv/offset. factor и
-/// jaggedness на тест №2 не трогаем (К2/шаг 2), их считает ваниль.
+/// шумы. v0/smoke — пять полей; v1-dev добавляет pv/offset/factor/jaggedness
+/// (К4а, часть 1, Д-106).
 fn make_pack(
     dir: &Path,
     version: GenVersion,
+    mode: Mode,
     label: &str,
     noise_prefix: &str,
     noise_dir: &str,
@@ -177,16 +182,17 @@ fn make_pack(
     if version.is_water_relief_dev() {
         // Пак заменяет `overworld/offset` ЦЕЛИКОМ: в ванильном графе внутри
         // уже сидит −0,50375, поэтому наш шум должен быть y/128 − 1.
+        // К4а/часть 1: factor/jaggedness тоже наши — иначе ванильный 3D-шум
+        // сдвигает поверхность на десятки блоков (Д-106).
         fields.push("pv");
         fields.push("offset");
-        // factor/jaggedness не переопределяем: ваниль берёт их из сплайнов
-        // по нашим C/E/PV. Таблица в шкале ванили остаётся в ядре до шага 5.
+        fields.push("factor");
+        // Д-117: jaggedness не наш — ваниль даёт зубцы только пикам.
     }
     for field in fields {
         // В ванили PV — именованная функция `ridges_folded`, на неё по имени
         // ссылаются offset/factor/jaggedness. Сам шум называется `pv`.
-        // Пак заменяет ridges_folded и offset; factor/jaggedness остаются
-        // ванильными и берут уже нашу PV через общий граф.
+        // Пак заменяет ridges_folded, offset, factor и jaggedness.
         let df_name = if field == "pv" {
             "ridges_folded"
         } else {
@@ -200,14 +206,61 @@ fn make_pack(
             )),
             &df,
         )?;
+        // Фиктивное определение шума обязано накрывать выдаваемые значения:
+        // factor до 6,5 — амплитуда 8; остальным хватает 4.
+        let amplitude = if field == "factor" { "8.0" } else { "4.0" };
+        let noise_json = render(&noise, &[("AMPLITUDE", amplitude)])?;
         write_file(
             &dir.join(format!(
                 "data/litospherity/worldgen/noise/{noise_dir}/{field}.json"
             )),
-            &noise,
+            &noise_json,
         )?;
     }
+    if version.is_water_relief_dev() && mode == Mode::Scientific {
+        write_tall_world(dir, version, mode)?;
+    }
     println!("пак: {}", dir.display());
+    Ok(())
+}
+
+/// К7 (Д-113): научный мир выше ванильного. Horizon берёт высоту уровня из
+/// `dimension_type`, а полосу шума — из `noise_settings`; пак научного режима
+/// несёт оба файла. Числа — из параметров ядра: верх мира `height.max_y`,
+/// высота уровня на единицу больше и кратна 16.
+fn write_tall_world(dir: &Path, version: GenVersion, mode: Mode) -> Result<(), String> {
+    let params = Params::defaults(version, mode);
+    let min_y = params.height.min_y as i32;
+    let raw = params.height.max_y as i32 + 1 - min_y;
+    let height = (raw + 15) / 16 * 16;
+    let min_y_text = min_y.to_string();
+    let height_text = height.to_string();
+    let logical_text = height.min(384).to_string();
+    let sea_text = (SEA_LEVEL as i32).to_string();
+    let dimension = read_template("packs/dimension_type.json.in")?;
+    write_file(
+        &dir.join("data/minecraft/dimension_type/overworld.json"),
+        &render(
+            &dimension,
+            &[
+                ("MIN_Y", min_y_text.as_str()),
+                ("HEIGHT", height_text.as_str()),
+                ("LOGICAL", logical_text.as_str()),
+            ],
+        )?,
+    )?;
+    let settings = read_template("packs/noise_settings.json.in")?;
+    write_file(
+        &dir.join("data/minecraft/worldgen/noise_settings/overworld.json"),
+        &render(
+            &settings,
+            &[
+                ("MIN_Y", min_y_text.as_str()),
+                ("HEIGHT", height_text.as_str()),
+                ("SEA_LEVEL", sea_text.as_str()),
+            ],
+        )?,
+    )?;
     Ok(())
 }
 
@@ -248,6 +301,7 @@ fn cmd_pack(out: &Path) -> Result<(), String> {
             make_pack(
                 &out.join(&name),
                 version,
+                mode,
                 if version == GenVersion::V1Dev {
                     "Э3.5: рабочая версия, не релиз"
                 } else {
@@ -262,6 +316,7 @@ fn cmd_pack(out: &Path) -> Result<(), String> {
     make_pack(
         &out.join("litospherity_smoke"),
         GEN_VERSION,
+        Mode::Gameplay,
         "smoke-тест точки №1 (всюду суша)",
         "litospherity:smoke",
         "smoke",
@@ -308,6 +363,13 @@ fn cmd_bundle(out: &Path) -> Result<(), String> {
     )?;
     for (src, dst) in [
         ("glue/noise_hook.rs.in", "glue/noise_hook.rs"),
+        ("glue/aquifer_hook.rs.in", "glue/aquifer_hook.rs"),
+        (
+            "glue/aquifer_reset_hook.rs.in",
+            "glue/aquifer_reset_hook.rs",
+        ),
+        ("glue/is_lava_hook.rs.in", "glue/is_lava_hook.rs"),
+        ("glue/packs_seed_hook.rs.in", "glue/packs_seed_hook.rs"),
         ("glue/litospherity_glue.rs.in", "glue/litospherity_glue.rs"),
     ] {
         let text = read_template(src)?;
@@ -325,6 +387,8 @@ fn cmd_bundle(out: &Path) -> Result<(), String> {
         &out.join("README.txt"),
         "Бандл собран xtask; план проверен horizon-mixins в CI, но НЕ собран лаунчером.\n\
          Команда на Windows: horizon-launcher native-build <эта папка> --instance <имя> --trust-native-code\n\
+         Все паки (v0, v1-dev обоих режимов и smoke) уже внутри мода: при создании\n\
+         мира они видны в Data Packs, отдельные zip-файлы не нужны (К6, Д-112).\n\
          Smoke: включите только litospherity_smoke, мир должен быть всюду сушей.\n\
          Тест №2: включите только litospherity_v1-dev_gameplay, запишите сид и номер сборки.\n\
          Актуальное состояние: docs/PLAN.md в репозитории.\n",
@@ -379,6 +443,9 @@ fn cmd_bundle_check(out: &Path) -> Result<(), String> {
     }
     for rel in [
         "glue/noise_hook.rs",
+        "glue/aquifer_hook.rs",
+        "glue/aquifer_reset_hook.rs",
+        "glue/is_lava_hook.rs",
         "glue/litospherity_glue.rs",
         "crates/litho-core/Cargo.toml",
         "crates/litho-core/src/lib.rs",
@@ -425,30 +492,22 @@ fn cmd_bundle_check(out: &Path) -> Result<(), String> {
                         return Err(format!("в паке {} нет I2-поля {field}", pack.display()));
                     }
                 }
-                for field in VANILLA_COMPUTED_FIELDS {
+                for field in VANILLA_FIELDS {
                     if df_path(field).exists() || noise_path(field).exists() {
                         return Err(format!(
-                            "пак {} не должен переопределять {field} до теста №2",
+                            "v1-dev пак {} не должен менять {field} (Д-117)",
                             pack.display()
                         ));
                     }
                 }
             } else {
-                for field in I2_FIELDS {
+                for field in I2_FIELDS.iter().chain(VANILLA_FIELDS.iter()).copied() {
                     let df_name = if field == "pv" {
                         "ridges_folded"
                     } else {
                         field
                     };
                     if df_path(df_name).exists() || noise_path(field).exists() {
-                        return Err(format!(
-                            "v0 пак {} не должен менять {field}",
-                            pack.display()
-                        ));
-                    }
-                }
-                for field in VANILLA_COMPUTED_FIELDS {
-                    if df_path(field).exists() || noise_path(field).exists() {
                         return Err(format!(
                             "v0 пак {} не должен менять {field}",
                             pack.display()

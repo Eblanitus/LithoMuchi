@@ -4,6 +4,7 @@
 // пути crate::noise::* принадлежат horizon-core и сверяются при первой сборке.
 // Сигнатура add_to_volume и порядок обхода Z/X/Y сверены с Horizon 66f3981
 // (К1: старая выдуманная сигнатура с DensityVolume&mut не компилируется).
+use std::cell::{Cell, RefCell};
 use std::sync::{Arc, Mutex, Weak};
 
 use litho_core::{Field, GenVersion, Generator, Mode};
@@ -77,33 +78,254 @@ pub fn field_for(seed: i64, name: &str, x: f64, z: f64) -> Option<f32> {
 type Key = (i64, u8, u8);
 static REGISTRY: Mutex<Vec<(Key, Weak<Generator>)>> = Mutex::new(Vec::new());
 
-fn key(seed: i64, spec: NoiseSpec) -> Key {
-    let version = spec.version as u8;
-    let mode = if spec.mode == Mode::Scientific { 0 } else { 1 };
-    (seed, version, mode)
-}
-
 /// Один Generator на (seed, mode, version), общий для всех полей мира и LOD.
-pub fn noise_for(seed: i64, spec: NoiseSpec) -> Option<Arc<dyn crate::noise::Noise>> {
-    let k = key(seed, spec);
+fn generator_for(seed: i64, version: GenVersion, mode: Mode) -> Option<Arc<Generator>> {
+    let k: Key = (
+        seed,
+        version as u8,
+        if mode == Mode::Scientific { 0 } else { 1 },
+    );
     let mut registry = REGISTRY.lock().ok()?;
     registry.retain(|(_, weak)| weak.strong_count() > 0);
     for (existing, weak) in registry.iter() {
         if *existing == k {
             if let Some(generator) = weak.upgrade() {
-                return Some(Arc::new(LithoNoise {
-                    generator,
-                    field: spec.field,
-                }));
+                return Some(generator);
             }
         }
     }
-    let generator = Arc::new(Generator::new(seed, spec.mode, spec.version).ok()?);
+    let generator = Arc::new(Generator::new(seed, mode, version).ok()?);
     registry.push((k, Arc::downgrade(&generator)));
+    Some(generator)
+}
+
+pub fn noise_for(seed: i64, spec: NoiseSpec) -> Option<Arc<dyn crate::noise::Noise>> {
+    let generator = generator_for(seed, spec.version, spec.mode)?;
     Some(Arc::new(LithoNoise {
         generator,
         field: spec.field,
     }))
+}
+
+/// T77: ванильный шум лавы аквиферов. Пак его не переименовывает (настройки
+/// шума мира — файл Mojang, мы его не копируем), поэтому мир узнаётся по
+/// именам шумов в графе: если в нём есть шумы `litospherity:v1-dev/<режим>/…`
+/// ровно одного режима, мир наш.
+pub const VANILLA_AQUIFER_LAVA: &str = "minecraft:aquifer_lava";
+
+/// Версия и режим мира по именам шумов графа. Нет наших имён, имена разных
+/// режимов или версия без лавы (v0 заморожена) -> None, лава остаётся ванильной.
+pub fn world_spec<'a>(names: impl Iterator<Item = &'a String>) -> Option<(GenVersion, Mode)> {
+    let mut found = None;
+    for name in names {
+        let Some(spec) = parse_noise_name(name) else {
+            continue;
+        };
+        let world = (spec.version, spec.mode);
+        match found {
+            None => found = Some(world),
+            Some(existing) if existing == world => {}
+            Some(_) => return None,
+        }
+    }
+    found.filter(|(version, _)| *version == GenVersion::V1Dev)
+}
+
+pub fn aquifer_lava_for<'a>(
+    seed: i64,
+    names: impl Iterator<Item = &'a String>,
+) -> Option<Arc<dyn crate::noise::Noise>> {
+    let (version, mode) = world_spec(names)?;
+    let generator = generator_for(seed, version, mode)?;
+    Some(Arc::new(LavaNoise { generator }))
+}
+
+/// Поле лавы аквиферов. Игра спрашивает его в координатах ячейки
+/// `(x div 64, y div 40, z div 64)` с масштабами 1/1 (26.3), поэтому
+/// координаты приходят целыми номерами ячеек.
+#[derive(Debug)]
+pub struct LavaNoise {
+    generator: Arc<Generator>,
+}
+
+impl crate::noise::Noise for LavaNoise {
+    fn range(&self) -> Result<[f32; 2], crate::noise::NanRange> {
+        Ok([0.0, 0.5])
+    }
+
+    fn get2(&self, x: f64, z: f64) -> f32 {
+        self.get3(x, 0.0, z)
+    }
+
+    fn get3(&self, x: f64, y: f64, z: f64) -> f32 {
+        // Д-098: запрос-метка от `aquifer_samplers`. Настоящие номера ячеек
+        // по Y лежат в пределах десятков, так что с игрой метку не спутать.
+        if y == f64::from(LAVA_PROBE_CELL[1]) {
+            LAVA_PROBE.with(|probe| *probe.borrow_mut() = Some(self.generator.clone()));
+            return 0.0;
+        }
+        self.generator
+            .lava_aquifer(x.round() as i64, y.round() as i64, z.round() as i64) as f32
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Д-098 (T77, часть 2): сплошная лава ниже −54 только у стыков плит.
+//
+// Общую лаву ниже −54 игра ставит в обход аквифера, и эта функция не знает
+// ни мира, ни координат X/Z; подключиться к ней horizon-mixins не может.
+// Поэтому в наших мирах проверка «это лава» в аквифере отвечает «нет»: блоки
+// ниже −54 решает обычная логика аквифера, а её поля мы подменяем:
+//   затопленность — у стыка залито до −54, вдали сухо;
+//   исключение    — у стыка снято (иначе под горами стыка сухо);
+//   разброс       — у стыка уровень ровно −54;
+//   барьер        — стенка между лавовой и водяной ячейками (её в ванили
+//                   ставило то же отключённое правило «лава рядом с водой»).
+// Мир узнаётся запросом-меткой к полю лавы: на него отвечает только LavaNoise.
+// ---------------------------------------------------------------------------
+
+/// Порядок полей аквифера в Horizon 66f3981 (`AquiferField::ALL`).
+pub const AQUIFER_BARRIER: usize = 0;
+pub const AQUIFER_FLOODEDNESS: usize = 1;
+pub const AQUIFER_SPREAD: usize = 2;
+pub const AQUIFER_LAVA: usize = 3;
+pub const AQUIFER_EXCLUSION: usize = 4;
+pub const AQUIFER_SURFACE: usize = 5;
+
+/// Запрос-метка к полю лавы: номер ячейки по Y, которого в игре не бывает.
+pub const LAVA_PROBE_CELL: [i32; 3] = [0, 1_000_000, 0];
+
+thread_local! {
+    static LAVA_PROBE: RefCell<Option<Arc<Generator>>> = const { RefCell::new(None) };
+    /// Аквифер, который этот поток строит и опрашивает сейчас, наш.
+    static DEEP_LAVA_BY_AQUIFER: Cell<bool> = const { Cell::new(false) };
+}
+
+/// Диагностика для теста на настоящем horizon-world: λ в центре ячейки
+/// 64×64 мира v1-dev и признак суши там же. Неизвестный режим -> None.
+pub fn deep_lava_cell(seed: i64, mode: &str, cell_x: i64, cell_z: i64) -> Option<(f64, bool)> {
+    let generator = generator_for(seed, GenVersion::V1Dev, Mode::parse(mode)?)?;
+    Some((
+        generator.lava_cell(cell_x, cell_z),
+        generator.lava_deep_land(cell_x, cell_z),
+    ))
+}
+
+/// Вызывается перед сборкой аквифера каждого чанка (любой мир).
+pub fn deep_lava_reset() {
+    DEEP_LAVA_BY_AQUIFER.with(|flag| flag.set(false));
+}
+
+/// Правда, пока поток работает с аквифером нашего мира v1-dev.
+pub fn deep_lava_by_aquifer() -> bool {
+    DEEP_LAVA_BY_AQUIFER.with(|flag| flag.get())
+}
+
+/// Генератор мира, если поле лавы этого аквифера — наш `LavaNoise`.
+fn aquifer_world(lava: &Arc<dyn crate::density::DensitySampler>) -> Option<Arc<Generator>> {
+    LAVA_PROBE.with(|probe| probe.borrow_mut().take());
+    let mut context = crate::density::SamplerContext::default();
+    let _ = lava.sample_value(&mut context, LAVA_PROBE_CELL);
+    LAVA_PROBE.with(|probe| probe.borrow_mut().take())
+}
+
+/// Шесть полей аквифера мира. В нашем мире v1-dev возвращает их же в
+/// обёртках; в остальных мирах `None`, аквифер остаётся ванильным.
+pub fn aquifer_samplers(
+    samplers: &[Arc<dyn crate::density::DensitySampler>; 6],
+) -> Option<[Arc<dyn crate::density::DensitySampler>; 6]> {
+    let generator = aquifer_world(&samplers[AQUIFER_LAVA])?;
+    Some(std::array::from_fn(|index| {
+        let inner = samplers[index].clone();
+        let field = match index {
+            AQUIFER_BARRIER => AquiferOverride::Barrier,
+            AQUIFER_FLOODEDNESS => AquiferOverride::Floodedness,
+            AQUIFER_SPREAD => AquiferOverride::Spread,
+            AQUIFER_EXCLUSION => AquiferOverride::Exclusion,
+            AQUIFER_SURFACE => {
+                return Arc::new(AquiferMark { inner }) as Arc<dyn crate::density::DensitySampler>;
+            }
+            _ => return inner,
+        };
+        Arc::new(AquiferSampler {
+            inner,
+            generator: generator.clone(),
+            field,
+        }) as Arc<dyn crate::density::DensitySampler>
+    }))
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum AquiferOverride {
+    Barrier,
+    Floodedness,
+    Spread,
+    Exclusion,
+}
+
+/// Поле аквифера нашего мира: ванильное значение с поправкой ядра.
+#[derive(Debug)]
+struct AquiferSampler {
+    inner: Arc<dyn crate::density::DensitySampler>,
+    generator: Arc<Generator>,
+    field: AquiferOverride,
+}
+
+impl crate::density::DensitySampler for AquiferSampler {
+    fn sample_value(
+        &self,
+        context: &mut crate::density::SamplerContext,
+        position: [i32; 3],
+    ) -> Result<f32, crate::density::SampleError> {
+        DEEP_LAVA_BY_AQUIFER.with(|flag| flag.set(true));
+        let [x, y, z] = position.map(i64::from);
+        let fixed = match self.field {
+            AquiferOverride::Floodedness => self.generator.aquifer_floodedness(x, y, z),
+            AquiferOverride::Exclusion => self.generator.aquifer_exclusion(x, y, z),
+            AquiferOverride::Barrier | AquiferOverride::Spread => None,
+        };
+        if let Some(value) = fixed {
+            return Ok(value as f32);
+        }
+        let vanilla = self.inner.sample_value(context, position)?;
+        Ok(match self.field {
+            AquiferOverride::Spread => {
+                self.generator.aquifer_spread(x, y, z, f64::from(vanilla)) as f32
+            }
+            AquiferOverride::Barrier => {
+                self.generator.aquifer_barrier(x, y, z, f64::from(vanilla)) as f32
+            }
+            AquiferOverride::Floodedness | AquiferOverride::Exclusion => vanilla,
+        })
+    }
+}
+
+/// Уровень поверхности: значение ванильное, но каждый аквифер начинает с
+/// этого поля, поэтому здесь поток помечается «работаю с нашим миром».
+#[derive(Debug)]
+struct AquiferMark {
+    inner: Arc<dyn crate::density::DensitySampler>,
+}
+
+impl crate::density::DensitySampler for AquiferMark {
+    fn sample_value(
+        &self,
+        context: &mut crate::density::SamplerContext,
+        position: [i32; 3],
+    ) -> Result<f32, crate::density::SampleError> {
+        DEEP_LAVA_BY_AQUIFER.with(|flag| flag.set(true));
+        self.inner.sample_value(context, position)
+    }
+
+    fn sample_volume(
+        &self,
+        context: &mut crate::density::SamplerContext,
+        buffer: &mut [f32],
+        volume: crate::noise::DensityVolume,
+    ) -> Result<(), crate::density::SampleError> {
+        DEEP_LAVA_BY_AQUIFER.with(|flag| flag.set(true));
+        self.inner.sample_volume(context, buffer, volume)
+    }
 }
 
 #[derive(Debug)]

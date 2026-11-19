@@ -30,12 +30,23 @@ pub struct ClimateGrid {
     cells: HashMap<Cell, RunoffClimate>,
 }
 
+/// T79, вторая часть: ниже этого числа узлов климатической решётки потоки
+/// дороже самой выборки. Ограничение сверху не даёт песочнице, которая уже
+/// рисует карты в несколько потоков, размножать потоки на каждый чанк.
+const CLIMATE_PARALLEL_MIN_KEYS: usize = 64;
+const CLIMATE_PARALLEL_MAX_THREADS: usize = 4;
+/// Узлов в одном блоке, который поток берёт со счётчика.
+const CLIMATE_PARALLEL_BLOCK: usize = 4;
+
 impl ClimateGrid {
-    pub fn build<'a>(
+    pub fn build<'a, F>(
         points: impl IntoIterator<Item = &'a Vec2>,
         step_l: f64,
-        sample: impl Fn(Vec2) -> Option<RunoffClimate>,
-    ) -> Result<Self, RiverNetError> {
+        sample: F,
+    ) -> Result<Self, RiverNetError>
+    where
+        F: Fn(Vec2) -> Option<RunoffClimate> + Sync,
+    {
         if !step_l.is_finite() || step_l <= 0.0 {
             return Err(RiverNetError::InvalidParameters(
                 "climate_step_l должен быть положительным",
@@ -61,18 +72,12 @@ impl ClimateGrid {
                 }
             }
         }
+        // BTreeSet задаёт порядок ключей; значения собираются в том же порядке,
+        // поэтому параллельная выборка побитово равна последовательной.
+        let keys: Vec<Cell> = keys.into_iter().collect();
+        let values = sample_climate_keys(&keys, step_l, &sample)?;
         let mut cells = HashMap::with_capacity(keys.len());
-        for key in keys {
-            let point = Vec2::new(key.0 as f64 * step_l, key.1 as f64 * step_l);
-            let value = sample(point).ok_or(RiverNetError::InvalidClimate { cell: key })?;
-            if !value.p_mm.is_finite()
-                || !value.pet_mm.is_finite()
-                || value.p_mm < 0.0
-                || value.pet_mm < 0.0
-                || !value.t_min_c.is_finite()
-            {
-                return Err(RiverNetError::InvalidClimate { cell: key });
-            }
+        for (key, value) in keys.into_iter().zip(values) {
             cells.insert(key, value);
         }
         Ok(Self { step_l, cells })
@@ -140,6 +145,126 @@ impl ClimateGrid {
     }
 }
 
+/// Один узел климатической решётки. Вынесена, чтобы последовательный и
+/// параллельный пути считали ровно одну и ту же функцию точки.
+fn climate_key_value<F>(key: Cell, step_l: f64, sample: &F) -> Result<RunoffClimate, RiverNetError>
+where
+    F: Fn(Vec2) -> Option<RunoffClimate> + Sync,
+{
+    let point = Vec2::new(key.0 as f64 * step_l, key.1 as f64 * step_l);
+    let value = sample(point).ok_or(RiverNetError::InvalidClimate { cell: key })?;
+    if !value.p_mm.is_finite()
+        || !value.pet_mm.is_finite()
+        || value.p_mm < 0.0
+        || value.pet_mm < 0.0
+        || !value.t_min_c.is_finite()
+    {
+        return Err(RiverNetError::InvalidClimate { cell: key });
+    }
+    Ok(value)
+}
+
+/// T79, вторая часть: 400+ узлов климата — почти всё время сборки сети рек
+/// (180 мс из 212 на сиде 42 в gameplay). Узлы независимы, формула чистая,
+/// поэтому делим отсортированный список ключей на чанки и считаем их в
+/// `std::thread::scope`. Значения возвращаются в порядке ключей: ответ
+/// побитово тот же, что при последовательном обходе. `LITHO_CLIMATE_GRID_SERIAL=1`
+/// выключает параллелизм для диагностики и сверки.
+fn sample_climate_keys<F>(
+    keys: &[Cell],
+    step_l: f64,
+    sample: &F,
+) -> Result<Vec<RunoffClimate>, RiverNetError>
+where
+    F: Fn(Vec2) -> Option<RunoffClimate> + Sync,
+{
+    let serial = std::env::var_os("LITHO_CLIMATE_GRID_SERIAL").is_some();
+    let threads = if serial {
+        1
+    } else {
+        std::thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(1)
+            .min(CLIMATE_PARALLEL_MAX_THREADS)
+    };
+    if threads < 2 || keys.len() < CLIMATE_PARALLEL_MIN_KEYS {
+        return keys
+            .iter()
+            .copied()
+            .map(|key| climate_key_value(key, step_l, sample))
+            .collect();
+    }
+    // Д-094: узлы разбираются по счётчику малыми блоками, а не четырьмя
+    // равными кусками: цена узла неодинакова, и поток с дешёвым куском
+    // раньше простаивал. Значения возвращаются на свои места по индексу.
+    let next = std::sync::atomic::AtomicUsize::new(0);
+    let parts: Vec<Result<Vec<(usize, RunoffClimate)>, RiverNetError>> =
+        std::thread::scope(|scope| {
+            let handles: Vec<_> = (0..threads)
+                .map(|_| {
+                    scope.spawn(|| {
+                        let mut out = Vec::new();
+                        loop {
+                            let start = next.fetch_add(
+                                CLIMATE_PARALLEL_BLOCK,
+                                std::sync::atomic::Ordering::Relaxed,
+                            );
+                            if start >= keys.len() {
+                                break;
+                            }
+                            let end = (start + CLIMATE_PARALLEL_BLOCK).min(keys.len());
+                            for (offset, key) in keys[start..end].iter().enumerate() {
+                                out.push((
+                                    start + offset,
+                                    climate_key_value(*key, step_l, sample)?,
+                                ));
+                            }
+                        }
+                        Ok(out)
+                    })
+                })
+                .collect();
+            handles
+                .into_iter()
+                .map(|handle| {
+                    handle
+                        .join()
+                        .unwrap_or(Err(RiverNetError::InvalidParameters(
+                            "поток выборки климатической решётки завершился с паникой",
+                        )))
+                })
+                .collect()
+        });
+    let mut values: Vec<Option<RunoffClimate>> = vec![None; keys.len()];
+    let mut first_error: Option<(usize, RiverNetError)> = None;
+    for (thread, part) in parts.into_iter().enumerate() {
+        match part {
+            Ok(part) => {
+                for (k, value) in part {
+                    values[k] = Some(value);
+                }
+            }
+            // Ошибку выбираем по номеру потока: сообщение не зависит от гонки.
+            Err(err) => {
+                if first_error.is_none_or(|(t, _)| thread < t) {
+                    first_error = Some((thread, err));
+                }
+            }
+        }
+    }
+    if let Some((_, err)) = first_error {
+        return Err(err);
+    }
+    values
+        .into_iter()
+        .map(|value| {
+            value.ok_or(RiverNetError::InvalidParameters(
+                "узел климатической решётки не посчитан",
+            ))
+        })
+        .collect()
+}
+
 fn checked_cell(i: i64, j: i64, di: i64, dj: i64) -> Option<Cell> {
     Some((i.checked_add(di)?, j.checked_add(dj)?))
 }
@@ -164,11 +289,14 @@ pub enum FlowTerminal {
     ClosedSurplus {
         depression: usize,
     },
-    /// Кольцо чужой плиты без собственного выхода в этой сети.
+    /// Узел без выхода и без пути вниз. В связанной сети плиты не возникает:
+    /// узлы кольца без выхода в неё не входят.
     Boundary,
+    /// Шаг 2 плана (T113): вода передана сети соседней плиты в узле кольца.
+    Handoff,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct RunoffNode {
     pub p_mm: f64,
     pub pet_mm: f64,
@@ -177,6 +305,8 @@ pub struct RunoffNode {
     pub runoff_mm_l2: f64,
     /// Фактический приход в баланс: на суше равен runoff, на зеркале — P·h².
     pub local_supply_mm_l2: f64,
+    /// Шаг 2 плана (T113): вода, пришедшая в узел из сетей соседних плит.
+    pub inflow_mm_l2: f64,
     /// Накопленный расход после испарения вышестоящих озёр, мм·L²/год.
     pub discharge_mm_l2: f64,
     pub downstream: Option<usize>,
@@ -204,6 +334,8 @@ pub struct Runoff {
     export_mm_l2: f64,
     evaporation_mm_l2: f64,
     storage_mm_l2: f64,
+    inflow_mm_l2: f64,
+    handoff_mm_l2: f64,
 }
 
 impl Runoff {
@@ -213,6 +345,30 @@ impl Runoff {
         grid: &ClimateGrid,
         params: &Params,
     ) -> Result<Self, RiverNetError> {
+        Self::calculate_with(nodes, depressions, grid, params, None, None)
+    }
+
+    /// Расход с притоком от соседних плит и, при необходимости, только по
+    /// части сети. `inflow[k]` — вода, пришедшая в узел `k` извне, мм·L²/год.
+    /// `mask` ограничивает расчёт: узлы вне маски не читают климат и не дают
+    /// воды. Маска обязана быть замкнута вверх по течению
+    /// ([`upstream_mask`]), тогда расход на её узлах равен полному.
+    pub fn calculate_with(
+        nodes: &[DrainageNode],
+        depressions: &[Depression],
+        grid: &ClimateGrid,
+        params: &Params,
+        inflow: Option<&[f64]>,
+        mask: Option<&[bool]>,
+    ) -> Result<Self, RiverNetError> {
+        if inflow.is_some_and(|v| v.len() != nodes.len())
+            || mask.is_some_and(|v| v.len() != nodes.len())
+        {
+            return Err(RiverNetError::BrokenInvariant {
+                node: 0,
+                reason: "приток или маска стока другой длины, чем сеть",
+            });
+        }
         let p = &params.drainage;
         if !p.et_factor.is_finite() || p.et_factor < 0.0 {
             return Err(RiverNetError::InvalidParameters(
@@ -226,9 +382,31 @@ impl Runoff {
             ));
         }
         let mut runoff_nodes = Vec::with_capacity(nodes.len());
-        for node in nodes {
-            let climate = grid.sample(node.point)?;
+        for (k, node) in nodes.iter().enumerate() {
+            if mask.is_some_and(|mask| !mask[k]) {
+                runoff_nodes.push(RunoffNode::default());
+                continue;
+            }
+            let incoming = inflow.map_or(0.0, |v| v[k]);
+            if !incoming.is_finite() || incoming < 0.0 {
+                return Err(RiverNetError::BrokenInvariant {
+                    node: k,
+                    reason: "неконечный или отрицательный приток от соседей",
+                });
+            }
             let land = node.in_plate && node.route_km >= 0.0 && node.outlet != DrainageOutlet::Sea;
+            // Д-094: климат читают только узлы, которым он нужен. Море и
+            // кольцо соседа воды не дают и не испаряют; их поля климата
+            // остаются нулевыми, а узлы решётки под ними не считаются.
+            let climate = if needs_climate(node) {
+                grid.sample(node.point)?
+            } else {
+                RunoffClimate {
+                    p_mm: 0.0,
+                    pet_mm: 0.0,
+                    t_min_c: 0.0,
+                }
+            };
             let runoff = if land {
                 (climate.p_mm - p.et_factor * climate.pet_mm).max(0.0) * area
             } else {
@@ -250,6 +428,7 @@ impl Runoff {
                 t_min_c: climate.t_min_c,
                 runoff_mm_l2: runoff,
                 local_supply_mm_l2: local_supply,
+                inflow_mm_l2: incoming,
                 discharge_mm_l2: 0.0,
                 downstream: None,
                 terminal: FlowTerminal::Flowing,
@@ -291,6 +470,7 @@ impl Runoff {
                         DrainageOutlet::Sea => FlowTerminal::Sea,
                         DrainageOutlet::Rift => FlowTerminal::Rift,
                         DrainageOutlet::Transform => FlowTerminal::Transform,
+                        DrainageOutlet::Handoff => FlowTerminal::Handoff,
                         DrainageOutlet::None => FlowTerminal::Boundary,
                     };
                 }
@@ -304,10 +484,17 @@ impl Runoff {
                 FlowTerminal::Sea
                 | FlowTerminal::Rift
                 | FlowTerminal::Transform
+                | FlowTerminal::Handoff
                 | FlowTerminal::Boundary => runoff_nodes[k].discharge_mm_l2,
                 _ => 0.0,
             })
             .sum();
+        let handoff_mm_l2 = runoff_nodes
+            .iter()
+            .filter(|node| node.terminal == FlowTerminal::Handoff)
+            .map(|node| node.discharge_mm_l2)
+            .sum();
+        let inflow_mm_l2 = runoff_nodes.iter().map(|node| node.inflow_mm_l2).sum();
         let evaporation_mm_l2 = basins.iter().map(|b| b.evaporation_mm_l2).sum();
         let storage_mm_l2 = basins.iter().map(|b| b.storage_mm_l2).sum();
         let result = Self {
@@ -317,6 +504,8 @@ impl Runoff {
             export_mm_l2,
             evaporation_mm_l2,
             storage_mm_l2,
+            inflow_mm_l2,
+            handoff_mm_l2,
         };
         result.check_balance(nodes, area)?;
         Ok(result)
@@ -346,6 +535,17 @@ impl Runoff {
         self.storage_mm_l2
     }
 
+    /// Шаг 2 плана (T113): вода, пришедшая из сетей соседних плит.
+    pub const fn inflow_mm_l2(&self) -> f64 {
+        self.inflow_mm_l2
+    }
+
+    /// Шаг 2 плана (T113): вода, переданная сетям соседних плит. Входит в
+    /// `export_mm_l2`.
+    pub const fn handoff_mm_l2(&self) -> f64 {
+        self.handoff_mm_l2
+    }
+
     pub fn endorheic_count(&self) -> usize {
         self.basins.iter().filter(|b| b.endorheic).count()
     }
@@ -357,7 +557,11 @@ impl Runoff {
                 reason: "длина климатического стока не совпадает с сетью",
             });
         }
-        let supply: f64 = self.nodes.iter().map(|n| n.local_supply_mm_l2).sum();
+        let supply: f64 = self
+            .nodes
+            .iter()
+            .map(|n| n.local_supply_mm_l2 + n.inflow_mm_l2)
+            .sum();
         let accounted = self.export_mm_l2 + self.evaporation_mm_l2 + self.storage_mm_l2;
         let tolerance = 1e-9 * supply.abs().max(area).max(1.0);
         if !supply.is_finite() || !accounted.is_finite() || (supply - accounted).abs() > tolerance {
@@ -372,6 +576,7 @@ impl Runoff {
                 || !node.t_min_c.is_finite()
                 || !node.runoff_mm_l2.is_finite()
                 || !node.local_supply_mm_l2.is_finite()
+                || !node.inflow_mm_l2.is_finite()
                 || !node.discharge_mm_l2.is_finite()
                 || node.p_mm < 0.0
                 || node.pet_mm < 0.0
@@ -405,6 +610,56 @@ fn basin_terminal(balance: BasinBalance) -> FlowTerminal {
             depression: balance.depression,
         }
     }
+}
+
+/// Нужен ли узлу климат: свой узел суши даёт сток, свой узел впадины —
+/// дождь на зеркало и испарение. Остальные (море, кольцо соседа) климат не
+/// читают. Точки для [`ClimateGrid::build`] берутся только у таких узлов.
+pub fn needs_climate(node: &DrainageNode) -> bool {
+    node.in_plate
+        && (node.depression.is_some()
+            || (node.route_km >= 0.0 && node.outlet != DrainageOutlet::Sea))
+}
+
+/// Шаг 2 плана (T113): узлы, вода которых приходит в `targets`, и сами
+/// `targets`. Впадина входит целиком: она считается одним резервуаром.
+/// Расход на узлах маски зависит только от узлов маски.
+pub fn upstream_mask(
+    nodes: &[DrainageNode],
+    depressions: &[Depression],
+    targets: &[usize],
+) -> Result<Vec<bool>, RiverNetError> {
+    let zero = vec![RunoffNode::default(); nodes.len()];
+    let graph = FlowGraph::build(nodes, depressions, &zero, 1.0)?;
+    let mut upstream = vec![Vec::new(); graph.units.len()];
+    for (k, unit) in graph.units.iter().enumerate() {
+        if let Some(down) = unit.downstream {
+            upstream[down].push(k);
+        }
+    }
+    let mut reached = vec![false; graph.units.len()];
+    let mut stack = Vec::new();
+    for &target in targets {
+        let Some(&unit) = graph.node_unit.get(target) else {
+            return Err(RiverNetError::BrokenInvariant {
+                node: target,
+                reason: "цель маски стока вне сети",
+            });
+        };
+        if !reached[unit] {
+            reached[unit] = true;
+            stack.push(unit);
+        }
+    }
+    while let Some(unit) = stack.pop() {
+        for &up in &upstream[unit] {
+            if !reached[up] {
+                reached[up] = true;
+                stack.push(up);
+            }
+        }
+    }
+    Ok(graph.node_unit.iter().map(|&unit| reached[unit]).collect())
 }
 
 /// Временный граф водных балансов: обычный узел или целая впадина.
@@ -476,7 +731,7 @@ impl FlowGraph {
         }
         for (k, node) in nodes.iter().enumerate() {
             let unit = node_unit[k];
-            units[unit].supply += runoff[k].local_supply_mm_l2;
+            units[unit].supply += runoff[k].local_supply_mm_l2 + runoff[k].inflow_mm_l2;
             if node.depression.is_some() && node.in_plate {
                 units[unit].evaporation += runoff[k].pet_mm * area;
             }
@@ -648,7 +903,7 @@ impl PartialOrd for ReadyUnit {
 
 #[cfg(test)]
 mod tests {
-    use super::{ClimateGrid, FlowTerminal, Runoff, RunoffClimate};
+    use super::{ClimateGrid, FlowTerminal, Runoff, RunoffClimate, upstream_mask};
     use crate::drainage::{Depression, DepressionKind, DrainageNode, DrainageOutlet};
     use crate::math::Vec2;
     use crate::mode::Mode;
@@ -681,6 +936,31 @@ mod tests {
             })
         })
         .unwrap()
+    }
+
+    /// T79, вторая часть: попадаем в параллельную ветку (`>= 64` ключей) и
+    /// сверяем каждый узел с чистой функцией точки. Порядок обхода ключей и
+    /// ответ не должны зависеть от числа потоков.
+    #[test]
+    fn climate_grid_parallel_matches_pointwise_values() {
+        let points: Vec<Vec2> = (0..12)
+            .flat_map(|i| (0..12).map(move |j| Vec2::new(i as f64 * 1.7, j as f64 * 1.7)))
+            .collect();
+        let grid = ClimateGrid::build(&points, 1.0, |q| {
+            Some(RunoffClimate {
+                p_mm: 100.0 + 0.5 * q.x,
+                pet_mm: 20.0 + 0.25 * q.z,
+                t_min_c: 5.0 + q.x - q.z,
+            })
+        })
+        .unwrap();
+        assert!(grid.len() >= super::CLIMATE_PARALLEL_MIN_KEYS);
+        for (&key, value) in &grid.cells {
+            let q = Vec2::new(key.0 as f64, key.1 as f64);
+            assert_eq!(value.p_mm, 100.0 + 0.5 * q.x);
+            assert_eq!(value.pet_mm, 20.0 + 0.25 * q.z);
+            assert_eq!(value.t_min_c, 5.0 + q.x - q.z);
+        }
     }
 
     #[test]
@@ -728,6 +1008,49 @@ mod tests {
         let dry_points: Vec<_> = nodes.iter().map(|n| n.point).collect();
         let dry = Runoff::calculate(&nodes, &[], &grid(&dry_points, 10.0, 100.0), &p).unwrap();
         assert!(dry.nodes().iter().all(|n| n.discharge_mm_l2 == 0.0));
+    }
+
+    #[test]
+    fn neighbour_inflow_is_added_and_handed_on_with_balance() {
+        // Шаг 2 плана (T113): 0 → 1 → 2 (передача соседу), 3 → 4 (море).
+        let p = params();
+        let mut nodes = vec![
+            node(4, 3.0, Some(1), DrainageOutlet::None),
+            node(3, 2.0, Some(2), DrainageOutlet::None),
+            node(2, 1.0, None, DrainageOutlet::Handoff),
+            node(1, 2.0, Some(4), DrainageOutlet::None),
+            node(0, 0.0, None, DrainageOutlet::Sea),
+        ];
+        nodes[2].in_plate = false;
+        let points: Vec<_> = nodes.iter().map(|n| n.point).collect();
+        let g = grid(&points, 100.0, 0.0);
+        let q = 100.0 * 0.25 * 0.25;
+        let inflow = [0.0, 40.0, 0.0, 0.0, 0.0];
+        let full = Runoff::calculate_with(&nodes, &[], &g, &p, Some(&inflow), None).unwrap();
+        assert_eq!(full.nodes()[0].discharge_mm_l2, q);
+        assert_eq!(full.nodes()[1].discharge_mm_l2, 2.0 * q + 40.0);
+        assert_eq!(full.nodes()[2].discharge_mm_l2, 2.0 * q + 40.0);
+        assert_eq!(full.nodes()[2].terminal, FlowTerminal::Handoff);
+        assert_eq!(full.inflow_mm_l2(), 40.0);
+        assert_eq!(full.handoff_mm_l2(), 2.0 * q + 40.0);
+        assert_eq!(full.export_mm_l2(), 3.0 * q + 40.0);
+
+        // Маска водосбора узла передачи: расход в ней тот же, остальное не
+        // считается и климата не требует.
+        let mask = upstream_mask(&nodes, &[], &[2]).unwrap();
+        assert_eq!(mask, [true, true, true, false, false]);
+        let part_points: Vec<_> = points[..3].to_vec();
+        let part_grid = grid(&part_points, 100.0, 0.0);
+        let part = Runoff::calculate_with(&nodes, &[], &part_grid, &p, Some(&inflow), Some(&mask))
+            .unwrap();
+        for k in 0..3 {
+            assert_eq!(
+                part.nodes()[k].discharge_mm_l2,
+                full.nodes()[k].discharge_mm_l2
+            );
+        }
+        assert_eq!(part.nodes()[3].discharge_mm_l2, 0.0);
+        assert!(upstream_mask(&nodes, &[], &[9]).is_err());
     }
 
     fn lake_nodes() -> (Vec<DrainageNode>, Vec<Depression>) {

@@ -1,0 +1,423 @@
+//! К4а/часть 2: счётчик крутых ступеней на прямых линиях с разбивкой по
+//! причинам (Д-106).
+//!
+//! Ступень — перепад больше 3 блоков на блок между соседними пробами шагом
+//! 2 блока. Считаются только пары, где обе точки — суша выше моря: океан и
+//! берег линии разрывают. Категории:
+//! - вырез воды (`height.water_strength`): край русла/котловины; из них
+//!   «стол со стеной» — вырезанная точка выше суши рядом (баг К3);
+//! - у реки (`river` > 0) — борта долины, PV → −1;
+//! - шов коры: `mountain`/`plateau` прыгают между пробами;
+//! - горы: эрозия ниже `height.shore_cliff_e` (E0/E1, обрывы задуманы);
+//! - таблица E/PV: ступень от движения полей по крутой таблице высот
+//!   (разложение через таблицу: чей вклад больше — E или PV), с подсчётом
+//!   доли внутри полосы затухания у низины (`relief.land_fade_km()`).
+
+use litho_core::Generator;
+use litho_core::height::{self, SEA_LEVEL};
+
+/// Шаг пробы вдоль линии, блоки.
+const STEP: i64 = 2;
+/// Длина линии, блоки.
+const LENGTH: i64 = 16_384;
+/// Смещения линий от центра, блоки: те же, что у `biomes` (К1, Д-103).
+const OFFSETS: [i64; 4] = [-6000, -2000, 2000, 6000];
+/// Порог ступени: перепад больше 3 блоков на блок.
+const STEEP_PER_BLOCK: f64 = 3.0;
+/// Разрыв коры: скачок `e_km` между соседними пробами, км (Д-110).
+const CRUST_JUMP_KM: f64 = 0.1;
+/// Доля вклада, с которой ступень приписывается одному полю.
+const MAIN_SHARE: f64 = 0.6;
+
+/// Проба линии: только то, что нужно счётчику.
+#[derive(Clone, Copy)]
+struct Point {
+    y: f64,
+    /// Суша выше моря: обе такие точки дают пару.
+    land: bool,
+    /// Сила выреза под воду (`height.water_strength`).
+    cut: f64,
+    /// Вода отложена до R2 (`DeferredWater`).
+    deferred: f64,
+    /// Геометрическая вода озера/болота/внутреннего моря.
+    lake: f64,
+    river: f64,
+    /// Поле эрозии, вход таблицы высот.
+    e: f64,
+    /// Собственный PV, вход таблицы высот (уже с речным PV → −1).
+    pv: f64,
+    c: f64,
+    e_km: f64,
+    /// К4: расстояние до изолинии океана, блоки (диагностика рампы).
+    shore: f64,
+    /// Наложки гидрологии на E/C (диагностика прыжков полей).
+    floodplain: f64,
+    estuary: f64,
+    inland_sea: f64,
+    mountain: f64,
+    plateau: f64,
+}
+
+impl Point {
+    fn near_water(self) -> bool {
+        self.cut > 0.0 || self.deferred > 0.0 || self.lake > 0.0
+    }
+}
+
+/// Чистое значение таблицы высот на суше: без воды, бугров и берега.
+fn table_y(generator: &Generator, e: f64, pv: f64, e_km: f64) -> f64 {
+    height::sample_micro(
+        1.0,
+        e,
+        pv,
+        e_km,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        f64::INFINITY,
+        generator.params(),
+    )
+    .surface_y
+}
+
+fn point(generator: &Generator, x: f64, z: f64) -> Option<Point> {
+    let sample = generator.sample(x, z)?;
+    let height = &sample.world.height;
+    let hydrology = &sample.world.hydrology;
+    let surface = &sample.world.climate.surface;
+    Some(Point {
+        y: height.surface_y,
+        land: !sample.class.is_ocean && height.surface_y > SEA_LEVEL,
+        cut: height.water_strength,
+        deferred: hydrology.r2_deferred,
+        lake: hydrology.lakes.water,
+        river: sample.world.river,
+        e: sample.world.vanilla.e,
+        pv: sample.world.pv,
+        c: sample.world.vanilla.c,
+        e_km: surface.e_km,
+        shore: generator.shore_distance_blocks(x, z, sample.world.vanilla.c),
+        floodplain: hydrology.floodplain,
+        estuary: hydrology.estuary,
+        inland_sea: hydrology.lakes.inland_sea,
+        mountain: surface.mountain,
+        plateau: surface.plateau,
+    })
+}
+
+/// Категории сухопутных ступеней.
+#[derive(Default)]
+struct DryTally {
+    mountain: u64,
+    crust_seam: u64,
+    erosion: u64,
+    pv: u64,
+    mixed: u64,
+    /// Из табличных: нижняя точка внутри полосы затухания у низины.
+    fade_strip: u64,
+}
+
+/// Одна из худших не-горных ступеней: перепад, место, причина и поля
+/// нижней (`lo_*`) и верхней (`hi_*`) точек.
+#[derive(Clone, Copy)]
+struct TopStep {
+    dy: f64,
+    x: f64,
+    z: f64,
+    category: &'static str,
+    lo_y: f64,
+    lo_e: f64,
+    lo_pv: f64,
+    lo_c: f64,
+    lo_e_km: f64,
+    table_lo: f64,
+    hi_e: f64,
+    hi_pv: f64,
+    hi_mountain: f64,
+    hi_plateau: f64,
+    table_hi: f64,
+    lo_shore: f64,
+    hi_shore: f64,
+    lo_floodplain: f64,
+    hi_floodplain: f64,
+    hi_estuary: f64,
+    hi_inland_sea: f64,
+}
+
+#[derive(Default)]
+struct Tally {
+    pairs: u64,
+    steep: u64,
+    /// Крутые края выреза воды: одна точка вырезана, вторая — нет.
+    water_edge: u64,
+    /// Из них «стол со стеной»: вырезанная точка выше суши рядом.
+    raised: u64,
+    river: u64,
+    /// Из них у горного русла (E ниже `shore_cliff_e`).
+    river_mountain: u64,
+    /// Разрывы коры: `e_km` меняется больше чем на `CRUST_JUMP_KM` между
+    /// соседними пробами (любая пара точек мира, не только суша).
+    crust_jumps: u64,
+    /// Самый большой разрыв коры: скачок e_km, x, z.
+    worst_crust: (f64, f64, f64),
+    dry: DryTally,
+    /// Самая крутая не-горная ступень: перепад, x, z, категория.
+    worst_dry: (f64, f64, f64, &'static str),
+    /// До пяти худших не-горных ступеней: (перепад, x, z, категория,
+    /// y_low, e_low, pv_low, c_low, e_km_low, табличное y_low,
+    /// e_high, pv_high, mountain_hi, plateau_hi, табличное y_high,
+    /// shore_low, shore_high, floodplain_lo, floodplain_hi, estuary_hi,
+    /// inland_sea_hi).
+    top: Vec<TopStep>,
+}
+
+fn line(generator: &Generator, tally: &mut Tally, at: impl Fn(i64) -> (f64, f64)) {
+    let mut previous: Option<(Point, f64, f64)> = None;
+    for k in 0..LENGTH / STEP {
+        let t = k * STEP - LENGTH / 2;
+        let (x, z) = at(t);
+        let current = point(generator, x, z).map(|p| (p, x, z));
+        let (b, bx, bz) = match current {
+            Some(c) => c,
+            None => {
+                previous = None;
+                continue;
+            }
+        };
+        if let Some((a, _, _)) = previous {
+            let jump = (b.e_km - a.e_km).abs();
+            if jump > CRUST_JUMP_KM {
+                tally.crust_jumps += 1;
+                if jump > tally.worst_crust.0 {
+                    tally.worst_crust = (jump, bx, bz);
+                }
+            }
+            if a.land && b.land {
+                tally.pairs += 1;
+                let dy = (b.y - a.y).abs();
+                if dy > STEEP_PER_BLOCK * STEP as f64 {
+                    tally.steep += 1;
+                    let cut_a = a.cut > 0.0;
+                    let cut_b = b.cut > 0.0;
+                    if cut_a != cut_b {
+                        tally.water_edge += 1;
+                        // Подъём считаем по вырезанной точке: она должна быть
+                        // ниже суши рядом (К3).
+                        let (cut, land) = if cut_a { (a.y, b.y) } else { (b.y, a.y) };
+                        if cut - land > 1.0 {
+                            tally.raised += 1;
+                        }
+                    } else if a.river > 0.0 || b.river > 0.0 {
+                        tally.river += 1;
+                        // Каньон в горах задуман; считаем его отдельно.
+                        if a.e.min(b.e) < generator.params().height.shore_cliff_e {
+                            tally.river_mountain += 1;
+                        }
+                    } else if !a.near_water() && !b.near_water() {
+                        classify_dry(generator, tally, &a, &b, bx, bz, dy);
+                    }
+                }
+            }
+        }
+        previous = Some((b, bx, bz));
+    }
+}
+
+/// Разложение сухопутной ступени по причинам (Д-106, часть 2).
+fn classify_dry(
+    generator: &Generator,
+    tally: &mut Tally,
+    a: &Point,
+    b: &Point,
+    bx: f64,
+    bz: f64,
+    dy: f64,
+) {
+    let category = if a.e.min(b.e) < generator.params().height.shore_cliff_e {
+        tally.dry.mountain += 1;
+        "горы"
+    } else if (a.mountain - b.mountain).abs() > 0.5 || (a.plateau - b.plateau).abs() > 0.5 {
+        tally.dry.crust_seam += 1;
+        "шов коры"
+    } else {
+        // Разложение по таблице: чьё поле двинуло высоту сильнее.
+        let (lo, hi) = if a.y <= b.y { (a, b) } else { (b, a) };
+        let base = table_y(generator, lo.e, lo.pv, lo.e_km);
+        let dy_e = table_y(generator, hi.e, lo.pv, lo.e_km) - base;
+        let dy_pv = table_y(generator, lo.e, hi.pv, lo.e_km) - base;
+        let (main, share) = if dy_e.abs() >= dy_pv.abs() {
+            ("E", dy_e.abs() / (dy_e.abs() + dy_pv.abs()).max(1e-9))
+        } else {
+            ("PV", dy_pv.abs() / (dy_e.abs() + dy_pv.abs()).max(1e-9))
+        };
+        if lo.e_km < generator.params().relief.land_fade_km() {
+            tally.dry.fade_strip += 1;
+        }
+        if share >= MAIN_SHARE {
+            if main == "E" {
+                tally.dry.erosion += 1;
+            } else {
+                tally.dry.pv += 1;
+            }
+            main
+        } else {
+            tally.dry.mixed += 1;
+            "E+PV"
+        }
+    };
+    if category != "горы" && dy > tally.worst_dry.0 {
+        tally.worst_dry = (dy, bx, bz, category);
+    }
+    if category != "горы" {
+        let (lo, hi) = if a.y <= b.y { (a, b) } else { (b, a) };
+        let table_lo = table_y(generator, lo.e, lo.pv, lo.e_km);
+        let table_hi = table_y(generator, hi.e, hi.pv, hi.e_km);
+        tally.top.push(TopStep {
+            dy,
+            x: bx,
+            z: bz,
+            category,
+            lo_y: lo.y,
+            lo_e: lo.e,
+            lo_pv: lo.pv,
+            lo_c: lo.c,
+            lo_e_km: lo.e_km,
+            table_lo,
+            hi_e: hi.e,
+            hi_pv: hi.pv,
+            hi_mountain: hi.mountain,
+            hi_plateau: hi.plateau,
+            table_hi,
+            lo_shore: lo.shore,
+            hi_shore: hi.shore,
+            lo_floodplain: lo.floodplain,
+            hi_floodplain: hi.floodplain,
+            hi_estuary: hi.estuary,
+            hi_inland_sea: hi.inland_sea,
+        });
+        tally.top.sort_by(|x, y| y.dy.total_cmp(&x.dy));
+        tally.top.truncate(5);
+    }
+}
+
+#[allow(clippy::too_many_lines)]
+pub fn run(generator: &Generator, center: (f64, f64)) -> Result<(), String> {
+    let mut tally = Tally::default();
+    for offset in OFFSETS {
+        line(generator, &mut tally, |t| {
+            (center.0 + t as f64, center.1 + offset as f64)
+        });
+        line(generator, &mut tally, |t| {
+            (center.0 + offset as f64, center.1 + t as f64)
+        });
+    }
+    if tally.pairs == 0 {
+        return Err("на линиях нет суши выше моря".into());
+    }
+    let per = |n: u64| 100.0 * n as f64 / tally.pairs as f64;
+    let land = tally.pairs as f64 * STEP as f64;
+    let inland = tally.dry.crust_seam + tally.dry.erosion + tally.dry.pv + tally.dry.mixed;
+    println!(
+        "walls: {n} линий по {LENGTH} блоков, шаг {STEP}; суши выше моря {land:.0} блоков ({pairs} пар)",
+        n = 2 * OFFSETS.len(),
+        pairs = tally.pairs
+    );
+    println!(
+        "  ступеней круче {STEEP_PER_BLOCK} блоков на блок: {} ({:.3} % пар), это раз в {:.0} блоков",
+        tally.steep,
+        per(tally.steep),
+        if tally.steep == 0 {
+            f64::INFINITY
+        } else {
+            land / tally.steep as f64
+        }
+    );
+    println!(
+        "  у выреза воды: {} (из них «стол со стеной»: {})",
+        tally.water_edge, tally.raised
+    );
+    println!(
+        "  у реки: {} (из них в горах, каньоны: {})",
+        tally.river, tally.river_mountain
+    );
+    println!(
+        "  суша вдали от воды: {} — горы {}, шов коры {}, таблица E {}, PV {}, смешанные {} (из них в полосе затухания: {})",
+        tally.dry.mountain
+            + tally.dry.crust_seam
+            + tally.dry.erosion
+            + tally.dry.pv
+            + tally.dry.mixed,
+        tally.dry.mountain,
+        tally.dry.crust_seam,
+        tally.dry.erosion,
+        tally.dry.pv,
+        tally.dry.mixed,
+        tally.dry.fade_strip
+    );
+    println!(
+        "  разрывы коры (e_km больше {CRUST_JUMP_KM} км на {STEP} блока): {}; самый большой {:.2} км у ({:.0}, {:.0})",
+        tally.crust_jumps, tally.worst_crust.0, tally.worst_crust.1, tally.worst_crust.2
+    );
+    println!(
+        "  суша вне гор: {inland} ступеней; самая крутая {:.0} блоков на {STEP} у ({:.0}, {:.0}), категория {}",
+        tally.worst_dry.0, tally.worst_dry.1, tally.worst_dry.2, tally.worst_dry.3
+    );
+    for step in &tally.top {
+        println!(
+            "    {:.0} бл. на {STEP} у ({:.0}, {:.0}), {}: низ y {:.0} (табл. {:.0}) e {:+.3} pv {:+.2} c {:+.2} e_km {:.3} берег {:.0} пойма {:.2}; высок e {:+.3} pv {:+.2} (табл. {:.0}) mnt {:.2} plat {:.2} берег {:.0} пойма {:.2} устье {:.2} внморе {:.2}",
+            step.dy,
+            step.x,
+            step.z,
+            step.category,
+            step.lo_y,
+            step.table_lo,
+            step.lo_e,
+            step.lo_pv,
+            step.lo_c,
+            step.lo_e_km,
+            step.lo_shore,
+            step.lo_floodplain,
+            step.hi_e,
+            step.hi_pv,
+            step.table_hi,
+            step.hi_mountain,
+            step.hi_plateau,
+            step.hi_shore,
+            step.hi_floodplain,
+            step.hi_estuary,
+            step.hi_inland_sea
+        );
+    }
+    Ok(())
+}
+
+/// Максимальный уклон поверхности вокруг точки по сетке шагом 4 блока
+/// в квадрате со стороной `2 * radius`, блоков на блок (проверка К4а).
+pub fn slope_around(generator: &Generator, center: (f64, f64), radius: f64) -> f64 {
+    let step = 4.0;
+    let mut worst = 0.0_f64;
+    let base = generator
+        .sample(center.0, center.1)
+        .map(|s| s.world.height.surface_y);
+    let Some(base_y) = base else {
+        return 0.0;
+    };
+    let n = (radius / step) as i64;
+    for dxi in -n..=n {
+        for dzi in -n..=n {
+            if dxi == 0 && dzi == 0 {
+                continue;
+            }
+            let (dx, dz) = (f64::from(dxi as i32), f64::from(dzi as i32));
+            let x = center.0 + dx * step;
+            let z = center.1 + dz * step;
+            if let Some(sample) = generator.sample(x, z) {
+                let y = sample.world.height.surface_y;
+                let dist = ((dx * step).powi(2) + (dz * step).powi(2)).sqrt().max(step);
+                worst = worst.max((y - base_y).abs() / dist);
+            }
+        }
+    }
+    worst
+}

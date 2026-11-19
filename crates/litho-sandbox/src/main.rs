@@ -1,6 +1,8 @@
 //! Песочница Litospherity: карты, метрики, атлас и пробы (план 12.2).
 
 mod acceptance;
+mod belts;
+mod biome_lines;
 mod height;
 mod height_stats;
 mod json;
@@ -8,7 +10,13 @@ mod palette;
 mod plan_metrics;
 mod png;
 mod render;
+mod s0_node_cost;
+mod shores;
 mod tune;
+mod vanilla_biomes;
+mod walls;
+mod water;
+mod water_stats;
 
 use std::path::Path;
 use std::time::Instant;
@@ -427,6 +435,600 @@ fn cmd_paths(args: &[String]) -> Result<(), String> {
         )),
         _ => Ok(()),
     }
+}
+
+/// T77: подсчёт лавы аквиферов по выборке ячеек 64×40×64. Доля лавовых
+/// ячеек у стыков плит (λ ≥ 0.5) против ячеек вдали (λ равна фону).
+/// К11 / Д-119 (Ш1): счётчик «биом против пояса» по средней температуре.
+fn cmd_belts(args: &[String]) -> Result<(), String> {
+    let gate = args.iter().any(|a| a == "--gate");
+    let all = args.iter().any(|a| a == "--all");
+    let rest: Vec<String> = args
+        .iter()
+        .filter(|a| *a != "--gate" && *a != "--all")
+        .cloned()
+        .collect();
+    let opts = options_from(&rest)?;
+    if all {
+        // Ш8: 16 приёмочных сидов × оба режима.
+        let seeds = SWEEP_SEEDS;
+        let modes = [Mode::Gameplay, Mode::Scientific];
+        return belts::run_sweep(&seeds, &modes, opts.version);
+    }
+    let generator = generator(&opts)?;
+    belts::run(&generator, gate)
+}
+
+fn cmd_biomes(args: &[String]) -> Result<(), String> {
+    let opts = options_from(args)?;
+    let generator = generator(&opts)?;
+    biome_lines::run(&generator, (opts.center_x, opts.center_z))
+}
+
+/// Д-118: биом игры по копии ванильной таблицы против нашего; с
+/// `--report ПУТЬ` — сверка копии с отчётом datagen 26.3.
+fn cmd_vanilla_biomes(args: &[String]) -> Result<(), String> {
+    if let Some(report) = value(args, "--report") {
+        let samples = match value(args, "--samples") {
+            Some(text) => text
+                .parse::<usize>()
+                .map_err(|e| format!("--samples: {e}"))?,
+            None => 200_000,
+        };
+        return vanilla_biomes::check_report(&report, samples);
+    }
+    let opts = options_from(args)?;
+    let generator = generator(&opts)?;
+    vanilla_biomes::run(&generator, (opts.center_x, opts.center_z))
+}
+
+/// К4: доля берегов океана с сушей выше моря на 10+ в 4 блоках от воды.
+fn cmd_shores(args: &[String]) -> Result<(), String> {
+    let opts = options_from(args)?;
+    let generator = generator(&opts)?;
+    shores::run(&generator, (opts.center_x, opts.center_z))
+}
+
+/// К3/К4а: крутые ступени на суше по линиям, с разбивкой по причинам.
+/// R2 (Ф6-В1, PLAN-WATER-FABRIC §5): инвариант «вода не уходит за берега».
+/// Три центра из `water-points`; каждый считается широким окном (`--size`,
+/// `--step`) и плотным (`--dense`, шаг 1) — узкое русло 4–6 блоков широкая
+/// сетка проскакивает. Ненулевое число нарушений — ошибка команды.
+fn cmd_water_leaks(args: &[String]) -> Result<(), String> {
+    let opts = options_from(args)?;
+    let generator = generator(&opts)?;
+    // `--explain x,z` — разбор одной колонки, работает и без поиска центров.
+    if let Some(text) = value(args, "--explain") {
+        let (x, z) = parse_pair(&text)?;
+        explain_column(&generator, x, z)?;
+        return Ok(());
+    }
+    if !opts.version.is_water_relief_r2() {
+        return Err(format!(
+            "water-leaks считает только v1-dev-r2 (сейчас {}): в v1-dev воды выше моря нет",
+            opts.version.as_str()
+        ));
+    }
+    let size = match value(args, "--size") {
+        Some(text) => text.parse::<i64>().map_err(|e| format!("--size: {e}"))?,
+        None => 2048,
+    };
+    let step = match value(args, "--step") {
+        Some(text) => text.parse::<i64>().map_err(|e| format!("--step: {e}"))?,
+        None => 4,
+    };
+    // §4, п. 6: окна берутся там, где вода есть. В научном режиме у (0,0) её
+    // нет, и прежние фиксированные центры давали пустой гейт.
+    let radius_l = match value(args, "--radius-l") {
+        Some(text) => text
+            .parse::<f64>()
+            .map_err(|e| format!("--radius-l: {e}"))?,
+        None => 32.0,
+    };
+    let centers: Vec<(f64, f64)> = if value(args, "--center").is_some() {
+        vec![(opts.center_x, opts.center_z)]
+    } else {
+        let mut seen = std::collections::BTreeSet::new();
+        water::points(&generator, (opts.center_x, opts.center_z), radius_l)
+            .into_iter()
+            .filter(|point| seen.insert((point.x.div_euclid(512), point.z.div_euclid(512))))
+            .take(3)
+            .map(|point| (point.x as f64, point.z as f64))
+            .collect()
+    };
+    if centers.is_empty() {
+        return Err(format!(
+            "нет мест с водой выше моря в радиусе {radius_l} L: увеличьте --radius-l"
+        ));
+    }
+    // §4, п. 6: широкая сетка шагом 8 проскакивает русло шириной 4–6 блоков
+    // (в окне 1024 получалось 6 колонок с водой вместо сотен). Поэтому каждый
+    // центр дополнительно считается плотным окном с шагом 1 — по нему и
+    // набирается минимум колонок с водой, а нарушения считаются суммарно.
+    let dense = match value(args, "--dense") {
+        Some(text) => text.parse::<i64>().map_err(|e| format!("--dense: {e}"))?,
+        None => 96,
+    };
+    // П. 5 §4 сравнивает рельеф с v1-dev: там вода выше моря не ставится вовсе.
+    let reference = Generator::new(opts.seed, opts.mode, GenVersion::V1Dev)
+        .map_err(|error| error.to_string())?;
+    let mut total = water::Leaks::default();
+    for (x, z) in centers {
+        let coarse = water::leaks_against(&generator, Some(&reference), (x, z), size, step);
+        // Плотное окно — только про воду (п. 6): сравнение с эталоном на
+        // каждом блоке стоило бы десятки минут на приёмочном прогоне.
+        let dense_leaks = if dense > 0 {
+            water::leaks_against(&generator, None, (x, z), dense, 1)
+        } else {
+            water::Leaks::default()
+        };
+        println!(
+            "  центр ({x}, {z}): широкое окно {size} шагом {step} — колонок {}, с водой {}; плотное {dense} шагом 1 — с водой {}; нарушений {} (дно {}, сосед {}, рельеф {}), водопадов {}",
+            coarse.columns,
+            coarse.water,
+            dense_leaks.water,
+            coarse.violations() + dense_leaks.violations(),
+            coarse.deep_bed + dense_leaks.deep_bed,
+            coarse.spill + dense_leaks.spill,
+            coarse.raised + dense_leaks.raised,
+            coarse.waterfalls + dense_leaks.waterfalls
+        );
+        println!(
+            "    кромка водопадов: {} сухих колонок ниже зеркала (§4, п. 3), ступени вода-вода: {}",
+            coarse.falls + dense_leaks.falls,
+            coarse.waterfalls + dense_leaks.waterfalls
+        );
+        for example in coarse.examples.iter().chain(dense_leaks.examples.iter()) {
+            println!("    {example}");
+        }
+        total.merge(&coarse);
+        total.merge(&dense_leaks);
+    }
+    println!(
+        "water-leaks: всего колонок {}, с водой выше моря {}, нарушений {} (п.1 {}, п.2 {}, п.5 {}), водопадов {} (кромка {} + ступени {})",
+        total.columns,
+        total.water,
+        total.violations(),
+        total.deep_bed,
+        total.spill,
+        total.raised,
+        total.waterfalls + total.falls,
+        total.falls,
+        total.waterfalls
+    );
+    println!(
+        "water-leaks: оси русла на суше {}, сухих {} ({:.2} %, порог {} %)",
+        total.river_axis,
+        total.river_dry,
+        total.river_dry_pct(),
+        water::RIVER_DRY_MAX_PCT
+    );
+    if total.water < water::MIN_WATER_COLUMNS {
+        return Err(format!(
+            "гейт пустой: колонок с водой {} меньше {} (§4, п. 6)",
+            total.water,
+            water::MIN_WATER_COLUMNS
+        ));
+    }
+    if total.river_dry_pct() > water::RIVER_DRY_MAX_PCT {
+        return Err(format!(
+            "сухих осей русла {:.2} % больше {} %: реки в игре будут лужами",
+            total.river_dry_pct(),
+            water::RIVER_DRY_MAX_PCT
+        ));
+    }
+    if total.violations() > 0 {
+        // Читать нарушения по адресу: первые три колонки разбираются целиком
+        // (`--explain`), чтобы правка уровня не ждала нового прогона.
+        for (x, z) in total.coords.iter().take(3) {
+            explain_column(&generator, *x as f64, *z as f64)?;
+        }
+        return Err(format!("нарушений инварианта §4: {}", total.violations()));
+    }
+    Ok(())
+}
+
+/// R2 (Ф6-В5): до 20 мест для CI и автора — высокие озёра, ступени рек,
+/// устья рек в озёра. `--radius-l` ограничивает обход плит вокруг центра.
+/// Разбор одной колонки: уровень, сухая поверхность, ближайшее русло и озеро.
+/// Нужен, чтобы читать нарушения §4 по адресу.
+fn explain_column(generator: &Generator, x: f64, z: f64) -> Result<(), String> {
+    let column = generator.water_column(x, z);
+    let dry = generator
+        .dry_surface_at(x, z)
+        .map_err(|error| error.to_string())?;
+    println!(
+        "колонка ({x}, {z}): вода level={} bed={} surface={} вид={} сухая S={dry:?}",
+        column.level,
+        column.bed,
+        column.surface,
+        column.kind.as_str()
+    );
+    let water = generator
+        .hydrology_levels_at(x, z)
+        .map_err(|error| error.to_string())?;
+    if let Some(hit) = water.channels.nearest {
+        println!(
+            "  русло: расстояние {:.3} L, core {:.3} L, глубина {:.2}, зеркало T145 {:.1}, уровень R2 {:?}, along {:.3}",
+            hit.distance_l, hit.core_l, hit.depth_blocks, hit.mirror_y, hit.level_blocks, hit.along
+        );
+    }
+    if let Some(hit) = water.lakes.water_hit {
+        println!(
+            "  озеро: внутри {}, расстояние {:.3} L, level_km {:?}, уровень R2 {:?}, вид {:?}",
+            hit.inside, hit.distance_l, hit.level_km, hit.level_blocks, hit.kind
+        );
+    }
+    Ok(())
+}
+
+fn cmd_water_points(args: &[String]) -> Result<(), String> {
+    let opts = options_from(args)?;
+    let generator = generator(&opts)?;
+    if !opts.version.is_water_relief_r2() {
+        return Err(format!(
+            "water-points считает только v1-dev-r2 (сейчас {}): в v1-dev воды выше моря нет",
+            opts.version.as_str()
+        ));
+    }
+    let radius_l = match value(args, "--radius-l") {
+        Some(text) => text
+            .parse::<f64>()
+            .map_err(|e| format!("--radius-l: {e}"))?,
+        None => 32.0,
+    };
+    let points = water::points(&generator, (opts.center_x, opts.center_z), radius_l);
+    println!(
+        "water-points: {} мест (сид {}, режим {}, радиус {radius_l} L)",
+        points.len(),
+        opts.seed,
+        opts.mode.as_str()
+    );
+    for point in &points {
+        println!(
+            "  x={} z={} level={} вид={} ({})",
+            point.x, point.z, point.level, point.kind, point.note
+        );
+    }
+    if points.is_empty() {
+        return Err("мест с водой выше моря не нашлось: увеличьте --radius-l".into());
+    }
+    Ok(())
+}
+
+/// ВО0-5 (PLAN-WATER-UPDATE §6.2): разведка цены `S0` в узлах стока.
+fn cmd_s0_node_cost(args: &[String]) -> Result<(), String> {
+    let mut opts = options_from(args)?;
+    // По умолчанию меряем ту версию, у которой есть `S0`.
+    if value(args, "--version").is_none() {
+        opts.version = GenVersion::V1DevW;
+    }
+    // Позиционная форма `s0-node-cost SEED MODE` — как у `water-stats`.
+    if let Some(text) = args.first() {
+        if let Ok(seed) = text.parse::<i64>() {
+            opts.seed = seed;
+        }
+    }
+    if let Some(text) = args.get(1) {
+        if let Some(mode) = Mode::parse(text) {
+            opts.mode = mode;
+        }
+    }
+    let generator = generator(&opts)?;
+    if !opts.version.is_water_update() {
+        return Err(format!(
+            "s0-node-cost меряет `S0`, а он есть только у версии с водным обновлением (v1-dev-w), сейчас {}",
+            opts.version.as_str()
+        ));
+    }
+    let plates_wanted = match value(args, "--plates") {
+        Some(text) => text
+            .parse::<usize>()
+            .map_err(|error| format!("--plates: {error}"))?,
+        None => 6,
+    };
+    if plates_wanted == 0 {
+        return Err("--plates должен быть > 0".into());
+    }
+    let spacings: Vec<f64> = match value(args, "--spacing") {
+        Some(text) => {
+            let mut out = Vec::new();
+            for part in text.split(',') {
+                let spacing = part
+                    .trim()
+                    .parse::<f64>()
+                    .map_err(|error| format!("--spacing: {error}"))?;
+                if !spacing.is_finite() || spacing <= 0.0 {
+                    return Err("--spacing требует конечных шагов > 0 (в L)".into());
+                }
+                out.push(spacing);
+            }
+            out
+        }
+        None => vec![0.25, 0.5],
+    };
+    let started = Instant::now();
+    let survey = s0_node_cost::survey(
+        &generator,
+        (opts.center_x, opts.center_z),
+        plates_wanted,
+        &spacings,
+    )?;
+    let seconds = started.elapsed().as_secs_f64();
+    let decision = s0_node_cost::decision(&survey);
+    if args.iter().any(|arg| arg == "--json") {
+        let lattices: Vec<String> = survey
+            .lattices
+            .iter()
+            .map(|lattice| {
+                format!(
+                    "{{\"path\":\"{}\",\"spacing_l\":{},\"samples\":{},\"samples_per_node\":{:.3},\"build_ms\":{:.1},\"error_p95\":{:.2},\"error_p99_9\":{:.2},\"error_max\":{:.2},\"meets\":{}}}",
+                    s0_node_cost::path_name(lattice.spacing_l),
+                    lattice.spacing_l,
+                    lattice.samples,
+                    lattice.samples_per_node(survey.nodes),
+                    lattice.build_ms,
+                    lattice.p95(),
+                    lattice.p999(),
+                    lattice.max(),
+                    lattice.meets()
+                )
+            })
+            .collect();
+        let mut fields: Vec<String> = Vec::new();
+        fields.push(format!("\"seed\":{}", opts.seed));
+        fields.push(format!("\"mode\":\"{}\"", opts.mode.as_str()));
+        fields.push(format!("\"version\":\"{}\"", opts.version.as_str()));
+        fields.push(format!("\"seconds\":{seconds:.2}"));
+        fields.push(format!("\"plates\":{}", survey.plates));
+        fields.push(format!("\"nodes\":{}", survey.nodes));
+        fields.push(format!("\"net_ms_p50\":{:.1}", survey.net_pct(50.0)));
+        fields.push(format!("\"net_ms_p95\":{:.1}", survey.net_p95()));
+        fields.push(format!("\"net_ms_max\":{:.1}", survey.net_max()));
+        fields.push(format!(
+            "\"exact_us_per_node\":{:.2}",
+            survey.exact_us_per_node()
+        ));
+        fields.push("\"net_budget_ms\":200.0".to_string());
+        fields.push(format!("\"lattices\":[{}]", lattices.join(",")));
+        fields.push(format!("\"decision\":\"{decision}\""));
+        println!("{{{}}}", fields.join(","));
+        return Ok(());
+    }
+    println!(
+        "s0-node-cost: сид {} режим {} версия {} · плит {}, узлов {} · {seconds:.1} с",
+        opts.seed,
+        opts.mode.as_str(),
+        opts.version.as_str(),
+        survey.plates,
+        survey.nodes
+    );
+    println!(
+        "  сеть плиты: p50 {:.1}, p95 {:.1}, max {:.1} мс (бюджет {} мс)",
+        survey.net_pct(50.0),
+        survey.net_p95(),
+        survey.net_max(),
+        s0_node_cost::NET_BUDGET_MS
+    );
+    println!(
+        "  точный S0: {:.2} мкс на узел, всего {:.1} мс",
+        survey.exact_us_per_node(),
+        survey.exact_ms
+    );
+    for lattice in &survey.lattices {
+        println!(
+            "  {} ({:.2} L): выборок {} ({:.3} на узел), сборка {:.1} мс, ошибка p95 {:.2}, p99.9 {:.2}, max {:.2} блока{}",
+            s0_node_cost::path_name(lattice.spacing_l),
+            lattice.spacing_l,
+            lattice.samples,
+            lattice.samples_per_node(survey.nodes),
+            lattice.build_ms,
+            lattice.p95(),
+            lattice.p999(),
+            lattice.max(),
+            if lattice.meets() {
+                " — проходит"
+            } else {
+                ""
+            }
+        );
+    }
+    println!("  решение: {decision}");
+    Ok(())
+}
+
+fn cmd_water_stats(args: &[String]) -> Result<(), String> {
+    let mut opts = options_from(args)?;
+    // §10.1: допускается и позиционная форма `water-stats SEED MODE`.
+    if let Some(text) = args.first() {
+        if let Ok(seed) = text.parse::<i64>() {
+            opts.seed = seed;
+        }
+    }
+    if let Some(text) = args.get(1) {
+        if let Some(mode) = Mode::parse(text) {
+            opts.mode = mode;
+        }
+    }
+    let generator = generator(&opts)?;
+    if !opts.version.is_water_relief_r2() {
+        return Err(format!(
+            "water-stats нужен версии с водой выше моря (v1-dev-r2, v1-dev-w), сейчас {}",
+            opts.version.as_str()
+        ));
+    }
+    let window = match value(args, "--window") {
+        Some(text) => text.parse::<i64>().map_err(|e| format!("--window: {e}"))?,
+        // Полный плановый объём (±8000 / ±24000) — отдельной задачей: он в
+        // разы дороже дымового окна, а метрика та же.
+        None => match opts.mode {
+            Mode::Gameplay => 2048,
+            Mode::Scientific => 4096,
+        },
+    };
+    let step = match value(args, "--step") {
+        Some(text) => text.parse::<i64>().map_err(|e| format!("--step: {e}"))?,
+        None => match opts.mode {
+            Mode::Gameplay => 8,
+            Mode::Scientific => 16,
+        },
+    };
+    if window <= 0 || step <= 0 {
+        return Err("--window и --step должны быть > 0".into());
+    }
+    let started = Instant::now();
+    let grid = water_stats::Window::new(&generator, (opts.center_x, opts.center_z), window, step)?;
+    let stats = grid.stats(opts.mode == Mode::Scientific);
+    let seconds = started.elapsed().as_secs_f64();
+    let json = args.iter().any(|arg| arg == "--json");
+    let above_sea = if stats.river_columns == 0 {
+        0.0
+    } else {
+        100.0 * stats.river_above_sea as f64 / stats.river_columns as f64
+    };
+    if json {
+        let zones: Vec<String> = stats
+            .zone_names()
+            .iter()
+            .enumerate()
+            .map(|(index, name)| {
+                format!(
+                    "{{\"name\":\"{name}\",\"lakes\":{}}}",
+                    stats.zone_lakes[index]
+                )
+            })
+            .collect();
+        let mut fields: Vec<String> = Vec::new();
+        fields.push(format!("\"seed\":{}", opts.seed));
+        fields.push(format!("\"mode\":\"{}\"", opts.mode.as_str()));
+        fields.push(format!("\"version\":\"{}\"", opts.version.as_str()));
+        fields.push(format!("\"window\":{window}"));
+        fields.push(format!("\"step\":{step}"));
+        fields.push(format!("\"seconds\":{seconds:.2}"));
+        fields.push(format!("\"land\":{}", stats.land));
+        fields.push(format!("\"river_columns\":{}", stats.river_columns));
+        fields.push(format!("\"river_above_sea_pct\":{above_sea:.2}"));
+        fields.push(format!("\"gorge_p50\":{:.2}", stats.gorge_p50));
+        fields.push(format!("\"gorge_p90\":{:.2}", stats.gorge_p90));
+        fields.push(format!("\"gorge_p99\":{:.2}", stats.gorge_p99));
+        fields.push(format!("\"lakes\":{}", stats.lakes));
+        fields.push(format!("\"lakes_per_100l2\":{:.3}", stats.lakes_per_100l2));
+        fields.push(format!("\"lake_area_pct\":{:.3}", stats.lake_area_pct));
+        fields.push(format!("\"lake_fit_pct\":{:.2}", stats.lake_fit_pct));
+        fields.push(format!("\"lakes_ge_80\":{}", stats.lakes_ge_80));
+        fields.push(format!("\"walls_pct\":{:.2}", stats.walls_pct));
+        fields.push(format!("\"zones\":[{}]", zones.join(",")));
+        println!("{{{}}}", fields.join(","));
+        return Ok(());
+    }
+    println!(
+        "water-stats: сид {} режим {} версия {} · окно ±{} шаг {} · суши {} колонок · {seconds:.1} с",
+        opts.seed,
+        opts.mode.as_str(),
+        opts.version.as_str(),
+        window / 2,
+        step,
+        stats.land
+    );
+    println!(
+        "  реки: вода выше моря {above_sea:.2} % колонок русла; врез p50 {:.2}, p90 {:.2}, p99 {:.2} блока",
+        stats.gorge_p50, stats.gorge_p90, stats.gorge_p99
+    );
+    println!(
+        "  озёра: {} водоёмов, {:.2} % площади суши, в котловине {:.2} % площади, ≥ 80 блоков — {}",
+        stats.lakes, stats.lake_area_pct, stats.lake_fit_pct, stats.lakes_ge_80
+    );
+    println!(
+        "  на 100 L² суши: {:.2} озера; стены у воды: {:.2} % колонок берега",
+        stats.lakes_per_100l2, stats.walls_pct
+    );
+    let mut parts = Vec::new();
+    for (index, name) in stats.zone_names().iter().enumerate() {
+        if stats.zone_lakes[index] > 0 {
+            parts.push(format!("{name} {}", stats.zone_lakes[index]));
+        }
+    }
+    if !parts.is_empty() {
+        println!("  по зонам: {}", parts.join(", "));
+    }
+    Ok(())
+}
+
+fn cmd_walls(args: &[String]) -> Result<(), String> {
+    let opts = options_from(args)?;
+    let generator = generator(&opts)?;
+    let result = walls::run(&generator, (opts.center_x, opts.center_z));
+    if let Some(text) = value(args, "--slope-at") {
+        let (x, z) = parse_pair(&text)?;
+        let slope = walls::slope_around(&generator, (x, z), 16.0);
+        println!("  уклон вокруг ({x}, {z}) радиусом 16: {slope:.2} блока на блок (цель ≤ 1,5)");
+    }
+    result
+}
+
+fn cmd_lava(args: &[String]) -> Result<(), String> {
+    let opts = options_from(args)?;
+    let generator = generator(&opts)?;
+    let background = generator.params().lava.background;
+    let half = 256_i64;
+    // Слои ячеек по Y: −2 это y −80…−41, −1 это y −40…−1.
+    let layers = [-2_i64, -1];
+    let mut near = (0_u64, 0_u64);
+    let mut far = (0_u64, 0_u64);
+    let mut all = (0_u64, 0_u64);
+    for cx in -half..half {
+        for cz in -half..half {
+            let x = (cx * 64 + 32) as f64;
+            let z = (cz * 64 + 32) as f64;
+            let lambda = generator.lava_sample(x, z);
+            for cy in layers {
+                let on = u64::from(generator.lava_aquifer(cx, cy, cz).abs() > 0.3);
+                all = (all.0 + on, all.1 + 1);
+                if lambda >= 0.5 {
+                    near = (near.0 + on, near.1 + 1);
+                } else if lambda <= background {
+                    far = (far.0 + on, far.1 + 1);
+                }
+            }
+        }
+    }
+    let pct = |(on, total): (u64, u64)| {
+        if total == 0 {
+            0.0
+        } else {
+            100.0 * on as f64 / total as f64
+        }
+    };
+    println!(
+        "lava: {n}×{n} ячеек 64×40×64 (область {span} блоков), слои y −80…−1; фон λ = {background}",
+        n = 2 * half,
+        span = 2 * half * 64,
+    );
+    println!(
+        "  у стыков (λ ≥ 0.5): {:.1} % лавовых из {} ячеек",
+        pct(near),
+        near.1
+    );
+    println!(
+        "  вдали (λ = фон):    {:.1} % лавовых из {} ячеек",
+        pct(far),
+        far.1
+    );
+    println!(
+        "  всего:              {:.1} % лавовых из {} ячеек; у стыков {:.1} % площади",
+        pct(all),
+        all.1,
+        100.0 * near.1 as f64 / all.1 as f64
+    );
+    if near.1 == 0 || far.1 == 0 {
+        return Err("в области нет ячеек у стыка или вдали от него".into());
+    }
+    let ratio = pct(near) / pct(far).max(1e-9);
+    println!("  у стыков лавы больше в {ratio:.1} раза");
+    if ratio < 3.0 {
+        return Err("у стыков лавы меньше чем втрое против фона".into());
+    }
+    Ok(())
 }
 
 fn cmd_seams(args: &[String]) -> Result<(), String> {
@@ -936,6 +1538,7 @@ fn cmd_drainage(args: &[String]) -> Result<(), String> {
              узлы: всего {total}, своей плиты {plate_nodes}, кольцо {ring}; выходы: море {sea}, рифт {rift}, трансформ {transform}\n\
              впадины: заполненные {filled}, замкнутые без выхода {closed}, бессточные {endorheic}; max глубина {max_depth:.6} км\n\
              климат: {climate_nodes} узлов; max Q {max_q:.3} мм·L²/год; экспорт {export:.3}, испарение {evaporation:.3}, замкнутый избыток {storage:.3}\n\
+             передача T113: узлов-передач {handoff_nodes}, русел за границу {handoff_reaches}; принято от соседей {inflow:.3}, отдано соседям {handed:.3} мм·L²/год (входит в экспорт)\n\
              русла T112: {reaches} цепочек, {channel_segments} отрезков, {baskets} корзин, длина {channel_length:.3} L; незакрытых концов {unresolved} (граница плиты {channel_boundary}, ниже Q_min {channel_below_threshold}, замкнутый избыток {channel_closed_surplus}); медиана извилистости равнинных {median_sinuosity:.3}\n\
              дельты T114: вееров {delta_count}, рукавов {delta_arms}; озёра/котловины: поверхностей {lake_count} (озеро {lake_water}, внутр. море {lake_inland_sea}, болото {lake_swamp}, сухая {lake_dry}, замкнутый избыток {lake_closed}, морская связь {lake_sea_connected}), замёрзших {lake_frozen}, рифтовых {lake_rift}, высоких R2 {lake_high}, площадь воды {lake_water_area:.3} L², без уровня {lake_unresolved}\n\
              общий запрос T113/T114: сетей {query_networks}, радиус {query_radius:.3} L, ядро {query_core:.3}, долина {query_valley:.3}, дельта {query_delta:.3}; ближайшее русло плиты {query_plate}, расстояние {query_distance} L; озеро вода {lake_query_water:.3}, берег {lake_query_shore:.3}, котловина {lake_query_basin:.3}, тип {lake_query_kind}, уровень {lake_query_level} км; запрос {query_ms:.3} мс\n\
@@ -948,6 +1551,15 @@ fn cmd_drainage(args: &[String]) -> Result<(), String> {
             plate = plate.id,
             total = nodes.len(),
             ring = nodes.len() - plate_nodes,
+            handoff_nodes = nodes
+                .iter()
+                .filter(|node| node.outlet == litho_core::drainage::DrainageOutlet::Handoff)
+                .count(),
+            handoff_reaches = net
+                .channels()
+                .end_count(litho_core::channel::ReachEnd::Handoff),
+            inflow = net.runoff().inflow_mm_l2(),
+            handed = net.runoff().handoff_mm_l2(),
             plan_rows = plan_rows,
         );
     }
@@ -1473,6 +2085,77 @@ fn cmd_sweep(args: &[String]) -> Result<(), String> {
 /// `--mode` ограничивает режим, `--seed` — один сид, `--seeds 0,42,7` — список.
 /// Итоговый вердикт `NO-VOLUME` означает «числа в порядке, но объём не тот»:
 /// неполный скан не доказывает выполнение 10.1.
+/// Замер строки 10.1 «озёра выше моря: на 16 сидах есть озёра на высоте 80 и выше».
+/// Сетка `grid × grid` точек по квадрату `span_l` L вокруг (0, 0). Берётся уровень
+/// воды R2 в блоках (`LakeHit::level_blocks`) для водоёмов `LakeKind::Lake`.
+/// Озеро ловится, только если в сетке попала его вода: это нижняя оценка.
+fn cmd_lake_levels(args: &[String]) -> Result<(), String> {
+    let opts = options_from(args)?;
+    let span_l = match value(args, "--span-l") {
+        Some(text) => text.parse::<f64>().map_err(|e| format!("--span-l: {e}"))?,
+        None => 200.0,
+    };
+    let grid = match value(args, "--grid") {
+        Some(text) => text.parse::<usize>().map_err(|e| format!("--grid: {e}"))?,
+        None => 200,
+    };
+    if !(span_l > 0.0 && span_l.is_finite()) || grid == 0 {
+        return Err("--span-l > 0, --grid ≥ 1".into());
+    }
+    let generator =
+        Generator::new(opts.seed, opts.mode, opts.version).map_err(|e| e.to_string())?;
+    let side = span_l * opts.mode.l_blocks();
+    let step = side / grid as f64;
+    let threshold = 80.0_f64;
+    let mut water_points = 0usize;
+    let mut max_level = f64::NEG_INFINITY;
+    let mut lakes_seen = std::collections::BTreeSet::new();
+    let mut lakes_high = std::collections::BTreeSet::new();
+    for j in 0..grid {
+        for i in 0..grid {
+            let x = -side / 2.0 + (i as f64 + 0.5) * step;
+            let z = -side / 2.0 + (j as f64 + 0.5) * step;
+            let sample = generator
+                .hydrology_levels_at(x, z)
+                .map_err(|error| error.to_string())?;
+            let Some(hit) = sample.lakes.water_hit else {
+                continue;
+            };
+            if hit.kind != LakeKind::Lake {
+                continue;
+            }
+            let Some(level) = hit.level_blocks else {
+                continue;
+            };
+            water_points += 1;
+            max_level = max_level.max(level);
+            lakes_seen.insert((hit.plate_id, hit.lake));
+            if level >= threshold {
+                lakes_high.insert((hit.plate_id, hit.lake));
+            }
+        }
+    }
+    let verdict = if lakes_high.is_empty() {
+        "НЕТ"
+    } else {
+        "ЕСТЬ"
+    };
+    let max_text = if max_level.is_finite() {
+        format!("{max_level:.1}")
+    } else {
+        "нет".to_string()
+    };
+    println!(
+        "сид={} режим={} сетка={grid}×{grid} span={span_l} L: точек воды озёр {water_points}, \
+         озёр в сетке {}, макс. уровень {max_text} блоков, озёр ≥{threshold:.0}: {} → {verdict}",
+        opts.seed,
+        opts.mode.as_str(),
+        lakes_seen.len(),
+        lakes_high.len(),
+    );
+    Ok(())
+}
+
 fn cmd_acceptance(args: &[String]) -> Result<(), String> {
     let base = options_from(args)?;
     let Some(model) = height_model_for(args, &base)? else {
@@ -1676,12 +2359,25 @@ fn usage() -> &'static str {
                     --strides 4,8,16,32,64,128 --tiles 3 --json\n\
        profile      разбивка времени по слоям\n\
        hash         хеши параметров для замка v0\n\
+       biomes       как часто меняется биом вдоль линий и размер пятен (К1)\n\
+       belts        К11: биом против пояса (L1, матрица, лёд, горы);\n\
+                    --gate — порог CI L1 ≤ 1 % и лёд только в t0,\n\
+                    --all — 16 приёмочных сидов × оба режима (Ш8)\n\
+       shores       доля берегов с сушей выше моря на 10+ в 4 блоках от воды (К4)\n\
+       water-leaks  R2: инвариант «вода не уходит за берега» (v1-dev-r2),\n\
+                    --size 2048 --step 4, три центра\n\
+       water-points R2: до 20 мест с водой выше моря для CI и автора (v1-dev-r2),\n\
+       water-stats  ВО0-3: реки (вода выше моря, врез), озёра по водоёмам, стены (v1-dev-r2),\n\
+       s0-node-cost ВО0-5: цена S0 в узлах стока и точность решётки S0 (v1-dev-w),\n\
+                    --radius-l 32\n\
+vanilla-biomes биом игры (копия ванильной таблицы) против нашего, горы на холмах (Д-118);\n\
+             --report ПУТЬ: сверка копии с отчётом datagen biome_parameters\n\
        checkpoints  10 точек вокруг точки появления\n\
        sweep        16 сидов × 2 режима + HTML-атлас\n\
        atlas        пересобрать только HTML-атлас\n\
        help         эта справка\n\n\
      Общие флаги: --seed N (42), --mode scientific|gameplay (gameplay),\n\
-       --version v0|v1|v1-dev (v0), --center x,z (0,0), --size N (512),\n\
+       --version v0|v1|v1-dev|v1-dev-r2 (v0), --center x,z (0,0), --size N (512),\n\
        --bpp N, --path reference|fast,\n\
        --layers plates|all|список через запятую, --out ПАПКА\n\
      Слои: шум/плиты/кора, климат, зоны, биомы, пять ванильных чисел,\n\
@@ -1711,7 +2407,18 @@ fn main() -> Result<(), String> {
         "stats" => cmd_stats(&args[1..]),
         "stats-all" => cmd_stats_all(&args[1..]),
         "acceptance" => cmd_acceptance(&args[1..]),
+        "lake-levels" => cmd_lake_levels(&args[1..]),
         "seams" => cmd_seams(&args[1..]),
+        "lava" => cmd_lava(&args[1..]),
+        "biomes" => cmd_biomes(&args[1..]),
+        "belts" => cmd_belts(&args[1..]),
+        "shores" => cmd_shores(&args[1..]),
+        "walls" => cmd_walls(&args[1..]),
+        "water-leaks" => cmd_water_leaks(&args[1..]),
+        "water-points" => cmd_water_points(&args[1..]),
+        "water-stats" => cmd_water_stats(&args[1..]),
+        "s0-node-cost" => cmd_s0_node_cost(&args[1..]),
+        "vanilla-biomes" => cmd_vanilla_biomes(&args[1..]),
         "paths" => cmd_paths(&args[1..]),
         "drainage" => cmd_drainage(&args[1..]),
         "bench" => cmd_bench(&args[1..]),

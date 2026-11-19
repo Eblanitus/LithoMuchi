@@ -93,9 +93,18 @@ fn set(p: &mut Params, key: &str, value: f64) -> Result<(), String> {
         }
         None => (key, Vec::new()),
     };
+    if name == "drainage.handoff_max_hops" {
+        // Целый параметр: шаг 2 плана (T113), число границ плит для притока.
+        if !indices.is_empty() || value < 0.0 || value.fract() != 0.0 {
+            return Err(format!("--set {key}: нужно целое число ≥ 0 без индекса"));
+        }
+        p.drainage.handoff_max_hops = value as i64;
+        return Ok(());
+    }
     let scalar: Option<&mut f64> = match name {
         "boundaries.ray_field_l" => Some(&mut p.boundaries.ray_field_l),
         "boundaries.ray_lattice_l" => Some(&mut p.boundaries.ray_lattice_l),
+        "boundaries.ecotone_max_fraction" => Some(&mut p.boundaries.ecotone_max_fraction),
         "relief.a_lo" => Some(&mut p.relief.a_lo),
         "relief.a_hi" => Some(&mut p.relief.a_hi),
         "climate.m_e_lo" => Some(&mut p.climate.m_e_lo),
@@ -108,6 +117,15 @@ fn set(p: &mut Params, key: &str, value: f64) -> Result<(), String> {
         "hydrology.dry_basin_e" => Some(&mut p.hydrology.dry_basin_e),
         "height.e_gain_base_km" => Some(&mut p.height.e_gain_base_km),
         "height.e_gain_blocks_per_km" => Some(&mut p.height.e_gain_blocks_per_km),
+        "height.shore_width_blocks" => Some(&mut p.height.shore_width_blocks),
+        "height.shore_cliff_e" => Some(&mut p.height.shore_cliff_e),
+        "relief.land_fade_blocks" => Some(&mut p.relief.land_fade_blocks),
+        "climate.alt_cool_base_y" => Some(&mut p.climate.alt_cool_base_y),
+        "climate.alt_cool_c_per_block" => Some(&mut p.climate.alt_cool_c_per_block),
+        "climate.alt_cool_land_c" => Some(&mut p.climate.alt_cool_land_c),
+        "climate.winter_temperate_c" => Some(&mut p.climate.winter_temperate_c),
+        "climate.winter_boreal_c" => Some(&mut p.climate.winter_boreal_c),
+        "relief.land_e_gradient_km_per_block" => Some(&mut p.relief.land_e_gradient_km_per_block),
         _ => None,
     };
     if let Some(slot) = scalar {
@@ -121,8 +139,11 @@ fn set(p: &mut Params, key: &str, value: f64) -> Result<(), String> {
         "morpho.e_flat" => Some(&mut p.morpho.e_flat),
         "morpho.e_hill" => Some(&mut p.morpho.e_hill),
         "morpho.sigma_e" => Some(&mut p.morpho.sigma_e),
+        "morpho.e_remap_lo" => Some(&mut p.morpho.e_remap_lo),
+        "morpho.e_remap_hi" => Some(&mut p.morpho.e_remap_hi),
         "morpho.sigma_pv" => Some(&mut p.morpho.sigma_pv),
         "height.micro_amp_blocks" => Some(&mut p.height.micro_amp_blocks),
+        "climate.belt_edges_mean_c" => Some(&mut p.climate.belt_edges_mean_c),
         _ => None,
     };
     if let Some(row) = row {

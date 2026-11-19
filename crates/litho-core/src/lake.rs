@@ -85,6 +85,9 @@ pub struct LakeHit {
     pub high: bool,
     pub water_strength: f64,
     pub shore_strength: f64,
+    /// R2 (PLAN-WATER-FABRIC §4, п. 1): уровень озера в блоках — `min(S)` по
+    /// контуру минус 1, блоки. `None` — уровня R2 нет (вода R1 или не R2).
+    pub level_blocks: Option<f64>,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -169,6 +172,33 @@ fn prefer_shore(a: Option<LakeHit>, b: Option<LakeHit>) -> Option<LakeHit> {
     }
 }
 
+/// Холодный пруд (T114, Ф6-В7): уровень замкнутой впадины, при котором объём
+/// воды под ним равен годовому избытку. Σ area·(L − z) = S по узлам впадины,
+/// где z — высота узла в км, area — площадь узла в L², S — избыток в км·L²
+/// (мм × 1e-6). Перевод L в км не нужен: площадь и избыток в L², масштаб сокращается.
+fn closed_pond_level(mut heights_km: Vec<f64>, area_l2: f64, storage_km_l2: f64) -> Option<f64> {
+    if !area_l2.is_finite() || area_l2 <= 0.0 || !storage_km_l2.is_finite() || storage_km_l2 <= 0.0
+    {
+        return None;
+    }
+    if heights_km.is_empty() {
+        return None;
+    }
+    heights_km.sort_by(f64::total_cmp);
+    let target = storage_km_l2 / area_l2;
+    let mut sum_z = 0.0;
+    for (i, &z) in heights_km.iter().enumerate() {
+        sum_z += z;
+        let count = (i + 1) as f64;
+        let level = (target + sum_z) / count;
+        let next = heights_km.get(i + 1).copied().unwrap_or(f64::INFINITY);
+        if level >= z && level <= next {
+            return Some(level);
+        }
+    }
+    None
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct LakeNetwork {
     plate_id: u64,
@@ -232,6 +262,28 @@ impl LakeNetwork {
                 Some(level) if !balance.endorheic && wet_supply > 0.0 => Some(level),
                 _ => None,
             };
+            // Холодный пруд (T114, Ф6-В7, только R2): замкнутая впадина с холодным
+            // годовым избытком получает уровень из объёма, а не остаётся сухой.
+            let level = level.or_else(|| {
+                if !matches!(depression.kind, DepressionKind::Closed)
+                    || balance.storage_mm_l2 <= 0.0
+                    || !params.version.is_water_relief_r2()
+                {
+                    return None;
+                }
+                let (t_sum, t_count) = members[d]
+                    .iter()
+                    .filter(|&&k| nodes[k].in_plate)
+                    .fold((0.0, 0.0), |(s, c), &k| {
+                        (s + runoff.nodes()[k].t_min_c, c + 1.0)
+                    });
+                if t_count <= 0.0 || t_sum / t_count > params.lakes.frozen_t_min_c {
+                    return None;
+                }
+                let heights: Vec<f64> = members[d].iter().map(|&k| nodes[k].route_km).collect();
+                closed_pond_level(heights, area, balance.storage_mm_l2 * 1e-6)
+                    .filter(|level| *level > 0.0)
+            });
             let mut mask = vec![false; nodes.len()];
             let mut water_nodes = Vec::new();
             if let Some(level) = level {
@@ -380,7 +432,8 @@ impl LakeNetwork {
             lakes,
             baskets,
             field_fade_l: params.hydrology.field_fade_l,
-            r1_max_level_km: params.hydrology.r1_max_level_km,
+            // R2 (Ф6-В1): предела нет — вода выше моря считается водой.
+            r1_max_level_km: crate::hydrology::r1_max_level_km(params),
         };
         net.check()?;
         Ok(net)
@@ -514,6 +567,7 @@ impl LakeNetwork {
                 high: lake.high,
                 water_strength,
                 shore_strength,
+                level_blocks: None,
             };
             out.nearest = prefer_distance(out.nearest, Some(hit));
             out.shore_hit = prefer_shore(out.shore_hit, Some(hit));
@@ -588,7 +642,14 @@ fn spill_level(
         if down >= nodes.len() || nodes[down].depression == Some(depression) {
             continue;
         }
-        let saddle = nodes[k].route_km.max(nodes[down].route_km);
+        // Узел-передача несёт уровень воды соседней плиты, а не свой рельеф:
+        // половина общего озера получает тот же порог, что и вторая.
+        let down_km = if nodes[down].outlet == DrainageOutlet::Handoff {
+            nodes[down].filled_km
+        } else {
+            nodes[down].route_km
+        };
+        let saddle = nodes[k].route_km.max(down_km);
         if best.is_none_or(|(level, old)| (saddle, k) < (level, old)) {
             best = Some((saddle, k));
         }
@@ -933,5 +994,30 @@ mod tests {
             })
             .sum();
         assert!((area - 8.0 * h * h).abs() < 1e-12);
+    }
+}
+
+#[cfg(test)]
+mod pond_tests {
+    use super::closed_pond_level;
+
+    #[test]
+    fn pond_level_matches_storage_volume() {
+        // Два узла на нуле, площадь 1, избыток 2: уровень 1, объём 2·(1 − 0).
+        let level = closed_pond_level(vec![0.0, 0.0], 1.0, 2.0).unwrap();
+        assert!((level - 1.0).abs() < 1e-12);
+        // Узлы 0 и 1: избыток 0,5 садится в нижний узел, уровень 0,5.
+        let level = closed_pond_level(vec![0.0, 1.0], 1.0, 0.5).unwrap();
+        assert!((level - 0.5).abs() < 1e-12);
+        // Избыток 3 переходит второй узел: L = 2, объём (2−0)+(2−1)=3.
+        let level = closed_pond_level(vec![1.0, 0.0], 1.0, 3.0).unwrap();
+        assert!((level - 2.0).abs() < 1e-12);
+    }
+
+    #[test]
+    fn pond_rejects_empty_or_dry_input() {
+        assert_eq!(closed_pond_level(Vec::new(), 1.0, 1.0), None);
+        assert_eq!(closed_pond_level(vec![0.0], 1.0, 0.0), None);
+        assert_eq!(closed_pond_level(vec![0.0], 0.0, 1.0), None);
     }
 }

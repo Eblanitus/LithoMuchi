@@ -62,6 +62,10 @@ pub struct ClimateShape {
     /// Итоговая проверка 10.1 по зонам, где есть достаточный объём.
     /// `None` — объём меньше порога, вердикта нет.
     pub pass: Option<bool>,
+    /// Та же проверка без воды: только полосы E (отличие зоны от средней
+    /// и E2 аридной). Озёра холодных зон ждут воду выше моря (Д-070, Д-088),
+    /// поэтому форма рельефа отчитывается отдельно от них.
+    pub bands_pass: Option<bool>,
     /// Почему проверка не прошла или не считается.
     pub notes: Vec<String>,
 }
@@ -81,6 +85,8 @@ pub struct RiverLake {
     pub river_land: usize,
     /// Точек суши вне рек и озёр — для «климата» и прочих долей.
     pub dry_land: usize,
+    /// Отдельных водоёмов — связных групп колонок воды озёр (ВО0-3).
+    pub lakes: usize,
     /// Площадь области в L², по которой считаются плотности.
     pub area_l2: f64,
 }
@@ -92,18 +98,62 @@ impl RiverLake {
     pub fn river_pct(&self) -> f64 {
         pct(self.river_land, self.land)
     }
-    /// Озеро на 100 L² суши (10.1). `lake_land` — точки воды на сетке,
-    /// поэтому «озеро» здесь — единица площади воды, а не отдельный водоём:
-    /// по сетке отдельные озёра не различить. Счёт водоёмов — в `drainage`.
+    /// Озёр на 100 L² суши (10.1).
+    ///
+    /// ВО0-3: считается **число водоёмов**, а не площадь узлов сетки. Площадь
+    /// воды остаётся в `lake_pct`: это разные строки 10.1, и раньше первая
+    /// выдавала площадь под видом числа озёр. Водоём — связная группа колонок
+    /// воды (`PlanAccumulator::add_cell`), порог площади по шагу сетки
+    /// применяет `water-stats`, где шаг известен.
     pub fn lakes_per_100_l2(&self) -> f64 {
         if self.land == 0 || self.area_l2 <= 0.0 {
             0.0
         } else {
             let land_l2 =
                 self.area_l2 * self.land as f64 / (self.land + self.lake_land).max(1) as f64;
-            100.0 * self.lake_land as f64 / land_l2.max(1e-9)
+            100.0 * self.lakes as f64 / land_l2.max(1e-9)
         }
     }
+}
+
+/// Число связных групп колонок воды по четырём соседям.
+///
+/// Строки сетки могут быть короче: колонки `add_cell` приходят по мере обхода,
+/// и у последней строки может не быть хвоста. Поэтому длина проверяется у
+/// каждой строки отдельно.
+fn count_water_bodies(grid: &[Vec<bool>]) -> usize {
+    let mut seen: Vec<Vec<bool>> = grid.iter().map(|row| vec![false; row.len()]).collect();
+    let mut count = 0;
+    let mut stack: Vec<(usize, usize)> = Vec::new();
+    for j in 0..grid.len() {
+        for i in 0..grid[j].len() {
+            if !grid[j][i] || seen[j][i] {
+                continue;
+            }
+            count += 1;
+            seen[j][i] = true;
+            stack.push((i, j));
+            while let Some((ci, cj)) = stack.pop() {
+                let neighbors = [
+                    (ci.wrapping_sub(1), cj),
+                    (ci + 1, cj),
+                    (ci, cj.wrapping_sub(1)),
+                    (ci, cj + 1),
+                ];
+                for (ni, nj) in neighbors {
+                    let Some(row) = grid.get(nj) else {
+                        continue;
+                    };
+                    if ni >= row.len() || !row[ni] || seen[nj][ni] {
+                        continue;
+                    }
+                    seen[nj][ni] = true;
+                    stack.push((ni, nj));
+                }
+            }
+        }
+    }
+    count
 }
 
 fn pct(count: usize, total: usize) -> f64 {
@@ -150,6 +200,9 @@ pub struct PlanAccumulator {
     lake_land: usize,
     river_land: usize,
     diag: ZoneDiagnostics,
+    /// Колонки воды озёр по сетке: по ним считаются отдельные водоёмы
+    /// (ВО0-3), а не площадь узлов.
+    lake_grid: Vec<Vec<bool>>,
 }
 
 impl PlanAccumulator {
@@ -208,6 +261,33 @@ impl PlanAccumulator {
         }
     }
 
+    /// То же, что [`Self::add`], но с местом колонки в сетке: `finish`
+    /// считает по этим местам отдельные водоёмы (ВО0-3, §10.1).
+    #[allow(clippy::too_many_arguments)]
+    pub fn add_cell(
+        &mut self,
+        i: usize,
+        j: usize,
+        land: bool,
+        e: f64,
+        in_river: bool,
+        in_lake: bool,
+        in_basin: Basin,
+        dominant: usize,
+    ) {
+        if in_lake {
+            if self.lake_grid.len() <= j {
+                self.lake_grid.resize(j + 1, Vec::new());
+            }
+            let row = &mut self.lake_grid[j];
+            if row.len() <= i {
+                row.resize(i + 1, false);
+            }
+            row[i] = true;
+        }
+        self.add(land, e, in_river, in_lake, in_basin, dominant);
+    }
+
     /// Диагностика T123 по этой же выборке.
     pub fn diagnose(&mut self, mountain: f64, plateau: f64, m_e: f64) {
         self.diag.add(mountain, plateau, m_e);
@@ -221,6 +301,7 @@ impl PlanAccumulator {
             dry_land: self.dry_land,
             lake_land: self.lake_land,
             river_land: self.river_land,
+            lakes: count_water_bodies(&self.lake_grid),
             area_l2,
         };
         shape.land = self.dry_land;
@@ -234,6 +315,7 @@ impl PlanAccumulator {
         shape.river_pct = pct(self.river_land, rivers.land);
 
         let mut all_ok = true;
+        let mut bands_ok = true;
         let mut any_zone_verdict = false;
         for (zone, name) in ZONE_NAMES.iter().enumerate() {
             let total = self.zone_land[zone] + self.zone_lake[zone] + self.zone_river[zone];
@@ -283,9 +365,15 @@ impl PlanAccumulator {
             );
             if in_plan_list && z.distinct_bands == 0 {
                 zone_ok = false;
+                bands_ok = false;
+                shape.notes.push(format!(
+                    "{}: ни одна полоса E не отличается от средней на {CLIMATE_SHAPE_MIN_GAP_PP} п. п. (наибольшее отличие {:.1})",
+                    z.name, z.max_gap_pp
+                ));
             }
             if z.name == "arid" && z.erosion_pct[2] < ARID_E2_MIN_PCT {
                 zone_ok = false;
+                bands_ok = false;
                 shape.notes.push(format!(
                     "arid: E2 {:.1} % < {ARID_E2_MIN_PCT} %",
                     z.erosion_pct[2]
@@ -311,6 +399,11 @@ impl PlanAccumulator {
             shape.zones.push(z);
         }
         shape.pass = if any_zone_verdict { Some(all_ok) } else { None };
+        shape.bands_pass = if any_zone_verdict {
+            Some(bands_ok)
+        } else {
+            None
+        };
         (shape, rivers, self.diag)
     }
 }
@@ -433,7 +526,9 @@ pub fn reach_report(
                 out.ends_endorheic += 1;
                 out.ends_with_water += 1;
             }
-            "confluence" => {
+            // Шаг 2 плана (T113): русло, переданное сети соседней плиты,
+            // продолжается там с тем же расходом — это не обрыв.
+            "confluence" | "handoff" => {
                 out.ends_confluence += 1;
                 out.ends_with_water += 1;
             }
@@ -561,6 +656,11 @@ pub fn text(
         Some(false) => out.push_str("  итог: НЕ в цели 10.1\n"),
         None => out.push_str("  итог: нет объёма по зонам\n"),
     }
+    match shape.bands_pass {
+        Some(true) => out.push_str("  только полосы E (без озёр и рек): в цели\n"),
+        Some(false) => out.push_str("  только полосы E (без озёр и рек): НЕ в цели\n"),
+        None => {}
+    }
     for note in &shape.notes {
         out.push_str(&format!("  · {note}\n"));
     }
@@ -637,6 +737,29 @@ mod tests {
         assert_eq!(report.lakes, 1);
         assert_eq!(report.high_lakes, 1);
         assert!(report.plain_sinuosity_median.is_some());
+    }
+
+    #[test]
+    fn lakes_are_counted_as_bodies_not_as_node_area() {
+        // ВО0-3: два озера по три колонки — это два озера, а не «6 узлов».
+        let mut acc = PlanAccumulator::new();
+        // Первое озеро: строка 0, колонки 0..3.
+        for i in 0..3 {
+            acc.add_cell(i, 0, true, 0.2, false, true, Basin::None, 0);
+        }
+        // Второе озеро: строка 2, колонки 5 и 6 (в строке 1 воды нет).
+        for i in 5..7 {
+            acc.add_cell(i, 2, true, 0.2, false, true, Basin::None, 0);
+        }
+        // Площадь суши вокруг, чтобы плотность считалась.
+        for j in 0..4 {
+            for i in 0..8 {
+                acc.add_cell(i, j, true, 0.2, false, false, Basin::None, 0);
+            }
+        }
+        let (_shape, rivers, _diag) = acc.finish(64.0);
+        assert_eq!(rivers.lakes, 2, "два водоёма, а не площадь узлов");
+        assert!(rivers.lakes_per_100_l2() > 0.0);
     }
 
     #[test]

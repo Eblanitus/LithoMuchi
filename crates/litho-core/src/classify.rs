@@ -5,7 +5,7 @@ use crate::climate::ClimateSample;
 use crate::math::{LN_2, clamp, clamp01, dexp, dln, smoothstep};
 use crate::noise::{fbm2, fbm2_unit};
 use crate::params::Params;
-use crate::seed::{SALT_CLASS_JITTER, SALT_CLASS_JITTER_COARSE, SALT_ECOTONE, subseed};
+use crate::seed::{SALT_CLASS_JITTER, SALT_ECOTONE, subseed};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct LifeZone {
@@ -35,12 +35,29 @@ pub struct ClassSample {
     pub is_ocean: bool,
     pub t_bio: f64,
     pub ratio: f64,
+    /// К11 / Д-119: пояс по средней годовой температуре, без сезонов и
+    /// высоты. Строка T биома не выходит за его допустимые строки; `v0`
+    /// это поле не читает (там пояс остаётся по биотемпературе в `zone`).
+    pub mean_belt: u8,
 }
 
-fn belt_of(t_bio: f64, params: &Params) -> u8 {
+/// Пояс по биотемпературе (как в `v0`).
+fn belt_of_bio(t_bio: f64, params: &Params) -> u8 {
+    belt_edges(t_bio, params.climate.belt_edges_c)
+}
+
+/// К11 / Д-119: пояс `v1-dev` — по средней годовой температуре `t_c`.
+/// Биотемпература «летняя» (месяцы ниже 0 °C считаются за 0 °C) поднимала
+/// пояс в глубине материка, и правило зимы возвращало биом назад: два
+/// правила гасили друг друга. Пояс — одна температура, без сезонов.
+fn belt_of_mean(t_c: f64, params: &Params) -> u8 {
+    belt_edges(t_c, params.climate.belt_edges_mean_c)
+}
+
+fn belt_edges(t: f64, edges: [f64; 6]) -> u8 {
     let mut belt = 0_u8;
-    for edge in params.climate.belt_edges_c {
-        if t_bio >= edge {
+    for edge in edges {
+        if t >= edge {
             belt += 1;
         } else {
             break;
@@ -61,9 +78,12 @@ fn province_of(ratio: f64, params: &Params) -> u8 {
 }
 
 fn desert(t_min: f64, params: &Params) -> VanillaCell {
-    // Правило ⚑ [ПО СИТУАЦИИ]: в игре нет холодной пустыни. Песок ставим
-    // только там, где зима не уходит в мороз; сухие места с морозной зимой
-    // (Гоби, Большой Бассейн) становятся сухими равнинами (Д-014).
+    // К11 / Д-119: в `v1-dev` зима биом не выбирает — песок ставится по
+    // поясу (П4 и теплее) и сухости. В `v0` правило Д-014
+    // (`cold_desert_winter_c`) остаётся как было.
+    if params.version.is_water_relief_dev() {
+        return cell(4, 0, "desert");
+    }
     if params.climate.cold_desert_sand && t_min >= params.climate.cold_desert_winter_c {
         cell(4, 0, "desert")
     } else {
@@ -71,6 +91,9 @@ fn desert(t_min: f64, params: &Params) -> VanillaCell {
     }
 }
 
+/// Правило суровой зимы — только `v0`. К11 / Д-119 убрал его из `v1-dev`:
+/// в 92 % случаев оно гасило подъём пояса от «летней» биотемпературы, и
+/// пояс с биомом говорили разное.
 fn severe_winter(belt: u8, t_min: f64, params: &Params) -> bool {
     match belt {
         2 => t_min < params.climate.winter_boreal_c,
@@ -79,10 +102,71 @@ fn severe_winter(belt: u8, t_min: f64, params: &Params) -> bool {
     }
 }
 
-/// Таблица 7.8.2: пояс × провинция → ванильная ячейка `(t, h)`.
+/// К2 / Д-104, К11 / Д-119: кайма пустыни в `v1-dev`. Песок — ванильная
+/// ступень t4, его соседи стоят на t1…t3, поэтому пустыня набирает ступени
+/// по одной: у низкого края пояса (t2) и у порога сухости идёт саванна
+/// (t3), и только потом песок (t4). Зима в кайме больше не участвует.
+/// Ширина одной ступени каймы по сухости, log2 R.
+const DESERT_RIM_LOG2_R: f64 = 0.5;
+/// Ширина одной ступени каймы по температуре, °C.
+const DESERT_RIM_C: f64 = 1.5;
+
+fn desert_with_rim(belt: u8, t_bio: f64, ratio: f64, params: &Params) -> VanillaCell {
+    let c = &params.climate;
+    // Порог K3/K2: суше него таблица ставит пустыню.
+    let dry_edge = dln(c.province_edges_r[3].max(1e-9)) / LN_2;
+    let by_dryness = 3.0 + (dln(ratio.max(1e-9)) / LN_2 - dry_edge).max(0.0) / DESERT_RIM_LOG2_R;
+    // Ступень по температуре — от нижнего края П4 (порог `belt_edges_mean_c[3]`):
+    // у края t2 (сухие равнины), дальше по одной на `DESERT_RIM_C` градуса.
+    // Без неё на границе П3/П4 сухая точка прыгала с t2 сразу на песок t4.
+    let by_warmth = 2.0 + (t_bio - c.belt_edges_mean_c[3]) / DESERT_RIM_C;
+    // В П4 низ пояса даёт t2 (сухие равнины), П5–П6 весь диапазон t3…t4.
+    let lo = if belt <= 4 { 2.0 } else { 3.0 };
+    let rim = by_dryness.min(by_warmth);
+    match rim.clamp(lo, 4.0).floor() as u8 {
+        2 => cell(2, 1, "plains"),
+        3 => cell(3, 0, "savanna"),
+        _ => cell(4, 0, "desert"),
+    }
+}
+
+/// К2 / Д-104: шаг от ячейки `base` к ячейке `target` не больше чем на одну
+/// ступень по T и по H. Так накладки (сухая котловина, галерейный лес,
+/// болото) не ставят рядом ячейки через ступень.
+pub(crate) fn step_toward(base: VanillaCell, target: VanillaCell) -> VanillaCell {
+    let step = |from: u8, to: u8| match to.cmp(&from) {
+        std::cmp::Ordering::Greater => from + 1,
+        std::cmp::Ordering::Less => from - 1,
+        std::cmp::Ordering::Equal => from,
+    };
+    let (t, h) = (step(base.t, target.t), step(base.h, target.h));
+    if (t, h) == (target.t, target.h) {
+        target
+    } else if (t, h) == (base.t, base.h) {
+        base
+    } else {
+        middle_cell(t, h)
+    }
+}
+
+/// Таблица 7.8.2 без каймы пустыни по поясу: для контрольных точек и тестов,
+/// где биотемпература внутри пояса не задана.
 pub fn biome_cell(belt: u8, province: u8, ratio: f64, t_min: f64, params: &Params) -> VanillaCell {
+    biome_cell_at(belt, province, f64::INFINITY, ratio, t_min, params)
+}
+
+/// Таблица 7.8.2: пояс × провинция → ванильная ячейка `(t, h)`.
+/// `t_bio` нужен только кайме пустыни `v1-dev`; `v0` его не читает.
+pub fn biome_cell_at(
+    belt: u8,
+    province: u8,
+    t_bio: f64,
+    ratio: f64,
+    t_min: f64,
+    params: &Params,
+) -> VanillaCell {
     if params.version.is_water_relief_dev() {
-        return biome_cell_ladder(belt, province, t_min, params);
+        return biome_cell_ladder(belt, province, t_bio, ratio, t_min, params);
     }
     let cold = severe_winter(belt, t_min, params);
     match (belt, province) {
@@ -172,7 +256,14 @@ pub fn biome_cell(belt: u8, province: u8, ratio: f64, t_min: f64, params: &Param
 /// ветки v0 по R (flower_forest при R≈1, birch при R≤0.75, dark_forest при
 /// R≥0.35) убраны: они создавали скачки h внутри одной провинции. Имя биома
 /// берётся из средней таблицы A.2 по итовым `(t,h)`.
-fn biome_cell_ladder(belt: u8, province: u8, t_min: f64, params: &Params) -> VanillaCell {
+fn biome_cell_ladder(
+    belt: u8,
+    province: u8,
+    t_bio: f64,
+    ratio: f64,
+    _t_min: f64,
+    params: &Params,
+) -> VanillaCell {
     let belt = belt.min(6);
     let province = province.clamp(1, 6);
     // Влажность: K1/K2 сухо, дальше по одной ступени на провинцию.
@@ -191,33 +282,31 @@ fn biome_cell_ladder(belt: u8, province: u8, t_min: f64, params: &Params) -> Van
         _ => 4,
     };
     let h = wet.min(cap);
-    let cold = severe_winter(belt, t_min, params);
+    // К11 / Д-119: строка T — только от пояса. Зима (`t_min`) и «летняя»
+    // биотемпература строку больше не двигают: П2 — всегда t1, П3 — всегда
+    // t2, П4 — t2…t4 по сухости, П5–П6 — t3…t4. Снег и лёд остаются в
+    // П0–П1 (строка t0), в остальных поясах их ставит только ванильная
+    // горная лестница по нашей высоте (Д-118).
     let t = match belt {
         0 | 1 => 0_u8,
-        2 => {
-            if cold {
-                0
-            } else {
-                1
-            }
-        }
+        2 => 1,
         3 => {
             if province <= 2 {
-                // Правило ⚑ холодной пустыни сохранено как в v0.
-                return desert(t_min, params);
+                // К11: в П3 сухо — сухие равнины t2 (саванна и песок только
+                // с П4), без ветки морозной зимы.
+                return cell(2, 1, "plains");
             }
-            if cold { 1 } else { 2 }
+            2
         }
         4 => {
             if province <= 2 {
-                return desert(t_min, params);
+                return desert_with_rim(belt, t_bio, ratio, params);
             }
-            // Тёплый умеренный: сухо — саванна, влажно — лиственный лес.
             if province >= 5 { 2 } else { 3 }
         }
         _ => {
             if province <= 2 {
-                return desert(t_min, params);
+                return desert_with_rim(belt, t_bio, ratio, params);
             }
             3
         }
@@ -243,16 +332,48 @@ pub fn ocean_cell(sst_c: f64, params: &Params) -> VanillaCell {
 
 /// Классификация на прямых входах, без дрожания границ (контрольные точки).
 pub fn classify_inputs(t_bio: f64, ratio: f64, t_min: f64, params: &Params) -> ClassSample {
+    classify_inputs_at(t_bio, t_bio, ratio, t_min, params)
+}
+
+/// К11 / Д-119: то же плюс средняя годовая температура `t_c`, по которой
+/// `v1-dev` считает пояс. `v0` `t_c` не читает.
+pub fn classify_inputs_at(
+    t_c: f64,
+    t_bio: f64,
+    ratio: f64,
+    t_min: f64,
+    params: &Params,
+) -> ClassSample {
+    let by_mean = params.version.is_water_relief_dev();
+    let belt = if by_mean {
+        belt_of_mean(t_c, params)
+    } else {
+        belt_of_bio(t_bio, params)
+    };
     let zone = LifeZone {
-        belt: belt_of(t_bio, params),
+        belt,
         province: province_of(ratio, params),
     };
     ClassSample {
         zone,
-        cell: biome_cell(zone.belt, zone.province, ratio, t_min, params),
+        cell: biome_cell_at(zone.belt, zone.province, t_bio, ratio, t_min, params),
         is_ocean: false,
         t_bio,
         ratio,
+        mean_belt: belt,
+    }
+}
+
+/// К11 / Д-119: допустимые строки ванильной температуры для пояса. В этих
+/// пределах биом и должен стоять; проверка живёт в `litho-core` и в
+/// песочнице (`belts`).
+pub const fn allowed_rows(belt: u8) -> (u8, u8) {
+    match belt {
+        0 | 1 => (0, 0),
+        2 => (1, 1),
+        3 => (2, 2),
+        4 => (2, 4),
+        _ => (3, 4),
     }
 }
 
@@ -270,47 +391,17 @@ pub fn classify(
     let sub = subseed(seed, SALT_CLASS_JITTER);
     let u = x / c.jitter_lambda_blocks;
     let v = z / c.jitter_lambda_blocks;
-    let (jitter_t, jitter_r) = if params.version.is_water_relief_dev() {
-        // T101/T133: амплитуды в σ. Мелкий масштаб λ240 остаётся прежним;
-        // крупный λ1000 добавляет независимое дрожание с σ в factor раз больше
-        // (стартовый factor 4 ≈ смещение границ ±200 против ±50 блоков).
-        let b = &params.boundaries;
-        let coarse = subseed(seed, SALT_CLASS_JITTER_COARSE);
-        let cu = x / b.jitter_coarse_lambda_blocks;
-        let cv = z / b.jitter_coarse_lambda_blocks;
-        let f = b.jitter_coarse_sigma_factor;
-        (
-            fbm2_unit(sub, u, v, 1.0, c.jitter_octaves, c.jitter_gain)
-                + f * fbm2_unit(coarse, cu, cv, 1.0, c.jitter_octaves, c.jitter_gain),
-            fbm2_unit(
-                sub.wrapping_add(1),
-                u,
-                v,
-                1.0,
-                c.jitter_octaves,
-                c.jitter_gain,
-            ) + f * fbm2_unit(
-                coarse.wrapping_add(1),
-                cu,
-                cv,
-                1.0,
-                c.jitter_octaves,
-                c.jitter_gain,
-            ),
-        )
-    } else {
-        (
-            fbm2(sub, u, v, 1.0, c.jitter_octaves, c.jitter_gain),
-            fbm2(
-                sub.wrapping_add(1),
-                u,
-                v,
-                1.0,
-                c.jitter_octaves,
-                c.jitter_gain,
-            ),
-        )
-    };
+    // К1 / Д-103: одно дрожание для всех версий, как в v0. Единичный fBm
+    // и крупный слой T101/T133 убраны: они дробили биомы на пятна.
+    let jitter_t = fbm2(sub, u, v, 1.0, c.jitter_octaves, c.jitter_gain);
+    let jitter_r = fbm2(
+        sub.wrapping_add(1),
+        u,
+        v,
+        1.0,
+        c.jitter_octaves,
+        c.jitter_gain,
+    );
     let t_bio = climate.temperature.t_bio + params.block.jitter_t_c * jitter_t;
     let log2_r = clamp(
         dln(climate.precip.ratio.max(1e-9)) / LN_2 + params.block.jitter_r_log2 * jitter_r,
@@ -318,7 +409,10 @@ pub fn classify(
         10.0,
     );
     let ratio = dexp(LN_2 * log2_r);
-    let mut result = classify_inputs(t_bio, ratio, climate.temperature.t_min, params);
+    // К11 / Д-119: в `v1-dev` пояс считается по средней температуре `t_c`
+    // (плюс то же дрожание границ); `t_bio` остаётся для `v0`, сухости и каймы.
+    let t_c = climate.temperature.t_c + params.block.jitter_t_c * jitter_t;
+    let mut result = classify_inputs_at(t_c, t_bio, ratio, climate.temperature.t_min, params);
     if params.version.is_water_relief_dev() && !is_ocean {
         result.cell = ecotone_cell(
             result,
@@ -336,6 +430,7 @@ pub fn classify(
             belt: result.cell.t,
             province: 1,
         };
+        result.mean_belt = result.cell.t;
         result.is_ocean = true;
     }
     result
@@ -400,9 +495,10 @@ fn ecotone_cell(
                 -0.5
             }),
     );
-    let neighbor = biome_cell(
+    let neighbor = biome_cell_at(
         base.zone.belt,
         neighbor_province,
+        base.t_bio,
         neighbor_ratio,
         t_min,
         params,
@@ -417,7 +513,8 @@ fn ecotone_cell(
     middle_cell(base.cell.t, h)
 }
 
-fn middle_cell(t: u8, h: u8) -> VanillaCell {
+/// Имя биома по ванильной ячейке `(t, h)` — средняя таблица A.2.
+pub(crate) fn middle_cell(t: u8, h: u8) -> VanillaCell {
     let name = match (t.min(4), h.min(4)) {
         (0, 0 | 1) => "snowy_plains",
         (0, 2) => "snowy_taiga",
@@ -555,35 +652,67 @@ mod t133_tests {
     }
 
     #[test]
-    fn coarse_jitter_moves_classes_more_than_fine_and_v0_is_bitwise_unchanged() {
-        let dev = Params::defaults(GenVersion::V1Dev, Mode::Gameplay);
-        let mut fine_only = dev.clone();
-        fine_only.boundaries.jitter_coarse_sigma_factor = 1.0;
+    fn v1_dev_table_and_desert_rim_never_jump_a_step() {
+        // К2 / Д-104: по сетке непрерывных входов соседние точки дают
+        // ванильные ступени T и H, отличающиеся не больше чем на одну.
+        let p = Params::defaults(GenVersion::V1Dev, Mode::Gameplay);
+        let cell_at = |t_bio: f64, log2_r: f64, winter: f64| {
+            classify_inputs(t_bio, dexp(LN_2 * log2_r), winter, &p).cell
+        };
+        // Каждый вход меняется отдельно: в мире два порога пересекаются
+        // только в точке, и такая «диагональ» в счёт не идёт.
+        let mut checked = 0_u32;
+        for wi in -40..=30 {
+            let winter = wi as f64;
+            for ti in 0..=300 {
+                let t_bio = ti as f64 * 0.1;
+                for ri in -80..=80 {
+                    let log2_r = ri as f64 * 0.05;
+                    let here = cell_at(t_bio, log2_r, winter);
+                    for next in [
+                        cell_at(t_bio + 0.1, log2_r, winter),
+                        cell_at(t_bio, log2_r + 0.05, winter),
+                        cell_at(t_bio, log2_r, winter + 1.0),
+                    ] {
+                        assert!(
+                            here.t.abs_diff(next.t) <= 1 && here.h.abs_diff(next.h) <= 1,
+                            "T_bio {t_bio}, log2 R {log2_r}, зима {winter}: {here:?} → {next:?}"
+                        );
+                        checked += 1;
+                    }
+                }
+            }
+        }
+        assert!(checked > 100_000);
+    }
+
+    #[test]
+    fn step_toward_moves_one_step_and_keeps_reached_target() {
+        let base = cell(0, 2, "snowy_taiga");
+        let stepped = step_toward(base, cell(1, 0, "plains"));
+        assert_eq!((stepped.t, stepped.h), (1, 1));
+        let near = step_toward(cell(3, 1, "savanna"), cell(3, 2, "forest"));
+        assert_eq!(near, cell(3, 2, "forest"));
+        assert_eq!(step_toward(base, base), base);
+    }
+
+    #[test]
+    fn jitter_of_v1_dev_is_the_v0_jitter() {
+        // К1 / Д-103: при одинаковых амплитудах дрожание v1-dev побитно
+        // равно v0 (экотоны выключены, климат один и тот же).
         let old = Params::defaults(GenVersion::V0, Mode::Gameplay);
-        let mut changed_old = old.clone();
-        changed_old.boundaries.jitter_coarse_sigma_factor = 8.0;
-        changed_old.boundaries.ecotone_max_fraction = 0.5;
+        let dev = Params::defaults(GenVersion::V1Dev, Mode::Gameplay);
+        assert_eq!(dev.block.jitter_t_c, old.block.jitter_t_c);
+        assert_eq!(dev.block.jitter_r_log2, old.block.jitter_r_log2);
         let c = climate(15.0, 1.0);
-        let mut dev_moves = 0;
-        let mut fine_moves = 0;
         for k in 0..400 {
             let x = k as f64 * 37.0 - 7000.0;
             let z = k as f64 * -23.0 + 3000.0;
-            let base = classify_inputs(15.0, 1.0, 5.0, &dev);
-            let d = classify(&c, false, x, z, 42, &dev);
-            let f = classify(&c, false, x, z, 42, &fine_only);
-            dev_moves += usize::from(d.cell != base.cell);
-            fine_moves += usize::from(f.cell != base.cell);
-            let a = classify(&c, false, x, z, 42, &old);
-            let b = classify(&c, false, x, z, 42, &changed_old);
-            assert_eq!(a.cell, b.cell);
+            let a = classify(&c, true, x, z, 42, &old);
+            let b = classify(&c, true, x, z, 42, &dev);
             assert_eq!(a.t_bio.to_bits(), b.t_bio.to_bits());
             assert_eq!(a.ratio.to_bits(), b.ratio.to_bits());
         }
-        assert!(
-            dev_moves > fine_moves,
-            "крупный масштаб должен двигать границы сильнее: {dev_moves} vs {fine_moves}"
-        );
     }
 
     #[test]

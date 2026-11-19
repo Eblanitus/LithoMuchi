@@ -48,7 +48,7 @@ pub fn apply_with_pv(
     let m = &params.morpho;
     let r = &params.relief;
     let surface = climate.surface;
-    let land = smoothstep(0.0, r.land_e_fade_km, surface.e_km);
+    let land = smoothstep(0.0, r.land_fade_km(), surface.e_km);
     let zone = morphoclimate::mix(weights, params);
     let a = smoothstep(r.a_lo, r.a_hi, relief.a);
 
@@ -71,6 +71,9 @@ pub fn apply_with_pv(
         c.e_plateau,
         clamp01(surface.plateau * (1.0 - m_e)),
     );
+    // Д-095: зона перекладывает сушу между плато, холмами и равнинами —
+    // после гор и плато, чтобы климат решал и за тектоническое плато.
+    let e_relief = morphoclimate::remap_erosion(e_relief, weights, params);
     let e_value = clamp(lerp(base.e, e_relief, land), -1.0, 1.0);
 
     // PV_relief → |W| на ветви [0, 2/3]; знак непрерывный, горы смещают его.

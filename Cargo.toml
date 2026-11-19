@@ -3,6 +3,7 @@
 [workspace]
 members = [
     "crates/litho-core",
+    "crates/litho-ffi",
     "crates/litho-sandbox",
     "crates/litho-tests",
     "tools/xtask",

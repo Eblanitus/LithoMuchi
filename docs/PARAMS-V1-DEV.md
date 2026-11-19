@@ -1,12 +1,22 @@
 # Параметры генератора v1-dev
 
-> **Актуально на 2026-11-12, T79 (Д-064) и шаг 7 (Д-065).** Таблица и хеши
-> сгенерированы из `Params::defaults`; `v0` не менялась. Что изменилось —
-> [archive/T79-LOD-2026-11-12.md](archive/T79-LOD-2026-11-12.md) (дальний рельеф) и
-> `docs/t151/` (подбор по 16 сидам); прежние отчёты —
-> [archive/STEP5-RELIEF-2026-11-11.md](archive/STEP5-RELIEF-2026-11-11.md) и
-> [archive/STEP6-SPEED-2026-11-11.md](archive/STEP6-SPEED-2026-11-11.md), карта документов —
-> [docs/README.md](README.md).
+> **Актуально на 2026-11-17, К11 — биом от пояса (Д-119, план
+> `docs/spec/PLAN-BELTS-2026-11-17.md`): пояс П0–П6 считается по средней годовой
+> `t_c`, строка T биома берётся только от пояса. Добавлен
+> `climate.belt_edges_mean_c = [1.5, 3.0, 6.0, 12.0, 18.0, 24.0]` (подбор по долям
+> строк на сидах 42 и 7, оба режима, — `belts`), `climate.alt_cool_c_per_block`
+> 0,2 → `0`, `climate.alt_cool_land_c` остаётся `3.5`. В `v1-dev` не читаются
+> `climate.winter_temperate_c`, `climate.winter_boreal_c`, `climate.cold_desert_*`
+> и `lakes.frozen_t_min_c` — это `v0`. До этого К7 нового плана — научный мир выше
+> ванильного (Д-113): `height.max_y` в scientific 319 → 447; до этого К5 — вычет
+> температуры по высоте поверхности в игре (Д-111): добавлены
+> `climate.alt_cool_base_y`, `climate.alt_cool_c_per_block`, `climate.alt_cool_land_c`;
+> до этого К4а/часть 2 — крутизна своей поверхности (Д-110); до этого К4 — спуск
+> суши к воде по расстоянию до берега (Д-108); до этого К1 — откат шума границ к
+> `v0` (Д-103); до этого шаг 3 плана T123 (Д-095); до этого шаг 2 T113 (Д-092),
+> T79 (Д-064) и шаг 7 (Д-065).** Таблица и хеши сгенерированы из
+> `Params::defaults`; `v0` не менялась. Карта документов — [docs/README.md](README.md).
+
 
 Сгенерировано `cargo run -p xtask -- params-doc --version v1-dev > docs/PARAMS-V1-DEV.md`.
 Источник правды — `Params::defaults` в `crates/litho-core/src/params.rs`.
@@ -15,8 +25,8 @@
 |---|---|---|
 | `block.delta_coarse_blocks` | `250` | `62.5` |
 | `block.delta_fine_blocks` | `62.5` | `15.625` |
-| `block.jitter_r_log2` | `0.125` | `0.25` |
-| `block.jitter_t_c` | `0.5` | `1` |
+| `block.jitter_r_log2` | `0.25` | `0.5` |
+| `block.jitter_t_c` | `0.8` | `1.5` |
 | `block.l_blocks` | `1000` | `250` |
 | `block.lambda_e_blocks` | `2400` | `1200` |
 | `block.lambda_s_blocks` | `8000` | `2400` |
@@ -32,8 +42,6 @@
 | `boundaries.ecotone_lambda_blocks` | `256.0` | `256.0` |
 | `boundaries.ecotone_max_fraction` | `0.0` | `0.0` |
 | `boundaries.ecotone_width_log2` | `0.35` | `0.35` |
-| `boundaries.jitter_coarse_lambda_blocks` | `1000.0` | `1000.0` |
-| `boundaries.jitter_coarse_sigma_factor` | `4.0` | `4.0` |
 | `boundaries.pass_depth` | `0.6` | `0.6` |
 | `boundaries.pass_gain` | `0.5` | `0.5` |
 | `boundaries.pass_lambda_l` | `2.0` | `2.0` |
@@ -69,11 +77,15 @@
 | `channels.valley_mountain` | `2.0` | `2.0` |
 | `channels.valley_plain` | `5.0` | `5.0` |
 | `climate.advection_wind_min` | `0.6` | `0.6` |
+| `climate.alt_cool_base_y` | `120.0` | `120.0` |
+| `climate.alt_cool_c_per_block` | `0.0` | `0.0` |
+| `climate.alt_cool_land_c` | `3.5` | `3.5` |
 | `climate.amp_base_c` | `1.0` | `1.0` |
 | `climate.amp_land_factor` | `0.75` | `0.75` |
 | `climate.amp_lat_c` | `24.0` | `24.0` |
 | `climate.amp_sea_factor` | `0.25` | `0.25` |
 | `climate.belt_edges_c` | `[1.5, 3.0, 6.0, 12.0, 18.0, 24.0]` | `[1.5, 3.0, 6.0, 12.0, 18.0, 24.0]` |
+| `climate.belt_edges_mean_c` | `[1.5, 3.0, 6.0, 12.0, 18.0, 24.0]` | `[1.5, 3.0, 6.0, 12.0, 18.0, 24.0]` |
 | `climate.belt_polar_deg` | `[68.0, 78.0]` | `[68.0, 78.0]` |
 | `climate.belt_trade_deg` | `[25.0, 35.0]` | `[25.0, 35.0]` |
 | `climate.belt_west_deg` | `[25.0, 35.0]` | `[25.0, 35.0]` |
@@ -110,6 +122,8 @@
 | `climate.local_fraction_width_deg` | `15.0` | `15.0` |
 | `climate.m_e_hi` | `0.7` | `1.0` |
 | `climate.m_e_lo` | `0.05` | `0.05` |
+| `climate.mountain_biome_full_y` | `250.0` | `250.0` |
+| `climate.mountain_biome_y` | `150.0` | `150.0` |
 | `climate.ocean_c_threshold` | `-0.19` | `-0.19` |
 | `climate.p_min_mm` | `10.0` | `10.0` |
 | `climate.pet_per_bio_c` | `58.93` | `58.93` |
@@ -201,6 +215,7 @@
 | `drainage.depression_min_depth_km` | `0.015` | `0.015` |
 | `drainage.et_factor` | `1.0` | `1.0` |
 | `drainage.fill_epsilon_km` | `0.0001` | `0.0001` |
+| `drainage.handoff_max_hops` | `6` | `6` |
 | `drainage.jitter_fraction` | `0.35` | `0.35` |
 | `drainage.lake_area_max_fraction` | `0.03` | `0.03` |
 | `drainage.outlet_min_weight` | `0.5` | `0.5` |
@@ -214,7 +229,7 @@
 | `height.jaggedness` | `[0.8, 0.5, 0.0, 0.0, 0.0, 0.2, 0.0]` | `[0.8, 0.5, 0.0, 0.0, 0.0, 0.2, 0.0]` |
 | `height.lake_depth_max_blocks` | `64.0` | `64.0` |
 | `height.land_y` | `[[90.0, 120.0, 150.0, 185.0, 230.0], [80.0, 95.0, 112.0, 128.0, 150.0], [63.5, 78.0, 100.0, 115.0, 129.0], [63.5, 71.0, 81.0, 100.0, 114.0], [63.5, 64.0, 65.0, 67.0, 71.0], [63.5, 64.5, 66.0, 68.0, 71.0], [62.0, 62.5, 63.0, 63.5, 64.0]]` | `[[90.0, 120.0, 150.0, 185.0, 230.0], [80.0, 95.0, 112.0, 128.0, 150.0], [63.5, 78.0, 95.0, 110.0, 124.0], [63.5, 71.0, 81.0, 90.0, 108.0], [63.5, 66.0, 69.0, 74.0, 80.0], [63.5, 64.5, 66.0, 68.0, 71.0], [62.0, 62.5, 63.0, 63.5, 64.0]]` |
-| `height.max_y` | `319.0` | `319.0` |
+| `height.max_y` | `447.0` | `319.0` |
 | `height.micro_amp_blocks` | `[6.0, 6.0, 5.0, 4.5, 4.0, 2.0, 0.0]` | `[4.0, 4.0, 3.0, 2.5, 1.5, 1.0, 0.0]` |
 | `height.micro_high_y` | `74.0` | `74.0` |
 | `height.micro_lambda_blocks` | `96.0` | `96.0` |
@@ -223,6 +238,8 @@
 | `height.ocean_c` | `[-0.98, -0.7, -0.52, -0.45, -0.4, -0.3, -0.19]` | `[-0.98, -0.7, -0.52, -0.45, -0.4, -0.3, -0.19]` |
 | `height.ocean_y` | `[35.0, 42.0, 48.0, 52.0, 55.0, 59.0, 63.0]` | `[35.0, 42.0, 48.0, 52.0, 55.0, 59.0, 63.0]` |
 | `height.pv_knots` | `[-1.0, -0.5, 0.0, 0.5, 1.0]` | `[-1.0, -0.5, 0.0, 0.5, 1.0]` |
+| `height.shore_cliff_e` | `-0.375` | `-0.375` |
+| `height.shore_width_blocks` | `24.0` | `24.0` |
 | `height.warm_jagged_drop` | `0.1` | `0.1` |
 | `height.water_km_to_blocks` | `24.0` | `64.0` |
 | `hydrology.bank_fraction` | `0.5` | `0.5` |
@@ -260,6 +277,8 @@
 | `morpho.c_highland_gain` | `0.15` | `0.15` |
 | `morpho.e_flat` | `[0.35, 0.3, 0.25, 0.2, 0.3, 0.15, -0.55, -0.5]` | `[0.35, 0.3, 0.25, 0.2, 0.3, 0.15, -0.55, -0.5]` |
 | `morpho.e_hill` | `[0.04, -0.11, -0.21, -0.44, -0.46, -0.18, -0.75, -0.7]` | `[0.04, -0.11, -0.21, -0.36, -0.38, -0.18, -0.75, -0.7]` |
+| `morpho.e_remap_hi` | `[-0.12, -0.15, 0.09, 0.02, 0.11, 0.12, 0.05, 0.05]` | `[-0.15, -0.15, 0.02, 0.05, 0.16, -0.12, 0.05, 0.05]` |
+| `morpho.e_remap_lo` | `[-0.36, -0.36, -0.36, -0.08, 0.04, -0.36, -0.2225, -0.2225]` | `[-0.29, -0.29, -0.29, -0.25, -0.1, -0.29, -0.2225, -0.2225]` |
 | `morpho.lambda_pv_blocks` | `[250.0, 300.0, 400.0, 450.0, 500.0, 250.0, 450.0, 450.0]` | `[250.0, 300.0, 400.0, 450.0, 500.0, 250.0, 450.0, 450.0]` |
 | `morpho.mountain_hi` | `0.7` | `0.7` |
 | `morpho.mountain_lo` | `0.5` | `0.5` |
@@ -350,7 +369,8 @@
 | `relief.hills_lambda_l` | `1.5` | `1.5` |
 | `relief.hills_noise_hi` | `1.5` | `1.5` |
 | `relief.hills_noise_lo` | `-0.5` | `-0.5` |
-| `relief.land_e_fade_km` | `0.05` | `0.05` |
+| `relief.land_e_gradient_km_per_block` | `0.001` | `0.004` |
+| `relief.land_fade_blocks` | `64.0` | `64.0` |
 | `relief.paleo_a_max` | `0.6` | `0.6` |
 | `relief.paleo_a_min` | `0.4` | `0.4` |
 | `relief.paleo_band_hi` | `0.15` | `0.15` |
@@ -414,4 +434,9 @@
 | `wind.knot7.phi_deg` | `90` | `90` |
 | `wind.knot7.s` | `0.3` | `0.3` |
 
-params_hash: scientific = 8887e6a4ec1f7f65, gameplay = c83af97b33674349
+> **Ключи только у `v1-dev-r2`** (Д-123, Д-125): в канонический текст и хеш этой версии
+> входят ещё `height.bank_raise_blocks` = `8.0` (полоса берега, где суша добивается
+> до зеркала) и `height.bank_raise_max_blocks` = `2.0` (добивка только при нехватке
+> не больше двух блоков). В `v1-dev` этих ключей нет, поэтому её хеш не меняется.
+
+params_hash: scientific = 35f888f82f3ba603, gameplay = 9cbf72e5fb90b9b7

@@ -754,3 +754,45 @@ mod tests {
         assert!(lowest > 0.2, "минимум якобиана = {lowest}");
     }
 }
+
+/// К4а/часть 2 (Д-110): три ближайших к точке центра плит и расстояния до
+/// четырёх ближайших, L. По ним `crust` считает тип деформации у тройного
+/// стыка так, что он не зависит от того, какая из плит названа ближайшей.
+#[derive(Clone, Copy, Debug)]
+pub struct Junction {
+    pub plates: [Plate; 3],
+    pub dist_l: [f64; 3],
+    /// Расстояние до четвёртого центра; бесконечность, если его нет.
+    pub fourth_l: f64,
+}
+
+/// Три ближайших центра плит вокруг `sample.q`. `None`, если плит меньше трёх.
+pub fn junction_query(sample: &PlateSample, seed: u64, params: &Params) -> Option<Junction> {
+    sample.b?;
+    sample.c?;
+    let q = sample.q;
+    let mut near: [Option<(f64, Plate)>; 4] = [None; 4];
+    let g = params.plates.cell_g_l;
+    let ci = (q.x / g).floor() as i64;
+    let cj = (q.z / g).floor() as i64;
+    let cells = params.plates.query_radius_cells.max(2);
+    for plate in near_window(seed, ci, cj, cells, params).iter() {
+        let mut entry = (q.dist2(plate.seed_pos), *plate);
+        for slot in near.iter_mut() {
+            match slot {
+                None => {
+                    *slot = Some(entry);
+                    break;
+                }
+                Some(held) if entry.0 < held.0 => std::mem::swap(held, &mut entry),
+                Some(_) => {}
+            }
+        }
+    }
+    let (a, b, c) = (near[0]?, near[1]?, near[2]?);
+    Some(Junction {
+        plates: [a.1, b.1, c.1],
+        dist_l: [a.0.sqrt(), b.0.sqrt(), c.0.sqrt()],
+        fourth_l: near[3].map_or(f64::INFINITY, |(d2, _)| d2.sqrt()),
+    })
+}

@@ -1,0 +1,36 @@
+// К6 (Д-112). Все паки (v0, v1-dev обоих режимов и smoke) уже лежат внутри
+// `.hnmod` (модуль `litospherity_packs`), поэтому папка паков нового мира
+// получает их сама: при создании мира они видны в Data Packs, перетаскивать
+// zip-файлы не нужно. Хук стоит на `Title::click` (мышь) и `Title::confirm_key_size`
+// (Enter) — обе точки открывают Data Packs, но не чистят чужой выбор.
+// Правило 5.5: ровно одна приватная функция, ни одного атрибута.
+fn litospherity_seed_packs(title: &mut Title) {
+    let Mode::Create { options, .. } = &mut title.mode else {
+        return;
+    };
+    if options.pack_dir.is_none() {
+        options.pack_dir = crate::datapack::temp_folder().ok();
+    }
+    let Some(dir) = options.pack_dir.as_ref() else {
+        return;
+    };
+    for &(name, files) in crate::title::litospherity_packs::PACKS {
+        let root = dir.join(name);
+        if root.join("pack.mcmeta").is_file() {
+            continue;
+        }
+        for &(path, contents) in files {
+            let target = root.join(path);
+            if let Some(parent) = target.parent()
+                && let Err(error) = std::fs::create_dir_all(parent)
+            {
+                log::warn!("Litospherity: паки нового мира: {error}");
+                return;
+            }
+            if let Err(error) = std::fs::write(&target, contents) {
+                log::warn!("Litospherity: паки нового мира: {error}");
+                return;
+            }
+        }
+    }
+}

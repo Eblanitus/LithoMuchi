@@ -25,7 +25,7 @@ pub struct SurfaceSample {
     pub sigma_l: f64,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct PoleSample {
     /// Псевдоширота 0…90°: 0 на «экваторе», 90 у полюса.
     pub phi_deg: f64,
@@ -37,7 +37,7 @@ pub struct PoleSample {
     pub distance_l: f64,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct TemperatureSample {
     pub t_c: f64,
     pub sst_c: f64,
@@ -46,7 +46,7 @@ pub struct TemperatureSample {
     pub t_min: f64,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct PrecipSample {
     /// Влагосодержание воздуха μ в точке.
     pub mu: f64,
@@ -58,7 +58,7 @@ pub struct PrecipSample {
     pub slope: f64,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct ClimateSample {
     pub point: Vec2,
     pub surface: SurfaceSample,
@@ -264,15 +264,67 @@ pub fn sea_level_temp(phi_deg: f64, params: &Params) -> f64 {
     c.t_equator_c - c.t_pole_drop_c * dpow(lat, c.t_lat_exponent)
 }
 
+/// К5 (Д-111) и К11 (Д-119), `v1-dev`: вычет температуры суши, °C.
+/// Постоянный `alt_cool_land_c` одинаков на всей суше — он только сдвигает
+/// границы поясов на суше. Высота пояс не двигает: `alt_cool_c_per_block`
+/// в `v1-dev` равен 0, холод на горе даёт ванильная горная лестница по
+/// нашей высоте (`mountain_biome_y`), а не смена пояса на холме.
+pub fn altitude_cooling_c(surface_y: f64, params: &Params) -> f64 {
+    let c = &params.climate;
+    c.alt_cool_land_c + c.alt_cool_c_per_block * (surface_y - c.alt_cool_base_y).max(0.0)
+}
+
+/// К11 / Д-119: то же без высоты — ровно постоянный вычет суши.
+pub fn land_cooling_c(params: &Params) -> f64 {
+    params.climate.alt_cool_land_c
+}
+
+/// К5 (Д-111): климат биомов. Рельеф и вода строятся по климату с прежним
+/// вычетом 6,5 °C на км модельной `e_km` (иначе высота зависела бы от
+/// температуры, а температура от высоты). Когда высота колонки готова,
+/// вычет пересчитывается по ней: модельные километры в игре не видны —
+/// плато 3 км в gameplay стоит равниной на y 100 и раньше было холодным.
+/// Осадки те же; сухость пересчитана по новой температуре.
+///
+/// К11 / Д-119: при `alt_cool_c_per_block = 0` высота входа не влияет —
+/// вычет один на всей суше, и «устья у моря» больше не теплее соседей.
+pub fn recool(climate: &ClimateSample, surface_y: f64, params: &Params) -> ClimateSample {
+    let _ = surface_y;
+    let mut temperature = temperature_cooled(
+        climate.pole.phi_deg,
+        land_cooling_c(params),
+        climate.precip.cont,
+        params,
+    );
+    temperature.sst_c = climate.temperature.sst_c;
+    let (pet_mm, ratio) = dryness(temperature.t_bio, climate.precip.p_mm, params);
+    let mut out = *climate;
+    out.temperature = temperature;
+    out.precip.pet_mm = pet_mm;
+    out.precip.ratio = ratio;
+    out
+}
+
 /// Температура с учётом высоты, континентальности и аналитических сезонов (7.5.3).
 pub fn temperature(phi_deg: f64, e_km: f64, cont: f64, params: &Params) -> TemperatureSample {
+    let cooling_c = params.climate.lapse_c_per_km * e_km.max(0.0);
+    temperature_cooled(phi_deg, cooling_c, cont, params)
+}
+
+/// То же с готовым вычетом за высоту.
+pub fn temperature_cooled(
+    phi_deg: f64,
+    cooling_c: f64,
+    cont: f64,
+    params: &Params,
+) -> TemperatureSample {
     let c = &params.climate;
     let t_sl = sea_level_temp(phi_deg, params);
     let cont = clamp01(cont);
     let delta_c = cont
         * (c.cont_tropical_c * (1.0 - smoothstep(25.0, 45.0, phi_deg))
             - c.cont_polar_c * smoothstep(40.0, 70.0, phi_deg));
-    let t_c = t_sl + delta_c - c.lapse_c_per_km * e_km.max(0.0);
+    let t_c = t_sl + delta_c - cooling_c;
     let amp_lat = c.amp_base_c + c.amp_lat_c * smoothstep(5.0, 75.0, phi_deg);
     let amp_c = amp_lat * (c.amp_sea_factor + c.amp_land_factor * cont);
     let (t_bio, t_min) = seasonal(t_c, amp_c, params);

@@ -341,6 +341,10 @@ pub struct DrainageParams {
     pub climate_step_l: f64,
     /// T111: коэффициент перед PET в стоке суши P - k_et·PET.
     pub et_factor: f64,
+    /// Шаг 2 плана (T113): через сколько границ плит прослеживается приток
+    /// вверх по течению. 0 — расход между плитами не передаётся. Вода,
+    /// пришедшая дальше этого числа границ, в расход не входит.
+    pub handoff_max_hops: i64,
 }
 
 /// T112: геометрия русел поверх Q. Числа блочные, поэтому режимы различаются;
@@ -430,7 +434,13 @@ pub struct ReliefParams {
     /// Расстояние до ближайшей границы плиты, L: дальше начинается «старая» кора.
     pub active_boundary_lo: f64,
     pub active_boundary_hi: f64,
-    pub land_e_fade_km: f64,
+    /// К4а/часть 2: ширина полосы затухания рельефа у низин в блоках (Д-106).
+    /// Холм у низины кончается спуском этой ширины, а не стеной.
+    pub land_fade_blocks: f64,
+    /// Оценка градиента поля e_km у кромки низины, км на блок. Полоса в блоках
+    /// переводится в порог e_km им (Д-106: 0,05 км ≈ 10–20 блоков в
+    /// геймплейном, научный λ вчетверо крупнее).
+    pub land_e_gradient_km_per_block: f64,
     pub continental_chi_lo: f64,
     pub continental_chi_hi: f64,
     pub craton_iota_lo: f64,
@@ -466,6 +476,11 @@ pub struct ReliefParams {
 }
 
 impl ReliefParams {
+    /// Порог затухания рельефа в e_km: полоса `land_fade_blocks` блоков при
+    /// измеренном градиенте поля у кромки низины (К4а/часть 2, Д-106).
+    pub fn land_fade_km(&self) -> f64 {
+        self.land_fade_blocks * self.land_e_gradient_km_per_block
+    }
     pub fn validate(&self) -> Result<(), &'static str> {
         let positive = [
             self.foothill_fade,
@@ -473,7 +488,8 @@ impl ReliefParams {
             self.hills_lambda_l,
             self.basin_lambda_l,
             self.basin_depth_km,
-            self.land_e_fade_km,
+            self.land_fade_blocks,
+            self.land_e_gradient_km_per_block,
             self.rift_floor_factor,
             self.rift_shoulder_offset_factor,
             self.rift_shoulder_width_factor,
@@ -580,6 +596,14 @@ pub struct MorphoParams {
     pub lambda_pv_blocks: [f64; MORPHO_ZONES],
     pub sigma_e: [f64; MORPHO_ZONES],
     pub sigma_pv: [f64; MORPHO_ZONES],
+    /// Д-095 (T123): зональная перекладка E между полосами E2, E3 и E4.
+    /// `e_remap_lo[k]` — значение E зоны `k`, которое становится границей
+    /// E2/E3 (`height.e_knots[3]`); `e_remap_hi[k]` — границей E3/E4
+    /// (`height.e_knots[4]`). Края E1/E2 и E4/E5 остаются на месте, поэтому
+    /// доли E0, E1, E5, E6 зона не меняет. Равные границам значения —
+    /// перекладки нет.
+    pub e_remap_lo: [f64; MORPHO_ZONES],
+    pub e_remap_hi: [f64; MORPHO_ZONES],
     pub scientific_lambda_factor: f64,
     pub scientific_sigma_factor: f64,
 }
@@ -659,6 +683,14 @@ impl MorphoParams {
         {
             return Err("λ_PV зон morpho должна быть положительной");
         }
+        if self
+            .e_remap_lo
+            .iter()
+            .zip(&self.e_remap_hi)
+            .any(|(lo, hi)| !lo.is_finite() || !hi.is_finite() || lo >= hi)
+        {
+            return Err("перекладка E зон morpho: нижний узел должен быть ниже верхнего");
+        }
         for array in [&self.sigma_e, &self.sigma_pv] {
             if array
                 .iter()
@@ -719,6 +751,23 @@ pub struct ClimateParams {
     pub t_pole_drop_c: f64,
     pub t_lat_exponent: f64,
     pub lapse_c_per_km: f64,
+    /// К5 (Д-111), только `v1-dev`: высота поверхности в игре, ниже которой
+    /// вычет температуры от высоты не зависит, блоки (y).
+    pub alt_cool_base_y: f64,
+    /// К5 (Д-111), только `v1-dev`: вычет на каждый блок выше
+    /// `alt_cool_base_y`, °C.
+    pub alt_cool_c_per_block: f64,
+    /// К5 (Д-111), только `v1-dev`: постоянный вычет на всей суше, °C —
+    /// средний прежний вычет на суше ниже порога. Без него мир теплеет
+    /// на эту величину и леса уходят в саванну и пустыню.
+    pub alt_cool_land_c: f64,
+    /// Д-118, только `v1-dev`: ниже этой высоты крупной формы (y) модуль W
+    /// ограничен срезом low — горных биомов ванили (снежные склоны, роща,
+    /// пики) нет, кроме снежных склонов в снежном поясе.
+    pub mountain_biome_y: f64,
+    /// Д-118: от этой высоты W без ограничения; между порогами предел
+    /// растёт плавно (W непрерывен).
+    pub mountain_biome_full_y: f64,
     pub cont_tropical_c: f64,
     pub cont_polar_c: f64,
     pub amp_base_c: f64,
@@ -757,7 +806,12 @@ pub struct ClimateParams {
     pub advection_wind_min: f64,
     pub local_fraction_equator: f64,
     pub local_fraction_width_deg: f64,
+    /// Пороги поясов П0–П6 по биотемпературе — только `v0`.
     pub belt_edges_c: [f64; 6],
+    /// К11 (Д-119), только `v1-dev`: пороги поясов по средней годовой
+    /// температуре `t_c`. Считаются по ней же, а не по биотемпературе, чтобы
+    /// «летняя» обрезка месяцев ниже 0 °C не поднимала пояс в глубине материка.
+    pub belt_edges_mean_c: [f64; 6],
     pub province_edges_r: [f64; 5],
     pub winter_boreal_c: f64,
     pub winter_temperate_c: f64,
@@ -953,10 +1007,6 @@ pub struct BoundaryParams {
     pub pass_lambda_l: f64,
     pub pass_octaves: usize,
     pub pass_gain: f64,
-    /// T133 / Б5: второй, крупный масштаб дрожания классификации.
-    /// Амплитуды наследуют σ из `block.jitter_*` и умножаются на factor.
-    pub jitter_coarse_lambda_blocks: f64,
-    pub jitter_coarse_sigma_factor: f64,
     /// T133 / Б6: мозаика переходных биомов у порогов влажности.
     pub ecotone_width_log2: f64,
     pub ecotone_max_fraction: f64,
@@ -1036,16 +1086,6 @@ impl BoundaryParams {
         {
             return Err("перевалы: 1…4 октавы, gain ∈ (0, 1)");
         }
-        if !self.jitter_coarse_lambda_blocks.is_finite()
-            || !(500.0..=2000.0).contains(&self.jitter_coarse_lambda_blocks)
-        {
-            return Err("λ крупного дрожания должна лежать в 500…2000 блоков");
-        }
-        if !self.jitter_coarse_sigma_factor.is_finite()
-            || !(1.0..=8.0).contains(&self.jitter_coarse_sigma_factor)
-        {
-            return Err("множитель σ крупного дрожания должен лежать в 1…8");
-        }
         if !self.ecotone_width_log2.is_finite() || !(0.0..=1.0).contains(&self.ecotone_width_log2) {
             return Err("полуширина экотона по log2 R должна лежать в 0…1");
         }
@@ -1077,6 +1117,11 @@ pub struct HeightParams {
     pub factor: [f64; 7],
     pub jaggedness: [f64; 7],
     pub coast_width_c: f64,
+    /// К4: ширина спуска суши к воде по расстоянию до берега, блоки.
+    /// 0 выключает спуск (замер «до» в песочнице).
+    pub shore_width_blocks: f64,
+    /// К4: эрозия ниже этой границы — горный берег, обрыв остаётся.
+    pub shore_cliff_e: f64,
     /// Научный режим: реальная `e_km` поверх таблицы; gameplay по умолчанию 0.
     pub e_gain_blocks_per_km: f64,
     /// Д-057: макровысота, с которой начинается прибавка `e_gain`, км.
@@ -1097,6 +1142,74 @@ pub struct HeightParams {
     pub water_km_to_blocks: f64,
     /// T145: предел глубины озера под зеркалом, блоки.
     pub lake_depth_max_blocks: f64,
+    /// R2 (Ф6-В1, PLAN-WATER-FABRIC §4): ширина полосы берега, где суша
+    /// добивается до зеркала воды. Уровень теперь берётся от поверхности,
+    /// поэтому берег правится только на добор.
+    /// Действует только в `v1-dev-r2`, в хеш входит только там же.
+    pub bank_raise_blocks: f64,
+    /// R2 (§4, п. 4): берег поднимается до уровня воды, только если ему не
+    /// хватает не больше этого числа блоков. Больше — ошибка в уровне.
+    pub bank_raise_max_blocks: f64,
+}
+
+/// Водное обновление (ВО0-1, [PLAN-WATER-UPDATE](../../docs/PLAN-WATER-UPDATE.md)
+/// §6.9): числа нового механизма воды `S0`. Раздел входит в
+/// `canonical_text()` только у `GenVersion::V1DevW`, поэтому хеши `v0`, `v1`,
+/// `v1-dev` и `v1-dev-r2` не меняются (критерий «готово» шага ВО0-1).
+///
+/// Порядок классов долины во всех массивах здесь и в §5.2 одинаков:
+/// равнинная, холмистая, горная V, ледниковая U, каньон, braided.
+#[derive(Clone, Debug, PartialEq)]
+pub struct WaterUpdateParams {
+    /// Шаг проб профиля уровня реки, блоки (4 / 8).
+    pub profile_step_blocks: f64,
+    /// Бюджет уровней на плиту, мс; при превышении шаг проб удваивается.
+    pub profile_budget_ms: u64,
+    /// Проба берега за краем воды, блоки.
+    pub bank_probe_blocks: f64,
+    /// Минимальный перепад для водопада, блоки.
+    pub fall_min_drop_blocks: f64,
+    /// Выше этого перепада водопад раскладывается в каскад (24 / 48).
+    pub fall_max_height_blocks: f64,
+    /// Выравнивание низовья притока (уклон).
+    pub grade_slope: f64,
+    /// Границы классов уклона `W`: спокойный / перекат / порог (дальше каскад).
+    pub slope_edges: [f64; 3],
+    /// Окно сглаживания класса долины вдоль русла, блоки (64 / 128).
+    pub class_window_blocks: f64,
+    /// Пороги глубины долины `G` для каньона и холмистой (12/20 и 4/6).
+    pub gorge_canyon_blocks: f64,
+    pub gorge_upland_blocks: f64,
+    /// Ширина поймы `fp` в ширинах русла по классам.
+    pub floodplain_w: [f64; 6],
+    /// Уклон склона долины `s_wall` по классам.
+    pub wall_slope: [f64; 6],
+    /// Дальность склона долины `R_wall`, блоки (32 / 64).
+    pub wall_reach_blocks: f64,
+    /// Ступень каньона: высота и через сколько блоков (6/2, 10/3).
+    pub canyon_step_blocks: f64,
+    pub canyon_step_every: f64,
+    /// Терраса долины: высота полки, ширина и порог `G`.
+    pub terrace_height_blocks: f64,
+    pub terrace_width_blocks: f64,
+    pub terrace_gorge_blocks: f64,
+    /// Края `smoothstep` затухания микробугров у воды (4…16 / 6…32).
+    pub gate_blocks: [f64; 2],
+    /// Края `smoothstep` маски `calm` (4…16 / 8…32).
+    pub calm_blocks: [f64; 2],
+    /// Вокруг озера маска `calm` шире на столько блоков (8 / 12).
+    pub lake_calm_pad_blocks: f64,
+    /// Развязка ничьих в стоке: блоков на км коры.
+    pub route_tau_blocks_per_km: f64,
+    /// Котловина глубже этого остаётся озером; порядок — `MORPHO_ZONES`.
+    /// Сухая зона `arid` не переливается никогда (`INFINITY`, ВО8).
+    pub depression_min_depth_blocks: [f64; MORPHO_ZONES],
+    /// Предел площади воды озёр как доля площади плиты.
+    pub lake_area_max_fraction: f64,
+    /// Пляж у обычных озёр влажных зон, блоки (3 / 4).
+    pub beach_blocks: f64,
+    /// Сколько блоков над водой чистит Java (8.2).
+    pub clear_above_blocks: f64,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -1120,6 +1233,8 @@ pub struct Params {
     pub morpho: MorphoParams,
     /// Собственная высота T144; включается только в `v1-dev`.
     pub height: HeightParams,
+    /// Водное обновление ВО0-1: действует и входит в хеш только в `v1-dev-w`.
+    pub water: WaterUpdateParams,
     /// Границы биомов T130–T133; включаются только в `v1-dev`.
     pub boundaries: BoundaryParams,
     pub lava: LavaParams,
@@ -1137,6 +1252,8 @@ impl Params {
     /// (8.2); `block` берётся из `Mode::block_params`.
     pub fn defaults(version: GenVersion, mode: Mode) -> Self {
         let block = mode.block_params();
+        // Режим нужен и разделу `water` (ВО0-1): числа §6.9 отличаются вдвое.
+        let game = mode == Mode::Gameplay;
         let mut p = Self {
             version,
             mode,
@@ -1329,6 +1446,7 @@ impl Params {
                 anchor_search_radius_cells: 2,
                 climate_step_l: 1.0,
                 et_factor: 1.0,
+                handoff_max_hops: 0,
             },
             channels: ChannelParams {
                 // Стартовый отсев русел; плотность подбирается T151 по 10.1.
@@ -1404,7 +1522,11 @@ impl Params {
                 paleo_a_max: 0.6,
                 active_boundary_lo: 0.5,
                 active_boundary_hi: 2.0,
-                land_e_fade_km: 0.05,
+                land_fade_blocks: 64.0,
+                land_e_gradient_km_per_block: match mode {
+                    Mode::Gameplay => 0.004,
+                    Mode::Scientific => 0.001,
+                },
                 continental_chi_lo: 0.5,
                 continental_chi_hi: 0.8,
                 craton_iota_lo: 0.3,
@@ -1459,6 +1581,8 @@ impl Params {
                 lambda_pv_blocks: [250.0, 300.0, 450.0, 600.0, 800.0, 250.0, 450.0, 450.0],
                 sigma_e: [0.08, 0.10, 0.12, 0.10, 0.08, 0.12, 0.15, 0.15],
                 sigma_pv: [0.10, 0.12, 0.15, 0.12, 0.10, 0.15, 0.20, 0.20],
+                e_remap_lo: [-0.2225; MORPHO_ZONES],
+                e_remap_hi: [0.05; MORPHO_ZONES],
                 scientific_lambda_factor: 2.0,
                 scientific_sigma_factor: 0.6,
             },
@@ -1484,6 +1608,8 @@ impl Params {
                 factor: [1.0, 1.5, 3.0, 4.5, 5.5, 3.5, 5.0],
                 jaggedness: [0.8, 0.5, 0.0, 0.0, 0.0, 0.2, 0.0],
                 coast_width_c: 0.06,
+                shore_width_blocks: 24.0,
+                shore_cliff_e: -0.375,
                 e_gain_blocks_per_km: match mode {
                     Mode::Gameplay => 0.0,
                     Mode::Scientific => 24.0,
@@ -1502,6 +1628,50 @@ impl Params {
                     Mode::Scientific => 24.0,
                 },
                 lake_depth_max_blocks: 64.0,
+                // R2 (Ф6-В1): восемь блоков — уже полосы берега в
+                // `hydrology.bank_min_blocks`, поэтому берег успевает добрать
+                // до зеркала раньше, чем кончится зона запроса озера.
+                bank_raise_blocks: 8.0,
+                // §4, п. 4: добивка только на 1–2 блока. Нехватка больше —
+                // признак ошибки уровня, а не берега.
+                bank_raise_max_blocks: 2.0,
+            },
+            water: WaterUpdateParams {
+                // §6.9: шаг проб профиля и окно класса долины в научном
+                // режиме вдвое больше — русла там в 4 раза длиннее.
+                profile_step_blocks: if game { 4.0 } else { 8.0 },
+                profile_budget_ms: 120,
+                bank_probe_blocks: 2.0,
+                fall_min_drop_blocks: 3.0,
+                fall_max_height_blocks: if game { 24.0 } else { 48.0 },
+                grade_slope: 1.0 / 16.0,
+                slope_edges: [1.0 / 64.0, 1.0 / 16.0, 1.0 / 4.0],
+                class_window_blocks: if game { 64.0 } else { 128.0 },
+                gorge_canyon_blocks: if game { 12.0 } else { 20.0 },
+                gorge_upland_blocks: if game { 4.0 } else { 6.0 },
+                floodplain_w: if game {
+                    [3.0, 1.0, 0.0, 2.0, 0.5, 1.0]
+                } else {
+                    [5.0, 1.5, 0.0, 2.0, 0.5, 1.0]
+                },
+                wall_slope: [0.5, 1.0, 1.5, 1.0, 0.5, 0.7],
+                wall_reach_blocks: if game { 32.0 } else { 64.0 },
+                canyon_step_blocks: if game { 6.0 } else { 10.0 },
+                canyon_step_every: if game { 2.0 } else { 3.0 },
+                terrace_height_blocks: if game { 6.0 } else { 10.0 },
+                terrace_width_blocks: if game { 4.0 } else { 8.0 },
+                terrace_gorge_blocks: if game { 12.0 } else { 20.0 },
+                gate_blocks: if game { [4.0, 16.0] } else { [6.0, 32.0] },
+                calm_blocks: if game { [4.0, 16.0] } else { [8.0, 32.0] },
+                lake_calm_pad_blocks: if game { 8.0 } else { 12.0 },
+                route_tau_blocks_per_km: 2.0,
+                // §6.2: полярная и бореальная 1, умеренная, влажная
+                // тропическая и холодные горы 2, полусухая и тёплые горы 3,
+                // сухая не переливается (сначала сухо, ВО8 — плайя).
+                depression_min_depth_blocks: [1.0, 1.0, 2.0, 3.0, f64::INFINITY, 2.0, 2.0, 3.0],
+                lake_area_max_fraction: 0.06,
+                beach_blocks: if game { 3.0 } else { 4.0 },
+                clear_above_blocks: 6.0,
             },
             boundaries: BoundaryParams {
                 // σ=6° даёт типичные ±6° и хвосты до ±18°, без тонких октав:
@@ -1529,8 +1699,6 @@ impl Params {
                 pass_lambda_l: 2.0,
                 pass_octaves: 1,
                 pass_gain: 0.5,
-                jitter_coarse_lambda_blocks: 1000.0,
-                jitter_coarse_sigma_factor: 4.0,
                 ecotone_width_log2: 0.35,
                 // T136: после лестницы T135 и веера Б2 мозаика T133 стала
                 // добавлять скачки h (проба 42: 0.99% без неё, 1.92% с ней).
@@ -1567,6 +1735,11 @@ impl Params {
                 t_pole_drop_c: 52.0,
                 t_lat_exponent: 1.6,
                 lapse_c_per_km: 6.5,
+                alt_cool_base_y: 120.0,
+                alt_cool_c_per_block: 0.2,
+                alt_cool_land_c: 3.5,
+                mountain_biome_y: 150.0,
+                mountain_biome_full_y: 250.0,
                 cont_tropical_c: 2.0,
                 cont_polar_c: 6.0,
                 amp_base_c: 1.0,
@@ -1610,6 +1783,9 @@ impl Params {
                 local_fraction_equator: 0.55,
                 local_fraction_width_deg: 15.0,
                 belt_edges_c: [1.5, 3.0, 6.0, 12.0, 18.0, 24.0],
+                // К11 / Д-119: старт — те же числа, что у `belt_edges_c`;
+                // подбор под среднюю температуру — отдельным шагом.
+                belt_edges_mean_c: [1.5, 3.0, 6.0, 12.0, 18.0, 24.0],
                 province_edges_r: [0.5, 1.0, 2.0, 4.0, 8.0],
                 winter_boreal_c: -12.0,
                 winter_temperate_c: -8.0,
@@ -1656,7 +1832,7 @@ impl Params {
             config_key: 0,
         };
         // T103 / Д-030: отдельный набор Э3.5. Ни одно число v0 не меняется.
-        // *_noise у fBm и jitter теперь означает σ, а не амплитуду сырого fBm.
+        // *_noise у fBm теперь означает σ, а не амплитуду сырого fBm.
         // w_mnt_noise остаётся амплитудой положительного ridged2, не fBm.
         if version.is_water_relief_dev() {
             p.block.lambda_e_blocks *= 2.0;
@@ -1671,11 +1847,8 @@ impl Params {
                 Mode::Gameplay => 48.0,
                 Mode::Scientific => 96.0,
             };
-            p.block.jitter_t_c = match mode {
-                Mode::Gameplay => 1.0,
-                Mode::Scientific => 0.5,
-            };
-            p.block.jitter_r_log2 = p.block.jitter_t_c * 0.25;
+            // К1 / Д-103: дрожание границ классификации — как в v0
+            // (`block.jitter_*` режима, обычный fBm). Переопределения T101 нет.
             let c = &mut p.climate;
             c.c_coast_e_km = 0.20;
             c.e_base = 0.15;
@@ -1687,9 +1860,17 @@ impl Params {
             c.w_sign_epsilon = 1e-3;
             // K5: отсечь мелкие «лужи» и ослабить плоское дно котловин.
             p.drainage.depression_min_depth_km = 0.015;
+            // К7 / Д-113: научный мир выше ванильного — верх 447 (высота
+            // уровня 512), чтобы горы и плато не упирались в потолок 319.
+            // Геймплейный режим и v0 остаются ванильными.
+            if mode == Mode::Scientific {
+                p.height.max_y = 447.0;
+            }
             // К5 / Д-057: впадины сверх 3 % узлов суши плиты прорезаются
             // руслом, а не заливаются. С полосой берега это ≤5–8 % суши.
             p.drainage.lake_area_max_fraction = 0.03;
+            // Шаг 2 плана (T113): расход передаётся через границу плиты.
+            p.drainage.handoff_max_hops = 6;
             // Д-059: луч влаги — около 85 % цены колонки. Быстрый путь считает его
             // наветренную часть в узлах решётки 0.128 L (32 блока gameplay,
             // 128 scientific) — вдвое мельче шага самого луча (0.25 L).
@@ -1726,6 +1907,31 @@ impl Params {
                 [0.04, -0.11, -0.21, -0.44, -0.46, -0.18, -0.75, -0.70]
             };
             p.morpho.sigma_e = [0.12, 0.15, 0.18, 0.15, 0.12, 0.18, 0.15, 0.15];
+            // К11 / Д-119: высота пояс не меняет. Холод на горе даёт горная
+            // лестница Д-118 по `shape_y`, а не вычет за высоту на холме.
+            // Постоянный вычет суши `alt_cool_land_c` = 3,5 °C остаётся.
+            c.alt_cool_c_per_block = 0.0;
+            // Д-095 (T123): климат перекладывает сушу между плато (E2),
+            // холмами (E3) и равнинами (E4). Холодные и влажные зоны теряют
+            // плато и становятся ровнее; аридная получает столовые земли.
+            // Горные зоны (6, 7) не трогаются. В gameplay ни один отрезок
+            // не растянут сильнее GAMEPLAY_REMAP_MAX_SLOPE, а полуаридная
+            // зона только отдаёт часть плато холмам: шов сида 42 там уже
+            // 0.018 (круг 1 дал 0.02787). В scientific запас по шву
+            // большой, отрезки круче.
+            p.morpho.e_remap_lo = if gameplay {
+                [-0.29, -0.29, -0.29, -0.25, -0.10, -0.29, -0.2225, -0.2225]
+            } else {
+                [-0.36, -0.36, -0.36, -0.08, 0.04, -0.36, -0.2225, -0.2225]
+            };
+            p.morpho.e_remap_hi = if gameplay {
+                [-0.15, -0.15, 0.02, 0.05, 0.16, -0.12, 0.05, 0.05]
+            } else {
+                // Д-110: аридная зона (4) — 0,05 → 0,11. Отрезок холмов
+                // 0,04…0,05 растягивался в 27 раз и давал стены 15 блоков
+                // на 2; теперь в 3,9 раза, граница плато на месте.
+                [-0.12, -0.15, 0.09, 0.02, 0.11, 0.12, 0.05, 0.05]
+            };
             p.climate.m_e_hi = if gameplay { 1.0 } else { 0.7 };
             p.hydrology.floodplain_e = if gameplay { 0.44 } else { 0.50 };
             p.hydrology.dry_basin_e = 0.5;
@@ -1747,8 +1953,10 @@ impl Params {
                 },
                 // Научная равнина ниже и ровнее: бугры Д-057 поднимают её
                 // только вверх, иначе полоса 70–90 забирает половину суши.
+                // Плоские участки (2026-11-18): середина PV у E4 почти
+                // ровная, подъём только у пиков PV.
                 if gameplay {
-                    [63.5, 66.0, 69.0, 74.0, 80.0]
+                    [63.5, 68.0, 69.0, 70.0, 76.0]
                 } else {
                     [63.5, 64.0, 65.0, 67.0, 71.0]
                 },
@@ -1771,9 +1979,12 @@ impl Params {
             // столом в окне 128 блоков. В научном режиме макроформы растянуты
             // вчетверо, поэтому размах бугров там больше.
             p.height.micro_amp_blocks = if gameplay {
-                [4.0, 4.0, 3.0, 2.5, 1.5, 1.0, 0.0]
+                // 2026-11-18: бугры съедали ровную сушу (16 блоков с
+                // перепадом ≤2: 29 % → 41 %); холмистые полосы E0–E1 как были.
+                [4.0, 4.0, 2.0, 1.0, 0.5, 1.0, 0.0]
             } else {
-                [6.0, 6.0, 5.0, 4.5, 4.0, 2.0, 0.0]
+                // научный: 31 % → 62 % ровных окон 16 блоков (сид 42).
+                [6.0, 6.0, 3.0, 2.0, 1.0, 2.0, 0.0]
             };
         }
         p.config_key = p.params_hash();
@@ -2023,6 +2234,14 @@ impl Params {
                 v = self.climate.w_sign_epsilon
             )
             .unwrap();
+            // К11 / Д-119: пояс `v1-dev` считается по средней температуре,
+            // поэтому свои пороги живут только в записи `v1-dev`.
+            writeln!(
+                w,
+                "climate.belt_edges_mean_c={:?}",
+                self.climate.belt_edges_mean_c
+            )
+            .unwrap();
             writeln!(w, "noise.amplitude_units=sigma").unwrap();
             let d = &self.drainage;
             for (name, value) in [
@@ -2046,6 +2265,7 @@ impl Params {
                 v = d.anchor_search_radius_cells
             )
             .unwrap();
+            writeln!(w, "drainage.handoff_max_hops={v}", v = d.handoff_max_hops).unwrap();
             let ch = &self.channels;
             for (name, value) in [
                 ("channels.q_min_mm_l2", ch.q_min_mm_l2),
@@ -2116,7 +2336,11 @@ impl Params {
                 ("relief.paleo_a_max", r.paleo_a_max),
                 ("relief.active_boundary_lo", r.active_boundary_lo),
                 ("relief.active_boundary_hi", r.active_boundary_hi),
-                ("relief.land_e_fade_km", r.land_e_fade_km),
+                ("relief.land_fade_blocks", r.land_fade_blocks),
+                (
+                    "relief.land_e_gradient_km_per_block",
+                    r.land_e_gradient_km_per_block,
+                ),
                 ("relief.continental_chi_lo", r.continental_chi_lo),
                 ("relief.continental_chi_hi", r.continental_chi_hi),
                 ("relief.craton_iota_lo", r.craton_iota_lo),
@@ -2188,6 +2412,8 @@ impl Params {
             writeln!(w, "morpho.lambda_pv_blocks={:?}", m.lambda_pv_blocks).unwrap();
             writeln!(w, "morpho.sigma_e={:?}", m.sigma_e).unwrap();
             writeln!(w, "morpho.sigma_pv={:?}", m.sigma_pv).unwrap();
+            writeln!(w, "morpho.e_remap_lo={:?}", m.e_remap_lo).unwrap();
+            writeln!(w, "morpho.e_remap_hi={:?}", m.e_remap_hi).unwrap();
             let hg = &self.height;
             writeln!(w, "height.e_knots={:?}", hg.e_knots).unwrap();
             writeln!(w, "height.pv_knots={:?}", hg.pv_knots).unwrap();
@@ -2197,7 +2423,24 @@ impl Params {
             writeln!(w, "height.factor={:?}", hg.factor).unwrap();
             writeln!(w, "height.jaggedness={:?}", hg.jaggedness).unwrap();
             for (name, value) in [
+                ("climate.alt_cool_base_y", self.climate.alt_cool_base_y),
+                (
+                    "climate.alt_cool_c_per_block",
+                    self.climate.alt_cool_c_per_block,
+                ),
+                ("climate.alt_cool_land_c", self.climate.alt_cool_land_c),
+                ("climate.mountain_biome_y", self.climate.mountain_biome_y),
+                (
+                    "climate.mountain_biome_full_y",
+                    self.climate.mountain_biome_full_y,
+                ),
+            ] {
+                writeln!(w, "{name}={value:?}").unwrap();
+            }
+            for (name, value) in [
                 ("height.coast_width_c", hg.coast_width_c),
+                ("height.shore_width_blocks", hg.shore_width_blocks),
+                ("height.shore_cliff_e", hg.shore_cliff_e),
                 ("height.e_gain_blocks_per_km", hg.e_gain_blocks_per_km),
                 ("height.cold_jagged_gain", hg.cold_jagged_gain),
                 ("height.warm_jagged_drop", hg.warm_jagged_drop),
@@ -2213,6 +2456,58 @@ impl Params {
                 writeln!(w, "{name}={value:?}").unwrap();
             }
             writeln!(w, "height.micro_amp_blocks={:?}", hg.micro_amp_blocks).unwrap();
+            // R2 (Ф6-В1): ключ только у своей версии — хеши `v0`, `v1` и
+            // `v1-dev` не меняются (критерий «готово» шага В1).
+            if self.version.is_water_relief_r2() {
+                writeln!(w, "height.bank_raise_blocks={:?}", hg.bank_raise_blocks).unwrap();
+                writeln!(
+                    w,
+                    "height.bank_raise_max_blocks={:?}",
+                    hg.bank_raise_max_blocks
+                )
+                .unwrap();
+            }
+            // ВО0-1 (§6.1, §6.9): раздел `water` входит в хеш только у
+            // `v1-dev-w`, поэтому хеши `v0`, `v1`, `v1-dev` и `v1-dev-r2`
+            // остаются прежними.
+            if self.version.is_water_update() {
+                let wa = &self.water;
+                for (name, value) in [
+                    ("water.profile_step_blocks", wa.profile_step_blocks),
+                    ("water.bank_probe_blocks", wa.bank_probe_blocks),
+                    ("water.fall_min_drop_blocks", wa.fall_min_drop_blocks),
+                    ("water.fall_max_height_blocks", wa.fall_max_height_blocks),
+                    ("water.grade_slope", wa.grade_slope),
+                    ("water.class_window_blocks", wa.class_window_blocks),
+                    ("water.gorge_canyon_blocks", wa.gorge_canyon_blocks),
+                    ("water.gorge_upland_blocks", wa.gorge_upland_blocks),
+                    ("water.wall_reach_blocks", wa.wall_reach_blocks),
+                    ("water.canyon_step_blocks", wa.canyon_step_blocks),
+                    ("water.canyon_step_every", wa.canyon_step_every),
+                    ("water.terrace_height_blocks", wa.terrace_height_blocks),
+                    ("water.terrace_width_blocks", wa.terrace_width_blocks),
+                    ("water.terrace_gorge_blocks", wa.terrace_gorge_blocks),
+                    ("water.lake_calm_pad_blocks", wa.lake_calm_pad_blocks),
+                    ("water.route_tau_blocks_per_km", wa.route_tau_blocks_per_km),
+                    ("water.lake_area_max_fraction", wa.lake_area_max_fraction),
+                    ("water.beach_blocks", wa.beach_blocks),
+                    ("water.clear_above_blocks", wa.clear_above_blocks),
+                ] {
+                    writeln!(w, "{name}={value:?}").unwrap();
+                }
+                writeln!(w, "water.profile_budget_ms={}", wa.profile_budget_ms).unwrap();
+                writeln!(w, "water.slope_edges={:?}", wa.slope_edges).unwrap();
+                writeln!(w, "water.floodplain_w={:?}", wa.floodplain_w).unwrap();
+                writeln!(w, "water.wall_slope={:?}", wa.wall_slope).unwrap();
+                writeln!(w, "water.gate_blocks={:?}", wa.gate_blocks).unwrap();
+                writeln!(w, "water.calm_blocks={:?}", wa.calm_blocks).unwrap();
+                writeln!(
+                    w,
+                    "water.depression_min_depth_blocks={:?}",
+                    wa.depression_min_depth_blocks
+                )
+                .unwrap();
+            }
             let bd = &self.boundaries;
             for (name, value) in [
                 ("boundaries.ray_bend_sigma_deg", bd.ray_bend_sigma_deg),
@@ -2263,14 +2558,6 @@ impl Params {
             }
             writeln!(w, "boundaries.pass_octaves={}", bd.pass_octaves).unwrap();
             for (name, value) in [
-                (
-                    "boundaries.jitter_coarse_lambda_blocks",
-                    bd.jitter_coarse_lambda_blocks,
-                ),
-                (
-                    "boundaries.jitter_coarse_sigma_factor",
-                    bd.jitter_coarse_sigma_factor,
-                ),
                 ("boundaries.ecotone_width_log2", bd.ecotone_width_log2),
                 ("boundaries.ecotone_max_fraction", bd.ecotone_max_fraction),
                 ("boundaries.ecotone_lambda_blocks", bd.ecotone_lambda_blocks),
@@ -2291,6 +2578,19 @@ mod tests {
     use super::Params;
     use crate::mode::Mode;
     use crate::version::GenVersion;
+
+    /// К7 / Д-113: выше становится только научный `v1-dev`.
+    #[test]
+    fn k7_only_scientific_v1dev_is_taller() {
+        let scientific = Params::defaults(GenVersion::V1Dev, Mode::Scientific);
+        assert_eq!(scientific.height.max_y, 447.0);
+        let gameplay = Params::defaults(GenVersion::V1Dev, Mode::Gameplay);
+        assert_eq!(gameplay.height.max_y, 319.0);
+        for mode in Mode::ALL {
+            let v0 = Params::defaults(GenVersion::V0, mode);
+            assert_eq!(v0.height.max_y, 319.0);
+        }
+    }
 
     #[test]
     fn macro_params_do_not_depend_on_mode() {

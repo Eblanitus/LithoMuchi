@@ -1,0 +1,135 @@
+name: Проба точки · probe по координатам
+
+# Диагностика координат из игровых тестов и issue без локального Rust:
+# `litho-sandbox probe` в точке и вокруг неё, вывод — аннотациями задания.
+# Так разбирается К8 (issue #7, «меза у льда», X 1287 Z 832; «плоская стена»,
+# X −1797 Z −630) и любой следующий отчёт автора: нужен только сид, режим,
+# версия и координаты.
+#
+# Запуск — как T151: правкой `tools/probe/request.json` и коммитом (push).
+# `workflow_dispatch` заработает после вливания файла в `main`; до этого
+# рабочая дорога — request.json, потому что вручную запускать можно только
+# workflow, зарегистрированный на ветке по умолчанию.
+#
+# Замер приёмки не заменяет и гейтом не является: только поля и биомы.
+on:
+  push:
+    branches: ["**"]
+    paths:
+      - "tools/probe/request.json"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: probe-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  probe:
+    name: Проба полей в точке
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Сборка песочницы (release)
+        run: cargo build --release -p litho-sandbox
+      - name: Проба
+        run: |
+          python3 - <<'PY' > probe.txt
+          import json, re, subprocess
+
+          request = json.load(open("tools/probe/request.json", encoding="utf-8"))
+          mode = request.get("mode", "gameplay")
+          version = request.get("version", "v0")
+          step = float(request.get("step", 64))
+          seeds = [str(s) for s in request.get("seeds", [42])]
+          points = []
+          for raw in request.get("at", ["1287,832"]):
+              x, z = str(raw).split(",")
+              points.append((float(x), float(z)))
+          print(f"# Проба «{request.get('name', '?')}»")
+          print()
+          if request.get("note"):
+              print(request["note"])
+              print()
+          print(f"Режим {mode}, версия {version}, обход ±{step:.0f} блоков "
+                f"(шаг {step:.0f}), точек {len(points)}, сидов {len(seeds)}.")
+          print()
+
+          def field(text, pattern, default="?"):
+              found = re.search(pattern, text)
+              return found.group(1) if found else default
+
+          def probe(seed, x, z):
+              run = subprocess.run(
+                  ["./target/release/litho-sandbox", "probe", "--seed", seed,
+                   "--mode", mode, "--version", version, "--at", f"{x:.1f},{z:.1f}"],
+                  capture_output=True, text=True)
+              if run.returncode != 0:
+                  tail = (run.stderr or run.stdout).strip().splitlines()
+                  return "ошибка: " + (tail[-1] if tail else "код " + str(run.returncode))
+              text = run.stdout
+              return ("биом={} зона={} T_bio={:.2f} T={} H={} φ={:.2f} океан={}".format(
+                  field(text, r"биом=([^ ]+)"),
+                  field(text, r"зона=([^ ]+)"),
+                  float(field(text, r"T_bio=([-0-9.]+)", "nan")),
+                  field(text, r"\bT=([-0-9.]+)"),
+                  field(text, r"\bH=([-0-9.]+)"),
+                  float(field(text, r"φ=([-0-9.]+)", "nan")),
+                  field(text, r"океан=(\w+)"),
+              ))
+
+          offsets = [(0.0, 0.0)] if step <= 0 else [
+              (dx * step, dz * step) for dz in (-1.0, 0.0, 1.0) for dx in (-1.0, 0.0, 1.0)
+          ]
+          commands = request.get("commands") or []
+          for seed in seeds:
+              for x, z in points:
+                  print(f"## сид {seed}: точка ({x:.0f}, {z:.0f})")
+                  print()
+                  print("| x | z | поля |")
+                  print("|---|---|---|")
+                  for dx, dz in offsets:
+                      px, pz = x + dx, z + dz
+                      print(f"| {px:.0f} | {pz:.0f} | {probe(seed, px, pz)} |")
+                  print()
+          for argv in commands:
+              argv = [str(a) for a in argv]
+              print(f"## sandbox {argv[0]} {' '.join(argv[1:])}")
+              print()
+              print("```")
+              run = subprocess.run(["./target/release/litho-sandbox"] + argv,
+                                   capture_output=True, text=True)
+              print((run.stdout + run.stderr).rstrip())
+              print("```")
+              print()
+          PY
+          sed 's/^/::notice::/; s/^::notice::|//' probe.txt | grep -v '^::notice::$' | head -60
+      - name: Результат в ветку (docs/probe/<имя>/, без повторного CI)
+        if: ${{ github.ref_type == 'branch' }}
+        run: |
+          NAME=$(python3 -c "import json;print(json.load(open('tools/probe/request.json'))['name'])")
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          for attempt in 1 2 3 4 5; do
+            git fetch origin "+refs/heads/$GITHUB_REF_NAME:refs/remotes/origin/$GITHUB_REF_NAME"
+            git checkout -q -B probe-result "origin/$GITHUB_REF_NAME"
+            mkdir -p "docs/probe/$NAME"
+            cp probe.txt "docs/probe/$NAME/probe.txt"
+            cp tools/probe/request.json "docs/probe/$NAME/request.json"
+            git add "docs/probe/$NAME"
+            if git diff --cached --quiet; then
+              echo "Результат не изменился."
+              exit 0
+            fi
+            git commit -q -m "probe: «$NAME» для ${GITHUB_SHA::7} [skip ci]"
+            if git push origin "HEAD:$GITHUB_REF_NAME"; then
+              exit 0
+            fi
+            sleep $((attempt * 5))
+          done
+          echo "::error::не удалось записать результат в ветку $GITHUB_REF_NAME"
+          exit 1

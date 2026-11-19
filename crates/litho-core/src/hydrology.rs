@@ -6,7 +6,9 @@
 //! сохраняется честно помеченный запасной путь «сухая котловина / болото».
 
 use crate::channel::{ChannelQuery, ReachEnd};
-use crate::classify::{ClassSample, VanillaCell, biome_cell, ocean_cell};
+use crate::classify::{
+    ClassSample, VanillaCell, allowed_rows, middle_cell, ocean_cell, step_toward,
+};
 use crate::climate::ClimateSample;
 use crate::drainage::RiverNetError;
 use crate::lake::{LakeKind, LakeQuery};
@@ -61,6 +63,17 @@ pub struct HydrologySample {
     pub networks_considered: usize,
 }
 
+/// Предел уровня озера, который R1 считает водой на море. В R2 (`v1-dev-r2`,
+/// PLAN-WATER-FABRIC §5) предела нет: вода стоит и выше моря, поэтому
+/// `DeferredWater` не возникает, а вид воды выбирается как у R1.
+pub fn r1_max_level_km(params: &Params) -> f64 {
+    if params.version.is_water_relief_r2() {
+        f64::INFINITY
+    } else {
+        params.hydrology.r1_max_level_km
+    }
+}
+
 pub fn validate(params: &Params) -> Result<(), RiverNetError> {
     let h = &params.hydrology;
     let values = [
@@ -111,7 +124,34 @@ pub fn resolve(
     climate: &ClimateSample,
     params: &Params,
 ) -> HydrologySample {
+    resolve_with_limit(channels, lakes, climate, params, r1_max_level_km(params))
+}
+
+/// То же, что [`resolve`], но с явным пределом уровня озера.
+///
+/// Нужен разделу 4 плана воды (`docs/PLAN-WATER-FABRIC.md`): `v1-dev-r2`
+/// меняет **только слой воды**, а поля C/E/W/T/H и сухая поверхность `S`
+/// обязаны совпасть с `v1-dev` побитово. `apply_fields` переводит `inland_sea`
+/// и `floodplain` в C/E/W, поэтому гидрология, по которой строятся поля,
+/// всегда считается с пределом R1 (`params.hydrology.r1_max_level_km`), а сам
+/// слой воды — с пределом версии.
+///
+/// До этого R2 разрешал гидрологию без предела и на высоких озёрах земля
+/// уходила из-под воды: мир строил сушу по одним полям, а уровень воды брался
+/// с другой поверхности — 20 расхождений паритета Ф4 из 5000 и 8 протечек в
+/// научном режиме (job `water`).
+pub fn resolve_with_limit(
+    channels: ChannelQuery,
+    lakes: LakeQuery,
+    climate: &ClimateSample,
+    params: &Params,
+    r1_max_km: f64,
+) -> HydrologySample {
     let h = &params.hydrology;
+    // Д-127: без предела (R2) озёрные силы относятся к высоким озёрам, и это
+    // только слой воды. Поля `v1-dev-r2` обязаны совпасть с `v1-dev`, поэтому
+    // при пределе R1 силы обнуляются, как их и обнулил бы предел.
+    let r1 = r1_max_km.is_finite();
     let mut out = HydrologySample {
         channels,
         lakes,
@@ -122,23 +162,34 @@ pub fn resolve(
     };
     // Классы озёр смешиваются максимумами сил: выбор одного shore_hit мог
     // скачком менять E, когда два берега почти равны (болото/котловина).
+    let inside = lakes.water_hit.filter(|hit| hit.inside);
     out.water = lakes.r1_water;
     out.river = out.river.max(lakes.river_lake);
-    out.valley = out.valley.max(lakes.shore);
+    if r1 {
+        out.valley = out.valley.max(lakes.shore);
+        // Д-127: `LakeNetwork::query` под R2 отдаёт `r1_water` только низким
+        // озёрам, а под пределом R1 в поле идут все. Поскольку предел R1
+        // означает «как в `v1-dev`», низкая вода возвращается как есть.
+        if inside.is_some_and(|hit| hit.level_km.is_some_and(|level| level <= r1_max_km)) {
+            // Поле `water` — та же «геометрическая вода», что `r1_water` в
+            // `LakeQuery`: в `v1-dev` низкое озеро идёт и в C/E, и в биом.
+            out.water = 1.0;
+        }
+    }
     out.swamp = lakes.swamp;
     out.dry_basin = lakes.dry_basin;
     out.r2_deferred = lakes.deferred_water;
-    let inside = lakes.water_hit.filter(|hit| hit.inside);
+    // R2: у всех озёр с водой предел снят, вид воды — как у R1 (В1).
+    // Предел приходит аргументом: поля всегда считаются с пределом R1.
     out.kind = if lakes.inland_sea > 0.0
         || inside.is_some_and(|hit| {
             matches!(hit.kind, LakeKind::InlandSea | LakeKind::SeaConnected)
-                && hit.level_km.is_some_and(|level| level <= h.r1_max_level_km)
+                && hit.level_km.is_some_and(|level| level <= r1_max_km)
         }) {
         SurfaceKind::InlandSea
     } else if lakes.river_lake > 0.0
         || inside.is_some_and(|hit| {
-            hit.kind == LakeKind::Lake
-                && hit.level_km.is_some_and(|level| level <= h.r1_max_level_km)
+            hit.kind == LakeKind::Lake && hit.level_km.is_some_and(|level| level <= r1_max_km)
         })
     {
         SurfaceKind::Lake
@@ -151,6 +202,12 @@ pub fn resolve(
     } else {
         SurfaceKind::Land
     };
+    // Д-127: под пределом R1 высокое озеро — это отложенная вода, а не суша
+    // с болотом: тот же кадр, что у `v1-dev`. Без этого `v1-dev-r2` давал бы
+    // на высоких озёрах E6 вместо DeferredWater и менял сушу.
+    if r1 && out.kind == SurfaceKind::Land && lakes.deferred_water > 0.0 {
+        out.kind = SurfaceKind::DeferredWater;
+    }
     // Пойма не перекрывает горный каньон: множитель (1-M) из §5.7.
     out.floodplain = out.valley * (1.0 - clamp01(climate.surface.mountain));
     // E6 только у геометрических болот и дельт (§5.4/5.7). Влажная пойма
@@ -204,8 +261,28 @@ pub fn classify_surface(
     climate: &ClimateSample,
     params: &Params,
 ) -> ClassSample {
+    classify_surface_with_limit(base, hydrology, climate, params, true)
+}
+
+/// [`classify_surface`] с явным выбором: брать ли вид воды из этой гидрологии.
+/// Д-127: под пределом R1 (`own_kind = false`) высокое озеро не даёт водного
+/// биома — ровно как `DeferredWater` в `v1-dev`.
+pub fn classify_surface_with_limit(
+    base: ClassSample,
+    hydrology: &HydrologySample,
+    climate: &ClimateSample,
+    params: &Params,
+    own_kind: bool,
+) -> ClassSample {
     let mut out = base;
-    let cell = match hydrology.kind {
+    let kind = if own_kind {
+        hydrology.kind
+    } else if hydrology.r2_deferred > 0.0 {
+        SurfaceKind::DeferredWater
+    } else {
+        SurfaceKind::Land
+    };
+    let cell = match kind {
         SurfaceKind::InlandSea => Some(ocean_cell(climate.temperature.sst_c, params)),
         SurfaceKind::Land
         | SurfaceKind::River
@@ -218,19 +295,29 @@ pub fn classify_surface(
         {
             // Сильный коридор получает лесную ячейку; слабая кромка только
             // плавно поднимает H (и опускает t4 к t3 ниже, в apply_fields).
-            Some(match base.zone.belt {
+            // К2 / Д-104: не дальше одной ступени от биома вокруг.
+            // К11 / Д-119: строка T остаётся в допустимых для пояса.
+            let (lo, hi) = allowed_rows(base.mean_belt);
+            let cell = match base.zone.belt {
                 0..=1 => base.cell,
-                2 => VanillaCell {
-                    t: 1,
-                    h: 3,
-                    biome: "taiga",
-                },
-                _ => VanillaCell {
-                    t: base.cell.t.saturating_sub(1).max(2),
-                    h: 2,
-                    biome: "forest",
-                },
-            })
+                2 => step_toward(
+                    base.cell,
+                    VanillaCell {
+                        t: 1,
+                        h: 3,
+                        biome: "taiga",
+                    },
+                ),
+                _ => step_toward(
+                    base.cell,
+                    VanillaCell {
+                        t: base.cell.t.saturating_sub(1).max(2),
+                        h: 2,
+                        biome: "forest",
+                    },
+                ),
+            };
+            Some(middle_cell(cell.t.clamp(lo, hi), cell.h))
         }
         SurfaceKind::Land
         | SurfaceKind::River
@@ -239,54 +326,74 @@ pub fn classify_surface(
         | SurfaceKind::DeferredWater
             if hydrology.river > 0.0 && hydrology.swamp == 0.0 =>
         {
-            Some(
-                if base.cell.t == 0 || climate.temperature.t_min <= params.lakes.frozen_t_min_c {
-                    VanillaCell {
-                        t: 0,
-                        h: 0,
-                        biome: "frozen_river",
-                    }
-                } else {
-                    VanillaCell {
-                        t: base.cell.t,
-                        h: 0,
-                        biome: "river",
-                    }
-                },
-            )
-        }
-        SurfaceKind::Swamp | SurfaceKind::DeferredWater if hydrology.swamp > 0.0 => {
-            Some(if base.cell.t >= 3 {
+            // К11 / Д-119: лёд на воде — только в холодном поясе (строка t0,
+            // П0–П1). В `v1-dev` `t_min` воду больше не замораживает: в
+            // бореальном и умеренном поясе река остаётся рекой.
+            let frozen = if params.version.is_water_relief_dev() {
+                base.cell.t == 0
+            } else {
+                base.cell.t == 0 || climate.temperature.t_min <= params.lakes.frozen_t_min_c
+            };
+            Some(if frozen {
                 VanillaCell {
-                    t: base.cell.t,
-                    h: 4,
-                    biome: "mangrove_swamp",
+                    t: 0,
+                    h: 0,
+                    biome: "frozen_river",
                 }
             } else {
                 VanillaCell {
-                    t: base.cell.t.clamp(1, 2),
-                    h: 4,
-                    biome: "swamp",
+                    t: base.cell.t,
+                    h: 0,
+                    biome: "river",
                 }
             })
         }
-        SurfaceKind::DryBasin | SurfaceKind::DeferredWater if hydrology.dry_basin > 0.0 => {
-            let belt = base.zone.belt;
-            // Солончака в ванили нет: тёплая котловина — саванна, остальные —
-            // пустыня; правило холодной зимы сохраняет сухие равнины.
-            Some(biome_cell(
-                belt.max(3),
-                if belt >= 4 { 3 } else { 1 },
-                base.ratio.max(2.0),
-                climate.temperature.t_min,
-                params,
+        SurfaceKind::Swamp | SurfaceKind::DeferredWater if hydrology.swamp > 0.0 => {
+            // К2 / Д-104: болото в ванили выбирается эрозией и температурой
+            // при любой влажности, поэтому H остаётся как у биома вокруг.
+            // К11 / Д-119: строка T не выходит из допустимых для пояса и
+            // болотом в полярном поясе (t0) не ставится.
+            let (lo, hi) = allowed_rows(base.mean_belt);
+            if hi == 0 {
+                // К11: болото возможно только от строки t1; в полярном поясе
+                // (t0) его нет — остаётся биом вокруг.
+                Some(base.cell)
+            } else {
+                let t = base.cell.t.clamp(lo.max(1), hi);
+                Some(if t >= 3 {
+                    VanillaCell {
+                        t,
+                        h: base.cell.h,
+                        biome: "mangrove_swamp",
+                    }
+                } else {
+                    VanillaCell {
+                        t,
+                        h: base.cell.h,
+                        biome: "swamp",
+                    }
+                })
+            }
+        }
+        SurfaceKind::DryBasin if hydrology.dry_basin > 0.0 => {
+            // К2 / Д-104: сухая котловина на одну ступень суше биома вокруг,
+            // температура та же. Прежняя цель (пустыня или саванна) ставила
+            // равнину посреди тайги. Котловина, где вода отложена до R2
+            // (`DeferredWater`), остаётся обычной сушей со своим биомом.
+            Some(step_toward(
+                base.cell,
+                VanillaCell {
+                    t: base.cell.t,
+                    h: 0,
+                    biome: base.cell.biome,
+                },
             ))
         }
         _ => None,
     };
     if let Some(cell) = cell {
         out.cell = cell;
-        out.is_ocean = hydrology.kind == SurfaceKind::InlandSea;
+        out.is_ocean = kind == SurfaceKind::InlandSea;
         if out.is_ocean {
             out.zone = crate::classify::LifeZone {
                 belt: cell.t,
@@ -297,26 +404,172 @@ pub fn classify_surface(
     out
 }
 
+#[cfg(test)]
+mod r2_limit_tests {
+    use super::*;
+    use crate::lake::LakeHit;
+    use crate::mode::Mode;
+    use crate::version::GenVersion;
+
+    fn empty() -> (ChannelQuery, LakeQuery, ClimateSample) {
+        (
+            ChannelQuery::default(),
+            LakeQuery::default(),
+            ClimateSample::default(),
+        )
+    }
+
+    /// Д-127: под пределом R1 гидрология не отдаёт силы берега — поля
+    /// `v1-dev-r2` считаются ровно как у `v1-dev`.
+    #[test]
+    fn r1_limit_hides_high_lake_from_fields() {
+        let params = Params::defaults(GenVersion::V1DevR2, Mode::Gameplay);
+        let (channels, mut lakes, climate) = empty();
+        lakes.shore = 1.0;
+        let limited = resolve_with_limit(
+            channels,
+            lakes,
+            &climate,
+            &params,
+            params.hydrology.r1_max_level_km,
+        );
+        assert_eq!(limited.valley, 0.0, "сила берега не должна попадать в E");
+        let water = resolve(channels, lakes, &climate, &params);
+        assert_eq!(water.valley, 1.0, "без предела сила берега остаётся");
+    }
+
+    /// Низкое озеро под пределом R1 возвращается в поле как вода, даже если
+    /// `LakeNetwork::query` в R2 отдал `r1_water = 0` (низкую воду знает
+    /// только предел). Высокое озеро под пределом в поле не идёт.
+    #[test]
+    fn r1_limit_restores_low_lake_water() {
+        let params = Params::defaults(GenVersion::V1DevR2, Mode::Gameplay);
+        let (channels, mut lakes, climate) = empty();
+        let mut hit = LakeHit {
+            plate_id: 0,
+            lake: 0,
+            depression: 0,
+            kind: LakeKind::Lake,
+            distance_l: 0.0,
+            inside: true,
+            level_km: Some(0.1),
+            max_depth_km: 0.0,
+            frozen: false,
+            rift: false,
+            high: false,
+            water_strength: 1.0,
+            shore_strength: 0.0,
+            level_blocks: None,
+        };
+        lakes.water_hit = Some(hit);
+        let limited = resolve_with_limit(
+            channels,
+            lakes,
+            &climate,
+            &params,
+            params.hydrology.r1_max_level_km,
+        );
+        assert_eq!(limited.water, 1.0);
+        assert_eq!(limited.kind, SurfaceKind::Lake);
+        // Высокое озеро под пределом R1 — отложенная вода, не вода.
+        hit.level_km = Some(0.8);
+        lakes.water_hit = Some(hit);
+        let high = resolve_with_limit(
+            channels,
+            lakes,
+            &climate,
+            &params,
+            params.hydrology.r1_max_level_km,
+        );
+        assert_eq!(high.water, 0.0);
+        assert_ne!(high.kind, SurfaceKind::Lake);
+    }
+
+    /// Замкнутая впадина под пределом R1 остаётся отложенной водой: в
+    /// `v1-dev` это `DeferredWater`, а не суша с болотом.
+    #[test]
+    fn r1_limit_keeps_deferred_water_deferred() {
+        let params = Params::defaults(GenVersion::V1DevR2, Mode::Gameplay);
+        let (channels, mut lakes, climate) = empty();
+        lakes.deferred_water = 1.0;
+        let limited = resolve_with_limit(
+            channels,
+            lakes,
+            &climate,
+            &params,
+            params.hydrology.r1_max_level_km,
+        );
+        assert_eq!(limited.kind, SurfaceKind::DeferredWater);
+        let water = resolve(channels, lakes, &climate, &params);
+        assert_eq!(water.kind, SurfaceKind::DeferredWater);
+    }
+
+    /// Обёртки без флага — прежнее поведение: поля и биом видят воду.
+    #[test]
+    fn default_wrappers_keep_own_kind() {
+        let params = Params::defaults(GenVersion::V1Dev, Mode::Gameplay);
+        let (channels, mut lakes, climate) = empty();
+        lakes.shore = 1.0;
+        lakes.swamp = 1.0;
+        let limited = resolve_with_limit(
+            channels,
+            lakes,
+            &climate,
+            &params,
+            params.hydrology.r1_max_level_km,
+        );
+        let same = resolve(channels, lakes, &climate, &params);
+        assert_eq!(limited.valley, same.valley);
+        assert_eq!(limited.swamp, same.swamp);
+        let base = VanillaSample {
+            c: 0.0,
+            e: 0.5,
+            w: 0.0,
+            t: 0.0,
+            h: 0.0,
+        };
+        let a = apply_fields(base, 0.0, &limited, &params);
+        let b = apply_fields_with_limit(base, 0.0, &limited, &params, true);
+        assert_eq!(a, b);
+    }
+}
+
 /// `base.w` ещё не подавлен рекой. Один общий множитель объединяет русло
 /// сети, низкое озеро и локальную рифт/трансформную реку, без двойного среза.
 pub fn apply_fields(
+    base: VanillaSample,
+    local_river: f64,
+    hydrology: &HydrologySample,
+    params: &Params,
+) -> VanillaSample {
+    apply_fields_with_limit(base, local_river, hydrology, params, true)
+}
+
+/// [`apply_fields`] с явным выбором: считать или нет силы вида поверхности.
+/// Д-127: поля `v1-dev-r2` обязаны совпасть с `v1-dev`, поэтому при пределе
+/// R1 вид поверхности не чужой (высокое озеро — `DeferredWater`) и в C/E
+/// идёт только то, что попало бы в поле под этим пределом.
+pub fn apply_fields_with_limit(
     mut base: VanillaSample,
     local_river: f64,
     hydrology: &HydrologySample,
     params: &Params,
+    own_kind: bool,
 ) -> VanillaSample {
     let h = &params.hydrology;
     base.w *= 1.0 - clamp01(hydrology.river.max(local_river));
     base.e = lerp(base.e, h.floodplain_e, hydrology.floodplain);
     base.e = lerp(base.e, h.dry_basin_e, hydrology.dry_basin);
-    base.e = lerp(base.e, h.swamp_e, hydrology.swamp);
-    if hydrology.kind == SurfaceKind::InlandSea {
+    if own_kind {
+        base.e = lerp(base.e, h.swamp_e, hydrology.swamp);
+    }
+    if own_kind && hydrology.kind == SurfaceKind::InlandSea {
         // Глубина большого озера идёт через морской сплайн C, не через W.
         let depth_c = continentalness(-hydrology.lakes.sea_depth_km.max(0.0), 0.0, params);
         let target = clamp(depth_c, -1.0, h.inland_sea_c);
         base.c = lerp(base.c, target.min(base.c), hydrology.lakes.inland_sea);
     }
-    if base.c > h.estuary_c {
+    if own_kind && base.c > h.estuary_c {
         base.c = lerp(base.c, h.estuary_c, hydrology.estuary);
     }
     // Б7 не меняет C/E/W: только влажность и жаркая полоса температуры.
@@ -394,6 +647,7 @@ mod tests {
             high: level > 0.0,
             water_strength: 1.0,
             shore_strength: 1.0,
+            level_blocks: None,
         }
     }
 
@@ -461,6 +715,8 @@ mod tests {
             delta_strength: 0.0,
             end: ReachEnd::Confluence,
             mouth_distance_l: 1.0,
+            level_blocks: None,
+            along: 0.0,
         };
         let q = ChannelQuery {
             core: 1.0,
@@ -561,6 +817,8 @@ mod tests {
             delta_strength: 0.0,
             end: ReachEnd::Sea,
             mouth_distance_l: 0.0,
+            level_blocks: None,
+            along: 0.0,
         };
         let q = ChannelQuery {
             core: 1.0,
@@ -589,11 +847,21 @@ mod tests {
         };
         let h = resolve(corridor, LakeQuery::default(), &c, &p);
         assert_eq!(h.gallery, 1.0);
-        let dry = classify_inputs(30.0, 5.0, 12.0, &p);
+        // R = 8: глубже каймы пустыни (Д-104), ячейка — песок t4/h0.
+        let dry = classify_inputs(30.0, 8.0, 12.0, &p);
         assert_eq!(dry.cell.biome, "desert");
+        // К2 / Д-104: коридор в пустыне — одна ступень к лесу, то есть
+        // саванна t3/h1; лес t3/h2 встал бы к песку через ступень.
         let forest = classify_surface(dry, &h, &c, &p);
+        assert_eq!(forest.cell.biome, "savanna");
+        assert_eq!((forest.cell.t, forest.cell.h), (3, 1));
+        let savanna = classify_inputs(30.0, 3.0, 12.0, &p);
+        assert_eq!((savanna.cell.t, savanna.cell.h), (3, 1));
+        let forest = classify_surface(savanna, &h, &c, &p);
         assert_eq!(forest.cell.biome, "forest");
-        assert_eq!(forest.cell.t, 3);
+        // К11 / Д-119: строка T остаётся строкой пояса (П6 → t3), галерея
+        // поднимает только влажность — t3/h2, лес.
+        assert_eq!((forest.cell.t, forest.cell.h), (3, 2));
         let mut numbers = base();
         numbers.t = p.climate.t_centers[4];
         numbers.h = p.climate.h_centers[0];

@@ -1,7 +1,8 @@
 // Executed in the staged real horizon-world, not as part of this workspace.
 // Inputs: generated packs and mcmeta's pinned 26.3-data-json checkout.
 // К2 / шаг 2: depth at y=80 is 0.375 + offset and the encoded surface is
-// y = 128·(1 + offset). factor/jaggedness stay vanilla for test №2.
+// y = 128·(1 + offset). К4а/часть 1: factor тоже приходит из litho-core —
+// игра перестаёт добавлять свой рельеф (Д-106). jaggedness ванильный (Д-117).
 use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::Arc;
@@ -119,16 +120,19 @@ fn v1_dev_pack_reaches_real_26_3_depth_graph() {
     let noise = root.join("data/litospherity/worldgen/noise");
     assert!((df.join("ridges_folded.json")).is_file());
     assert!((df.join("offset.json")).is_file());
-    for field in ["factor", "jaggedness"] {
-        assert!(
-            !df.join(format!("{field}.json")).exists(),
-            "пак не должен переопределять {field} до теста №2"
-        );
-        assert!(
-            !has_noise(&noise, &format!("{field}.json")),
-            "пак не должен объявлять шум {field} до теста №2"
-        );
-    }
+    assert!(
+        df.join("factor.json").is_file(),
+        "пак обязан переопределять factor (К4а, часть 1)"
+    );
+    assert!(
+        has_noise(&noise, "factor.json"),
+        "пак обязан объявлять шум factor (К4а, часть 1)"
+    );
+    // Д-117: jaggedness остаётся ванильным — иначе иглы на холмах.
+    assert!(
+        !df.join("jaggedness.json").exists() && !has_noise(&noise, "jaggedness.json"),
+        "пак не должен переопределять jaggedness (Д-117)"
+    );
 
     let fields = samplers(pack);
     let mut checked_surface = false;
@@ -158,8 +162,24 @@ fn v1_dev_pack_reaches_real_26_3_depth_graph() {
                 expected
             );
             assert!((-2.0..=2.0).contains(&a[4]));
-            // factor/jaggedness остаются ванильными: только разумные пределы.
-            assert!((0.0..=10.0).contains(&a[5]));
+            // К4а/часть 1: factor приходит из litho-core; jaggedness —
+            // ванильный граф по нашим C/E/PV (Д-117), проверяем только диапазон.
+            for (index, field) in [(5usize, "factor")] {
+                let expected = field_for(
+                    1,
+                    &format!("litospherity:v1-dev/gameplay/{field}"),
+                    f64::from(x),
+                    f64::from(z),
+                )
+                .unwrap();
+                assert!(
+                    (a[index] - expected).abs() < 1e-6,
+                    "{field}({x},{z}) = {} != ядра {}",
+                    a[index],
+                    expected
+                );
+            }
+            assert!((0.5..=6.5).contains(&a[5]));
             assert!((0.0..=1.0).contains(&a[6]));
 
             // Поверхность: depth(y) = (1 − y/128) + offset; при

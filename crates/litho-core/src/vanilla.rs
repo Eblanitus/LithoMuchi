@@ -9,7 +9,7 @@ use crate::noise::{fbm2, fbm2_unit, ridged2};
 use crate::params::Params;
 use crate::seed::{SALT_VANILLA_E, SALT_VANILLA_S, SALT_VANILLA_W, subseed};
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct VanillaSample {
     pub c: f64,
     pub e: f64,
@@ -139,6 +139,24 @@ pub fn weirdness(
     }
 }
 
+/// Ванильные `t` и `h` — центры полос клетки биома.
+pub fn temperature_humidity(
+    climate: &ClimateSample,
+    class: &ClassSample,
+    params: &Params,
+) -> (f64, f64) {
+    let c = &params.climate;
+    let t_value = c.t_centers[(class.cell.t as usize).min(4)];
+    let h_value = if class.is_ocean {
+        0.0
+    } else if class.cell.h == 4 {
+        c.h4_base + c.h4_gain * smoothstep(0.5, 0.25, climate.precip.ratio)
+    } else {
+        c.h_centers[(class.cell.h as usize).min(4)]
+    };
+    (t_value, h_value)
+}
+
 /// Пять чисел для ванили. `t` и `h` — центры полос, остальные непрерывны.
 pub fn sample(
     climate: &ClimateSample,
@@ -149,19 +167,11 @@ pub fn sample(
     params: &Params,
     river: f64,
 ) -> VanillaSample {
-    let c = &params.climate;
     let surface = climate.surface;
     let c_value = continentalness(surface.e_km, surface.iota_l, params);
     let e_value = erosion(x, z, surface.mountain, surface.plateau, seed, params);
     let w_value = weirdness(x, z, surface.mountain, surface.plateau, seed, params, river);
-    let t_value = c.t_centers[(class.cell.t as usize).min(4)];
-    let h_value = if class.is_ocean {
-        0.0
-    } else if class.cell.h == 4 {
-        c.h4_base + c.h4_gain * smoothstep(0.5, 0.25, climate.precip.ratio)
-    } else {
-        c.h_centers[(class.cell.h as usize).min(4)]
-    };
+    let (t_value, h_value) = temperature_humidity(climate, class, params);
     VanillaSample {
         c: c_value,
         e: e_value,

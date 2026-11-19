@@ -25,32 +25,57 @@ packs/density_function.json.in  переопределение minecraft:overwor
 packs/noise.json.in          фиктивное определение шума; диапазон с запасом
 ```
 
+## Лава аквиферов (шаг 4, T77, Д-097)
+
+Точка №1 подменяет ещё и ванильный шум `minecraft:aquifer_lava`, но только в
+мире `v1-dev`: мир узнаётся по именам шумов `litospherity:v1-dev/<режим>/…` в
+том же графе. В ванильном мире, в мире `v0` и со smoke-паком лава ванильная.
+Значение считает `Generator::lava_aquifer` по номеру ячейки аквифера
+(64 × 40 × 64 блока). В паках для этого ничего нет.
+
+## Лава ниже −54 только у стыков (шаг 4, T77, Д-098)
+
+Три точки внедрения: `aquifer` (`MaterialRuleLibrary::compile_aquifer`),
+`is-lava` (`RegistryAquiferBlockStates::is_lava`) и `aquifer-reset`
+(`AquiferSamplers::new`). В мире `v1-dev` общая лава ниже −54 отключена, а
+поля аквифера обёрнуты: у стыка плит (λ ≥ 0,5) залито лавой до −54, вдали
+сухо. Ванильный мир, `v0` и smoke-пак не меняются. Проверка на настоящем
+аквифере Horizon — `tools/horizon-core-check/deep_lava.rs` (job CI
+`horizon-mixins-contract`).
+
 ## Что собирает `xtask` и упаковщик
 
 ```bash
 cargo run -q -p xtask -- pack --out out/packs
 cargo run -q -p xtask -- bundle --out out/bundle
 cargo run -q -p xtask -- bundle-check --out out/bundle
-python3 tools/package_mod.py          # .hnmod + ZIP всех паков + native-plan.json
+python3 tools/package_mod.py          # .hnmod со всеми паками внутри
 ```
 
 - `pack` генерирует паки `v0`, `v1-dev` и `smoke`. В паках v0/v1-dev —
   `pack.mcmeta`, переопределения полей `overworld/*` и фиктивные определения
   наших шумов (план 10.4). Файлы Mojang не копируются: JSON написаны нами и
   содержат только ссылки.
-- `v1-dev` до теста №2 переопределял `pv` → `ridges_folded` и `offset`;
-  `factor`/`jaggedness` считает ваниль. Экспериментальные паки `v1-dev-i2`
+- `v1-dev` переопределяет полную I2: `pv` → `ridges_folded`, `offset`, а с
+  К4а/часть 1 (Д-106) ещё `factor` — игра перестаёт добавлять свой рельеф
+  поверх нашего. `jaggedness` остаётся ванильным (Д-117): наша таблица
+  давала иглы на холмах. Экспериментальные паки `v1-dev-i2`
   из `arena/cc2bb388` в рабочий `.hnmod` **не входят**.
 - `smoke` — тестовый пак из DoD Э2: все пять полей ссылаются на
   `litospherity:smoke/<поле>`, клей возвращает константу, `continents = 0.8`.
 - `bundle` складывает готовый `horizon-mixin.toml`, копию `crates/litho-core`,
-  два glue-файла без `.in` и все паки в одну папку. Архивы `.zip` и сам
-  `.hnmod` собираются `tools/package_mod.py` в CI; артефакт шага 5 —
-  `litospherity-hnmod` id `13857022266` (run `43025888764`), 421527 байт.
+  glue-файлы без `.in` и все паки в одну папку. `tools/package_mod.py` собирает
+  `.hnmod`: паки пишутся в него исходником `glue/packs_data.rs` (модуль
+  `litospherity_packs`), отдельных `.zip` рядом с модом нет (К6, Д-112).
+  Артефакт CI — `litospherity-hnmod` последнего зелёного прогона.
+- Клиентский хук (Д-112) — `glue/packs_seed_hook.rs` на `Title::click` и
+  `Title::confirm_key_size`: при открытии экрана создания мира он кладёт паки в
+  папку паков нового мира, поэтому Data Packs показывает их без перетаскивания
+  файлов. Выбор игрока хук не трогает.
 - `bundle-check` — жёсткая проверка без `|| true`: все файлы на месте, ни одного
   неподставленного `@…@`, JSON начинается и заканчивается фигурной скобкой,
   манифест содержит `dependent = "horizon-core"`, v0 не содержит новых
-  переопределений, v1-dev не содержит factor/jaggedness/I2. Выполняется в CI.
+  переопределений, v1-dev содержит pv/offset/factor и не содержит jaggedness (Д-117). Выполняется в CI.
 
 ## Ограничения, которые проверяет T72 и реальный CI
 
@@ -62,6 +87,9 @@ python3 tools/package_mod.py          # .hnmod + ZIP всех паков + nativ
 - диапазон фиктивного определения шума: граф берёт его из JSON, а не из
   `range()` экземпляра (5.3), `base_amplitude = 4` выбран с запасом под [−1, 1];
 - хуки написаны под Rust 2024: `gen` зарезервирован, в клее его нет;
+- клиентский хук К6: `cargo check -p horizon-client --no-default-features` на
+  закреплённых исходниках с внедрённым хуком (без `audio`/`controllers` — на
+  раннере нет ALSA/libudev);
 - Windows-лаунчер в песочнице по-прежнему не запускается, но реальные типы
   Horizon, настоящий план mixins и граф 26.3 проверяются отдельными job'ами CI,
   а игру подтвердил автор в тесте №2.
