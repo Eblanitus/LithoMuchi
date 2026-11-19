@@ -446,11 +446,20 @@ mod r2_limit_tests {
         let params = Params::defaults(GenVersion::V1DevR2, Mode::Gameplay);
         let (channels, mut lakes, climate) = empty();
         let mut hit = LakeHit {
+            plate_id: 0,
+            lake: 0,
+            depression: 0,
+            kind: LakeKind::Lake,
+            distance_l: 0.0,
             inside: true,
             level_km: Some(0.1),
-            kind: LakeKind::Lake,
+            max_depth_km: 0.0,
+            frozen: false,
+            rift: false,
+            high: false,
             water_strength: 1.0,
-            ..LakeHit::default()
+            shore_strength: 0.0,
+            level_blocks: None,
         };
         lakes.water_hit = Some(hit);
         let limited = resolve_with_limit(
@@ -528,7 +537,7 @@ mod r2_limit_tests {
 /// `base.w` ещё не подавлен рекой. Один общий множитель объединяет русло
 /// сети, низкое озеро и локальную рифт/трансформную реку, без двойного среза.
 pub fn apply_fields(
-    mut base: VanillaSample,
+    base: VanillaSample,
     local_river: f64,
     hydrology: &HydrologySample,
     params: &Params,
