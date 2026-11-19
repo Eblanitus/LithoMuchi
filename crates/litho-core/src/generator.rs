@@ -146,7 +146,7 @@ fn worker_threads() -> usize {
 }
 
 type CoarseTiles = ShardedCache<(i64, i64), Arc<Nodes<COARSE_N>>>;
-type LastCoarse = Option<(u64, u64, i64, i64, Arc<Nodes<COARSE_N>>)>;
+type LastCoarse = Option<(u64, u64, u64, i64, i64, Arc<Nodes<COARSE_N>>)>;
 /// Д-061: тайл → плиты, чьи сети рек могут иметь узел рядом с запросом.
 type NetOwners = ShardedCache<(i64, i64), Arc<Vec<u64>>>;
 /// T79: блок решётки стока → владелец каждого узла блока.
@@ -163,7 +163,9 @@ thread_local! {
     static RAY_TILES: RefCell<[RayTileSlot; RAY_TILE_SLOTS]> =
         const { RefCell::new([const { None }; RAY_TILE_SLOTS]) };
     /// «Последний тайл» на поток: соседние запросы не трогают замки (6.6).
-    /// Ключ включает сид и масштаб, чтобы миры в одном процессе не путались (Р14).
+    /// Ключ включает сид, **хеш параметров** и масштаб (Р14, Д-128): мирам с
+    /// одним сидом и разными параметрами (v1-dev и v1-dev-r2 в одном процессе)
+    /// нельзя читать тайлы друг друга — это давало 20 расхождений паритета из 5000.
     static LAST_COARSE: RefCell<LastCoarse> = const { RefCell::new(None) };
 }
 
@@ -1988,9 +1990,10 @@ impl Generator {
 
     fn coarse_tile_at(&self, tx: i64, tz: i64) -> Arc<Nodes<COARSE_N>> {
         let scale = self.params.block.l_blocks.to_bits();
+        let key = self.params.config_key;
         let cached = LAST_COARSE.with(|cell| {
-            cell.borrow().as_ref().and_then(|(seed, s, x, z, tile)| {
-                if *seed == self.seed && *s == scale && *x == tx && *z == tz {
+            cell.borrow().as_ref().and_then(|(seed, config, s, x, z, tile)| {
+                if *seed == self.seed && *config == key && *s == scale && *x == tx && *z == tz {
                     Some(tile.clone())
                 } else {
                     None
@@ -2004,7 +2007,7 @@ impl Generator {
             .coarse
             .get_or_insert((tx, tz), || self.compute_coarse_tile(tx, tz));
         LAST_COARSE.with(|cell| {
-            *cell.borrow_mut() = Some((self.seed, scale, tx, tz, tile.clone()));
+            *cell.borrow_mut() = Some((self.seed, key, scale, tx, tz, tile.clone()));
         });
         tile
     }
