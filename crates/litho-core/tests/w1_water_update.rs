@@ -9,7 +9,7 @@
 //! совпасть с поверхностью колонки, а быстрый путь `s0_node` — с точным.
 
 use litho_core::version::GenVersion;
-use litho_core::{Generator, Mode, Params};
+use litho_core::{Field, Generator, Mode, Params};
 
 /// Те же 1000 точек, что в CI мода и в паритете Ф4 (`r2_fields_parity`).
 fn points() -> Vec<(f64, f64)> {
@@ -22,19 +22,31 @@ fn points() -> Vec<(f64, f64)> {
         .collect()
 }
 
-/// ВО0-1: `v1-dev-w` меняет только параметры, а не мир. Колонка воды — это
-/// уровень, дно, поверхность и вид воды; все четыре обязаны совпасть с R2.
+/// ВО1-1: уровни `W` теперь профиль от `S0` (§6.3), поэтому колонки W и R2
+/// расходятся. Совпадение колонок было требованием ВО0-1 и закрылось вместе с
+/// «W — копия R2». Мир вне воды не меняется: континентальность в поле та же,
+/// `S0` есть только у W, а вода не опускается ниже моря (там её ставит ваниль).
 #[test]
-fn w_copies_r2_water_columns() {
+fn w_keeps_land_fields_and_takes_own_levels() {
     for mode in Mode::ALL {
         let w = Generator::new(42, mode, GenVersion::V1DevW).unwrap();
         let r2 = Generator::new(42, mode, GenVersion::V1DevR2).unwrap();
-        for (x, z) in points() {
+        for (x, z) in points().into_iter().take(200) {
             assert_eq!(
-                w.water_column(x, z),
-                r2.water_column(x, z),
-                "режим {mode:?}, колонка ({x}, {z})"
+                w.field(Field::Continents, x, 0.0, z),
+                r2.field(Field::Continents, x, 0.0, z),
+                "C разошёлся в ({x}, {z}), режим {mode:?}"
             );
+            let s0 = w.s0_at(x, z).expect("S0 есть у W");
+            assert!(s0.macro_y.is_finite(), "S0 не число в ({x}, {z})");
+            let column = w.water_column(x, z);
+            if column.level != 0 {
+                assert!(
+                    column.level >= 63,
+                    "уровень ниже моря в ({x}, {z}), режим {mode:?}"
+                );
+                assert!(column.bed <= column.level, "дно выше зеркала ({x}, {z})");
+            }
         }
     }
 }

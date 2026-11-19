@@ -1,5 +1,5 @@
 # Временный диагностический прогон ветки arena/4e4f066f-lithomuchi: в песочнице
-# нет Rust, а логи job'ов отсюда не скачиваются. Ошибки компиляции печатаются
+# нет Rust, а логи job'ов отсюда не скачиваются. Ошибки печатаются
 # workflow-командами `::error::` и читаются через annotations API.
 name: diag
 on:
@@ -14,49 +14,27 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
+      - name: fmt
+        run: |
+          set +e
+          cargo fmt --all --check > /tmp/fmt.log 2>&1
+          status=$?
+          grep -E "^Diff in" /tmp/fmt.log | head -20 | sed 's/^/::error::fmt /'
+          if [ $status -ne 0 ]; then head -c 1500 /tmp/fmt.log; fi
+          exit $status
       - name: clippy
         run: |
           set +e
           cargo clippy --workspace --all-targets -- -D warnings > /tmp/clippy.log 2>&1
           status=$?
-          python3 - <<'PY'
-import os, pathlib
-lines = pathlib.Path("/tmp/clippy.log").read_text(errors="replace").splitlines()
-out = []
-i = 0
-while i < len(lines):
-    line = lines[i]
-    if line.startswith("error") or line.startswith("warning: unused"):
-        loc = ""
-        for j in range(i + 1, min(i + 4, len(lines))):
-            if lines[j].strip().startswith("-->"):
-                loc = lines[j].strip()[3:].strip()
-                break
-        text = line if not loc else f"{loc}: {line}"
-        out.append(text.replace("%", "%25").replace("\r", ""))
-        if len(out) >= 20:
-            break
-        i += 3
-        continue
-    i += 1
-for text in out:
-    print(f"::error::{text}")
-print("DIAG-END")
-PY
-          head -c 3000 /tmp/clippy.log
+          grep -E "^(error|warning)" /tmp/clippy.log | head -24 | sed 's/^/::error::clippy /'
+          if [ $status -ne 0 ]; then grep -A3 -E "^error" /tmp/clippy.log | head -80; fi
           exit $status
       - name: tests
         run: |
           set +e
           cargo test --workspace > /tmp/test.log 2>&1
           status=$?
-          python3 - <<'PY'
-import pathlib
-lines = pathlib.Path("/tmp/test.log").read_text(errors="replace").splitlines()
-out = [l.replace("%", "%25") for l in lines if "panicked at" in l or l.startswith("error[") or l.startswith("error:") or l.startswith("---- ")]
-for text in out[:20]:
-    print(f"::error::{text}")
-print("DIAG-END")
-PY
-          tail -c 3000 /tmp/test.log
+          grep -E "panicked at|^error\[|^error:|^---- " /tmp/test.log | head -24 | sed 's/^/::error::test /'
+          if [ $status -ne 0 ]; then grep -B2 -A12 -E "panicked at" /tmp/test.log | head -120; fi
           exit $status

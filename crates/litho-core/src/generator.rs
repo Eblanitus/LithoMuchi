@@ -298,6 +298,10 @@ pub struct Generator {
     /// R2 (§4): уровни воды плиты от сухой поверхности. Отдельный кэш, потому
     /// что для их счёта нужна `S`, а `S` не зависит от уровней.
     r2_levels: Arc<PlateCache<PlateLevels>>,
+    /// ВО1-1 (6.3): уровни `W` — профиль реки от `S0`. Кэш отдельный: в `W`
+    /// уровни не читают `S` (иначе цикл «уровень → `S` → уровень»), а озёра
+    /// пока живут по правилу R2 (6.4).
+    w_levels: Arc<PlateCache<PlateLevels>>,
     /// R2 (§4): гидрология с уровнями воды. Кэш отдельный от сырого: сырой
     /// нужен счёту `S`, и в него уровни не попадают.
     hydrology_levels: Arc<crate::cache::ShardedCache<(i64, i64), Arc<HydrologySample>>>,
@@ -425,6 +429,7 @@ impl Generator {
                 crate::drainage::NET_CACHE_CAPACITY,
             )),
             r2_levels: Arc::new(PlateCache::new(shards, crate::drainage::NET_CACHE_CAPACITY)),
+            w_levels: Arc::new(PlateCache::new(shards, crate::drainage::NET_CACHE_CAPACITY)),
             hydrology_levels: Arc::new(crate::cache::ShardedCache::new(shards, 4096)),
             drainage_topo: Arc::new(PlateCache::new(shards, crate::drainage::NET_CACHE_CAPACITY)),
             drainage_routing: Arc::new(PlateCache::new(
@@ -1205,13 +1210,25 @@ impl Generator {
             let mut channels_here = net.channels().query(point);
             let mut lakes_here = net.lakes().query(point);
             if with_levels && self.params.version.is_water_relief_r2() {
-                let levels = self.r2_plate_levels(&plate, &net)?;
+                // ВО1-1 (6.3): у `v1-dev-w` уровень реки — профиль от `S0`, у
+                // R2 — прежний «низший берег минус 1». Озёра в ВО1–ВО2 у обеих
+                // версий по правилу R2 (6.4).
+                let water_update = self.params.version.is_water_update();
+                let levels = if water_update {
+                    self.w_plate_levels(&plate, &net)?
+                } else {
+                    self.r2_plate_levels(&plate, &net)?
+                };
                 if let Some(hit) = lakes_here.water_hit.as_mut() {
                     hit.level_blocks = levels.lakes.get(hit.lake).copied().flatten();
                 }
                 if let Some(hit) = channels_here.nearest.as_mut() {
                     let reach = hit.reach;
-                    let reach_levels = self.r2_reach_levels(&levels, &net, reach)?;
+                    let reach_levels = if water_update {
+                        self.w_reach_levels(&levels, &net, reach)?
+                    } else {
+                        self.r2_reach_levels(&levels, &net, reach)?
+                    };
                     let first = net.channels().reach_first_segment(reach);
                     hit.level_blocks = reach_levels
                         .get(hit.segment.saturating_sub(first))
@@ -1376,6 +1393,133 @@ impl Generator {
                 } else {
                     None
                 };
+            }
+        }
+        Ok(segments)
+    }
+
+    /// ВО1-1 (6.3): уровни `W` плиты. Озёра — правило R2 (6.4, ВО1–ВО2),
+    /// русла — профиль от `S0`, лениво по звену: у плиты тысячи сегментов.
+    fn w_plate_levels(
+        &self,
+        plate: &Plate,
+        net: &crate::drainage::RiverNet,
+    ) -> Result<Arc<PlateLevels>, RiverNetError> {
+        self.w_levels
+            .get_or_build(plate.id, || self.build_w_plate_levels(net))
+    }
+
+    /// Уровни `W` одного звена: считается один раз на звено.
+    fn w_reach_levels(
+        &self,
+        levels: &PlateLevels,
+        net: &crate::drainage::RiverNet,
+        reach: usize,
+    ) -> Result<ReachLevels, RiverNetError> {
+        if let Some(found) = levels
+            .reaches
+            .lock()
+            .expect("уровни русел W не отравлены")
+            .get(&reach)
+        {
+            return Ok(Arc::clone(found));
+        }
+        let built = Arc::new(self.build_w_reach_levels(net, reach)?);
+        levels
+            .reaches
+            .lock()
+            .expect("уровни русел W не отравлены")
+            .insert(reach, Arc::clone(&built));
+        Ok(built)
+    }
+
+    /// Озёра `W` пока по правилу R2 (6.4): их поверхность — ещё не `S0`.
+    /// Русла считаются лениво в [`Self::w_reach_levels`].
+    fn build_w_plate_levels(
+        &self,
+        net: &crate::drainage::RiverNet,
+    ) -> Result<PlateLevels, RiverNetError> {
+        self.build_r2_plate_levels(net)
+    }
+
+    /// `S0_macro` в блочной точке: сухая поверхность без микробугров.
+    /// `None` — версия без водного обновления или точка без климата/плиты.
+    fn s0_macro_at(&self, x: f64, z: f64) -> Option<f64> {
+        if !self.params.version.is_water_update() {
+            return None;
+        }
+        self.s0_at(x, z).map(|sample| sample.macro_y)
+    }
+
+    /// ВО1-1 (6.3, пп. 1–3, 5, 7): профиль уровня реки `W` по звену.
+    ///
+    /// Пробы оси идут с шагом `water.profile_step_blocks` (при перерасходе
+    /// бюджета шаг удваивается): цель `T = floor(B) − 1` от низшего из трёх
+    /// `S0` сечения, не ниже моря. Вниз по течению уровень только убывает
+    /// (бегущий минимум), поэтому ступень внутри звена — не больше блока на
+    /// блок русла; перепады, которые рельеф даёт быстрее, разбирает п. 6
+    /// (водопады, ВО1-2). Подпор и притоки (п. 4) и межплитовые звенья (п. 8)
+    /// считаются после того, как сеть научится читать уровень приёмника.
+    fn build_w_reach_levels(
+        &self,
+        net: &crate::drainage::RiverNet,
+        reach: usize,
+    ) -> Result<Vec<Option<(f64, f64)>>, RiverNetError> {
+        let l = self.params.block.l_blocks;
+        let shift = self.spawn_shift;
+        let to_blocks = |p: Vec2| ((p.x - shift.x) * l, (p.z - shift.z) * l);
+        let channels = net.channels();
+        let water = &self.params.water;
+        let sea = crate::height::SEA_LEVEL;
+        let source = channels.reach_segments(reach);
+        // п. 1–2: цель `T` в пробах оси. Между пробами цели нет: уровень там
+        // держится прежним, поэтому ступень не больше блока на блок русла.
+        let mut targets: Vec<Option<f64>> = vec![None; source.len()];
+        let mut last_sample: Option<Vec2> = None;
+        let started = std::time::Instant::now();
+        for (index, segment) in source.iter().enumerate() {
+            let b = segment.b;
+            let direction = b.point.sub(segment.a.point);
+            if direction.len() <= 1e-12 {
+                continue;
+            }
+            // п. 1: при перерасходе бюджета плиты шаг проб удваивается.
+            let doubled = started.elapsed().as_millis() > u128::from(water.profile_budget_ms);
+            let step_l = water.profile_step_blocks * if doubled { 2.0 } else { 1.0 } / l;
+            let due = last_sample.is_none_or(|last| b.point.sub(last).len() >= step_l);
+            if !due {
+                continue;
+            }
+            last_sample = Some(b.point);
+            // п. 1: ось, нормаль и полуширина воды сечения; берег — низший из
+            // трёх `S0`: оси и двух проб за краем воды.
+            let normal = direction.normalized().perp();
+            let edge_l = 0.5 * b.core_l + water.bank_probe_blocks / l;
+            let mut bank: Option<f64> = None;
+            for offset_l in [0.0, edge_l, -edge_l] {
+                let (px, pz) = to_blocks(b.point.add(normal.scale(offset_l)));
+                if let Some(s) = self.s0_macro_at(px, pz) {
+                    bank = Some(bank.map_or(s, |old: f64| old.min(s)));
+                }
+            }
+            if let Some(bank) = bank {
+                // п. 2: цель — блок под низшим берегом, не ниже моря.
+                targets[index] = Some((bank - 1.0).floor().max(sea));
+            }
+        }
+        // п. 3 и 5: бегущий минимум вниз по течению; зеркало сегмента —
+        // `(уровень в начале, уровень в конце)`, между ними интерполяция.
+        let mut segments = vec![None; source.len()];
+        let mut current: Option<f64> = None;
+        for (index, target) in targets.iter().enumerate() {
+            let start = current.or(*target).unwrap_or(sea);
+            let level = match *target {
+                Some(target) => start.min(target),
+                None => start,
+            };
+            current = Some(level);
+            if start > sea {
+                segments[index] = Some((start, level));
             }
         }
         Ok(segments)
