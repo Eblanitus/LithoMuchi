@@ -81,8 +81,8 @@ public final class LithoWaterFeature implements Feature {
         }
         LithoNative.WaterColumns probe = core.water(probeX, probeZ);
         boolean any = false;
-        for (int level : probe.level()) {
-            if (level != LithoNative.WaterColumns.NONE && level > SEA_LEVEL) any = true;
+        for (int probeLevel : probe.level()) {
+            if (probeLevel != LithoNative.WaterColumns.NONE && probeLevel > SEA_LEVEL) any = true;
         }
         if (!any) return false;
         LithoNative.WaterColumns water = core.water(xs, zs);

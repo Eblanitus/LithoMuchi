@@ -35,7 +35,7 @@ final class LithoWorlds {
                 LithoFields.setWorld(new LithoFields.Binding(level.getSeed(), mode, version));
             }
             LithoMod.LOG.info("Litospherity: мир {} — пресет «{}», версия {} режим {}",
-                    level.dimension().location(), path,
+                    level.dimension().identifier(), path,
                     version == LithoFields.VERSION_R2 ? "v1-dev-r2" : "v1-dev",
                     mode == 0 ? "scientific" : "gameplay");
         } catch (Throwable error) {
