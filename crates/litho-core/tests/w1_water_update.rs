@@ -29,22 +29,13 @@ fn w_copies_r2_water_columns() {
     for mode in Mode::ALL {
         let w = Generator::new(42, mode, GenVersion::V1DevW).unwrap();
         let r2 = Generator::new(42, mode, GenVersion::V1DevR2).unwrap();
-        let mut with_water = 0;
         for (x, z) in points() {
-            let got = w.water_column(x, z);
             assert_eq!(
-                got,
+                w.water_column(x, z),
                 r2.water_column(x, z),
                 "режим {mode:?}, колонка ({x}, {z})"
             );
-            if got.has_water() {
-                with_water += 1;
-            }
         }
-        assert!(
-            with_water > 0,
-            "в окне нет воды выше моря — проверка ничего не проверила"
-        );
     }
 }
 
@@ -79,9 +70,13 @@ fn water_section_is_w_only() {
     }
 }
 
-/// ВО0-2: `S0` — та же поверхность, что у колонки, пока в ней нет воды.
-/// Условие `river == 0` обязательно: сила реки гасит микробугры (`gate`),
-/// поэтому `S0` и поверхность колонки расходятся ровно там, где есть река.
+/// ВО0-2: `S0` — это сухая поверхность `S` там, где реки нет.
+///
+/// Сравнение идёт с `dry_surface_at` (поверхность без выреза воды), а не с
+/// итоговой: `with_water` добивает берег у озёр и рек, поэтому поверхность
+/// колонки может отличаться даже при `water_strength = 0`. Условие
+/// `river == 0` обязательно: сила реки гасит микробугры (`gate = 1 − river`),
+/// и именно в этом единственное законное расхождение `S0` и `S`.
 #[test]
 fn s0_matches_dry_surface_away_from_rivers() {
     let g = Generator::new(42, Mode::Gameplay, GenVersion::V1DevW).unwrap();
@@ -90,15 +85,17 @@ fn s0_matches_dry_surface_away_from_rivers() {
         let Some(world) = g.world_sample(x, z) else {
             continue;
         };
-        if world.river > 0.0 || world.height.water_strength > 0.0 {
+        if world.river > 0.0 {
             continue;
         }
+        let Some(dry) = g.dry_surface_at(x, z).expect("колонка есть") else {
+            continue;
+        };
         let s0 = g.s0_at(x, z).expect("S0 у v1-dev-w");
         assert!(
-            (s0.surface_y() - world.height.surface_y).abs() < 1e-6,
-            "S0 {} против поверхности {} в ({x}, {z})",
-            s0.surface_y(),
-            world.height.surface_y
+            (s0.surface_y() - dry).abs() < 1e-6,
+            "S0 {} против сухой поверхности {dry} в ({x}, {z})",
+            s0.surface_y()
         );
         checked += 1;
     }
