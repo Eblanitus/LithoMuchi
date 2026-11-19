@@ -28,31 +28,25 @@ jobs:
           [ -n "$api" ] && args="$args -Pfabric_api_version=$api"
           [ -n "$loom" ] && args="$args -Ploom_version=$loom"
           echo "args=$args" >> "$GITHUB_OUTPUT"
-      - name: Классы feature-API
+      - name: Классы feature-API и сигнатуры
         working-directory: fabric
         run: |
           set +e
           mkdir -p ../out
           gradle probeApi --console=plain ${{ steps.v.outputs.args }} 2>&1 | tee ../out/probe.log
-          grep -E "^PROBE|^PROBEJAR" ../out/probe.log | sort -u | python3 ../tools/ci_annotations.py report || true
-      - name: javap ключевых типов
-        working-directory: fabric
-        run: |
-          set +e
-          mkdir -p ../out
-          jar=$(grep -oE "^PROBEJAR .*" ../out/probe.log | head -1 | cut -d' ' -f2)
-          echo "PROBE javap jar=$jar"
-          probe() {
-            echo "JAVAP $1 grep=$2"
-            javap -classpath "$jar" "$1" 2>&1 | grep -iE "$2" | head -12
-          }
           {
-          probe net.minecraft.core.registries.BuiltInRegistries "feature"
-          probe net.minecraft.core.registries.Registries "feature"
-          probe net.minecraft.world.level.levelgen.NoiseBasedChunkGenerator "settings"
-          probe net.minecraft.server.level.ServerChunkCache "chunk"
-          probe com.mojang.serialization.MapCodec "unit"
-          probe net.minecraft.core.Registry "register"
-          probe net.minecraft.world.level.levelgen.feature.LakeFeature "codec|place|class"
-          probe net.minecraft.world.level.levelgen.feature.FeatureTypes "feature|register"
+            grep -E "^PROBEJAR" ../out/probe.log | head -3
+            jar=$(grep -oE "^PROBEJAR .*" ../out/probe.log | head -1 | sed 's/^PROBEJAR //')
+            echo "PROBE jar=[$jar]"
+            ls -l "$jar" 2>&1 | head -3
+            for c in net.minecraft.world.level.levelgen.feature.LakeFeature \
+                     net.minecraft.world.level.levelgen.feature.Feature \
+                     net.minecraft.core.registries.BuiltInRegistries \
+                     net.minecraft.world.level.levelgen.NoiseBasedChunkGenerator \
+                     net.minecraft.server.level.ServerChunkCache; do
+              echo "=== javap $c"
+              javap -classpath "$jar" "$c" 2>&1 | head -30
+            done
+            echo "=== jars в кеше loom с sources"
+            find ~/.gradle -name "*.jar" -path "*minecraft*" 2>/dev/null | head -10
           } | python3 ../tools/ci_annotations.py report || true
