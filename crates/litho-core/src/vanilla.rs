@@ -9,7 +9,7 @@ use crate::noise::{fbm2, fbm2_unit, ridged2};
 use crate::params::Params;
 use crate::seed::{SALT_VANILLA_E, SALT_VANILLA_S, SALT_VANILLA_W, subseed};
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct VanillaSample {
     pub c: f64,
     pub e: f64,

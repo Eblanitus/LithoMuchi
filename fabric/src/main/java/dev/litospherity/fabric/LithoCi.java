@@ -28,6 +28,7 @@ final class LithoCi {
     }
 
     private static void run(MinecraftServer server, String mode) {
+        if (mode.startsWith("water-live-")) { LithoWaterFeature.LIVE_STEPS = true; LithoCiWater.run(server, mode.substring("water-live-".length())); return; }
         if (mode.startsWith("water-")) {
             LithoCiWater.run(server, mode.substring("water-".length()));
             return;
@@ -60,7 +61,11 @@ final class LithoCi {
                 }
             }
             report.add("parity: расхождений " + bad + " из 5000");
-            // ВРЕМЕННО (диагностика): та же сверка против v1-dev и привязка мира.
+            // Д-127: R2 меняет только слой воды, поэтому R2-генератор обязан
+            // совпасть с v1-dev в тех же колонках. Сверка идёт от `gen`
+            // (генератора мира), а не от отладочного v1-dev: иначе паритет
+            // полей и паритет R2 проверяли бы одно и то же и не ловили
+            // расхождение версий.
             LithoNative.Generator dev = LithoFields.generator(
                     new LithoFields.Binding(seed, m, LithoFields.VERSION_V1_DEV));
             int badDev = 0;
@@ -74,9 +79,13 @@ final class LithoCi {
                     if (Math.abs(gen.field(f, x, z) - dev.field(f, x, z)) > 1e-6) badCross++;
                 }
             }
-            report.add("диагностика: привязка " + LithoFields.binding(rs) + ", мир против v1-dev "
+            report.add("привязка: " + LithoFields.binding(rs) + ", мир против v1-dev "
                     + badDev + ", R2 против v1-dev " + badCross);
             if (bad > 0) ok = false;
+            if (badCross > 0) {
+                ok = false;
+                report.add("FAIL: v1-dev-r2 отличается от v1-dev в полях (Д-127: только слой воды)");
+            }
 
             int radius = Integer.getInteger("litospherity.ci.radius", 8);
             long t0 = System.nanoTime();

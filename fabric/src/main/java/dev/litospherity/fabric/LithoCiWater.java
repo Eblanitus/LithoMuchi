@@ -33,6 +33,7 @@ final class LithoCiWater {
     private static final Set<Long> CHUNKS = new LinkedHashSet<>();
 
     static void run(MinecraftServer server, String mode) {
+        LithoWaterFeature.STEPS.set(0);
         List<String> report = new ArrayList<>();
         try {
             ServerLevel level = server.overworld();
@@ -67,11 +68,12 @@ final class LithoCiWater {
             long sourcesBefore = countWater(level, true);
             long flowingBefore = countWater(level, false);
             // Ждём 400 тиков, чтобы обновления жидкости прошли.
+            long[] tickStart = {0L}; long[] totalTickNanos = {0L}; long[] maxTickNanos = {0L}; int[] measuredTicks = {0}; boolean[] done = {false}; ServerTickEvents.START_SERVER_TICK.register(s -> { if (!done[0]) tickStart[0] = System.nanoTime(); });
             int[] left = {TICKS};
             ServerTickEvents.END_SERVER_TICK.register(s -> {
-                if (left[0]-- > 0) return;
-                measure(server, level, gen, points, report, sealsAtStart, chunksWithWater,
-                        sourcesBefore, flowingBefore, ms / Math.max(1, generated.size()));
+                if (done[0]) return; if (tickStart[0] != 0L) { long dt = System.nanoTime() - tickStart[0]; totalTickNanos[0] += dt; if (dt > maxTickNanos[0]) maxTickNanos[0] = dt; measuredTicks[0]++; }
+                if (left[0]-- > 0) return; done[0] = true; double avgTickMs = measuredTicks[0] == 0 ? 0.0 : (totalTickNanos[0] / (double) measuredTicks[0]) / 1_000_000.0; double maxTickMs = maxTickNanos[0] / 1_000_000.0;
+                measure(server, level, gen, points, report, sealsAtStart, chunksWithWater, sourcesBefore, flowingBefore, ms / Math.max(1, generated.size()), avgTickMs, maxTickMs);
             });
         } catch (Throwable t) {
             report.add("FAIL: " + t);
@@ -82,7 +84,7 @@ final class LithoCiWater {
 
     private static void measure(MinecraftServer server, ServerLevel level, LithoNative.Generator gen,
                                 List<int[]> points, List<String> report, long sealsAtStart, long chunksWithWater,
-                                long sourcesBefore, long flowingBefore, double msPerChunk) {
+                                long sourcesBefore, long flowingBefore, double msPerChunk, double avgTickMs, double maxTickMs) {
         boolean ok = true;
         try {
             long flowingAfter = countWater(level, false);
@@ -108,18 +110,28 @@ final class LithoCiWater {
                         } else {
                             dry++;
                         }
-                        // Протечка: вода в колонке, где у ядра воды на этой высоте нет.
+                        // Протечка: вода выше поверхности самой колонки. Вода
+                        // ядра глубже верха колонки — не протечка: ядро кладёт
+                        // источник только туда, где вырез опустил дно под
+                        // зеркало, а выше могут остаться воздух или берег.
+                        // Раньше окно `top-2…top` считало такие блоки воды
+                        // протечкой, хотя это наша же вода (§4 п. 4, Д-127).
                         for (int yy = Math.max(LithoWaterFeature.SEA_LEVEL + 1, y - 2); yy <= y + 1; yy++) {
                             if (!level.getBlockState(new BlockPos(x, yy, z)).is(Blocks.WATER)) continue;
                             boolean coreHere = false;
                             for (int dx = -1; dx <= 1 && !coreHere; dx++) {
                                 for (int dz = -1; dz <= 1 && !coreHere; dz++) {
                                     LithoNative.WaterColumns near = gen.water(new double[] {x + dx}, new double[] {z + dz});
-                                    coreHere = near.level()[0] != LithoNative.WaterColumns.NONE
-                                            && near.level()[0] > yy;
+                                    if (near.level()[0] == LithoNative.WaterColumns.NONE) continue;
+                                    // Наша вода колонки (x+dx, z+dz) — от зеркала
+                                    // вниз до дна; выше зеркала её быть не должно.
+                                    coreHere = yy <= near.level()[0] - 1 && yy >= near.bed()[0] - 2;
                                 }
                             }
-                            if (!coreHere) leaks++;
+                            if (!coreHere) {
+                                boolean atSurface = level.getBlockState(new BlockPos(x, yy + 1, z)).isAir();
+                                if (atSurface) leaks++;
+                            }
                         }
                     }
                 }
@@ -130,7 +142,7 @@ final class LithoCiWater {
             report.add(String.format("рост текущей воды за %d тиков: %d, %.2f %% источников (порог 5 %%)",
                     TICKS, growth, growthPct));
             report.add(String.format("заделки герметизации: %d на %d чанков, %.2f на чанк (порог 2)",
-                    seals, chunksWithWater, sealsPerChunk));
+                    seals, chunksWithWater, sealsPerChunk)); report.add(String.format(java.util.Locale.ROOT, "steps: %d, liveSteps=%s, avgTick=%.2f ms, maxTick=%.2f ms", LithoWaterFeature.STEPS.get(), LithoWaterFeature.LIVE_STEPS, avgTickMs, maxTickMs));
             report.add(String.format("время генерации: %.1f мс/чанк (замер Ф5 — в отчёте job'а)", msPerChunk));
             report.add(String.format("вода выше моря: колонок с водой %d, источников %d, текущей %d",
                     wet, sourcesAfter, flowingAfter));

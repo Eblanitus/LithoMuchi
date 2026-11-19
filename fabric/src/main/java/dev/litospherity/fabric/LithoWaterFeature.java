@@ -9,6 +9,7 @@ import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.chunk.ChunkGenerator;
 import net.minecraft.world.level.levelgen.feature.Feature;
+import net.minecraft.world.level.material.Fluids;
 
 /**
  * Ф6-В3/В4 (PLAN-WATER-FABRIC): вода выше уровня моря на Fabric.
@@ -42,6 +43,9 @@ public final class LithoWaterFeature implements Feature {
     public static final AtomicLong CHUNKS = new AtomicLong();
     /** Колонок, где вода выше моря поставлена. */
     public static final AtomicLong COLUMNS = new AtomicLong();
+    private static final byte KIND_RIVER = 1;
+    public static volatile boolean LIVE_STEPS = Boolean.getBoolean("litospherity.water.liveSteps");
+    public static final AtomicLong STEPS = new AtomicLong();
 
     /** 26.3: {@code Feature} — интерфейс без параметра конфигурации, а реестр
      *  {@code FEATURE_TYPE} держит кодеки. Типу воды конфигурация не нужна. */
@@ -90,6 +94,7 @@ public final class LithoWaterFeature implements Feature {
         int maxY = level.getMaxY();
         int placed = 0;
         long seals = 0;
+        long steps = 0;
         BlockState waterState = Blocks.WATER.defaultBlockState();
         // Заливка и правка дна.
         for (int j = 1; j <= 16; j++) {
@@ -101,15 +106,24 @@ public final class LithoWaterFeature implements Feature {
                 int z = (int) zs[k];
                 int from = Math.min(surface - 1, maxY);
                 int to = Math.max(water.bed()[k] - 2, minY);
+                // §4 пп. 3–4: колонка с водой выше моря не бывает сухой. Зеркало
+                // `level` — это срез: всё, что стоит между ним и дном русла,
+                // вынимается, а вода ставится от `level − 1` вниз. Раньше цикл
+                // останавливался на первом не-воздухе, поэтому трава, дресва и
+                // земля над зеркалом давали «сухое русло» — 20,6 % в научном
+                // режиме против порога 1 % (job `water`).
+                //
+                // Глубже `bed − 2` не режем никогда: дно задаёт ядро, а пещеры
+                // под руслом закрывает затычка ниже.
+                for (int y = from; y >= to; y--) {
+                    BlockPos pos = new BlockPos(x, y, z);
+                    if (level.getBlockState(pos).isAir()) continue;
+                    level.setBlock(pos, Blocks.AIR.defaultBlockState(), 2);
+                }
                 int lowest = from;
                 for (int y = from; y >= to; y--) {
                     BlockPos pos = new BlockPos(x, y, z);
-                    BlockState current = level.getBlockState(pos);
-                    // §4 п. 4: вырез только вниз, и уровень в §4 — это уровень воды.
-                    // Колонка, где почва стоит ровно под зеркалом, тоже вода: зеркало
-                    // задаёт ядро, а верхний слой почвы уходит под него. Камень,
-                    // глина и всё прочее — дно, на нём останавливаемся.
-                    if (!current.isAir() && !isSurface(current)) break;
+                    if (!level.getBlockState(pos).isAir()) break;
                     level.setBlock(pos, waterState, 2);
                     lowest = y;
                 }
@@ -141,20 +155,37 @@ public final class LithoWaterFeature implements Feature {
                 for (int[] step : new int[][] {{1, 0}, {-1, 0}, {0, 1}, {0, -1}}) {
                     int nk = (j + step[1]) * SIDE + (i + step[0]);
                     int neighbour = water.level()[nk];
+                    boolean riverStep = water.kind()[k] == KIND_RIVER && water.kind()[nk] == KIND_RIVER && neighbour != LithoNative.WaterColumns.NONE && neighbour > SEA_LEVEL && neighbour < surface;
                     int top = Math.min(surface - 1, maxY);
                     int bottom = Math.max(water.bed()[k] - 2, minY);
                     for (int y = top; y >= bottom; y--) {
                         if (neighbour != LithoNative.WaterColumns.NONE && neighbour > y) continue;
+                        // Ступень (§3 п. 3): один слой воздуха над нижним зеркалом, не весь
+                        // столб до высокой колонки. Иначе вода уходит дальше 1 блока от ядра
+                        // (метрика «протечки», CI water: 4 при пороге 0).
+                        if (riverStep && y != neighbour) continue;
                         BlockPos pos = new BlockPos((int) xs[nk], y, (int) zs[nk]);
                         if (!level.getBlockState(pos).isAir()) continue;
-                        level.setBlock(pos, Blocks.DIRT.defaultBlockState(), 2);
-                        seals++;
+                        if (riverStep) {
+                            BlockState flowing = Fluids.FLOWING_WATER.getFlowing(7, false).createLegacyBlock();
+                            level.setBlock(pos, flowing, 2);
+                            // Живой режим: тик жидкости, чтобы ступень начала растекаться.
+                            // В 26.3 у ProtoChunk нет markPosForPostprocessing (CI 44489540790).
+                            if (LIVE_STEPS) {
+                                level.scheduleTick(pos, Fluids.FLOWING_WATER, 1);
+                            }
+                            steps++;
+                        } else {
+                            level.setBlock(pos, Blocks.DIRT.defaultBlockState(), 2);
+                            seals++;
+                        }
                     }
                 }
             }
         }
         if (placed > 0) CHUNKS.incrementAndGet();
         SEALS.addAndGet(seals);
+        STEPS.addAndGet(steps);
         return placed > 0;
     }
 
