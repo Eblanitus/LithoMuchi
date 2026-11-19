@@ -141,11 +141,14 @@ jobs:
           mkdir -p run
           echo "eula=true" > run/eula.txt
           printf 'level-seed=42\nlevel-type=litospherity\\:%s\nonline-mode=false\n' "${{ matrix.mode }}" > run/server.properties
+          set +e
+          mkdir -p ../out
           timeout 1500 gradle runServer --args=nogui -Dorg.gradle.jvmargs=-Xmx3G \
-            -Plitospherity_ci=${{ matrix.mode }} || true
-          cat run/litospherity-ci.txt
-          # Отчёт сервера тоже уходит аннотацией: сырые логи CI недоступны.
-          python3 ../tools/ci_annotations.py report < run/litospherity-ci.txt
+            -Plitospherity_ci=${{ matrix.mode }} 2>&1 | tee ../out/server.log
+          echo "--- хвост лога сервера ---"
+          grep -nE "Exception|Error|FAIL|RESULT|Litospherity" ../out/server.log | tail -25 | python3 ../tools/ci_annotations.py report
+          [ -f run/litospherity-ci.txt ] && cat run/litospherity-ci.txt
+          [ -f run/litospherity-ci.txt ] && python3 ../tools/ci_annotations.py report < run/litospherity-ci.txt
           grep -q "RESULT: PASS" run/litospherity-ci.txt
 
   water:

@@ -104,7 +104,12 @@ public final class LithoWaterFeature implements Feature {
                 int lowest = from;
                 for (int y = from; y >= to; y--) {
                     BlockPos pos = new BlockPos(x, y, z);
-                    if (!level.getBlockState(pos).isAir()) break;
+                    BlockState current = level.getBlockState(pos);
+                    // §4 п. 4: вырез только вниз, и уровень в §4 — это уровень воды.
+                    // Колонка, где почва стоит ровно под зеркалом, тоже вода: зеркало
+                    // задаёт ядро, а верхний слой почвы уходит под него. Камень,
+                    // глина и всё прочее — дно, на нём останавливаемся.
+                    if (!current.isAir() && !isSurface(current)) break;
                     level.setBlock(pos, waterState, 2);
                     lowest = y;
                 }
