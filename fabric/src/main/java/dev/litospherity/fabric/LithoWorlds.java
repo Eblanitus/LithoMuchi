@@ -22,10 +22,10 @@ final class LithoWorlds {
         try {
             if (!(level.getChunkSource().getGenerator() instanceof NoiseBasedChunkGenerator noise)) return;
             String path = noise.generatorSettings().unwrapKey()
-                    .map(key -> key.location().getPath())
+                    .map(key -> key.identifier().getPath())
                     .orElse("");
             boolean ours = noise.generatorSettings().unwrapKey()
-                    .map(key -> key.location().getNamespace().equals(LithoMod.MOD_ID))
+                    .map(key -> key.identifier().getNamespace().equals(LithoMod.MOD_ID))
                     .orElse(false);
             int version = ours ? LithoFields.VERSION_R2 : LithoFields.VERSION_V1_DEV;
             int mode = level.getHeight() >= 512 ? 0 : 1;

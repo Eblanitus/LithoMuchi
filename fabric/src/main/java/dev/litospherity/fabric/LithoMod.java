@@ -33,9 +33,11 @@ public final class LithoMod implements ModInitializer {
                     Identifier.fromNamespaceAndPath(MOD_ID, "field"), LithoFields.ColumnField.CODEC);
             Registry.register(BuiltInRegistries.DENSITY_FUNCTION_TYPE,
                     Identifier.fromNamespaceAndPath(MOD_ID, "lava_aquifer"), LithoFields.LavaAquifer.CODEC);
-            Registry.register(BuiltInRegistries.FEATURE,
+            // 26.3: фичи стали данными — в реестре типов лежит кодек, а сама фича
+            // берётся из data/litospherity/worldgen/feature/water.json.
+            Registry.register(BuiltInRegistries.FEATURE_TYPE,
                     Identifier.fromNamespaceAndPath(MOD_ID, "water"),
-                    new LithoWaterFeature());
+                    LithoWaterFeature.CODEC);
             BiomeModifications.addFeature(BiomeSelectors.foundInOverworld(),
                     GenerationStep.Decoration.RAW_GENERATION,
                     ResourceKey.create(Registries.PLACED_FEATURE,

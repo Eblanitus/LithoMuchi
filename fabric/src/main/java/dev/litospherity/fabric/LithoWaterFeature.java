@@ -1,13 +1,14 @@
 package dev.litospherity.fabric;
 
+import com.mojang.serialization.MapCodec;
 import java.util.concurrent.atomic.AtomicLong;
 import net.minecraft.core.BlockPos;
+import net.minecraft.util.RandomSource;
 import net.minecraft.world.level.WorldGenLevel;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.chunk.ChunkGenerator;
 import net.minecraft.world.level.levelgen.feature.Feature;
-import net.minecraft.world.level.levelgen.feature.FeaturePlaceContext;
-import net.minecraft.world.level.levelgen.feature.configurations.NoneFeatureConfiguration;
 
 /**
  * Ф6-В3/В4 (PLAN-WATER-FABRIC): вода выше уровня моря на Fabric.
@@ -29,7 +30,7 @@ import net.minecraft.world.level.levelgen.feature.configurations.NoneFeatureConf
  * <p>Работает только в мире с пресетом Litospherity ({@code v1-dev-r2}); в остальных мирах
  * возвращает {@code false}, и вода выше моря не появляется.
  */
-public final class LithoWaterFeature extends Feature<NoneFeatureConfiguration> {
+public final class LithoWaterFeature implements Feature {
     /** Уровень моря: выше него — предмет R2. */
     public static final int SEA_LEVEL = 63;
     /** Колонка чанка плюс один блок по краю: герметизации нужны соседи. */
@@ -42,18 +43,19 @@ public final class LithoWaterFeature extends Feature<NoneFeatureConfiguration> {
     /** Колонок, где вода выше моря поставлена. */
     public static final AtomicLong COLUMNS = new AtomicLong();
 
-    /** Кодек конфигурации берётся у {@link NoneFeatureConfiguration}: тип параметра
-     *  зависит от версии игры (Codec или MapCodec), поэтому конструктор без параметров. */
-    public LithoWaterFeature() {
-        super(NoneFeatureConfiguration.CODEC);
+    /** 26.3: {@code Feature} — интерфейс без параметра конфигурации, а реестр
+     *  {@code FEATURE_TYPE} держит кодеки. Типу воды конфигурация не нужна. */
+    public static final MapCodec<LithoWaterFeature> CODEC = MapCodec.unit(new LithoWaterFeature());
+
+    @Override
+    public MapCodec<LithoWaterFeature> codec() {
+        return CODEC;
     }
 
     @Override
-    public boolean place(FeaturePlaceContext<NoneFeatureConfiguration> context) {
+    public boolean place(WorldGenLevel level, ChunkGenerator chunkGenerator, RandomSource random, BlockPos origin) {
         LithoFields.Binding binding = LithoFields.world();
         if (binding == null || binding.version() != LithoFields.VERSION_R2) return false;
-        WorldGenLevel level = context.level();
-        BlockPos origin = context.origin();
         int x0 = origin.getX() & ~15;
         int z0 = origin.getZ() & ~15;
         // Один вызов ядра на чанк: 18×18 колонок, начиная с блока левее/выше чанка.
@@ -66,7 +68,7 @@ public final class LithoWaterFeature extends Feature<NoneFeatureConfiguration> {
             }
         }
         // Генератор общий и потокобезопасный (Ф1): не закрываем его здесь.
-        LithoNative.Generator generator = LithoFields.generator(binding);
+        LithoNative.Generator core = LithoFields.generator(binding);
         // Дешёвая проба: 4x4 колонки через 5 блоков. Чанк без воды выше моря
         // не платит за полный пакет 18x18 (цена колонки ядра — десятки мкс).
         double[] probeX = new double[16];
@@ -77,13 +79,13 @@ public final class LithoWaterFeature extends Feature<NoneFeatureConfiguration> {
                 probeZ[j * 4 + i] = z0 + j * 5;
             }
         }
-        LithoNative.WaterColumns probe = generator.water(probeX, probeZ);
+        LithoNative.WaterColumns probe = core.water(probeX, probeZ);
         boolean any = false;
         for (int level : probe.level()) {
             if (level != LithoNative.WaterColumns.NONE && level > SEA_LEVEL) any = true;
         }
         if (!any) return false;
-        LithoNative.WaterColumns water = generator.water(xs, zs);
+        LithoNative.WaterColumns water = core.water(xs, zs);
         int minY = level.getMinY();
         int maxY = level.getMaxY();
         int placed = 0;

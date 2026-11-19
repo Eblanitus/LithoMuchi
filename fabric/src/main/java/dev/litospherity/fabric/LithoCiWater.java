@@ -29,6 +29,9 @@ final class LithoCiWater {
     /** Радиус области вокруг места, чанки: 5×5. */
     private static final int RADIUS = 2;
 
+    /** Сгенерированные чанки окна: пары (x, z) в одной long. */
+    private static final Set<Long> CHUNKS = new LinkedHashSet<>();
+
     static void run(MinecraftServer server, String mode) {
         List<String> report = new ArrayList<>();
         try {
@@ -42,7 +45,8 @@ final class LithoCiWater {
             }
             LithoNative.Generator gen = LithoFields.generator(LithoFields.binding(level.getChunkSource().randomState()));
             long t0 = System.nanoTime();
-            Set<Long> generated = new LinkedHashSet<>();
+            Set<Long> generated = CHUNKS;
+            generated.clear();
             for (int[] p : points) {
                 int cx = p[0] >> 4;
                 int cz = p[1] >> 4;
@@ -161,11 +165,14 @@ final class LithoCiWater {
         return count;
     }
 
+    /** 26.3: {@code getLoadedChunks()} убран — берём чанки окна по {@code getChunkNow}. */
     private static List<net.minecraft.world.level.chunk.LevelChunk> loadedChunks(ServerLevel level) {
         List<net.minecraft.world.level.chunk.LevelChunk> out = new ArrayList<>();
-        level.getChunkSource().getLoadedChunks().forEach(chunk -> {
-            if (chunk instanceof net.minecraft.world.level.chunk.LevelChunk full) out.add(full);
-        });
+        for (long key : CHUNKS) {
+            net.minecraft.world.level.chunk.LevelChunk chunk =
+                    level.getChunkSource().getChunkNow((int) (key >> 32), (int) key);
+            if (chunk != null) out.add(chunk);
+        }
         return out;
     }
 
