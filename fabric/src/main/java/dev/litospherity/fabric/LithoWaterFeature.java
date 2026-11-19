@@ -9,6 +9,7 @@ import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.chunk.ChunkGenerator;
 import net.minecraft.world.level.levelgen.feature.Feature;
+import net.minecraft.world.level.material.Fluids;
 
 /**
  * Ф6-В3/В4 (PLAN-WATER-FABRIC): вода выше уровня моря на Fabric.
@@ -42,6 +43,9 @@ public final class LithoWaterFeature implements Feature {
     public static final AtomicLong CHUNKS = new AtomicLong();
     /** Колонок, где вода выше моря поставлена. */
     public static final AtomicLong COLUMNS = new AtomicLong();
+    private static final byte KIND_RIVER = 1;
+    public static volatile boolean LIVE_STEPS = Boolean.getBoolean("litospherity.water.liveSteps");
+    public static final AtomicLong STEPS = new AtomicLong();
 
     /** 26.3: {@code Feature} — интерфейс без параметра конфигурации, а реестр
      *  {@code FEATURE_TYPE} держит кодеки. Типу воды конфигурация не нужна. */
@@ -90,6 +94,7 @@ public final class LithoWaterFeature implements Feature {
         int maxY = level.getMaxY();
         int placed = 0;
         long seals = 0;
+        long steps = 0;
         BlockState waterState = Blocks.WATER.defaultBlockState();
         // Заливка и правка дна.
         for (int j = 1; j <= 16; j++) {
@@ -141,20 +146,29 @@ public final class LithoWaterFeature implements Feature {
                 for (int[] step : new int[][] {{1, 0}, {-1, 0}, {0, 1}, {0, -1}}) {
                     int nk = (j + step[1]) * SIDE + (i + step[0]);
                     int neighbour = water.level()[nk];
+                    boolean riverStep = water.kind()[k] == KIND_RIVER && water.kind()[nk] == KIND_RIVER && neighbour != LithoNative.WaterColumns.NONE && neighbour > SEA_LEVEL && neighbour < surface;
                     int top = Math.min(surface - 1, maxY);
                     int bottom = Math.max(water.bed()[k] - 2, minY);
                     for (int y = top; y >= bottom; y--) {
                         if (neighbour != LithoNative.WaterColumns.NONE && neighbour > y) continue;
                         BlockPos pos = new BlockPos((int) xs[nk], y, (int) zs[nk]);
                         if (!level.getBlockState(pos).isAir()) continue;
+                        if (riverStep) {
+                           BlockState flowing = Fluids.FLOWING_WATER.getFlowing(7, y < top).createLegacyBlock();
+                           level.setBlock(pos, flowing, 2);
+                           if (LIVE_STEPS) level.getChunk(pos).markPosForPostprocessing(pos);
+                           steps++;
+                           } else { 
                         level.setBlock(pos, Blocks.DIRT.defaultBlockState(), 2);
                         seals++;
+                        }    
                     }
                 }
             }
         }
         if (placed > 0) CHUNKS.incrementAndGet();
         SEALS.addAndGet(seals);
+        STEPS.addAndGet(steps);
         return placed > 0;
     }
 
