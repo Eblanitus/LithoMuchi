@@ -10,6 +10,7 @@ mod palette;
 mod plan_metrics;
 mod png;
 mod render;
+mod s0_node_cost;
 mod shores;
 mod tune;
 mod vanilla_biomes;
@@ -678,6 +679,143 @@ fn cmd_water_points(args: &[String]) -> Result<(), String> {
     if points.is_empty() {
         return Err("мест с водой выше моря не нашлось: увеличьте --radius-l".into());
     }
+    Ok(())
+}
+
+/// ВО0-5 (PLAN-WATER-UPDATE §6.2): разведка цены `S0` в узлах стока.
+fn cmd_s0_node_cost(args: &[String]) -> Result<(), String> {
+    let mut opts = options_from(args)?;
+    // По умолчанию меряем ту версию, у которой есть `S0`.
+    if value(args, "--version").is_none() {
+        opts.version = GenVersion::V1DevW;
+    }
+    // Позиционная форма `s0-node-cost SEED MODE` — как у `water-stats`.
+    if let Some(text) = args.first() {
+        if let Ok(seed) = text.parse::<i64>() {
+            opts.seed = seed;
+        }
+    }
+    if let Some(text) = args.get(1) {
+        if let Some(mode) = Mode::parse(text) {
+            opts.mode = mode;
+        }
+    }
+    let generator = generator(&opts)?;
+    if !opts.version.is_water_update() {
+        return Err(format!(
+            "s0-node-cost меряет `S0`, а он есть только у версии с водным обновлением (v1-dev-w), сейчас {}",
+            opts.version.as_str()
+        ));
+    }
+    let plates_wanted = match value(args, "--plates") {
+        Some(text) => text
+            .parse::<usize>()
+            .map_err(|error| format!("--plates: {error}"))?,
+        None => 6,
+    };
+    if plates_wanted == 0 {
+        return Err("--plates должен быть > 0".into());
+    }
+    let spacings: Vec<f64> = match value(args, "--spacing") {
+        Some(text) => {
+            let mut out = Vec::new();
+            for part in text.split(',') {
+                let spacing = part
+                    .trim()
+                    .parse::<f64>()
+                    .map_err(|error| format!("--spacing: {error}"))?;
+                if !spacing.is_finite() || spacing <= 0.0 {
+                    return Err("--spacing требует конечных шагов > 0 (в L)".into());
+                }
+                out.push(spacing);
+            }
+            out
+        }
+        None => vec![0.25, 0.5],
+    };
+    let started = Instant::now();
+    let survey = s0_node_cost::survey(
+        &generator,
+        (opts.center_x, opts.center_z),
+        plates_wanted,
+        &spacings,
+    )?;
+    let seconds = started.elapsed().as_secs_f64();
+    let decision = s0_node_cost::decision(&survey);
+    if args.iter().any(|arg| arg == "--json") {
+        let lattices: Vec<String> = survey
+            .lattices
+            .iter()
+            .map(|lattice| {
+                format!(
+                    "{{\"path\":\"{}\",\"spacing_l\":{},\"samples\":{},\"samples_per_node\":{:.3},\"build_ms\":{:.1},\"error_p95\":{:.2},\"error_p99_9\":{:.2},\"error_max\":{:.2},\"meets\":{}}}",
+                    s0_node_cost::path_name(lattice.spacing_l),
+                    lattice.spacing_l,
+                    lattice.samples,
+                    lattice.samples_per_node(survey.nodes),
+                    lattice.build_ms,
+                    lattice.p95(),
+                    lattice.p999(),
+                    lattice.max(),
+                    lattice.meets()
+                )
+            })
+            .collect();
+        let mut fields: Vec<String> = Vec::new();
+        fields.push(format!("\"seed\":{}", opts.seed));
+        fields.push(format!("\"mode\":\"{}\"", opts.mode.as_str()));
+        fields.push(format!("\"version\":\"{}\"", opts.version.as_str()));
+        fields.push(format!("\"seconds\":{seconds:.2}"));
+        fields.push(format!("\"plates\":{}", survey.plates));
+        fields.push(format!("\"nodes\":{}", survey.nodes));
+        fields.push(format!("\"net_ms_p50\":{:.1}", survey.net_pct(50.0)));
+        fields.push(format!("\"net_ms_p95\":{:.1}", survey.net_p95()));
+        fields.push(format!("\"net_ms_max\":{:.1}", survey.net_max()));
+        fields.push(format!(
+            "\"exact_us_per_node\":{:.2}",
+            survey.exact_us_per_node()
+        ));
+        fields.push("\"net_budget_ms\":200.0".to_string());
+        fields.push(format!("\"lattices\":[{}]", lattices.join(",")));
+        fields.push(format!("\"decision\":\"{decision}\""));
+        println!("{{{}}}", fields.join(","));
+        return Ok(());
+    }
+    println!(
+        "s0-node-cost: сид {} режим {} версия {} · плит {}, узлов {} · {seconds:.1} с",
+        opts.seed,
+        opts.mode.as_str(),
+        opts.version.as_str(),
+        survey.plates,
+        survey.nodes
+    );
+    println!(
+        "  сеть плиты: p50 {:.1}, p95 {:.1}, max {:.1} мс (бюджет {} мс)",
+        survey.net_pct(50.0),
+        survey.net_p95(),
+        survey.net_max(),
+        s0_node_cost::NET_BUDGET_MS
+    );
+    println!(
+        "  точный S0: {:.2} мкс на узел, всего {:.1} мс",
+        survey.exact_us_per_node(),
+        survey.exact_ms
+    );
+    for lattice in &survey.lattices {
+        println!(
+            "  {} ({:.2} L): выборок {} ({:.3} на узел), сборка {:.1} мс, ошибка p95 {:.2}, p99.9 {:.2}, max {:.2} блока{}",
+            s0_node_cost::path_name(lattice.spacing_l),
+            lattice.spacing_l,
+            lattice.samples,
+            lattice.samples_per_node(survey.nodes),
+            lattice.build_ms,
+            lattice.p95(),
+            lattice.p999(),
+            lattice.max(),
+            if lattice.meets() { " — проходит" } else { "" }
+        );
+    }
+    println!("  решение: {decision}");
     Ok(())
 }
 
@@ -2212,6 +2350,7 @@ fn usage() -> &'static str {
                     --size 2048 --step 4, три центра\n\
        water-points R2: до 20 мест с водой выше моря для CI и автора (v1-dev-r2),\n\
        water-stats  ВО0-3: реки (вода выше моря, врез), озёра по водоёмам, стены (v1-dev-r2),\n\
+       s0-node-cost ВО0-5: цена S0 в узлах стока и точность решётки S0 (v1-dev-w),\n\
                     --radius-l 32\n\
 vanilla-biomes биом игры (копия ванильной таблицы) против нашего, горы на холмах (Д-118);\n\
              --report ПУТЬ: сверка копии с отчётом datagen biome_parameters\n\
@@ -2260,6 +2399,7 @@ fn main() -> Result<(), String> {
         "water-leaks" => cmd_water_leaks(&args[1..]),
         "water-points" => cmd_water_points(&args[1..]),
         "water-stats" => cmd_water_stats(&args[1..]),
+        "s0-node-cost" => cmd_s0_node_cost(&args[1..]),
         "vanilla-biomes" => cmd_vanilla_biomes(&args[1..]),
         "paths" => cmd_paths(&args[1..]),
         "drainage" => cmd_drainage(&args[1..]),
