@@ -171,8 +171,9 @@ pub fn resolve_with_limit(
         // озёрам, а под пределом R1 в поле идут все. Поскольку предел R1
         // означает «как в `v1-dev`», низкая вода возвращается как есть.
         if inside.is_some_and(|hit| hit.level_km.is_some_and(|level| level <= r1_max_km)) {
-            out.r1_water = 1.0;
-            out.water = out.water.max(out.r1_water);
+            // Поле `water` — та же «геометрическая вода», что `r1_water` в
+            // `LakeQuery`: в `v1-dev` низкое озеро идёт и в C/E, и в биом.
+            out.water = 1.0;
         }
     }
     out.swamp = lakes.swamp;
@@ -406,6 +407,7 @@ pub fn classify_surface_with_limit(
 #[cfg(test)]
 mod r2_limit_tests {
     use super::*;
+    use crate::lake::LakeHit;
     use crate::mode::Mode;
     use crate::version::GenVersion;
 
@@ -458,7 +460,7 @@ mod r2_limit_tests {
             &params,
             params.hydrology.r1_max_level_km,
         );
-        assert_eq!(limited.r1_water, 1.0);
+        assert_eq!(limited.water, 1.0);
         assert_eq!(limited.kind, SurfaceKind::Lake);
         // Высокое озеро под пределом R1 — отложенная вода, не вода.
         hit.level_km = Some(0.8);
@@ -470,7 +472,7 @@ mod r2_limit_tests {
             &params,
             params.hydrology.r1_max_level_km,
         );
-        assert_eq!(high.r1_water, 0.0);
+        assert_eq!(high.water, 0.0);
         assert_ne!(high.kind, SurfaceKind::Lake);
     }
 
