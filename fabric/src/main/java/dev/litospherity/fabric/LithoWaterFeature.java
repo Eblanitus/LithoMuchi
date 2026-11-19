@@ -158,9 +158,29 @@ public final class LithoWaterFeature implements Feature {
                 int k = j * SIDE + i;
                 int surface = water.level()[k];
                 if (surface == LithoNative.WaterColumns.NONE || surface <= SEA_LEVEL) continue;
+                // Ступень сверху: соседняя колонка русла выше, и шаг ниже кладёт в
+                // эту колонку текущую воду на высоте `surface` (над её зеркалом).
+                // Этот слой тоже надо закрыть сбоку от колонок без воды R2, иначе
+                // вода ступени растекается за русло (устье в море, CI water
+                // gameplay: рост текущей 5,2 % при пороге 5 %).
+                boolean stepped = false;
+                if (water.kind()[k] == KIND_RIVER) {
+                    for (int[] step : new int[][] {{1, 0}, {-1, 0}, {0, 1}, {0, -1}}) {
+                        int uk = (j + step[1]) * SIDE + (i + step[0]);
+                        int upper = water.level()[uk];
+                        if (water.kind()[uk] == KIND_RIVER && upper != LithoNative.WaterColumns.NONE && upper > surface) stepped = true;
+                    }
+                }
                 for (int[] step : new int[][] {{1, 0}, {-1, 0}, {0, 1}, {0, -1}}) {
                     int nk = (j + step[1]) * SIDE + (i + step[0]);
                     int neighbour = water.level()[nk];
+                    if (stepped && surface <= maxY && (neighbour == LithoNative.WaterColumns.NONE || neighbour <= SEA_LEVEL)) {
+                        BlockPos lip = new BlockPos((int) xs[nk], surface, (int) zs[nk]);
+                        if (level.getBlockState(lip).isAir()) {
+                            level.setBlock(lip, Blocks.DIRT.defaultBlockState(), 2);
+                            seals++;
+                        }
+                    }
                     boolean riverStep = water.kind()[k] == KIND_RIVER && water.kind()[nk] == KIND_RIVER && neighbour != LithoNative.WaterColumns.NONE && neighbour > SEA_LEVEL && neighbour < surface;
                     int top = Math.min(surface - 1, maxY);
                     int bottom = Math.max(water.bed()[k] - 2, minY);
