@@ -13,12 +13,12 @@
 
 use std::collections::VecDeque;
 
+use litho_core::Generator;
 use litho_core::SurfaceKind;
 use litho_core::generator::WaterColumn;
 use litho_core::height::SEA_LEVEL;
 use litho_core::morphoclimate::ZONE_NAMES;
 use litho_core::params::MORPHO_ZONES;
-use litho_core::Generator;
 
 /// Уровень моря в блоках: вода выше него — предмет водного обновления.
 const SEA: i32 = SEA_LEVEL as i32;

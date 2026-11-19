@@ -736,7 +736,10 @@ fn cmd_water_stats(args: &[String]) -> Result<(), String> {
             .iter()
             .enumerate()
             .map(|(index, name)| {
-                format!("{{\"name\":\"{name}\",\"lakes\":{}}}", stats.zone_lakes[index])
+                format!(
+                    "{{\"name\":\"{name}\",\"lakes\":{}}}",
+                    stats.zone_lakes[index]
+                )
             })
             .collect();
         let mut fields: Vec<String> = Vec::new();
