@@ -1152,6 +1152,67 @@ pub struct HeightParams {
     pub bank_raise_max_blocks: f64,
 }
 
+
+/// Водное обновление (ВО0-1, [PLAN-WATER-UPDATE](../../docs/PLAN-WATER-UPDATE.md)
+/// §6.9): числа нового механизма воды `S0`. Раздел входит в
+/// `canonical_text()` только у `GenVersion::V1DevW`, поэтому хеши `v0`, `v1`,
+/// `v1-dev` и `v1-dev-r2` не меняются (критерий «готово» шага ВО0-1).
+///
+/// Порядок классов долины во всех массивах здесь и в §5.2 одинаков:
+/// равнинная, холмистая, горная V, ледниковая U, каньон, braided.
+#[derive(Clone, Debug, PartialEq)]
+pub struct WaterUpdateParams {
+    /// Шаг проб профиля уровня реки, блоки (4 / 8).
+    pub profile_step_blocks: f64,
+    /// Бюджет уровней на плиту, мс; при превышении шаг проб удваивается.
+    pub profile_budget_ms: u64,
+    /// Проба берега за краем воды, блоки.
+    pub bank_probe_blocks: f64,
+    /// Минимальный перепад для водопада, блоки.
+    pub fall_min_drop_blocks: f64,
+    /// Выше этого перепада водопад раскладывается в каскад (24 / 48).
+    pub fall_max_height_blocks: f64,
+    /// Выравнивание низовья притока (уклон).
+    pub grade_slope: f64,
+    /// Границы классов уклона `W`: спокойный / перекат / порог (дальше каскад).
+    pub slope_edges: [f64; 3],
+    /// Окно сглаживания класса долины вдоль русла, блоки (64 / 128).
+    pub class_window_blocks: f64,
+    /// Пороги глубины долины `G` для каньона и холмистой (12/20 и 4/6).
+    pub gorge_canyon_blocks: f64,
+    pub gorge_upland_blocks: f64,
+    /// Ширина поймы `fp` в ширинах русла по классам.
+    pub floodplain_w: [f64; 6],
+    /// Уклон склона долины `s_wall` по классам.
+    pub wall_slope: [f64; 6],
+    /// Дальность склона долины `R_wall`, блоки (32 / 64).
+    pub wall_reach_blocks: f64,
+    /// Ступень каньона: высота и через сколько блоков (6/2, 10/3).
+    pub canyon_step_blocks: f64,
+    pub canyon_step_every: f64,
+    /// Терраса долины: высота полки, ширина и порог `G`.
+    pub terrace_height_blocks: f64,
+    pub terrace_width_blocks: f64,
+    pub terrace_gorge_blocks: f64,
+    /// Края `smoothstep` затухания микробугров у воды (4…16 / 6…32).
+    pub gate_blocks: [f64; 2],
+    /// Края `smoothstep` маски `calm` (4…16 / 8…32).
+    pub calm_blocks: [f64; 2],
+    /// Вокруг озера маска `calm` шире на столько блоков (8 / 12).
+    pub lake_calm_pad_blocks: f64,
+    /// Развязка ничьих в стоке: блоков на км коры.
+    pub route_tau_blocks_per_km: f64,
+    /// Котловина глубже этого остаётся озером; порядок — `MORPHO_ZONES`.
+    /// Сухая зона `arid` не переливается никогда (`INFINITY`, ВО8).
+    pub depression_min_depth_blocks: [f64; MORPHO_ZONES],
+    /// Предел площади воды озёр как доля площади плиты.
+    pub lake_area_max_fraction: f64,
+    /// Пляж у обычных озёр влажных зон, блоки (3 / 4).
+    pub beach_blocks: f64,
+    /// Сколько блоков над водой чистит Java (8.2).
+    pub clear_above_blocks: f64,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct Params {
     pub version: GenVersion,
@@ -1173,6 +1234,8 @@ pub struct Params {
     pub morpho: MorphoParams,
     /// Собственная высота T144; включается только в `v1-dev`.
     pub height: HeightParams,
+    /// Водное обновление ВО0-1: действует и входит в хеш только в `v1-dev-w`.
+    pub water: WaterUpdateParams,
     /// Границы биомов T130–T133; включаются только в `v1-dev`.
     pub boundaries: BoundaryParams,
     pub lava: LavaParams,
@@ -1190,6 +1253,8 @@ impl Params {
     /// (8.2); `block` берётся из `Mode::block_params`.
     pub fn defaults(version: GenVersion, mode: Mode) -> Self {
         let block = mode.block_params();
+        // Режим нужен и разделу `water` (ВО0-1): числа §6.9 отличаются вдвое.
+        let game = mode == Mode::Gameplay;
         let mut p = Self {
             version,
             mode,
@@ -1571,6 +1636,60 @@ impl Params {
                 // §4, п. 4: добивка только на 1–2 блока. Нехватка больше —
                 // признак ошибки уровня, а не берега.
                 bank_raise_max_blocks: 2.0,
+            },
+            water: WaterUpdateParams {
+                // §6.9: шаг проб профиля и окно класса долины в научном
+                // режиме вдвое больше — русла там в 4 раза длиннее.
+                profile_step_blocks: if game { 4.0 } else { 8.0 },
+                profile_budget_ms: 120,
+                bank_probe_blocks: 2.0,
+                fall_min_drop_blocks: 3.0,
+                fall_max_height_blocks: if game { 24.0 } else { 48.0 },
+                grade_slope: 1.0 / 16.0,
+                slope_edges: [1.0 / 64.0, 1.0 / 16.0, 1.0 / 4.0],
+                class_window_blocks: if game { 64.0 } else { 128.0 },
+                gorge_canyon_blocks: if game { 12.0 } else { 20.0 },
+                gorge_upland_blocks: if game { 4.0 } else { 6.0 },
+                floodplain_w: if game {
+                    [3.0, 1.0, 0.0, 2.0, 0.5, 1.0]
+                } else {
+                    [5.0, 1.5, 0.0, 2.0, 0.5, 1.0]
+                },
+                wall_slope: [0.5, 1.0, 1.5, 1.0, 0.5, 0.7],
+                wall_reach_blocks: if game { 32.0 } else { 64.0 },
+                canyon_step_blocks: if game { 6.0 } else { 10.0 },
+                canyon_step_every: if game { 2.0 } else { 3.0 },
+                terrace_height_blocks: if game { 6.0 } else { 10.0 },
+                terrace_width_blocks: if game { 4.0 } else { 8.0 },
+                terrace_gorge_blocks: if game { 12.0 } else { 20.0 },
+                gate_blocks: if game {
+                    [4.0, 16.0]
+                } else {
+                    [6.0, 32.0]
+                },
+                calm_blocks: if game {
+                    [4.0, 16.0]
+                } else {
+                    [8.0, 32.0]
+                },
+                lake_calm_pad_blocks: if game { 8.0 } else { 12.0 },
+                route_tau_blocks_per_km: 2.0,
+                // §6.2: полярная и бореальная 1, умеренная, влажная
+                // тропическая и холодные горы 2, полусухая и тёплые горы 3,
+                // сухая не переливается (сначала сухо, ВО8 — плайя).
+                depression_min_depth_blocks: [
+                    1.0,
+                    1.0,
+                    2.0,
+                    3.0,
+                    f64::INFINITY,
+                    2.0,
+                    2.0,
+                    3.0,
+                ],
+                lake_area_max_fraction: 0.06,
+                beach_blocks: if game { 3.0 } else { 4.0 },
+                clear_above_blocks: 6.0,
             },
             boundaries: BoundaryParams {
                 // σ=6° даёт типичные ±6° и хвосты до ±18°, без тонких октав:
@@ -2358,6 +2477,47 @@ impl Params {
                     w,
                     "height.bank_raise_max_blocks={:?}",
                     hg.bank_raise_max_blocks
+                )
+                .unwrap();
+            }
+            // ВО0-1 (§6.1, §6.9): раздел `water` входит в хеш только у
+            // `v1-dev-w`, поэтому хеши `v0`, `v1`, `v1-dev` и `v1-dev-r2`
+            // остаются прежними.
+            if self.version.is_water_update() {
+                let wa = &self.water;
+                for (name, value) in [
+                    ("water.profile_step_blocks", wa.profile_step_blocks),
+                    ("water.bank_probe_blocks", wa.bank_probe_blocks),
+                    ("water.fall_min_drop_blocks", wa.fall_min_drop_blocks),
+                    ("water.fall_max_height_blocks", wa.fall_max_height_blocks),
+                    ("water.grade_slope", wa.grade_slope),
+                    ("water.class_window_blocks", wa.class_window_blocks),
+                    ("water.gorge_canyon_blocks", wa.gorge_canyon_blocks),
+                    ("water.gorge_upland_blocks", wa.gorge_upland_blocks),
+                    ("water.wall_reach_blocks", wa.wall_reach_blocks),
+                    ("water.canyon_step_blocks", wa.canyon_step_blocks),
+                    ("water.canyon_step_every", wa.canyon_step_every),
+                    ("water.terrace_height_blocks", wa.terrace_height_blocks),
+                    ("water.terrace_width_blocks", wa.terrace_width_blocks),
+                    ("water.terrace_gorge_blocks", wa.terrace_gorge_blocks),
+                    ("water.lake_calm_pad_blocks", wa.lake_calm_pad_blocks),
+                    ("water.route_tau_blocks_per_km", wa.route_tau_blocks_per_km),
+                    ("water.lake_area_max_fraction", wa.lake_area_max_fraction),
+                    ("water.beach_blocks", wa.beach_blocks),
+                    ("water.clear_above_blocks", wa.clear_above_blocks),
+                ] {
+                    writeln!(w, "{name}={value:?}").unwrap();
+                }
+                writeln!(w, "water.profile_budget_ms={}", wa.profile_budget_ms).unwrap();
+                writeln!(w, "water.slope_edges={:?}", wa.slope_edges).unwrap();
+                writeln!(w, "water.floodplain_w={:?}", wa.floodplain_w).unwrap();
+                writeln!(w, "water.wall_slope={:?}", wa.wall_slope).unwrap();
+                writeln!(w, "water.gate_blocks={:?}", wa.gate_blocks).unwrap();
+                writeln!(w, "water.calm_blocks={:?}", wa.calm_blocks).unwrap();
+                writeln!(
+                    w,
+                    "water.depression_min_depth_blocks={:?}",
+                    wa.depression_min_depth_blocks
                 )
                 .unwrap();
             }

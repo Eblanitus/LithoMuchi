@@ -251,6 +251,27 @@ impl Default for WaterColumn {
     }
 }
 
+/// ВО0-2 (PLAN-WATER-UPDATE §6.1): поверхность без воды `S0`.
+///
+/// `S0` — это рельеф, каким он был бы без рек и озёр: крупная форма
+/// `macro_y` (без микробугров) плюс их вклад `micro_dy` отдельным слагаемым.
+/// От `S0` в `v1-dev-w` считаются уровни воды, поэтому вырез рельефа в него
+/// не входит и от гидрологии он не зависит.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct S0Sample {
+    /// `S0_macro`: крупная форма поверхности в блоках, без микробугров.
+    pub macro_y: f64,
+    /// Вклад микробугров в блоках; ноль у версий без мелкого рельефа.
+    pub micro_dy: f64,
+}
+
+impl S0Sample {
+    /// `S0 = S0_macro + micro` — сухая поверхность колонки в блоках.
+    pub const fn surface_y(&self) -> f64 {
+        self.macro_y + self.micro_dy
+    }
+}
+
 /// Результат перевода колонки в игровые поля (T115/T122/T141/T144).
 struct SurfaceFields {
     /// К5 (Д-111): климат биомов — с вычетом температуры по высоте колонки.
@@ -374,7 +395,7 @@ impl Generator {
     pub fn with_params(seed: i64, mut params: Params) -> Result<Self, GenError> {
         let version = params.version;
         match version {
-            GenVersion::V0 | GenVersion::V1Dev | GenVersion::V1DevR2 => {}
+            GenVersion::V0 | GenVersion::V1Dev | GenVersion::V1DevR2 | GenVersion::V1DevW => {}
             GenVersion::V1 => return Err(GenError::UnsupportedVersion(version)),
         }
         // Ключ кэшей плит обязан соответствовать фактическим параметрам.
@@ -2502,6 +2523,107 @@ impl Generator {
     /// Значение на колонку `(x, z)` для `add_to_volume` (10.3).
     pub fn field_column(&self, field: Field, x: f64, z: f64) -> f64 {
         self.field(field, x, 0.0, z)
+    }
+
+    /// ВО0-2 (PLAN-WATER-UPDATE §6.1): сухая поверхность колонки `S0` —
+    /// точный путь по той же цепочке, что `surface_fields`, но **до**
+    /// гидрологии: без `hydrology::apply_fields`, без силы `river` и без
+    /// `e_valley_km`. Поэтому `S0` не зависит от воды: её уровни потом
+    /// считаются уже от него.
+    ///
+    /// `None` — версия без водного обновления или точка без климата/плиты.
+    pub fn s0_at(&self, x: f64, z: f64) -> Option<S0Sample> {
+        if !self.params.version.is_water_update() {
+            return None;
+        }
+        let climate = self.climate_sample(x, z)?;
+        let point = self.macro_point(x, z);
+        let plate = plate_query(point, self.seed, &self.params)?;
+        let crust = crust_from_sample(point, &plate, self.seed, &self.params);
+        let c = continentalness(climate.surface.e_km, climate.surface.iota_l, &self.params);
+        let is_ocean = c < self.params.climate.ocean_c_threshold;
+        let class = self.class_before_height(&climate, is_ocean, x, z);
+        let depth = self.relief_basin_depth(point, &plate).ok()?;
+        let crust_c = continentalness(crust.e_km, crust.iota_l, &self.params);
+        let shore_dist = self.shore_distance_blocks(x, z, crust_c);
+        let shore_fade = self.shore_fade_from(shore_dist);
+        let relief_sample =
+            relief::sample_near_shore(&plate, &crust, depth, shore_fade, self.seed, &self.params);
+        let morpho = self.morpho_weights(x, z)?;
+        // `local_river = 0`: в `S0` воды нет по определению.
+        let base = crate::vanilla::sample(&climate, &class, x, z, self.seed, &self.params, 0.0);
+        let (base, pv_relief) = crate::relief_fields::apply_with_pv(
+            base,
+            &climate,
+            &relief_sample,
+            &morpho,
+            Vec2::new(x, z),
+            self.seed,
+            &self.params,
+        );
+        let hp = &self.params.height;
+        // Тот же шум и та же длина волны, что в `surface_fields`; в `S0` он
+        // не гасится рекой (`gate = 1`), а вычитается отдельным слагаемым.
+        let micro = if hp.micro_amp_blocks.iter().any(|amp| *amp > 0.0) {
+            crate::noise::fbm2_unit(
+                crate::seed::subseed(self.seed, crate::seed::SALT_HEIGHT_MICRO),
+                x / hp.micro_lambda_blocks,
+                z / hp.micro_lambda_blocks,
+                1.0,
+                2,
+                0.5,
+            )
+        } else {
+            0.0
+        };
+        let shore_dist = if base.c <= self.params.climate.ocean_c_threshold {
+            0.0
+        } else {
+            shore_dist
+        };
+        let cold = morpho.values[6];
+        let warm = morpho.values[7];
+        let macro_h = crate::height::sample_micro(
+            base.c,
+            base.e,
+            pv_relief,
+            climate.surface.e_km,
+            cold,
+            warm,
+            0.0,
+            0.0,
+            shore_dist,
+            &self.params,
+        );
+        // Разность двух вызовов, а не повтор формулы: вклад микробугров уже
+        // взвешен берегом (`coast`), как в игре, и `S0` совпадает с полной
+        // поверхностью побитово.
+        let full_h = crate::height::sample_micro(
+            base.c,
+            base.e,
+            pv_relief,
+            climate.surface.e_km,
+            cold,
+            warm,
+            micro,
+            1.0,
+            shore_dist,
+            &self.params,
+        );
+        Some(S0Sample {
+            macro_y: macro_h.surface_y,
+            micro_dy: full_h.surface_y - macro_h.surface_y,
+        })
+    }
+
+    /// ВО0-2: быстрый `S0` для узлов решётки стока (§6.2).
+    ///
+    /// Пока это тот же точный путь: выбор приближения (путь А на 0,25 L или
+    /// «Б-лайт» на 0,5 L) делает разведка ВО0-5 по цене сети плиты и
+    /// точности. Поэтому тест точности `s0_node` против `s0_at` сейчас
+    /// нулевой, а числа ВО0-5 меряют уже эту функцию.
+    pub fn s0_node(&self, x: f64, z: f64) -> Option<S0Sample> {
+        self.s0_at(x, z)
     }
 
     /// R2 (Ф6-В1): вода колонки для заливки в игре. Уровень и дно берутся из
