@@ -85,6 +85,9 @@ pub struct LakeHit {
     pub high: bool,
     pub water_strength: f64,
     pub shore_strength: f64,
+    /// R2 (PLAN-WATER-FABRIC §4, п. 1): уровень озера в блоках — `min(S)` по
+    /// контуру минус 1, блоки. `None` — уровня R2 нет (вода R1 или не R2).
+    pub level_blocks: Option<f64>,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -380,7 +383,8 @@ impl LakeNetwork {
             lakes,
             baskets,
             field_fade_l: params.hydrology.field_fade_l,
-            r1_max_level_km: params.hydrology.r1_max_level_km,
+            // R2 (Ф6-В1): предела нет — вода выше моря считается водой.
+            r1_max_level_km: crate::hydrology::r1_max_level_km(params),
         };
         net.check()?;
         Ok(net)
@@ -514,6 +518,7 @@ impl LakeNetwork {
                 high: lake.high,
                 water_strength,
                 shore_strength,
+                level_blocks: None,
             };
             out.nearest = prefer_distance(out.nearest, Some(hit));
             out.shore_hit = prefer_shore(out.shore_hit, Some(hit));

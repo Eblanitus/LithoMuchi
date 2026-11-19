@@ -84,8 +84,26 @@ jobs:
           [ -n "$loom" ] && args="$args -Ploom_version=$loom"
           echo "versions: mc=$mv loader=$loader api=$api loom=$loom"
           echo "args=$args" >> "$GITHUB_OUTPUT"
-      - working-directory: fabric
-        run: gradle build --stacktrace ${{ steps.v.outputs.args }}
+      - name: Сборка jar
+        working-directory: fabric
+        run: |
+          set -o pipefail
+          # `bash -e` у GitHub Actions: без `set +e` шаг выходит на упавшей
+          # сборке и аннотация не печатается вовсе.
+          set +e
+          mkdir -p ../out
+          # Сырые логи CI недоступны, поэтому ошибки компиляции уходят
+          # аннотациями: иначе падение сборки видно только как exit code 1.
+          gradle build --stacktrace ${{ steps.v.outputs.args }} 2>&1 \
+            | tee ../out/gradle-build.log
+          status=$?
+          {
+            grep -nE "error:|error\\]|What went wrong|Caused by:|^FAILURE|command not found|Could not|Execution failed|> Task .*FAILED" \
+              ../out/gradle-build.log | head -40 || true
+            echo "--- хвост лога сборки ---"
+            tail -n 40 ../out/gradle-build.log || true
+          } | python3 ../tools/ci_annotations.py report || true
+          exit $status
       - uses: actions/upload-artifact@v4
         with:
           name: litospherity-fabric-jar
@@ -123,7 +141,69 @@ jobs:
           mkdir -p run
           echo "eula=true" > run/eula.txt
           printf 'level-seed=42\nlevel-type=litospherity\\:%s\nonline-mode=false\n' "${{ matrix.mode }}" > run/server.properties
+          set +e
+          mkdir -p ../out
           timeout 1500 gradle runServer --args=nogui -Dorg.gradle.jvmargs=-Xmx3G \
-            -Plitospherity_ci=${{ matrix.mode }} || true
+            -Plitospherity_ci=${{ matrix.mode }} 2>&1 | tee ../out/server.log
+          echo "--- хвост лога сервера ---"
+          grep -nE "Exception|Error|FAIL|RESULT|Litospherity" ../out/server.log | tail -25 | python3 ../tools/ci_annotations.py report
+          [ -f run/litospherity-ci.txt ] && cat run/litospherity-ci.txt
+          [ -f run/litospherity-ci.txt ] && python3 ../tools/ci_annotations.py report < run/litospherity-ci.txt
+          grep -q "RESULT: PASS" run/litospherity-ci.txt
+
+  water:
+    # Ф6-В5 (docs/PLAN-WATER-FABRIC.md §5): вода выше уровня моря не стекает по склону.
+    # Ядро даёт до 20 мест (высокие озёра, ступени рек, устья), сервер держит вокруг
+    # каждого 5x5 чанков 400 тиков и считает метрики; провал — RESULT: FAIL.
+    needs: natives
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        mode: [gameplay, scientific]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: natives-*
+          merge-multiple: true
+          path: fabric/src/main/resources/natives
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Ресурсы и сервер 26.3
+        run: |
+          set -e
+          cargo run -q -p xtask -- pack --out out/packs
+          mv=$(grep '^minecraft_version=' fabric/gradle.properties | cut -d= -f2)
+          url=$(curl -fsS https://piston-meta.mojang.com/mc/game/version_manifest_v2.json | jq -r --arg v "$mv" '.versions[]|select(.id==$v).url')
+          curl -fsS -o out/server.jar "$(curl -fsS "$url" | jq -r '.downloads.server.url')"
+          python3 tools/fabric_resources.py out/packs/litospherity_v1-dev_gameplay out/server.jar fabric/src/generated/resources
+      - name: Места с водой выше моря (ядро, v1-dev-r2)
+        run: |
+          set -e
+          mkdir -p fabric/run
+          # Опорная точка высокого озера — та же, что в тестах ядра (сид 42,
+          # геймплейный); в научном мире она в 4 раза дальше по блокам.
+          case "${{ matrix.mode }}" in
+            gameplay) at=-35098,8022 ;;
+            *) at=-140392,32089 ;;
+          esac
+          cargo run -q -p litho-sandbox --release -- water-points \
+            --seed 42 --mode ${{ matrix.mode }} --version v1-dev-r2 --radius-l 32 --at "$at" \
+            | tee fabric/run/water-points.txt | python3 tools/ci_annotations.py report
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: "25" }
+      - uses: gradle/actions/setup-gradle@v4
+        with: { gradle-version: current }
+      - name: "Сервер: вода не стекает по склону"
+        working-directory: fabric
+        run: |
+          set -e
+          mkdir -p run
+          echo "eula=true" > run/eula.txt
+          printf 'level-seed=42\nlevel-type=litospherity\\:%s\nonline-mode=false\n' "${{ matrix.mode }}" > run/server.properties
+          timeout 2400 gradle runServer --args=nogui -Dorg.gradle.jvmargs=-Xmx3G \
+            -Plitospherity_ci=water-${{ matrix.mode }} || true
           cat run/litospherity-ci.txt
+          # Отчёт сервера тоже уходит аннотацией: сырые логи CI недоступны.
+          python3 ../tools/ci_annotations.py report < run/litospherity-ci.txt
           grep -q "RESULT: PASS" run/litospherity-ci.txt

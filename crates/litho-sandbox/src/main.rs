@@ -14,6 +14,7 @@ mod shores;
 mod tune;
 mod vanilla_biomes;
 mod walls;
+mod water;
 
 use std::path::Path;
 use std::time::Instant;
@@ -487,6 +488,198 @@ fn cmd_shores(args: &[String]) -> Result<(), String> {
 }
 
 /// К3/К4а: крутые ступени на суше по линиям, с разбивкой по причинам.
+/// R2 (Ф6-В1, PLAN-WATER-FABRIC §5): инвариант «вода не уходит за берега».
+/// Три центра из `water-points`; каждый считается широким окном (`--size`,
+/// `--step`) и плотным (`--dense`, шаг 1) — узкое русло 4–6 блоков широкая
+/// сетка проскакивает. Ненулевое число нарушений — ошибка команды.
+fn cmd_water_leaks(args: &[String]) -> Result<(), String> {
+    let opts = options_from(args)?;
+    let generator = generator(&opts)?;
+    // `--explain x,z` — разбор одной колонки, работает и без поиска центров.
+    if let Some(text) = value(args, "--explain") {
+        let (x, z) = parse_pair(&text)?;
+        explain_column(&generator, x, z)?;
+        return Ok(());
+    }
+    if !opts.version.is_water_relief_r2() {
+        return Err(format!(
+            "water-leaks считает только v1-dev-r2 (сейчас {}): в v1-dev воды выше моря нет",
+            opts.version.as_str()
+        ));
+    }
+    let size = match value(args, "--size") {
+        Some(text) => text.parse::<i64>().map_err(|e| format!("--size: {e}"))?,
+        None => 2048,
+    };
+    let step = match value(args, "--step") {
+        Some(text) => text.parse::<i64>().map_err(|e| format!("--step: {e}"))?,
+        None => 4,
+    };
+    // §4, п. 6: окна берутся там, где вода есть. В научном режиме у (0,0) её
+    // нет, и прежние фиксированные центры давали пустой гейт.
+    let radius_l = match value(args, "--radius-l") {
+        Some(text) => text
+            .parse::<f64>()
+            .map_err(|e| format!("--radius-l: {e}"))?,
+        None => 32.0,
+    };
+    let centers: Vec<(f64, f64)> = if value(args, "--center").is_some() {
+        vec![(opts.center_x, opts.center_z)]
+    } else {
+        let mut seen = std::collections::BTreeSet::new();
+        water::points(&generator, (opts.center_x, opts.center_z), radius_l)
+            .into_iter()
+            .filter(|point| seen.insert((point.x.div_euclid(512), point.z.div_euclid(512))))
+            .take(3)
+            .map(|point| (point.x as f64, point.z as f64))
+            .collect()
+    };
+    if centers.is_empty() {
+        return Err(format!(
+            "нет мест с водой выше моря в радиусе {radius_l} L: увеличьте --radius-l"
+        ));
+    }
+    // §4, п. 6: широкая сетка шагом 8 проскакивает русло шириной 4–6 блоков
+    // (в окне 1024 получалось 6 колонок с водой вместо сотен). Поэтому каждый
+    // центр дополнительно считается плотным окном с шагом 1 — по нему и
+    // набирается минимум колонок с водой, а нарушения считаются суммарно.
+    let dense = match value(args, "--dense") {
+        Some(text) => text.parse::<i64>().map_err(|e| format!("--dense: {e}"))?,
+        None => 96,
+    };
+    // П. 5 §4 сравнивает рельеф с v1-dev: там вода выше моря не ставится вовсе.
+    let reference = Generator::new(opts.seed, opts.mode, GenVersion::V1Dev)
+        .map_err(|error| error.to_string())?;
+    let mut total = water::Leaks::default();
+    for (x, z) in centers {
+        let coarse = water::leaks_against(&generator, Some(&reference), (x, z), size, step);
+        // Плотное окно — только про воду (п. 6): сравнение с эталоном на
+        // каждом блоке стоило бы десятки минут на приёмочном прогоне.
+        let dense_leaks = if dense > 0 {
+            water::leaks_against(&generator, None, (x, z), dense, 1)
+        } else {
+            water::Leaks::default()
+        };
+        println!(
+            "  центр ({x}, {z}): широкое окно {size} шагом {step} — колонок {}, с водой {}; плотное {dense} шагом 1 — с водой {}; нарушений {} (дно {}, сосед {}, рельеф {}), водопадов {}",
+            coarse.columns,
+            coarse.water,
+            dense_leaks.water,
+            coarse.violations() + dense_leaks.violations(),
+            coarse.deep_bed + dense_leaks.deep_bed,
+            coarse.spill + dense_leaks.spill,
+            coarse.raised + dense_leaks.raised,
+            coarse.waterfalls + dense_leaks.waterfalls
+        );
+        println!(
+            "    кромка водопадов: {} сухих колонок ниже зеркала (§4, п. 3), ступени вода-вода: {}",
+            coarse.falls + dense_leaks.falls,
+            coarse.waterfalls + dense_leaks.waterfalls
+        );
+        for example in coarse.examples.iter().chain(dense_leaks.examples.iter()) {
+            println!("    {example}");
+        }
+        total.merge(&coarse);
+        total.merge(&dense_leaks);
+    }
+    println!(
+        "water-leaks: всего колонок {}, с водой выше моря {}, нарушений {} (п.1 {}, п.2 {}, п.5 {}), водопадов {} (кромка {} + ступени {})",
+        total.columns,
+        total.water,
+        total.violations(),
+        total.deep_bed,
+        total.spill,
+        total.raised,
+        total.waterfalls + total.falls,
+        total.falls,
+        total.waterfalls
+    );
+    if total.water < water::MIN_WATER_COLUMNS {
+        return Err(format!(
+            "гейт пустой: колонок с водой {} меньше {} (§4, п. 6)",
+            total.water,
+            water::MIN_WATER_COLUMNS
+        ));
+    }
+    if total.violations() > 0 {
+        // Читать нарушения по адресу: первые три колонки разбираются целиком
+        // (`--explain`), чтобы правка уровня не ждала нового прогона.
+        for (x, z) in total.coords.iter().take(3) {
+            explain_column(&generator, *x as f64, *z as f64)?;
+        }
+        return Err(format!("нарушений инварианта §4: {}", total.violations()));
+    }
+    Ok(())
+}
+
+/// R2 (Ф6-В5): до 20 мест для CI и автора — высокие озёра, ступени рек,
+/// устья рек в озёра. `--radius-l` ограничивает обход плит вокруг центра.
+/// Разбор одной колонки: уровень, сухая поверхность, ближайшее русло и озеро.
+/// Нужен, чтобы читать нарушения §4 по адресу.
+fn explain_column(generator: &Generator, x: f64, z: f64) -> Result<(), String> {
+    let column = generator.water_column(x, z);
+    let dry = generator
+        .dry_surface_at(x, z)
+        .map_err(|error| error.to_string())?;
+    println!(
+        "колонка ({x}, {z}): вода level={} bed={} surface={} вид={} сухая S={dry:?}",
+        column.level,
+        column.bed,
+        column.surface,
+        column.kind.as_str()
+    );
+    let water = generator
+        .hydrology_levels_at(x, z)
+        .map_err(|error| error.to_string())?;
+    if let Some(hit) = water.channels.nearest {
+        println!(
+            "  русло: расстояние {:.3} L, core {:.3} L, глубина {:.2}, зеркало T145 {:.1}, уровень R2 {:?}, along {:.3}",
+            hit.distance_l, hit.core_l, hit.depth_blocks, hit.mirror_y, hit.level_blocks, hit.along
+        );
+    }
+    if let Some(hit) = water.lakes.water_hit {
+        println!(
+            "  озеро: внутри {}, расстояние {:.3} L, level_km {:?}, уровень R2 {:?}, вид {:?}",
+            hit.inside, hit.distance_l, hit.level_km, hit.level_blocks, hit.kind
+        );
+    }
+    Ok(())
+}
+
+fn cmd_water_points(args: &[String]) -> Result<(), String> {
+    let opts = options_from(args)?;
+    let generator = generator(&opts)?;
+    if !opts.version.is_water_relief_r2() {
+        return Err(format!(
+            "water-points считает только v1-dev-r2 (сейчас {}): в v1-dev воды выше моря нет",
+            opts.version.as_str()
+        ));
+    }
+    let radius_l = match value(args, "--radius-l") {
+        Some(text) => text
+            .parse::<f64>()
+            .map_err(|e| format!("--radius-l: {e}"))?,
+        None => 32.0,
+    };
+    let points = water::points(&generator, (opts.center_x, opts.center_z), radius_l);
+    println!(
+        "water-points: {} мест (сид {}, режим {}, радиус {radius_l} L)",
+        points.len(),
+        opts.seed,
+        opts.mode.as_str()
+    );
+    for point in &points {
+        println!(
+            "  x={} z={} level={} вид={} ({})",
+            point.x, point.z, point.level, point.kind, point.note
+        );
+    }
+    if points.is_empty() {
+        return Err("мест с водой выше моря не нашлось: увеличьте --radius-l".into());
+    }
+    Ok(())
+}
+
 fn cmd_walls(args: &[String]) -> Result<(), String> {
     let opts = options_from(args)?;
     let generator = generator(&opts)?;
@@ -1826,6 +2019,10 @@ fn usage() -> &'static str {
                     --gate — порог CI L1 ≤ 1 % и лёд только в t0,\n\
                     --all — 16 приёмочных сидов × оба режима (Ш8)\n\
        shores       доля берегов с сушей выше моря на 10+ в 4 блоках от воды (К4)\n\
+       water-leaks  R2: инвариант «вода не уходит за берега» (v1-dev-r2),\n\
+                    --size 2048 --step 4, три центра\n\
+       water-points R2: до 20 мест с водой выше моря для CI и автора (v1-dev-r2),\n\
+                    --radius-l 32\n\
 vanilla-biomes биом игры (копия ванильной таблицы) против нашего, горы на холмах (Д-118);\n\
              --report ПУТЬ: сверка копии с отчётом datagen biome_parameters\n\
        checkpoints  10 точек вокруг точки появления\n\
@@ -1833,7 +2030,7 @@ vanilla-biomes биом игры (копия ванильной таблицы) 
        atlas        пересобрать только HTML-атлас\n\
        help         эта справка\n\n\
      Общие флаги: --seed N (42), --mode scientific|gameplay (gameplay),\n\
-       --version v0|v1|v1-dev (v0), --center x,z (0,0), --size N (512),\n\
+       --version v0|v1|v1-dev|v1-dev-r2 (v0), --center x,z (0,0), --size N (512),\n\
        --bpp N, --path reference|fast,\n\
        --layers plates|all|список через запятую, --out ПАПКА\n\
      Слои: шум/плиты/кора, климат, зоны, биомы, пять ванильных чисел,\n\
@@ -1869,6 +2066,8 @@ fn main() -> Result<(), String> {
         "belts" => cmd_belts(&args[1..]),
         "shores" => cmd_shores(&args[1..]),
         "walls" => cmd_walls(&args[1..]),
+        "water-leaks" => cmd_water_leaks(&args[1..]),
+        "water-points" => cmd_water_points(&args[1..]),
         "vanilla-biomes" => cmd_vanilla_biomes(&args[1..]),
         "paths" => cmd_paths(&args[1..]),
         "drainage" => cmd_drainage(&args[1..]),

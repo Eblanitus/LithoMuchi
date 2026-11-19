@@ -1,0 +1,64 @@
+name: r2-report
+# ВРЕМЕННЫЙ workflow отладки R2: cargo check/clippy и диффы rustfmt отдаются
+# аннотациями (api.github.com) кусками по 1200 символов — сырые логи CI
+# недоступны. Удаляется, когда шаг «Готово» §4 достигнут.
+on:
+  workflow_dispatch:
+  push:
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - name: rustfmt diff как аннотации
+        run: |
+          cargo fmt --all
+          python3 - <<'PY'
+          import subprocess, urllib.parse
+          diff = subprocess.run(["git", "diff"], capture_output=True, text=True).stdout
+          if not diff:
+              print("::notice::rustfmt: диффа нет")
+              raise SystemExit(0)
+          enc = urllib.parse.quote(diff, safe="")
+          step = 1200
+          for i in range(0, min(len(enc), step * 40), step):
+              print(f"::error::FMTDIFF{i // step}:{enc[i:i + step]}")
+          PY
+      - name: cargo check как аннотации
+        run: |
+          python3 - <<'PY'
+          import subprocess, urllib.parse, re
+          out = subprocess.run(["cargo", "check", "--workspace", "--all-targets"],
+                               capture_output=True, text=True)
+          text = out.stdout + out.stderr
+          if out.returncode == 0:
+              print("::notice::cargo check: чисто")
+              raise SystemExit(0)
+          keep = [l for l in text.splitlines() if re.match(r"^(error|warning)", l)]
+          enc = urllib.parse.quote("\n".join(keep[:200]), safe="")
+          step = 1200
+          for i in range(0, min(len(enc), step * 20), step):
+              print(f"::error::CHECK{i // step}:{enc[i:i + step]}")
+          raise SystemExit(1)
+          PY
+      - name: clippy как аннотации
+        if: always()
+        run: |
+          python3 - <<'PY'
+          import subprocess, urllib.parse
+          out = subprocess.run(
+              ["cargo", "clippy", "--workspace", "--all-targets", "--", "-D", "warnings"],
+              capture_output=True, text=True)
+          text = out.stdout + out.stderr
+          lines = [l for l in text.splitlines() if l.startswith(("error", "warning"))]
+          if not lines:
+              print("::notice::clippy: чисто")
+              raise SystemExit(0)
+          enc = urllib.parse.quote("\n".join(lines[:200]), safe="")
+          step = 1200
+          for i in range(0, min(len(enc), step * 20), step):
+              print(f"::error::CLIPPY{i // step}:{enc[i:i + step]}")
+          PY

@@ -6,6 +6,13 @@
 //!
 //! Статус: реализованы Э0, Э1a–Э1f, решётка и кэш (T13/T14), эталонный и
 //! быстрый пути с пятью полями для игры (T55). Дальше: оценка автором (Э1h).
+//!
+//! Вода выше моря (`GenVersion::V1DevR2`, раздел 4 [PLAN-WATER-FABRIC]): уровень
+//! берётся от сухой поверхности колонки `S`, а не из километров — озеро `min(S)`
+//! по контуру минус 1, русло — низший берег сечения минус 1 вниз по течению,
+//! вырез только вниз, берег добивается на 1–2 блока (Д-123, Д-125).
+//!
+//! [PLAN-WATER-FABRIC]: ../docs/PLAN-WATER-FABRIC.md
 
 #![forbid(unsafe_code)]
 
@@ -45,7 +52,9 @@ pub use classify::{ClassSample, LifeZone, VanillaCell};
 pub use climate::{ClimateSample, PoleSample, PrecipSample, TemperatureSample};
 pub use crust::CrustSample;
 pub use field::{Field, FullSample, to_f32};
-pub use generator::{GenError, Generator, WorldSample, field_error_log_count, net_build_count};
+pub use generator::{
+    GenError, Generator, WaterColumn, WorldSample, field_error_log_count, net_build_count,
+};
 pub use hydrology::{HydrologySample, SurfaceKind};
 pub use math::Vec2;
 pub use mode::{BlockParams, Mode};

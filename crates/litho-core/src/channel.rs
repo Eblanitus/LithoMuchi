@@ -150,6 +150,12 @@ pub struct ChannelHit {
     pub mouth_distance_l: f64,
     /// T145: зеркало русла в точке запроса, блоки.
     pub mirror_y: f64,
+    /// R2 (PLAN-WATER-FABRIC §4, п. 2): уровень воды в сегменте от берегов,
+    /// блоки. Интерполируется по `along`, чтобы ступень была не больше блока
+    /// на блок русла. `None` — уровня R2 нет (вода не выше моря или не R2).
+    pub level_blocks: Option<f64>,
+    /// Доля вдоль сегмента `0…1` (от `a` к `b`): по ней интерполируется `level_blocks`.
+    pub along: f64,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -542,6 +548,8 @@ impl ChannelNetwork {
                 end: reach.end,
                 mouth_distance_l,
                 mirror_y: at.mirror_y,
+                level_blocks: None,
+                along: t,
             };
             if out.nearest.is_none_or(|old| distance_l < old.distance_l) {
                 out.nearest = Some(hit);
@@ -1059,6 +1067,8 @@ mod tests {
                             delta_strength: delta,
                             end: net.reaches()[segment.reach].end,
                             mirror_y: at.mirror_y,
+                            level_blocks: None,
+                            along: t,
                             mouth_distance_l: (1.0 - t) * ab.dot(ab).sqrt()
                                 + net
                                     .reach_segments(segment.reach)
