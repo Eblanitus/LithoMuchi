@@ -160,10 +160,14 @@ public final class LithoWaterFeature implements Feature {
                     int bottom = Math.max(water.bed()[k] - 2, minY);
                     for (int y = top; y >= bottom; y--) {
                         if (neighbour != LithoNative.WaterColumns.NONE && neighbour > y) continue;
+                        // Ступень (§3 п. 3): один слой воздуха над нижним зеркалом, не весь
+                        // столб до высокой колонки. Иначе вода уходит дальше 1 блока от ядра
+                        // (метрика «протечки», CI water: 4 при пороге 0).
+                        if (riverStep && y != neighbour) continue;
                         BlockPos pos = new BlockPos((int) xs[nk], y, (int) zs[nk]);
                         if (!level.getBlockState(pos).isAir()) continue;
                         if (riverStep) {
-                            BlockState flowing = Fluids.FLOWING_WATER.getFlowing(7, y < top).createLegacyBlock();
+                            BlockState flowing = Fluids.FLOWING_WATER.getFlowing(7, false).createLegacyBlock();
                             level.setBlock(pos, flowing, 2);
                             // Живой режим: тик жидкости, чтобы ступень начала растекаться.
                             // В 26.3 у ProtoChunk нет markPosForPostprocessing (CI 44489540790).
