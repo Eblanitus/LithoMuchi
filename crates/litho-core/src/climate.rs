@@ -25,7 +25,7 @@ pub struct SurfaceSample {
     pub sigma_l: f64,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct PoleSample {
     /// Псевдоширота 0…90°: 0 на «экваторе», 90 у полюса.
     pub phi_deg: f64,
@@ -37,7 +37,7 @@ pub struct PoleSample {
     pub distance_l: f64,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct TemperatureSample {
     pub t_c: f64,
     pub sst_c: f64,
@@ -46,7 +46,7 @@ pub struct TemperatureSample {
     pub t_min: f64,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct PrecipSample {
     /// Влагосодержание воздуха μ в точке.
     pub mu: f64,
@@ -58,7 +58,7 @@ pub struct PrecipSample {
     pub slope: f64,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct ClimateSample {
     pub point: Vec2,
     pub surface: SurfaceSample,
