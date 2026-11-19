@@ -177,7 +177,8 @@ fn prefer_shore(a: Option<LakeHit>, b: Option<LakeHit>) -> Option<LakeHit> {
 /// где z — высота узла в км, area — площадь узла в L², S — избыток в км·L²
 /// (мм × 1e-6). Перевод L в км не нужен: площадь и избыток в L², масштаб сокращается.
 fn closed_pond_level(mut heights_km: Vec<f64>, area_l2: f64, storage_km_l2: f64) -> Option<f64> {
-    if !area_l2.is_finite() || area_l2 <= 0.0 || !storage_km_l2.is_finite() || storage_km_l2 <= 0.0 {
+    if !area_l2.is_finite() || area_l2 <= 0.0 || !storage_km_l2.is_finite() || storage_km_l2 <= 0.0
+    {
         return None;
     }
     if heights_km.is_empty() {
