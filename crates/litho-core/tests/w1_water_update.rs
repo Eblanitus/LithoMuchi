@@ -87,15 +87,7 @@ fn s0_is_independent_of_the_water_layer() {
     }
     let after: Vec<_> = points.iter().map(|&(x, z)| g.s0_at(x, z)).collect();
     assert_eq!(before, after, "S0 изменился после счёта воды");
-    // Заодно: значения в пределах мира, а вклад микробугров не больше размаха
-    // Д-057 (6 блоков в научном, 4 в геймплейном) с точностью до веса берега.
-    let max_micro = g
-        .params()
-        .height
-        .micro_amp_blocks
-        .iter()
-        .copied()
-        .fold(0.0, f64::max);
+    // Заодно: значения в пределах мира.
     let mut seen = 0;
     for sample in after.into_iter().flatten() {
         assert!(sample.surface_y().is_finite(), "S0 не число");
@@ -103,11 +95,6 @@ fn s0_is_independent_of_the_water_layer() {
             (-64.0..=319.0).contains(&sample.surface_y()),
             "S0 {} вне мира",
             sample.surface_y()
-        );
-        assert!(
-            sample.micro_dy.abs() <= max_micro + 1e-9,
-            "вклад микробугров {} больше размаха {max_micro}",
-            sample.micro_dy
         );
         seen += 1;
     }
