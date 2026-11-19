@@ -67,6 +67,8 @@ final class LithoCiWater {
             long chunksWithWater = LithoWaterFeature.CHUNKS.get();
             long sourcesBefore = countWater(level, true);
             long flowingBefore = countWater(level, false);
+            FLOWING_BEFORE.clear();
+            collectFlowing(level, FLOWING_BEFORE);
             // Ждём 400 тиков, чтобы обновления жидкости прошли.
             long[] tickStart = {0L}; long[] totalTickNanos = {0L}; long[] maxTickNanos = {0L}; int[] measuredTicks = {0}; boolean[] done = {false}; ServerTickEvents.START_SERVER_TICK.register(s -> { if (!done[0]) tickStart[0] = System.nanoTime(); });
             int[] left = {TICKS};
@@ -93,6 +95,25 @@ final class LithoCiWater {
             double growthPct = sourcesAfter == 0 ? 0.0 : 100.0 * growth / (double) sourcesAfter;
             long seals = LithoWaterFeature.SEALS.get() - sealsAtStart;
             double sealsPerChunk = chunksWithWater == 0 ? 0.0 : seals / (double) chunksWithWater;
+
+            // Где выросла текущая вода: первые места с ядром колонки и соседей,
+            // чтобы разбирать рост по адресу (ядро считается локально).
+            Set<Long> flowingAfterSet = new LinkedHashSet<>();
+            collectFlowing(level, flowingAfterSet);
+            int shown = 0;
+            for (long key : flowingAfterSet) {
+                if (FLOWING_BEFORE.contains(key)) continue;
+                if (shown++ >= 12) break;
+                BlockPos pos = BlockPos.of(key);
+                StringBuilder line = new StringBuilder(String.format("новая текущая: (%d, %d, %d)", pos.getX(), pos.getY(), pos.getZ()));
+                for (int[] d : new int[][] {{0, 0}, {1, 0}, {-1, 0}, {0, 1}, {0, -1}}) {
+                    LithoNative.WaterColumns c = gen.water(new double[] {pos.getX() + d[0]}, new double[] {pos.getZ() + d[1]});
+                    int lv = c.level()[0];
+                    line.append(String.format(" [%d,%d] level=%s bed=%d kind=%d", d[0], d[1],
+                            lv == LithoNative.WaterColumns.NONE ? "-" : Integer.toString(lv), c.bed()[0], c.kind()[0]));
+                }
+                report.add(line.toString());
+            }
 
             long leaks = 0;
             long wet = 0;
@@ -156,6 +177,23 @@ final class LithoCiWater {
             LithoMod.LOG.error("Litospherity CI water measure", t);
         }
         finish(server, report, ok);
+    }
+
+    /** Текущая вода выше моря до тиков: ключи {@link BlockPos#asLong()}. */
+    private static final Set<Long> FLOWING_BEFORE = new LinkedHashSet<>();
+
+    private static void collectFlowing(ServerLevel level, Set<Long> out) {
+        for (net.minecraft.world.level.chunk.LevelChunk chunk : loadedChunks(level)) {
+            for (int x = 0; x < 16; x++) {
+                for (int z = 0; z < 16; z++) {
+                    for (int y = LithoWaterFeature.SEA_LEVEL; y < level.getMaxY(); y++) {
+                        BlockPos pos = new BlockPos(chunk.getPos().getMinBlockX() + x, y, chunk.getPos().getMinBlockZ() + z);
+                        BlockState state = chunk.getBlockState(pos);
+                        if (state.is(Blocks.WATER) && !state.getFluidState().isSource()) out.add(pos.asLong());
+                    }
+                }
+            }
+        }
     }
 
     /** Вода выше моря в загруженных чанках: источники или текущая. */
