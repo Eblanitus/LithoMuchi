@@ -223,6 +223,14 @@ fn belongs_to_a_fall(generator: &Generator, x: i64, z: i64, level: i32) -> bool 
                 if own <= level as f64 - 2.0 {
                     return true;
                 }
+                // Уровень сегмента стоит над сушей соседа выше предела русла:
+                // ядро считает эту колонку водопадом (`height::with_water`), а
+                // не руслом, и воды в ней нет.
+                if let Ok(Some(dry)) = generator.dry_surface_at(x as f64, z as f64) {
+                    if own > dry + litho_core::height::RIVER_MAX_ABOVE_LAND_BLOCKS {
+                        return true;
+                    }
+                }
             }
         }
     }
