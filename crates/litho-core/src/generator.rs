@@ -1433,7 +1433,7 @@ impl Generator {
         {
             return Ok(Arc::clone(found));
         }
-        let built = Arc::new(self.build_w_reach_levels(net, reach)?);
+        let built = Arc::new(self.build_w_reach_levels(levels, net, reach)?);
         levels
             .reaches
             .lock()
@@ -1471,6 +1471,7 @@ impl Generator {
     /// считаются после того, как сеть научится читать уровень приёмника.
     fn build_w_reach_levels(
         &self,
+        levels: &PlateLevels,
         net: &crate::drainage::RiverNet,
         reach: usize,
     ) -> Result<Vec<Option<(f64, f64)>>, RiverNetError> {
@@ -1481,8 +1482,12 @@ impl Generator {
         let water = &self.params.water;
         let sea = crate::height::SEA_LEVEL;
         let source = channels.reach_segments(reach);
-        // п. 1–2: цель `T` в пробах оси. Между пробами цели нет: уровень там
-        // держится прежним, поэтому ступень не больше блока на блок русла.
+        if source.is_empty() {
+            return Ok(Vec::new());
+        }
+        // п. 1–2: берег `B` и цель `T` в пробах оси. Между пробами цели нет:
+        // уровень там держится прежним, поэтому ступень не больше блока на блок.
+        let mut banks: Vec<Option<f64>> = vec![None; source.len()];
         let mut targets: Vec<Option<f64>> = vec![None; source.len()];
         let mut last_sample: Option<Vec2> = None;
         let started = std::time::Instant::now();
@@ -1500,8 +1505,7 @@ impl Generator {
                 continue;
             }
             last_sample = Some(b.point);
-            // п. 1: ось, нормаль и полуширина воды сечения; берег — низший из
-            // трёх `S0`: оси и двух проб за краем воды.
+            // п. 1: ось, нормаль и полуширина воды; берег — низший из трёх `S0`.
             let normal = direction.normalized().perp();
             let edge_l = 0.5 * b.core_l + water.bank_probe_blocks / l;
             let mut bank: Option<f64> = None;
@@ -1512,26 +1516,119 @@ impl Generator {
                 }
             }
             if let Some(bank) = bank {
+                banks[index] = Some(bank);
                 // п. 2: цель — блок под низшим берегом, не ниже моря.
                 targets[index] = Some((bank - 1.0).floor().max(sea));
             }
         }
-        // п. 3 и 5: бегущий минимум вниз по течению; зеркало сегмента —
-        // `(уровень в начале, уровень в конце)`, между ними интерполяция.
-        let mut segments = vec![None; source.len()];
+        // п. 3 и 5: бегущий минимум вниз по течению.
+        let mut level: Vec<f64> = vec![sea; source.len()];
         let mut current: Option<f64> = None;
-        for (index, target) in targets.iter().enumerate() {
-            let start = current.or(*target).unwrap_or(sea);
-            let level = match *target {
+        for index in 0..source.len() {
+            let start = current.or(targets[index]).unwrap_or(sea);
+            let here = match targets[index] {
                 Some(target) => start.min(target),
                 None => start,
             };
-            current = Some(level);
-            if start > sea {
-                segments[index] = Some((start, level));
+            current = Some(here);
+            level[index] = here;
+        }
+        // п. 4: приёмник и подпор. Слияние и озеро требуют уровня соседа,
+        // поэтому это отдельный проход уже по готовому профилю.
+        if let Some(receiver) = self.w_receiver_level(levels, net, reach)? {
+            let mouth_level = *level.last().expect("звено непусто");
+            if mouth_level + 1.0 < receiver {
+                // Подпор: вода у устья ниже приёмника — поднимаем вверх по
+                // течению, пока берег не окажется ниже зеркала приёмника.
+                let mut index = level.len();
+                while index > 0 {
+                    index -= 1;
+                    level[index] = level[index].max(receiver);
+                    if banks[index].is_some_and(|bank| bank < receiver + 1.0) {
+                        break;
+                    }
+                }
+            } else if mouth_level > receiver + 1.0 && !self.w_cold_mountains(net, reach) {
+                // п. 4: приток висит выше приёмника — выравниваем низовье
+                // уклоном `grade_slope` от устья вверх. В холодных горах
+                // ступень остаётся: это висячая долина (водопады, п. 6).
+                let mut distance = 0.0_f64;
+                for index in (0..level.len()).rev() {
+                    let segment = &source[index];
+                    distance += segment.b.point.sub(segment.a.point).len() * l;
+                    let cap = receiver + (distance * water.grade_slope).floor();
+                    level[index] = level[index].min(cap);
+                }
+            }
+        }
+        // Зеркало сегмента: `(уровень в начале, уровень в конце)`; между ними
+        // интерполяция по `along`, поэтому ступень ≤ 1 блок на блок русла.
+        let mut segments = vec![None; source.len()];
+        for index in 0..level.len() {
+            let up = level[index];
+            let down = level.get(index + 1).copied().unwrap_or(level[index]);
+            if up > sea || down > sea {
+                segments[index] = Some((up, down));
             }
         }
         Ok(segments)
+    }
+
+    /// п. 4 (6.3): уровень приёмника звена, блоки. Море — 63, озеро — его
+    /// зеркало R2 (6.4), слияние — уровень звена, которое начинается от того
+    /// же узла (оно ниже по течению, поэтому рекурсия конечна). У прочих
+    /// концов приёмника нет.
+    fn w_receiver_level(
+        &self,
+        levels: &PlateLevels,
+        net: &crate::drainage::RiverNet,
+        reach: usize,
+    ) -> Result<Option<f64>, RiverNetError> {
+        let channels = net.channels();
+        let Some(this) = channels.reaches().get(reach) else {
+            return Ok(None);
+        };
+        match this.end {
+            crate::channel::ReachEnd::Sea => Ok(Some(crate::height::SEA_LEVEL)),
+            crate::channel::ReachEnd::Lake => {
+                let Some(last) = channels.reach_segments(reach).last() else {
+                    return Ok(None);
+                };
+                let index = net.lakes().query(last.b.point).water_hit.map(|hit| hit.lake);
+                Ok(index.and_then(|index| levels.lakes.get(index).copied().flatten()))
+            }
+            crate::channel::ReachEnd::Confluence => {
+                let mouth = this.mouth_node;
+                let next = channels
+                    .reaches()
+                    .iter()
+                    .position(|candidate| candidate.source_node == mouth);
+                let Some(next) = next else {
+                    return Ok(None);
+                };
+                if next == reach {
+                    return Ok(None);
+                }
+                let below = self.w_reach_levels(levels, net, next)?;
+                Ok(below.first().copied().flatten().map(|(start, _)| start))
+            }
+            _ => Ok(None),
+        }
+    }
+
+    /// В холодных горах (вес морфозоны 6 ≥ 0,5) низовье притока не
+    /// выравнивается: висячая долина — это будущий водопад (6.3, п. 6).
+    fn w_cold_mountains(&self, net: &crate::drainage::RiverNet, reach: usize) -> bool {
+        let channels = net.channels();
+        let Some(last) = channels.reach_segments(reach).last() else {
+            return false;
+        };
+        let l = self.params.block.l_blocks;
+        let shift = self.spawn_shift;
+        let x = (last.b.point.x - shift.x) * l;
+        let z = (last.b.point.z - shift.z) * l;
+        self.morpho_weights(x, z)
+            .is_some_and(|weights| weights.values[6] >= 0.5)
     }
 
     /// Эффективная гидрология T115 в блочной точке. Кэш точной колонки не

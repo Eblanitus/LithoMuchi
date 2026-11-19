@@ -22,31 +22,35 @@ fn points() -> Vec<(f64, f64)> {
         .collect()
 }
 
-/// ВО1-1: уровни `W` теперь профиль от `S0` (§6.3), поэтому колонки W и R2
-/// расходятся. Совпадение колонок было требованием ВО0-1 и закрылось вместе с
-/// «W — копия R2». Мир вне воды не меняется: континентальность в поле та же,
-/// `S0` есть только у W, а вода не опускается ниже моря (там её ставит ваниль).
+/// ВО1-1/ВО1-3: уровни `W` считаются профилем от `S0`, а карандашные реки
+/// выключены. Поэтому мир W больше не обязан совпадать с R2 ни в колонках, ни
+/// в `C` (совпадение было требованием ВО0-1 и закрылось вместе с «W — копия»).
+/// Здесь проверяется то, что должно держаться при любом профиле: `S0` есть и
+/// конечен, вода не ниже моря, дно не выше зеркала, и ответ не зависит от
+/// пересчёта (кэши уровней и `S0` не меняют мир).
 #[test]
-fn w_keeps_land_fields_and_takes_own_levels() {
+fn w_levels_and_s0_are_sane() {
     for mode in Mode::ALL {
-        let w = Generator::new(42, mode, GenVersion::V1DevW).unwrap();
-        let r2 = Generator::new(42, mode, GenVersion::V1DevR2).unwrap();
+        let first = Generator::new(42, mode, GenVersion::V1DevW).unwrap();
+        let second = Generator::new(42, mode, GenVersion::V1DevW).unwrap();
         for (x, z) in points().into_iter().take(200) {
-            assert_eq!(
-                w.field(Field::Continents, x, 0.0, z),
-                r2.field(Field::Continents, x, 0.0, z),
-                "C разошёлся в ({x}, {z}), режим {mode:?}"
-            );
-            let s0 = w.s0_at(x, z).expect("S0 есть у W");
+            let s0 = first.s0_at(x, z).expect("S0 есть у W");
             assert!(s0.macro_y.is_finite(), "S0 не число в ({x}, {z})");
-            let column = w.water_column(x, z);
+            let column = first.water_column(x, z);
             if column.level != 0 {
                 assert!(
                     column.level >= 63,
                     "уровень ниже моря в ({x}, {z}), режим {mode:?}"
                 );
                 assert!(column.bed <= column.level, "дно выше зеркала ({x}, {z})");
+                assert!(column.surface >= column.bed, "поверхность ниже дна ({x}, {z})");
             }
+            assert_eq!(
+                first.field(Field::Continents, x, 0.0, z),
+                second.field(Field::Continents, x, 0.0, z),
+                "C зависит от порядка расчёта ({x}, {z}), режим {mode:?}"
+            );
+            assert_eq!(column, second.water_column(x, z), "колонка не сошлась ({x}, {z})");
         }
     }
 }
