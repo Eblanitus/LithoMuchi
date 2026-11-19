@@ -1,0 +1,261 @@
+[1m[33mwarning[0m[1m: unused field `license` in `workspace.package`[0m
+  [1m[94m--> [0mCargo.toml:14:1
+   [1m[94m|[0m
+[1m[94m14[0m [1m[94m|[0m license = "MIT OR Apache-2.0"
+   [1m[94m|[0m [1m[33m^^^^^^^[0m
+   [1m[94m|[0m
+   [1m[94m= [0m[1mnote[0m: `cargo::unused_workspace_package_fields` is set to `warn` by default
+[1m[96mhelp[0m: consider removing the field `workspace.package.license`
+[1m[33mwarning[0m[1m: unused field `repository` in `workspace.package`[0m
+  [1m[94m--> [0mCargo.toml:15:1
+   [1m[94m|[0m
+[1m[94m15[0m [1m[94m|[0m repository = "https://github.com/Eblanitus/LithoMuchi"
+   [1m[94m|[0m [1m[33m^^^^^^^^^^[0m
+   [1m[94m|[0m
+[1m[96mhelp[0m: consider removing the field `workspace.package.repository`
+[1m[33mwarning[0m: workspace (manifest) generated 2 warnings
+[1m[33mwarning[0m[1m: fields `x0` and `z0` are never read[0m
+  [1m[94m--> [0mcrates/litho-sandbox/src/water_stats.rs:85:5
+   [1m[94m|[0m
+[1m[94m81[0m [1m[94m|[0m pub struct Window {
+   [1m[94m|[0m            [1m[94m------[0m [1m[94mfields in this struct[0m
+[1m[94m...[0m
+[1m[94m85[0m [1m[94m|[0m     x0: i64,
+   [1m[94m|[0m     [1m[33m^^[0m
+[1m[94m86[0m [1m[94m|[0m     z0: i64,
+   [1m[94m|[0m     [1m[33m^^[0m
+   [1m[94m|[0m
+   [1m[94m= [0m[1mnote[0m: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+[1m[33mwarning[0m: `litho-sandbox` (bin "litho-sandbox" test) generated 1 warning
+[1m[33mwarning[0m[1m: unused dependency `litho-core`[0m
+  [1m[94m--> [0mcrates/litho-tests/Cargo.toml:13:1
+   [1m[94m|[0m
+[1m[94m13[0m [1m[94m|[0m litho-core = { path = "../litho-core" }
+   [1m[94m|[0m [1m[33m^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m
+   [1m[94m|[0m
+   [1m[94m= [0m[1mnote[0m: `cargo::unused_dependencies` is set to `warn` by default
+[1m[96mhelp[0m: consider removing the dependency on `litho-core`
+[1m[96mhelp[0m: to still use for development builds, move to `dev-dependencies`
+[1m[33mwarning[0m: `litho-tests` (manifest) generated 1 warning
+[1m[92m    Finished[0m `test` profile [unoptimized + debuginfo] target(s) in 0.01s
+[1m[92m     Running[0m unittests src/lib.rs (target/debug/build/litho-core/f278baeed2b586c4/out/litho_core-f278baeed2b586c4)
+
+running 195 tests
+test cache::tests::compute_runs_only_once_per_key_while_cached ... ok
+test channel::mirror_tests::mirror_is_rounded_monotone_and_step_limited ... ok
+test channel::mirror_tests::adverse_raw_slope_does_not_make_water_flow_uphill ... ok
+test cache::tests::cold_warm_and_tiny_cache_give_the_same_answer ... ok
+test channel::tests::dry_network_has_no_channels_and_meanders_are_deterministic ... ok
+test channel::tests::large_gentle_mouth_splits_into_two_to_four_delta_arms ... ok
+test channel::tests::gallery_corridor_is_gated_by_discharge_and_fades_with_distance ... ok
+test channel::tests::steep_or_small_mouths_do_not_grow_deltas ... ok
+test channel::tests::ring_outlets_keep_their_kind_and_queries_merge_deterministically ... ok
+test classify::t133_tests::step_toward_moves_one_step_and_keeps_reached_target ... ok
+test channel::tests::width_grows_downstream_and_basket_query_matches_brute_force ... ok
+test classify::t135_tests::v0_table_is_untouched_by_the_ladder ... ok
+test classify::t133_tests::jitter_of_v1_dev_is_the_v0_jitter ... ok
+test classify::t135_tests::v1_dev_h_is_constant_inside_a_province ... ok
+test classify::tests::cold_winter_moves_boreal_and_temperate_biomes_one_row_colder ... ok
+test classify::tests::dry_places_with_freezing_winters_are_plains_not_sand ... ok
+test classify::tests::dryness_and_temperature_select_expected_belts ... ok
+test classify::tests::every_table_cell_is_a_valid_vanilla_cell ... ok
+test classify::tests::ocean_bands_are_monotonic ... ok
+test climate::t131_tests::t131_north_is_unit_and_fallback_is_continuous_at_zero_gradient ... ok
+test classify::t135_tests::v1_dev_table_neighbors_differ_by_at_most_one_h_step ... ok
+test climate::t131_tests::t131_phi_scalar_is_continuous_and_v0_pole_sample_is_bitwise_unchanged ... ok
+test classify::t133_tests::ecotone_is_one_step_only_near_humidity_thresholds_and_never_in_ocean ... ok
+test climate::t136_tests::fan_averages_real_ray_paths_and_stays_bounded ... ok
+test climate::t136_tests::default_fan_is_the_three_ray_weighted_sum ... ok
+test climate::t136_tests::fan_parameters_validate ... ok
+test climate::t136_tests::v0_ignores_fan_parameters_bit_for_bit ... ok
+test climate::tests::climate_sample_is_finite_on_flat_and_mountainous_surfaces ... ok
+test climate::tests::control_points_a_to_f_match_plan_7_7_6 ... ok
+test climate::tests::poles_form_a_regular_non_square_lattice ... ok
+test climate::tests::sea_level_temperature_matches_plan_table ... ok
+test climate::t136_tests::fan_softens_the_edge_of_a_finite_rain_shadow ... ok
+test climate::tests::t130_ray_bend_is_smooth_bounded_and_v0_is_untouched ... ok
+test climate::tests::wind_is_bounded_and_weak_at_equator ... ok
+test climate::tests::zonal_precipitation_has_two_maxima_and_a_subtropical_minimum ... ok
+test crust::t132_tests::pass_factor_is_bounded_smooth_and_varies_along_the_boundary ... ok
+test climate::tests::t130_bent_ray_breaks_a_straight_rain_shadow_without_a_block_jump ... ok
+test crust::t132_tests::v0_crust_ignores_pass_parameters_bitwise ... ok
+test crust::t132_tests::passes_are_order_invariant_and_lower_the_orographic_barrier ... ok
+test crust::tests::e_base_is_continuous_at_table_knots ... ok
+test crust::tests::gauss_and_plateau_are_bounded ... ok
+test crust::tests::kappa_global_has_no_cell_window_seams ... ok
+test drainage::tests::cache_builds_once_and_eviction_is_deterministic ... ok
+test drainage::tests::closed_basin_without_outlet_is_not_invented_sea ... ok
+test drainage::tests::depression_depth_bounds_shortcut_does_not_change_the_answer ... ok
+test drainage::tests::depression_depth_query_is_compact_and_continuous ... ok
+test drainage::tests::many_shards_do_not_reduce_each_shard_to_one_slot ... ok
+test drainage::tests::over_budget_pits_are_breached_deepest_first ... ok
+test drainage::tests::priority_flood_fills_pit_and_routes_to_sea ... ok
+test field::tests::all_field_names_round_trip ... ok
+test field::tests::non_finite_values_become_zero ... ok
+test generator::field_log_tests::field_error_log_counts_all_errors_but_prints_a_limited_prefix ... ok
+test crust::tests::crust_samples_are_finite_and_bounded ... ok
+test generator::net_owner_tests::owner_list_does_not_depend_on_query_order ... ok
+test climate::t131_tests::wind_direction_changes_at_most_five_degrees_per_32_blocks ... ok
+test generator::ray_lattice_tests::disabled_lattice_matches_the_reference_bit_for_bit ... ok
+test generator::net_owner_tests::skipped_river_nets_are_silent_at_the_point ... ok
+test generator::ray_lattice_tests::frozen_v0_never_uses_the_lattice ... ok
+test classify::t133_tests::v1_dev_table_and_desert_rim_never_jump_a_step ... ok
+test generator::ray_lattice_tests::node_reproduces_the_reference_ray_at_its_own_point ... ok
+test generator::ray_lattice_tests::ray_field_node_holds_exact_height_and_wind ... ok
+test generator::ray_lattice_tests::ray_field_tiles_are_not_shared_between_worlds ... ok
+test generator::ray_lattice_tests::column_on_a_lattice_node_traces_one_ray ... ok
+test generator::t141_tests::v0_pv_keeps_the_old_derivative_of_w ... ok
+test generator::t144_tests::owned_height_fields_match_the_world_sample_on_both_paths ... ok
+test generator::t160_tests::column_cache_does_not_change_field_answers_or_order ... ok
+test generator::tests::macro_coordinates_scale_with_mode ... ok
+test generator::tests::owner_blocks_match_direct_window ... ok
+test generator::ray_lattice_tests::fast_path_does_not_depend_on_query_order has been running for over 60 seconds
+test generator::ray_lattice_tests::lattice_stays_close_to_the_reference has been running for over 60 seconds
+test generator::ray_lattice_tests::fast_path_does_not_depend_on_query_order ... ok
+test generator::t141_tests::pv_field_is_exposed_and_rivers_cut_their_own_valley ... ok
+test generator::tests::t121_morpho_weights_are_dev_only_and_sum_to_one ... ok
+test generator::tests::t122_former_zone_flip_seams_stay_continuous ... ok
+test generator::tests::t122_morpho_weights_are_continuous_across_grid_boundary ... ok
+test generator::tests::v0_world_has_no_dev_hydrology ... ok
+test generator::tests::v1_dev_fast_and_reference_rivers_agree ... ok
+test generator::tests::v1_is_not_implemented_yet ... ok
+test generator::tests::world_sample_is_finite_and_bounded ... ok
+test hash::tests::fnv_differs_for_close_salts ... ok
+test hash::tests::hash3_is_deterministic_and_sensitive_to_arguments ... ok
+test hash::tests::splitmix64_is_stable_for_zero_and_max ... ok
+test hash::tests::unit_stays_in_half_open_interval ... ok
+test height::tests::cold_mountains_are_jaggeder_than_warm_and_fields_are_bounded ... ok
+test height::tests::deferred_lake_leaves_terrain_untouched ... ok
+test height::tests::height_keys_are_v1_dev_only_and_validate ... ok
+test height::tests::lake_mirror_is_flat_at_spill_and_bed_is_below_it ... ok
+test height::tests::mountain_shore_keeps_the_cliff ... ok
+test height::tests::negative_pv_cuts_a_plateau_valley ... ok
+test height::tests::ocean_is_below_sea_and_land_is_above ... ok
+test height::tests::offset_matches_game_depth_formula ... ok
+test height::tests::r1_lake_water_never_stands_above_the_land ... ok
+test height::tests::r2_bank_fill_is_only_a_two_block_top_up ... ok
+test height::tests::r2_lake_keeps_columns_above_the_mirror_as_land ... ok
+test height::tests::r2_river_does_not_dig_a_canyon_to_the_mirror ... ok
+test height::tests::r2_river_takes_level_from_banks_and_cuts_only_down ... ok
+test height::tests::r2_without_surface_level_gives_no_water_above_sea ... ok
+test height::tests::river_cut_keeps_water_below_the_local_bank ... ok
+test height::tests::scientific_mode_adds_real_macro_elevation ... ok
+test height::tests::shore_ramp_descends_to_the_water_within_width ... ok
+test hydrology::r2_limit_tests::default_wrappers_keep_own_kind ... ok
+test hydrology::r2_limit_tests::r1_limit_hides_high_lake_from_fields ... FAILED
+test hydrology::r2_limit_tests::r1_limit_keeps_deferred_water_deferred ... ok
+test hydrology::r2_limit_tests::r1_limit_restores_low_lake_water ... ok
+test hydrology::tests::channel_core_and_bank_follow_distance_and_floodplain_avoids_mountains ... ok
+test hydrology::tests::frozen_lake_and_estuary_use_the_correct_biome_and_coast ... ok
+test hydrology::tests::gallery_forest_needs_a_large_river_corridor_and_dry_land ... ok
+test hydrology::tests::high_water_is_not_faked_at_sea_level_in_r1 ... ok
+test hydrology::tests::small_lake_is_river_large_lake_is_ocean_and_swamp_is_e6 ... ok
+test hydrology::tests::v0_formula_is_not_called_by_the_new_resolution_and_params_validate ... ok
+test lake::pond_tests::pond_level_matches_storage_volume ... ok
+test lake::pond_tests::pond_rejects_empty_or_dry_input ... ok
+test lake::tests::closed_surplus_does_not_invent_a_spill_or_water_level ... ok
+test lake::tests::contours_keep_islands_as_holes ... ok
+test lake::tests::dry_endorheic_basin_has_influence_but_no_water_level ... ok
+test lake::tests::freezing_winter_marks_the_lake_and_high_water_stays_r2 ... ok
+test lake::tests::negative_spill_is_sea_connected_not_a_freshwater_lake ... ok
+test lake::tests::shallow_humid_basin_is_swamp_and_large_basin_is_inland_sea ... ok
+test lake::tests::spill_uses_true_saddle_not_priority_flood_epsilon ... ok
+test lattice::tests::catmull_rom_is_exact_on_a_linear_field ... ok
+test lattice::tests::nodes_are_tied_to_world_coordinates ... ok
+test lattice::tests::smoothing_preserves_a_constant_field ... ok
+test lava::tests::aquifer_lava_share_follows_lambda ... ok
+test lava::tests::lava_is_at_least_background_and_bounded ... ok
+test math::tests::deterministic_atan2_and_rotation_cover_all_quadrants ... ok
+test math::tests::exp_log_pow_agree_with_known_constants ... ok
+test math::tests::piecewise_hits_knots_exactly ... ok
+test math::tests::smoothstep_edges_and_reverse_direction ... ok
+test math::tests::vec2_helpers ... ok
+test mode::tests::one_planet_two_scales ... ok
+test mode::tests::parse_roundtrip ... ok
+test morphoclimate::tests::defaults_validate_and_v0_is_rejected ... ok
+test morphoclimate::tests::endmembers_match_the_plan_table ... ok
+test morphoclimate::tests::erosion_remap_gameplay_defaults_stay_under_slope_limit ... ok
+test morphoclimate::tests::erosion_remap_keeps_outer_bands_and_order ... ok
+test morphoclimate::tests::erosion_remap_moves_zone_edges ... ok
+test morphoclimate::tests::mix_respects_mode_and_bounds ... ok
+test morphoclimate::tests::weights_are_continuous ... ok
+test morphoclimate::tests::weights_form_a_partition_of_unity ... ok
+test noise::tests::directions_are_unit_vectors ... ok
+test noise::tests::fbm_and_ridged_are_bounded ... ok
+test noise::tests::noise_is_continuous ... ok
+test noise::tests::noise_stays_in_range ... ok
+test noise::tests::warp_is_bounded_by_amplitude ... ok
+test params::tests::boundary_keys_are_v1_dev_only_and_hash_sensitive ... ok
+test params::tests::k7_only_scientific_v1dev_is_taller ... ok
+test params::tests::macro_params_do_not_depend_on_mode ... ok
+test params::tests::params_hash_is_stable_and_sensitive ... ok
+test params::tests::v0_is_frozen_and_v1_dev_has_its_own_parameters ... ok
+test plates::tests::boundary_type_is_symmetric ... ok
+test plates::tests::channel_neighborhood_covers_owners_of_the_whole_disk ... ok
+test plates::tests::continent_field_sign_matches_center ... ok
+test plates::tests::empty_cells_only_at_even_indices ... ok
+test plates::tests::plate_colors_are_not_all_the_same ... ok
+test plates::tests::plates_near_window_memory_does_not_change_the_answer ... ok
+test plates::tests::warp_does_not_fold_the_plane ... ok
+test plates::tests::warp_jacobian_stays_above_threshold ... ok
+test plates::tests::window_5x5_matches_brute_force_9x9 ... ok
+test ray_field::tests::bilinear_is_exact_at_nodes_and_linear_between ... ok
+test ray_field::tests::locate_covers_negative_coordinates_without_gaps ... ok
+test ray_field::tests::node_is_computed_once_and_then_read_back ... ok
+test ray_field::tests::spline_height_is_exact_at_nodes_and_on_planes ... ok
+test relief::tests::basin_lowers_potential_and_rift_flattens_floor ... ok
+test relief::tests::defaults_validate_and_v0_is_rejected ... ok
+test relief::tests::foothills_live_on_the_outer_orogen_slope ... ok
+test relief::tests::potential_has_no_step_between_close_points ... ok
+test relief::tests::potential_is_bounded_on_a_transect ... ok
+test relief::tests::relief_fades_towards_the_ocean_shore ... ok
+test relief_fields::tests::cold_mountains_take_negative_sign_and_warm_positive ... ok
+test relief_fields::tests::fields_are_continuous_across_the_land_gate ... ok
+test relief_fields::tests::ocean_keeps_base_fields_and_land_changes_them ... ok
+test relief_fields::tests::w_magnitude_inverts_to_pv_relief_on_the_branch ... ok
+test rivers::tests::dev_keeps_rift_adds_transform_and_drops_foothill_without_touching_v0 ... ok
+test runoff::balance_tests::closed_wet_basin_keeps_surplus_in_storage_not_a_fake_river ... ok
+test runoff::balance_tests::foreign_basin_transmits_water_without_double_export ... ok
+test runoff::balance_tests::invalid_climate_is_rejected_not_replaced_by_zero ... ok
+test runoff::tests::bilinear_grid_is_exact_on_linear_field_and_handles_negative_coords ... ok
+test runoff::tests::climate_grid_parallel_matches_pointwise_values ... ok
+test runoff::tests::discharge_accumulates_downhill_and_dry_nodes_stay_zero ... ok
+test runoff::tests::dry_lake_is_endorheic_and_does_not_export_water ... ok
+test runoff::tests::neighbour_inflow_is_added_and_handed_on_with_balance ... ok
+test runoff::tests::wet_lake_evaporates_once_and_exports_surplus ... ok
+test seed::tests::cell_rng_follows_splitmix_chain ... ok
+test seed::tests::different_salts_give_different_subseeds ... ok
+test seed::tests::negative_world_seed_keeps_bits ... ok
+test spawn::tests::same_seed_gives_same_shift ... ok
+test spawn::tests::spawn_point_is_good_on_one_hundred_seeds ... ok
+test vanilla::tests::all_five_values_stay_in_vanilla_range ... ok
+test vanilla::tests::c_e_w_are_continuous_on_a_smooth_transect ... ok
+test vanilla::tests::continentalness_matches_plan_knots_and_is_continuous_at_coast ... ok
+test vanilla_biome::tests::guard_keeps_forest_on_hill_and_snow_on_mountain ... ok
+test vanilla_biome::tests::known_points ... ok
+test generator::tests::t115_network_lake_delta_and_cross_plate_reach_the_game_fields has been running for over 60 seconds
+test generator::tests::t116_gallery_forest_reaches_a_real_dry_corridor has been running for over 60 seconds
+test generator::tests::t116_gallery_forest_reaches_a_real_dry_corridor ... ok
+test version::tests::parse_roundtrip ... ok
+test vanilla_biome::tests::table_covers_every_inland_cell ... ok
+test generator::ray_lattice_tests::lattice_stays_close_to_the_reference ... ok
+test generator::tests::t115_network_lake_delta_and_cross_plate_reach_the_game_fields ... ok
+
+failures:
+
+---- hydrology::r2_limit_tests::r1_limit_hides_high_lake_from_fields stdout ----
+
+thread 'hydrology::r2_limit_tests::r1_limit_hides_high_lake_from_fields' (7323) panicked at crates/litho-core/src/hydrology.rs:436:9:
+assertion `left == right` failed: сила берега не должна попадать в E
+  left: 1.0
+ right: 0.0
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    hydrology::r2_limit_tests::r1_limit_hides_high_lake_from_fields
+
+test result: FAILED. 194 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 187.09s
+
+[1m[91merror[0m: test failed, to rerun pass `-p litho-core --lib`
