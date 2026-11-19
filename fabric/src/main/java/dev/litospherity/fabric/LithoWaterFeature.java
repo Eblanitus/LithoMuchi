@@ -8,7 +8,6 @@ import net.minecraft.world.level.WorldGenLevel;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.chunk.ChunkGenerator;
-import net.minecraft.world.level.chunk.ProtoChunk;
 import net.minecraft.world.level.levelgen.feature.Feature;
 import net.minecraft.world.level.material.Fluids;
 
@@ -166,10 +165,10 @@ public final class LithoWaterFeature implements Feature {
                         if (riverStep) {
                             BlockState flowing = Fluids.FLOWING_WATER.getFlowing(7, y < top).createLegacyBlock();
                             level.setBlock(pos, flowing, 2);
-                            // ChunkAccess не умеет постобработку; она есть у ProtoChunk, а фича
-                            // RAW_GENERATION идёт именно на нём.
-                            if (LIVE_STEPS && level.getChunk(pos) instanceof ProtoChunk protoChunk) {
-                                protoChunk.markPosForPostprocessing(pos);
+                            // Живой режим: тик жидкости, чтобы ступень начала растекаться.
+                            // В 26.3 у ProtoChunk нет markPosForPostprocessing (CI 44489540790).
+                            if (LIVE_STEPS) {
+                                level.scheduleTick(pos, Fluids.FLOWING_WATER, 1);
                             }
                             steps++;
                         } else {
