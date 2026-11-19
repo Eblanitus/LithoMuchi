@@ -37,14 +37,8 @@ jobs:
           jar=$(grep -oE "^PROBEJAR .*" ../out/probe.log | head -1 | sed 's/^PROBEJAR //')
           {
             echo "JAR $(basename "$jar")"
-            echo "--- MapCodec статические"
-            javap -classpath "$jar" com.mojang.serialization.MapCodec 2>&1 | grep -E "static" | head -10
-            echo "--- NoOpFeature"
-            javap -classpath "$jar" net.minecraft.world.level.levelgen.feature.NoOpFeature 2>&1 | head -12
-            echo "--- FeatureTypes"
-            javap -classpath "$jar" net.minecraft.world.level.levelgen.feature.FeatureTypes 2>&1 | head -12
-            echo "--- Holder"
-            javap -classpath "$jar" net.minecraft.core.Holder 2>&1 | grep -iE "unwrap|key" | head -6
             echo "--- ResourceKey"
-            javap -classpath "$jar" net.minecraft.resources.ResourceKey 2>&1 | grep -iE "location|identifier|registry" | head -6
+            javap -classpath "$jar" net.minecraft.resources.ResourceKey 2>&1 | grep -E "public" | head -20
+            echo "--- LevelHeightAccessor"
+            javap -classpath "$jar" net.minecraft.world.level.LevelHeightAccessor 2>&1 | grep -E "getMinY|getMaxY|getHeight" | head -6
           } | python3 ../tools/ci_annotations.py report || true
