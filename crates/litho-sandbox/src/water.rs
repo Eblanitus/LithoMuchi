@@ -41,6 +41,14 @@ pub struct Leaks {
     /// считаются метрикой. Печатаются с примерами: рост числа означает, что
     /// уровень где-то посчитан неверно.
     pub waterfalls: u64,
+    /// Колонки оси русла на суше (`core > 0.9`, сухая `S ≥ 63`): в игре в
+    /// них должна стоять вода — либо R2 выше моря, либо ванильная до y = 62
+    /// (дно вырезано ниже 62). Игровой тест 2026-11-19: R2 не резал русла
+    /// на уровне моря, реки были сухими, а гейт этого не видел — он смотрел
+    /// только на колонки, где у ядра уже есть вода.
+    pub river_axis: u64,
+    /// Из них сухие: ни воды R2, ни дна ниже 62.
+    pub river_dry: u64,
     /// Первые примеры нарушений, не больше `EXAMPLE_LIMIT`.
     pub examples: Vec<String>,
     /// Координаты первых нарушений — по ним печатается разбор колонки.
@@ -54,6 +62,13 @@ pub const RAISE_LIMIT_BLOCKS: f64 = 3.0;
 /// §4, п. 6: в окне каждого режима должно быть не меньше стольких колонок
 /// с водой выше моря, иначе гейт проходит впустую.
 pub const MIN_WATER_COLUMNS: u64 = 200;
+/// Ось русла: сила ядра выше этого порога.
+const RIVER_AXIS_CORE: f64 = 0.9;
+/// Гейт сухих осей русла, %. Цель — 2 %. Временно 30 %: после ущелий до
+/// 8 блоков в окнах CI остаётся 3–25 % сухих осей — участки, где дно долины
+/// выше уровня реки больше чем на 8 блоков (2026-11-19). Порог ловит прежний
+/// провал (60–100 % сухих) и не даёт ему вернуться; снижать по мере правки.
+pub const RIVER_DRY_MAX_PCT: f64 = 30.0;
 
 impl Leaks {
     /// Суммирует окна: широкое и плотное считаются отдельно, а гейт —
@@ -66,6 +81,8 @@ impl Leaks {
         self.raised += other.raised;
         self.waterfalls += other.waterfalls;
         self.falls += other.falls;
+        self.river_axis += other.river_axis;
+        self.river_dry += other.river_dry;
         for coord in &other.coords {
             if self.coords.len() < EXAMPLE_LIMIT {
                 self.coords.push(*coord);
@@ -73,6 +90,15 @@ impl Leaks {
         }
         for example in &other.examples {
             self.example(example.clone());
+        }
+    }
+
+    /// Доля сухих осей русла, %.
+    pub fn river_dry_pct(&self) -> f64 {
+        if self.river_axis == 0 {
+            0.0
+        } else {
+            100.0 * self.river_dry as f64 / self.river_axis as f64
         }
     }
 
@@ -140,11 +166,46 @@ pub fn leaks_against(
                 out.water += 1;
                 check_column(generator, &column, x, z, &mut out);
             }
+            river_axis(generator, &column, x, z, &mut out);
             x += step;
         }
         z += step;
     }
     out
+}
+
+/// Ось русла на суше должна быть мокрой в игре (см. `Leaks::river_axis`).
+fn river_axis(generator: &Generator, column: &WaterColumn, x: i64, z: i64, out: &mut Leaks) {
+    let (xf, zf) = (x as f64, z as f64);
+    let Ok(hydrology) = generator.hydrology_at(xf, zf) else {
+        return;
+    };
+    if hydrology.channels.core <= RIVER_AXIS_CORE {
+        return;
+    }
+    let Ok(Some(dry)) = generator.dry_surface_at(xf, zf) else {
+        return;
+    };
+    if dry < SEA_LEVEL {
+        return;
+    }
+    out.river_axis += 1;
+    if column.has_water() {
+        return;
+    }
+    // Ванильная вода стоит до y = 62: блок 62 воздух, если дно не выше 62.
+    let bed = generator
+        .sample(xf, zf)
+        .map_or(f64::INFINITY, |full| full.world.height.surface_y);
+    if bed <= SEA_LEVEL - 1.0 {
+        return;
+    }
+    out.river_dry += 1;
+    if out.river_dry <= 3 {
+        out.example(format!(
+            "сухое русло: ({x}, {z}) сухая S {dry:.1}, дно {bed:.1}, воды R2 нет"
+        ));
+    }
 }
 
 /// §4, п. 3: сосед ниже зеркала на кромке водопада — не протечка. Признак:

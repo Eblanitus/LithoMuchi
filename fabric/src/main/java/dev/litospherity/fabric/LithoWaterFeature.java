@@ -36,6 +36,9 @@ public final class LithoWaterFeature implements Feature {
     public static final int SEA_LEVEL = 63;
     /** Колонка чанка плюс один блок по краю: герметизации нужны соседи. */
     private static final int SIDE = 18;
+    /** Проба чанка: {@code PROBE × PROBE} колонок через {@code PROBE_STEP} блоков. */
+    private static final int PROBE = 6;
+    private static final int PROBE_STEP = 3;
 
     /** Заделок герметизации (метрика В5: ≤ 2 на чанк с водой выше моря). */
     public static final AtomicLong SEALS = new AtomicLong();
@@ -73,14 +76,17 @@ public final class LithoWaterFeature implements Feature {
         }
         // Генератор общий и потокобезопасный (Ф1): не закрываем его здесь.
         LithoNative.Generator core = LithoFields.generator(binding);
-        // Дешёвая проба: 4x4 колонки через 5 блоков. Чанк без воды выше моря
-        // не платит за полный пакет 18x18 (цена колонки ядра — десятки мкс).
-        double[] probeX = new double[16];
-        double[] probeZ = new double[16];
-        for (int j = 0; j < 4; j++) {
-            for (int i = 0; i < 4; i++) {
-                probeX[j * 4 + i] = x0 + i * 5;
-                probeZ[j * 4 + i] = z0 + j * 5;
+        // Дешёвая проба: 6x6 колонок через 3 блока (от x0 − 1 до x0 + 14). Чанк
+        // без воды выше моря не платит за полный пакет 18x18 (цена колонки ядра —
+        // десятки мкс). Прежняя сетка 4x4 через 5 блоков пропускала русло шириной
+        // до 4 блоков целиком, и чанк оставался без воды: река рвалась по чанкам.
+        // Шаг 3 ловит любое русло шириной от 3 блоков (ядро русла — 4–6 блоков).
+        double[] probeX = new double[PROBE * PROBE];
+        double[] probeZ = new double[PROBE * PROBE];
+        for (int j = 0; j < PROBE; j++) {
+            for (int i = 0; i < PROBE; i++) {
+                probeX[j * PROBE + i] = x0 - 1 + i * PROBE_STEP;
+                probeZ[j * PROBE + i] = z0 - 1 + j * PROBE_STEP;
             }
         }
         LithoNative.WaterColumns probe = core.water(probeX, probeZ);

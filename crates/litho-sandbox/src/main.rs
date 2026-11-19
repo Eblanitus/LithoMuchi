@@ -594,11 +594,25 @@ fn cmd_water_leaks(args: &[String]) -> Result<(), String> {
         total.falls,
         total.waterfalls
     );
+    println!(
+        "water-leaks: оси русла на суше {}, сухих {} ({:.2} %, порог {} %)",
+        total.river_axis,
+        total.river_dry,
+        total.river_dry_pct(),
+        water::RIVER_DRY_MAX_PCT
+    );
     if total.water < water::MIN_WATER_COLUMNS {
         return Err(format!(
             "гейт пустой: колонок с водой {} меньше {} (§4, п. 6)",
             total.water,
             water::MIN_WATER_COLUMNS
+        ));
+    }
+    if total.river_dry_pct() > water::RIVER_DRY_MAX_PCT {
+        return Err(format!(
+            "сухих осей русла {:.2} % больше {} %: реки в игре будут лужами",
+            total.river_dry_pct(),
+            water::RIVER_DRY_MAX_PCT
         ));
     }
     if total.violations() > 0 {
