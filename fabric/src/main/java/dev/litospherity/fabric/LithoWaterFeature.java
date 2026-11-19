@@ -39,6 +39,8 @@ public final class LithoWaterFeature implements Feature {
     /** Проба чанка: {@code PROBE × PROBE} колонок через {@code PROBE_STEP} блоков. */
     private static final int PROBE = 6;
     private static final int PROBE_STEP = 3;
+    /** Сколько блоков над зеркалом русла можно вынуть (бугры 3D-шума). */
+    private static final int UP_CLEAR = 8;
 
     /** Заделок герметизации (метрика В5: ≤ 2 на чанк с водой выше моря). */
     public static final AtomicLong SEALS = new AtomicLong();
@@ -92,7 +94,7 @@ public final class LithoWaterFeature implements Feature {
         LithoNative.WaterColumns probe = core.water(probeX, probeZ);
         boolean any = false;
         for (int probeLevel : probe.level()) {
-            if (probeLevel != LithoNative.WaterColumns.NONE && probeLevel > SEA_LEVEL) any = true;
+            if (probeLevel != LithoNative.WaterColumns.NONE && probeLevel >= SEA_LEVEL) any = true;
         }
         if (!any) return false;
         LithoNative.WaterColumns water = core.water(xs, zs);
@@ -107,7 +109,11 @@ public final class LithoWaterFeature implements Feature {
             for (int i = 1; i <= 16; i++) {
                 int k = j * SIDE + i;
                 int surface = water.level()[k];
-                if (surface == LithoNative.WaterColumns.NONE || surface <= SEA_LEVEL) continue;
+                if (surface == LithoNative.WaterColumns.NONE || surface < SEA_LEVEL) continue;
+                // Уровень 63 — русло у моря (вода до y = 62): ядро отдаёт его, чтобы
+                // прорезать русло по настоящим блокам. 3D-шум поднимает дно выше 62,
+                // и без этого ванильная вода стояла в русле лужами.
+                if (surface == SEA_LEVEL && water.kind()[k] != KIND_RIVER) continue;
                 int x = (int) xs[k];
                 int z = (int) zs[k];
                 int from = Math.min(surface - 1, maxY);
@@ -124,6 +130,15 @@ public final class LithoWaterFeature implements Feature {
                 for (int y = from; y >= to; y--) {
                     BlockPos pos = new BlockPos(x, y, z);
                     if (level.getBlockState(pos).isAir()) continue;
+                    level.setBlock(pos, Blocks.AIR.defaultBlockState(), 2);
+                }
+                // Над зеркалом тоже вынимаем: 3D-шум игры ставит над водой бугры
+                // и крышки, которых у ядра нет, и река уходит под землю. Не выше
+                // UP_CLEAR блоков: дальше это уже склон, а не русло.
+                for (int y = from + 1; y <= Math.min(from + UP_CLEAR, maxY); y++) {
+                    BlockPos pos = new BlockPos(x, y, z);
+                    BlockState above = level.getBlockState(pos);
+                    if (above.isAir() || above.is(Blocks.WATER)) break;
                     level.setBlock(pos, Blocks.AIR.defaultBlockState(), 2);
                 }
                 int lowest = from;

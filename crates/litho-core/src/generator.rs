@@ -222,8 +222,15 @@ impl WaterColumn {
     /// Метка «воды выше моря нет»: так же, как `i32::MIN` в соглашении FFI.
     pub const NONE: i32 = i32::MIN;
 
+    /// Вода выше моря (R2). Русло у моря отдаётся с уровнем 63 (вода до
+    /// y = 62) и сюда не входит: см. `has_sea_river`.
     pub const fn has_water(self) -> bool {
-        self.level != Self::NONE
+        self.level != Self::NONE && self.level > crate::height::SEA_LEVEL as i32
+    }
+
+    /// Русло у моря: вода до y = 62, прорезается Java по настоящим блокам.
+    pub const fn has_sea_river(self) -> bool {
+        self.level == crate::height::SEA_LEVEL as i32
     }
 
     /// Код вида воды для FFI и Java (Ф6-В2): без строк на каждый блок.
@@ -2524,6 +2531,23 @@ impl Generator {
             };
         }
         let level = height.water_y.round();
+        // Русло у моря (запасной вырез R2): воду до y = 62 ставит игра, но
+        // 3D-шум поднимает дно русла выше 62, и вода остаётся лужами (игровой
+        // тест 2026-11-19, (1421, -1276)). Поэтому такое русло тоже отдаётся
+        // в игру с уровнем 63 — Java прорезает его по настоящим блокам. Выше
+        // моря эта вода не встаёт, инвариантов R2 (§4) она не касается.
+        if level.is_finite()
+            && level <= crate::height::SEA_LEVEL
+            && kind == crate::hydrology::SurfaceKind::River
+            && full.world.hydrology.channels.core > 0.0
+        {
+            return WaterColumn {
+                level: crate::height::SEA_LEVEL as i32,
+                bed: height.bed_y.round() as i32,
+                surface,
+                kind,
+            };
+        }
         // NaN и «не выше моря» — одно и то же: колонка остаётся сушей (clippy:
         // neg_cmp_op_on_partial_ord не даёт писать `!(level > SEA_LEVEL)`).
         if !level.is_finite() || level <= crate::height::SEA_LEVEL {
