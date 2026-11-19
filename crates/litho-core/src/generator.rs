@@ -6,7 +6,9 @@
 //! игры (`field`). Песочница и будущий мод вызывают один и тот же `Generator`.
 
 use std::cell::RefCell;
+use std::collections::HashMap;
 use std::sync::Arc;
+use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::cache::{CACHE_CAPACITY, ShardedCache};
@@ -320,10 +322,11 @@ type ShoreEdge = Arc<Vec<[u8; 2]>>;
 struct PlateLevels {
     /// По индексу `LakeNetwork::lakes()`: зеркало озера, блоки.
     lakes: Vec<Option<f64>>,
-    /// По индексу `ChannelNetwork::segments()`: зеркало в начале и в конце
-    /// сегмента, блоки. Уровень между ними интерполируется: так ступень
-    /// остаётся не больше блока на блок русла.
-    segments: Vec<Option<(f64, f64)>>,
+    /// Уровни русел по номеру звена: по сегментам звена, зеркало в начале и в
+    /// конце. Уровень между ними интерполируется: так ступень остаётся не
+    /// больше блока на блок русла. Считаются лениво, по одному звену: у плиты
+    /// тысячи сегментов, и первая же колонка платила бы за все (замер В5).
+    reaches: Mutex<HashMap<usize, Arc<Vec<Option<(f64, f64)>>>>>,
 }
 
 /// §4, п. 1: точки контура озера берутся не реже чем через 2 блока.
@@ -1164,24 +1167,22 @@ impl Generator {
                 }
             }
             let net = self.drainage_network(&plate)?;
-            let levels = if with_levels && self.params.version.is_water_relief_r2() {
-                Some(self.r2_plate_levels(&plate, &net)?)
-            } else {
-                None
-            };
             let mut channels_here = net.channels().query(point);
             let mut lakes_here = net.lakes().query(point);
-            if let Some(levels) = levels {
+            if with_levels && self.params.version.is_water_relief_r2() {
+                let levels = self.r2_plate_levels(&plate, &net)?;
+                if let Some(hit) = lakes_here.water_hit.as_mut() {
+                    hit.level_blocks = levels.lakes.get(hit.lake).copied().flatten();
+                }
                 if let Some(hit) = channels_here.nearest.as_mut() {
-                    hit.level_blocks = levels
-                        .segments
-                        .get(hit.segment)
+                    let reach = hit.reach;
+                    let reach_levels = self.r2_reach_levels(&levels, &net, reach)?;
+                    let first = net.channels().reach_first_segment(reach);
+                    hit.level_blocks = reach_levels
+                        .get(hit.segment.saturating_sub(first))
                         .copied()
                         .flatten()
                         .map(|(up, down)| up + (down - up) * hit.along);
-                }
-                if let Some(hit) = lakes_here.water_hit.as_mut() {
-                    hit.level_blocks = levels.lakes.get(hit.lake).copied().flatten();
                 }
             }
             channels.merge(channels_here);
@@ -1190,22 +1191,48 @@ impl Generator {
         Ok((channels, lakes))
     }
 
-    /// R2 (PLAN-WATER-FABRIC §4): уровни воды плиты в блоках от сухой
-    /// поверхности `S`. Один раз на плиту, вместе с кэшем сети.
+    /// R2 (PLAN-WATER-FABRIC §4): уровни воды плиты. Озёра — сразу, русла — по
+    /// звеньям стока, лениво: у плиты тысячи сегментов, и первая же колонка
+    /// платила бы за все (замер В5: 180 мс на чанк против бюджета Д-090).
     fn r2_plate_levels(
         &self,
         plate: &Plate,
         net: &crate::drainage::RiverNet,
     ) -> Result<Arc<PlateLevels>, RiverNetError> {
         self.r2_levels
-            .get_or_build(plate.id, || self.build_r2_levels(net))
+            .get_or_build(plate.id, || self.build_r2_plate_levels(net))
     }
 
-    /// §4, пп. 1–2: зеркало озера — `min(S)` по контуру минус 1 (плоское на
-    /// всей площади), уровень русла — низший берег сечения минус 1, только
-    /// вниз по течению. Оба считаются в блоках, а не в километрах: таблица
-    /// высот игры с километрами не связана.
-    fn build_r2_levels(
+    /// Уровни одного звена стока: считается один раз на звено.
+    fn r2_reach_levels(
+        &self,
+        levels: &PlateLevels,
+        net: &crate::drainage::RiverNet,
+        reach: usize,
+    ) -> Result<Arc<Vec<Option<(f64, f64)>>>, RiverNetError> {
+        // Блокировку держим только на поиск и вставку: колонки чанка идут
+        // параллельно, а ответ — чистая функция, повторный счёт не вреден.
+        if let Some(found) = levels
+            .reaches
+            .lock()
+            .expect("уровни русел R2 не отравлены")
+            .get(&reach)
+        {
+            return Ok(Arc::clone(found));
+        }
+        let built = Arc::new(self.build_reach_levels(net, reach)?);
+        levels
+            .reaches
+            .lock()
+            .expect("уровни русел R2 не отравлены")
+            .insert(reach, Arc::clone(&built));
+        Ok(built)
+    }
+
+    /// §4, п. 1: зеркало озера — `min(S)` по контуру минус 1, плоское на всей
+    /// площади. Считается в блоках, а не в километрах: таблица высот игры с
+    /// километрами не связана.
+    fn build_r2_plate_levels(
         &self,
         net: &crate::drainage::RiverNet,
     ) -> Result<PlateLevels, RiverNetError> {
@@ -1213,7 +1240,6 @@ impl Generator {
         let shift = self.spawn_shift;
         let to_blocks = |p: Vec2| ((p.x - shift.x) * l, (p.z - shift.z) * l);
         let mut levels = PlateLevels::default();
-        // --- Озёра (§4, п. 1)
         let lakes = net.lakes().lakes();
         levels.lakes.reserve(lakes.len());
         for lake in lakes {
@@ -1251,63 +1277,73 @@ impl Generator {
             }
             levels.lakes.push(level);
         }
-        // --- Русла (§4, п. 2)
+        Ok(levels)
+    }
+
+    /// §4, п. 2: уровень русла — низший берег сечения минус 1, только вниз по
+    /// течению. Считается на звено стока целиком: бюджет Д-090 — на звено.
+    fn build_reach_levels(
+        &self,
+        net: &crate::drainage::RiverNet,
+        reach: usize,
+    ) -> Result<Vec<Option<(f64, f64)>>, RiverNetError> {
+        let l = self.params.block.l_blocks;
+        let shift = self.spawn_shift;
+        let to_blocks = |p: Vec2| ((p.x - shift.x) * l, (p.z - shift.z) * l);
         let channels = net.channels();
-        levels.segments = vec![None; channels.segments().len()];
+        let mut segments = vec![None; channels.reach_segments(reach).len()];
+        // Уровень вершины — низший берег минус 1; вниз по течению только
+        // убывает, но не быстрее блока на блок русла.
+        let mut current: Option<f64> = None;
+        let mut target: Option<f64> = None;
+        let mut last_sample: Option<Vec2> = None;
         let started = std::time::Instant::now();
         let stride_l = RIVER_LEVEL_STRIDE_BLOCKS / l;
-        for reach in 0..channels.reaches().len() {
-            let first = channels.reach_first_segment(reach);
-            // Уровень вершины — низший берег минус 1; вниз по течению только
-            // убывает, но не быстрее блока на блок русла.
-            let mut current: Option<f64> = None;
-            let mut target: Option<f64> = None;
-            let mut last_sample: Option<Vec2> = None;
-            for (offset, segment) in channels.reach_segments(reach).iter().enumerate() {
-                let k = first + offset;
-                let a = segment.a;
-                let b = segment.b;
-                let direction = b.point.sub(a.point);
-                // Запасной режим (Д-090): вершины реже, через 8 блоков, уровень
-                // между ними держится прежним и остаётся монотонным.
-                let slow = started.elapsed().as_millis() > RIVER_LEVEL_BUDGET_MS;
-                let due = last_sample.is_none_or(|last| {
-                    let step = if slow { stride_l } else { 0.0 };
-                    b.point.sub(last).len() >= step
-                });
-                if due && direction.len() > 1e-12 {
-                    last_sample = Some(b.point);
-                    // Низший из двух берегов сечения: `core/2 + 1` блок от оси.
-                    let normal = direction.normalized().perp();
-                    let offset_l = (0.5 * b.core_l * l + 1.0) / l;
-                    let mut bank: Option<f64> = None;
-                    for side in [1.0, -1.0] {
-                        let probe = b.point.add(normal.scale(side * offset_l));
-                        let (px, pz) = to_blocks(probe);
-                        if let Some(s) = self.dry_surface_at(px, pz)? {
-                            bank = Some(bank.map_or(s, |old: f64| old.min(s)));
-                        }
-                    }
-                    if let Some(bank) = bank {
-                        target = Some((bank - 1.0).floor());
+        for (offset, segment) in channels.reach_segments(reach).iter().enumerate() {
+            let a = segment.a;
+            let b = segment.b;
+            let direction = b.point.sub(a.point);
+            // Запасной режим (Д-090): вершины реже, через 8 блоков, уровень
+            // между ними держится прежним и остаётся монотонным.
+            let slow = started.elapsed().as_millis() > RIVER_LEVEL_BUDGET_MS;
+            let due = last_sample.is_none_or(|last| {
+                let step = if slow { stride_l } else { 0.0 };
+                b.point.sub(last).len() >= step
+            });
+            if due && direction.len() > 1e-12 {
+                last_sample = Some(b.point);
+                // Низший из двух берегов сечения: `core/2 + 1` блок от оси.
+                let normal = direction.normalized().perp();
+                let offset_l = (0.5 * b.core_l * l + 1.0) / l;
+                let mut bank: Option<f64> = None;
+                for side in [1.0, -1.0] {
+                    let probe = b.point.add(normal.scale(side * offset_l));
+                    let (px, pz) = to_blocks(probe);
+                    if let Some(s) = self.dry_surface_at(px, pz)? {
+                        bank = Some(bank.map_or(s, |old: f64| old.min(s)));
                     }
                 }
-                let start = current.or(target).unwrap_or(crate::height::SEA_LEVEL);
-                let desired = target.map_or(start, |level| start.min(level));
-                // Падение внутри сегмента размазано по его длине (уровень
-                // интерполируется по `along`), поэтому ступень между соседними
-                // блоками — не больше блока на блок. Быстрее рельеф падает
-                // только на водопадах; их считают метрики (§4, п. 2).
-                let end = desired.min(start);
-                current = Some(end);
-                levels.segments[k] = if start > crate::height::SEA_LEVEL {
+                if let Some(bank) = bank {
+                    target = Some((bank - 1.0).floor());
+                }
+            }
+            let start = current.or(target).unwrap_or(crate::height::SEA_LEVEL);
+            let desired = target.map_or(start, |level| start.min(level));
+            // Падение внутри сегмента размазано по его длине (уровень
+            // интерполируется по `along`), поэтому ступень между соседними
+            // блоками — не больше блока на блок. Быстрее рельеф падает только
+            // на водопадах; их считают метрики (§4, п. 2).
+            let end = desired.min(start);
+            current = Some(end);
+            if let Some(slot) = segments.get_mut(offset) {
+                *slot = if start > crate::height::SEA_LEVEL {
                     Some((start, end))
                 } else {
                     None
                 };
             }
         }
-        Ok(levels)
+        Ok(segments)
     }
 
     /// Эффективная гидрология T115 в блочной точке. Кэш точной колонки не
