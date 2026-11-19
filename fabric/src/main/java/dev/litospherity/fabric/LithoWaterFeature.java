@@ -102,14 +102,14 @@ public final class LithoWaterFeature implements Feature {
                 int from = Math.min(surface - 1, maxY);
                 int to = Math.max(water.bed()[k] - 2, minY);
                 int lowest = from;
+                // §4 п. 4: вырез только вниз, не глубже трёх блоков от зеркала —
+                // ровно та плата, о которой говорит раздел 3 плана: дно под водой
+                // правится здесь. Глубже решает ядро (`bed`), а не фича.
+                int digLimit = from - 3;
                 for (int y = from; y >= to; y--) {
                     BlockPos pos = new BlockPos(x, y, z);
                     BlockState current = level.getBlockState(pos);
-                    // §4 п. 4: вырез только вниз, и уровень в §4 — это уровень воды.
-                    // Колонка, где почва стоит ровно под зеркалом, тоже вода: зеркало
-                    // задаёт ядро, а верхний слой почвы уходит под него. Камень,
-                    // глина и всё прочее — дно, на нём останавливаемся.
-                    if (!current.isAir() && !isSurface(current)) break;
+                    if (!current.isAir() && !(y >= digLimit && isDiggable(current))) break;
                     level.setBlock(pos, waterState, 2);
                     lowest = y;
                 }
@@ -156,6 +156,21 @@ public final class LithoWaterFeature implements Feature {
         if (placed > 0) CHUNKS.incrementAndGet();
         SEALS.addAndGet(seals);
         return placed > 0;
+    }
+
+    /** Что фича вправе убрать под воду: почва, наносы и мягкий камень у кромки. */
+    private static boolean isDiggable(BlockState state) {
+        return isSurface(state)
+                || state.is(Blocks.DIRT)
+                || state.is(Blocks.GRAVEL)
+                || state.is(Blocks.CLAY)
+                || state.is(Blocks.STONE)
+                || state.is(Blocks.DEEPSLATE)
+                || state.is(Blocks.TUFF)
+                || state.is(Blocks.ANDESITE)
+                || state.is(Blocks.DIORITE)
+                || state.is(Blocks.GRANITE)
+                || state.is(Blocks.SANDSTONE);
     }
 
     private static boolean isSurface(BlockState state) {

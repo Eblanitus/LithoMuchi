@@ -316,6 +316,9 @@ pub struct Generator {
 /// номера ячеек 4×4 внутри квадрата.
 type ShoreEdge = Arc<Vec<[u8; 2]>>;
 
+/// Уровни одного звена стока: зеркало в начале и в конце каждого сегмента.
+type ReachLevels = Vec<Option<(f64, f64)>>;
+
 /// R2 (PLAN-WATER-FABRIC §4): уровни воды плиты в блоках. Кэш плиты, потому
 /// что в них входит сухая поверхность `S` в точках контура и берегов.
 #[derive(Debug, Default)]
@@ -326,7 +329,7 @@ struct PlateLevels {
     /// конце. Уровень между ними интерполируется: так ступень остаётся не
     /// больше блока на блок русла. Считаются лениво, по одному звену: у плиты
     /// тысячи сегментов, и первая же колонка платила бы за все (замер В5).
-    reaches: Mutex<HashMap<usize, Arc<Vec<Option<(f64, f64)>>>>>,
+    reaches: Mutex<HashMap<usize, Arc<ReachLevels>>>,
 }
 
 /// §4, п. 1: точки контура озера берутся не реже чем через 2 блока.
@@ -335,8 +338,6 @@ const LAKE_RING_STEP_BLOCKS: f64 = 2.0;
 const LAKE_RING_MAX_SAMPLES: usize = 384;
 /// §4, п. 2 и Д-090: запасной шаг вершин русла — 8 блоков.
 const RIVER_LEVEL_STRIDE_BLOCKS: f64 = 8.0;
-/// Д-090: сеть плиты с уровнями не дольше 200 мс; на уровни — не больше 120.
-const RIVER_LEVEL_BUDGET_MS: u128 = 120;
 
 /// К4: сторона ячейки, в центре которой берётся континентальность берега.
 const SHORE_CELL: f64 = 4.0;
@@ -1209,7 +1210,7 @@ impl Generator {
         levels: &PlateLevels,
         net: &crate::drainage::RiverNet,
         reach: usize,
-    ) -> Result<Arc<Vec<Option<(f64, f64)>>>, RiverNetError> {
+    ) -> Result<Arc<ReachLevels>, RiverNetError> {
         // Блокировку держим только на поиск и вставку: колонки чанка идут
         // параллельно, а ответ — чистая функция, повторный счёт не вреден.
         if let Some(found) = levels
@@ -1286,7 +1287,7 @@ impl Generator {
         &self,
         net: &crate::drainage::RiverNet,
         reach: usize,
-    ) -> Result<Vec<Option<(f64, f64)>>, RiverNetError> {
+    ) -> Result<ReachLevels, RiverNetError> {
         let l = self.params.block.l_blocks;
         let shift = self.spawn_shift;
         let to_blocks = |p: Vec2| ((p.x - shift.x) * l, (p.z - shift.z) * l);
@@ -1297,19 +1298,16 @@ impl Generator {
         let mut current: Option<f64> = None;
         let mut target: Option<f64> = None;
         let mut last_sample: Option<Vec2> = None;
-        let started = std::time::Instant::now();
         let stride_l = RIVER_LEVEL_STRIDE_BLOCKS / l;
         for (offset, segment) in channels.reach_segments(reach).iter().enumerate() {
             let a = segment.a;
             let b = segment.b;
             let direction = b.point.sub(a.point);
-            // Запасной режим (Д-090): вершины реже, через 8 блоков, уровень
-            // между ними держится прежним и остаётся монотонным.
-            let slow = started.elapsed().as_millis() > RIVER_LEVEL_BUDGET_MS;
-            let due = last_sample.is_none_or(|last| {
-                let step = if slow { stride_l } else { 0.0 };
-                b.point.sub(last).len() >= step
-            });
+            // Д-090, замер В5: берег пробуется через 8 блоков русла, а не в
+            // каждой вершине. Уровень между пробами держится прежним и только
+            // убывает, поэтому ступень остаётся мелкой, а звено стока в тысячи
+            // сегментов перестаёт стоить сотни миллисекунд на первую колонку.
+            let due = last_sample.is_none_or(|last| b.point.sub(last).len() >= stride_l);
             if due && direction.len() > 1e-12 {
                 last_sample = Some(b.point);
                 // Низший из двух берегов сечения: `core/2 + 1` блок от оси.
