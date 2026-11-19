@@ -1,0 +1,63 @@
+name: water-acceptance
+# Ф6-В1/ФА-В1 (docs/PLAN-WATER-FABRIC.md §4): полная приёмка инварианта «вода
+# не уходит за берега» на v1-dev-r2. Запускается вручную (workflow_dispatch):
+# окно 4096 × 4096 вокруг трёх центров, сиды 42 и 7, оба режима — и отдельно
+# 16 приёмочных сидов Д-084 в окне поменьше. Обычный PR-гейт в ci.yml гоняет
+# только дым 1024 × 1024: полный прогон идёт часами.
+#
+# Отчёт уходит аннотациями (не за строками лога): сырые логи CI недоступны.
+on:
+  workflow_dispatch:
+    inputs:
+      seeds:
+        description: "Сиды полного окна (через запятую)"
+        default: "42,7"
+      window:
+        description: "Сторона окна вокруг центра, блоков"
+        default: "4096"
+      step:
+        description: "Шаг сетки колонок, блоков"
+        default: "4"
+jobs:
+  full:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix:
+        mode: [gameplay, scientific]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: "Окно ${{ inputs.window }}×${{ inputs.window }} шагом ${{ inputs.step }}"
+        run: |
+          set -o pipefail
+          for seed in $(echo "${{ inputs.seeds }}" | tr ',' ' '); do
+            echo "== сид $seed, режим ${{ matrix.mode }}"
+            cargo run -q -p litho-sandbox --release -- water-leaks \
+              --seed "$seed" --mode ${{ matrix.mode }} --version v1-dev-r2 \
+              --size "${{ inputs.window }}" --step "${{ inputs.step }}" \
+              | python3 tools/ci_annotations.py report
+          done
+  seeds-16:
+    # Д-084: 16 приёмочных сидов. Окно меньше полного: проверяется, что
+    # инвариант держится не на одном удачном сиде.
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        mode: [gameplay, scientific]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: "16 сидов Д-084, окно 1024 шагом 8"
+        run: |
+          set -o pipefail
+          for seed in -123456789 -42 -1 0 1 2 7 42 123 777 1234 2024 12345 54321 99999 987654321; do
+            echo "== сид $seed, режим ${{ matrix.mode }}"
+            cargo run -q -p litho-sandbox --release -- water-leaks \
+              --seed "$seed" --mode ${{ matrix.mode }} --version v1-dev-r2 \
+              --size 1024 --step 8 \
+              | python3 tools/ci_annotations.py report
+          done
