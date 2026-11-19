@@ -151,10 +151,7 @@ pub fn survey(
                 continue;
             }
             // `point` — макро-координата со сдвигом спавна; в блоки — обратно.
-            nodes.push((
-                (node.point.x - shift.x) * l,
-                (node.point.z - shift.z) * l,
-            ));
+            nodes.push(((node.point.x - shift.x) * l, (node.point.z - shift.z) * l));
         }
     }
     if survey.plates == 0 {
@@ -180,12 +177,7 @@ pub fn survey(
     survey.nodes = kept.len();
     for spacing_l in spacings_l {
         survey.lattices.push(lattice_error(
-            generator,
-            &kept,
-            &exact,
-            *spacing_l,
-            l,
-            center,
+            generator, &kept, &exact, *spacing_l, l, center,
         ));
     }
     Ok(survey)
@@ -242,10 +234,8 @@ fn lattice_error(
             // Узел без `S0` не входит в ошибку: его и точный путь не берёт.
             continue;
         };
-        let fast = a * (1.0 - tx) * (1.0 - tz)
-            + b * tx * (1.0 - tz)
-            + c * (1.0 - tx) * tz
-            + d * tx * tz;
+        let fast =
+            a * (1.0 - tx) * (1.0 - tz) + b * tx * (1.0 - tz) + c * (1.0 - tx) * tz + d * tx * tz;
         lattice.errors.push((fast - want).abs());
     }
     lattice.samples = cache.len();

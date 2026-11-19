@@ -812,7 +812,11 @@ fn cmd_s0_node_cost(args: &[String]) -> Result<(), String> {
             lattice.p95(),
             lattice.p999(),
             lattice.max(),
-            if lattice.meets() { " — проходит" } else { "" }
+            if lattice.meets() {
+                " — проходит"
+            } else {
+                ""
+            }
         );
     }
     println!("  решение: {decision}");
