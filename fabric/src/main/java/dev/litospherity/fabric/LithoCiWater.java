@@ -91,8 +91,7 @@ final class LithoCiWater {
         try {
             long flowingAfter = countWater(level, false);
             long sourcesAfter = countWater(level, true);
-            long growth = flowingAfter - flowingBefore;
-            double growthPct = sourcesAfter == 0 ? 0.0 : 100.0 * growth / (double) sourcesAfter;
+            long growthAll = flowingAfter - flowingBefore;
             long seals = LithoWaterFeature.SEALS.get() - sealsAtStart;
             double sealsPerChunk = chunksWithWater == 0 ? 0.0 : seals / (double) chunksWithWater;
 
@@ -131,13 +130,35 @@ final class LithoCiWater {
                 groups.add(new long[] {size, topKey, minX, minY, minZ, maxX, maxYb, maxZ});
             }
             groups.sort((a, b) -> Long.compare(b[0], a[0]));
+            // Чужая вода: группа, у верхней точки которой ни в колонке, ни у 4
+            // соседей нет нашей воды (уровень ядра ≥ 63). Наша заливка ставит воду
+            // только в такие колонки, значит верх группы без них — ванильный
+            // родник или водоносный слой на склоне (CI 914e370: водопад 446 блоков
+            // с y = 102 у (-8410, 1766), ядро вокруг пустое). Ванильная вода течёт
+            // и без мода, в рост нашей воды её не считаем, но печатаем.
+            long foreign = 0;
+            boolean[] foreignGroup = new boolean[groups.size()];
+            for (int g = 0; g < groups.size(); g++) {
+                BlockPos top = BlockPos.of(groups.get(g)[1]);
+                boolean ours = false;
+                for (int[] d : new int[][] {{0, 0}, {1, 0}, {-1, 0}, {0, 1}, {0, -1}}) {
+                    int lv = gen.water(new double[] {top.getX() + d[0]}, new double[] {top.getZ() + d[1]}).level()[0];
+                    if (lv != LithoNative.WaterColumns.NONE && lv >= LithoWaterFeature.SEA_LEVEL) ours = true;
+                }
+                if (!ours) {
+                    foreignGroup[g] = true;
+                    foreign += groups.get(g)[0];
+                }
+            }
+            long growth = Math.max(0, growthAll - foreign);
+            double growthPct = sourcesAfter == 0 ? 0.0 : 100.0 * growth / (double) sourcesAfter;
             report.add(String.format("новая текущая: %d блоков, групп %d", fresh.size(), groups.size()));
             for (int g = 0; g < Math.min(10, groups.size()); g++) {
                 long[] gr = groups.get(g);
                 BlockPos top = BlockPos.of(gr[1]);
                 StringBuilder line = new StringBuilder(String.format(
-                        "группа %d: %d блоков, x %d..%d y %d..%d z %d..%d, верх (%d, %d, %d)",
-                        g + 1, gr[0], gr[2], gr[5], gr[3], gr[6], gr[4], gr[7], top.getX(), top.getY(), top.getZ()));
+                        "группа %d%s: %d блоков, x %d..%d y %d..%d z %d..%d, верх (%d, %d, %d)",
+                        g + 1, foreignGroup[g] ? " (чужая, не наша вода)" : "", gr[0], gr[2], gr[5], gr[3], gr[6], gr[4], gr[7], top.getX(), top.getY(), top.getZ()));
                 for (int[] d : new int[][] {{0, 0}, {1, 0}, {-1, 0}, {0, 1}, {0, -1}}) {
                     LithoNative.WaterColumns c = gen.water(new double[] {top.getX() + d[0]}, new double[] {top.getZ() + d[1]});
                     int lv = c.level()[0];
@@ -199,8 +220,8 @@ final class LithoCiWater {
             double dryPct = wet + dry == 0 ? 0.0 : 100.0 * dry / (double) (wet + dry);
             report.add(String.format("протечки: %d (порог 0)", leaks));
             report.add(String.format("сухое русло: %d из %d, %.2f %% (порог 1 %%)", dry, wet + dry, dryPct));
-            report.add(String.format("рост текущей воды за %d тиков: %d, %.2f %% источников (порог 5 %%)",
-                    TICKS, growth, growthPct));
+            report.add(String.format("рост текущей воды за %d тиков: %d, %.2f %% источников (порог 5 %%); всего %d, из них чужой (родники, склоны) %d",
+                    TICKS, growth, growthPct, growthAll, foreign));
             report.add(String.format("заделки герметизации: %d на %d чанков, %.2f на чанк (порог 2)",
                     seals, chunksWithWater, sealsPerChunk)); report.add(String.format(java.util.Locale.ROOT, "steps: %d, liveSteps=%s, avgTick=%.2f ms, maxTick=%.2f ms", LithoWaterFeature.STEPS.get(), LithoWaterFeature.LIVE_STEPS, avgTickMs, maxTickMs));
             report.add(String.format("время генерации: %.1f мс/чанк (замер Ф5 — в отчёте job'а)", msPerChunk));
