@@ -89,10 +89,6 @@ final class LithoCiWater {
                                 long sourcesBefore, long flowingBefore, double msPerChunk) {
         boolean ok = true;
         try {
-            long flowingAfter = countWater(level, false);
-            long sourcesAfter = countWater(level, true);
-            long growth = flowingAfter - flowingBefore;
-            double growthPct = sourcesAfter == 0 ? 0.0 : 100.0 * growth / (double) sourcesAfter;
             long seals = LithoWaterFeature.SEALS.get() - sealsAtStart;
             double sealsPerChunk = chunksWithWater == 0 ? 0.0 : seals / (double) chunksWithWater;
 
@@ -127,11 +123,17 @@ final class LithoCiWater {
                                             && near.level()[0] > yy;
                                 }
                             }
-                            if (!coreHere) leaks++;
+                            boolean atSurface = level.getBlockState(new BlockPos(x, yy + 1, z)).isAir();
+                            if (!coreHere && atSurface) leaks++;
                         }
                     }
                 }
             }
+            // Наши блоки перечислены обходом выше — только теперь их можно считать.
+            long flowingAfter = countWater(level, false);
+            long sourcesAfter = countWater(level, true);
+            long growth = flowingAfter - flowingBefore;
+            double growthPct = sourcesAfter == 0 ? 0.0 : 100.0 * growth / (double) sourcesAfter;
             double dryPct = wet + dry == 0 ? 0.0 : 100.0 * dry / (double) (wet + dry);
             report.add(String.format("протечки: %d (порог 0)", leaks));
             report.add(String.format("сухое русло: %d из %d, %.2f %% (порог 1 %%)", dry, wet + dry, dryPct));
