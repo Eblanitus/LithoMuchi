@@ -42,6 +42,8 @@ public final class LithoWaterFeature implements Feature {
     public static final AtomicLong CHUNKS = new AtomicLong();
     /** Колонок, где вода выше моря поставлена. */
     public static final AtomicLong COLUMNS = new AtomicLong();
+    /** Соседей, где ядро ждало воду выше нашей (§4 п. 3: водопад, не течь). */
+    public static final AtomicLong SEALS_STEPS = new AtomicLong();
 
     /** 26.3: {@code Feature} — интерфейс без параметра конфигурации, а реестр
      *  {@code FEATURE_TYPE} держит кодеки. Типу воды конфигурация не нужна. */
@@ -144,11 +146,18 @@ public final class LithoWaterFeature implements Feature {
                     int top = Math.min(surface - 1, maxY);
                     int bottom = Math.max(water.bed()[k] - 2, minY);
                     for (int y = top; y >= bottom; y--) {
-                        if (neighbour != LithoNative.WaterColumns.NONE && neighbour > y) continue;
                         BlockPos pos = new BlockPos((int) xs[nk], y, (int) zs[nk]);
                         if (!level.getBlockState(pos).isAir()) continue;
+                        // Мир — источник правды, а не ядро: колонка-сосед может
+                        // быть «сухой» по ядру и пустой по факту (§4 п. 4: мир
+                        // вырез не делает), и вода утекла бы в эту пустоту.
                         level.setBlock(pos, Blocks.DIRT.defaultBlockState(), 2);
                         seals++;
+                    }
+                    if (seals > 0 && neighbour != LithoNative.WaterColumns.NONE
+                            && neighbour > surface) {
+                        // Сосед ниже нас по ядру — это ступень/водопад, не течь.
+                        SEALS_STEPS.incrementAndGet();
                     }
                 }
             }
