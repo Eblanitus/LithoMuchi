@@ -1,7 +1,11 @@
 # Временный помощник ветки arena/4e4f066f-lithomuchi: в песочнице нет Rust,
-# поэтому форматирование применяет CI. Файл удаляется следующим коммитом.
+# поэтому форматирование применяет CI. Запуск — пуш файла `.fmt-trigger`.
+# Файл и триггер удаляются следующим коммитом.
 name: fmt-fix
-on: workflow_dispatch
+on:
+  push:
+    paths:
+      - ".fmt-trigger"
 permissions:
   contents: write
 jobs:
