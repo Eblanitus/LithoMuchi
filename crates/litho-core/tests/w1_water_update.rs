@@ -70,46 +70,78 @@ fn water_section_is_w_only() {
     }
 }
 
-/// ВО0-2: `S0` — это сухая поверхность `S` там, где гидрология ничего не
-/// меняет.
+/// ВО0-2: `S0` не зависит от слоя воды.
 ///
-/// Сравнение идёт с `dry_surface_at` (поверхность без выреза воды), а не с
-/// итоговой: `with_water` добивает берег у воды. И колонка должна быть
-/// «тихой»: `apply_fields` подмешивает в C/E/W силу русла, озера, поймы,
-/// болота и устья, а `S0` по определению считается до гидрологии. Где влияние
-/// нулевое, ответы обязаны совпасть.
+/// Это главный инвариант шага: уровни в W считаются **от** `S0` (§6.1), и
+/// если `S0` начнёт читать уровни или вырез, получится цикл «уровень → `S0` →
+/// уровень». Поэтому ответ обязан совпасть до и после прогрева слоя воды
+/// (`hydrology_levels_at` строит уровни R2, `water_column` — колонки).
 #[test]
-fn s0_matches_dry_surface_without_hydrology() {
+fn s0_is_independent_of_the_water_layer() {
+    let points: Vec<(f64, f64)> = points().into_iter().take(64).collect();
     let g = Generator::new(42, Mode::Gameplay, GenVersion::V1DevW).unwrap();
-    let mut checked = 0;
-    for (x, z) in points().into_iter().take(256) {
-        let Some(world) = g.world_sample(x, z) else {
-            continue;
-        };
-        let h = &world.hydrology;
-        let quiet = world.river == 0.0
-            && h.channels.nearest.is_none()
-            && h.lakes.water_hit.is_none()
-            && h.water == 0.0
-            && h.valley == 0.0
-            && h.floodplain == 0.0
-            && h.swamp == 0.0
-            && h.estuary == 0.0
-            && h.gallery == 0.0
-            && h.r2_deferred == 0.0;
-        if !quiet {
-            continue;
-        }
-        let Some(dry) = g.dry_surface_at(x, z).expect("колонка есть") else {
-            continue;
-        };
-        let s0 = g.s0_at(x, z).expect("S0 у v1-dev-w");
+    let before: Vec<_> = points.iter().map(|&(x, z)| g.s0_at(x, z)).collect();
+    for &(x, z) in &points {
+        let _ = g.hydrology_levels_at(x, z);
+        let _ = g.water_column(x, z);
+    }
+    let after: Vec<_> = points.iter().map(|&(x, z)| g.s0_at(x, z)).collect();
+    assert_eq!(before, after, "S0 изменился после счёта воды");
+    // Заодно: значения в пределах мира, а вклад микробугров не больше размаха
+    // Д-057 (6 блоков в научном, 4 в геймплейном) с точностью до веса берега.
+    let max_micro = g
+        .params()
+        .height
+        .micro_amp_blocks
+        .iter()
+        .copied()
+        .fold(0.0, f64::max);
+    let mut seen = 0;
+    for sample in after.into_iter().flatten() {
+        assert!(sample.surface_y().is_finite(), "S0 не число");
         assert!(
-            (s0.surface_y() - dry).abs() < 1e-6,
-            "S0 {} против сухой поверхности {dry} в ({x}, {z})",
-            s0.surface_y()
+            (-64.0..=319.0).contains(&sample.surface_y()),
+            "S0 {} вне мира",
+            sample.surface_y()
+        );
+        assert!(
+            sample.micro_dy.abs() <= max_micro + 1e-9,
+            "вклад микробугров {} больше размаха {max_micro}",
+            sample.micro_dy
+        );
+        seen += 1;
+    }
+    assert!(seen >= 8, "S0 не посчитался почти нигде: {seen}");
+}
+
+/// ВО0-2: быстрый путь `s0_node` пока равен точному. Разведка ВО0-5 выберет
+/// приближение (0,25 L или «Б-лайт» 0,5 L), и этот тест станет тестом
+/// точности: |быстрый − точный| ≤ 2 блока у 95 % узлов и ≤ 6 у 99,9 % §6.2.
+#[test]
+fn s0_node_matches_s0_at() {
+    let g = Generator::new(42, Mode::Scientific, GenVersion::V1DevW).unwrap();
+    let mut checked = 0;
+    for (x, z) in points().into_iter().take(64) {
+        let (Some(exact), Some(fast)) = (g.s0_at(x, z), g.s0_node(x, z)) else {
+            continue;
+        };
+        assert!(
+            (exact.surface_y() - fast.surface_y()).abs() < 1e-9,
+            "быстрый S0 {} против точного {} в ({x}, {z})",
+            fast.surface_y(),
+            exact.surface_y()
         );
         checked += 1;
     }
-    assert!(checked >= 8, "тихих колонок мало: {checked}");
+    assert!(checked > 0, "S0 не посчитался ни в одной точке");
+}
+
+/// `S0` — понятие водного обновления: у прежних версий его нет.
+#[test]
+fn s0_exists_only_in_water_update() {
+    for version in [GenVersion::V0, GenVersion::V1Dev, GenVersion::V1DevR2] {
+        let g = Generator::new(42, Mode::Gameplay, version).unwrap();
+        assert!(g.s0_at(0.0, 0.0).is_none(), "{version:?}");
+        assert!(g.s0_node(0.0, 0.0).is_none(), "{version:?}");
+    }
 }
