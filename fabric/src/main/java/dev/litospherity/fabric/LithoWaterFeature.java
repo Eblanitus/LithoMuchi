@@ -137,7 +137,17 @@ public final class LithoWaterFeature implements Feature {
                 // землю. Не выше UP_CLEAR блоков: дальше это уже склон. Только у
                 // моря: там вода не выше 62 и протечь вверх не может; у русел R2
                 // вскрытие берега давало протечки (CI water scientific 9 → 27).
-                for (int y = from + 1; surface == SEA_LEVEL && y <= Math.min(from + UP_CLEAR, maxY); y++) {
+                //
+                // Рядом с колонкой R2 (уровень выше моря) не вынимаем: её затычку
+                // сбоку мог уже поставить соседний чанк, и вскрытие её снимает, вода
+                // R2 стекает в русло у моря. Порядок чанков разный от запуска к
+                // запуску, поэтому рост текущей воды в CI скакал 5,2 → 7,9 → 11,9 %.
+                boolean nearR2 = false;
+                for (int[] step : new int[][] {{1, 0}, {-1, 0}, {0, 1}, {0, -1}}) {
+                    int nl = water.level()[(j + step[1]) * SIDE + (i + step[0])];
+                    if (nl != LithoNative.WaterColumns.NONE && nl > SEA_LEVEL) nearR2 = true;
+                }
+                for (int y = from + 1; surface == SEA_LEVEL && !nearR2 && y <= Math.min(from + UP_CLEAR, maxY); y++) {
                     BlockPos pos = new BlockPos(x, y, z);
                     BlockState above = level.getBlockState(pos);
                     if (above.isAir() || above.is(Blocks.WATER)) break;
