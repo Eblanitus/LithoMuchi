@@ -1594,7 +1594,11 @@ impl Generator {
                 let Some(last) = channels.reach_segments(reach).last() else {
                     return Ok(None);
                 };
-                let index = net.lakes().query(last.b.point).water_hit.map(|hit| hit.lake);
+                let index = net
+                    .lakes()
+                    .query(last.b.point)
+                    .water_hit
+                    .map(|hit| hit.lake);
                 Ok(index.and_then(|index| levels.lakes.get(index).copied().flatten()))
             }
             crate::channel::ReachEnd::Confluence => {

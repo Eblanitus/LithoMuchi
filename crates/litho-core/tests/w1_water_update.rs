@@ -45,14 +45,21 @@ fn w_levels_and_s0_are_sane() {
                 // Согласованность дна и зеркала (`bed ≤ level`) — гейт ВО1-2:
                 // пока вырез 6.5 не сделан, поверхность считается старым путём
                 // и вода нового профиля может оказаться под землёй.
-                assert!(column.surface >= column.bed, "поверхность ниже дна ({x}, {z})");
+                assert!(
+                    column.surface >= column.bed,
+                    "поверхность ниже дна ({x}, {z})"
+                );
             }
             assert_eq!(
                 first.field(Field::Continents, x, 0.0, z),
                 second.field(Field::Continents, x, 0.0, z),
                 "C зависит от порядка расчёта ({x}, {z}), режим {mode:?}"
             );
-            assert_eq!(column, second.water_column(x, z), "колонка не сошлась ({x}, {z})");
+            assert_eq!(
+                column,
+                second.water_column(x, z),
+                "колонка не сошлась ({x}, {z})"
+            );
         }
     }
 }
