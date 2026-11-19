@@ -70,7 +70,7 @@ pub struct LakeSurface {
     bounds: (Vec2, Vec2),
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct LakeHit {
     pub plate_id: u64,
     pub lake: usize,

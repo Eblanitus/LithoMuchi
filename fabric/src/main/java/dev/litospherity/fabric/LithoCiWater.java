@@ -108,18 +108,28 @@ final class LithoCiWater {
                         } else {
                             dry++;
                         }
-                        // Протечка: вода в колонке, где у ядра воды на этой высоте нет.
+                        // Протечка: вода выше поверхности самой колонки. Вода
+                        // ядра глубже верха колонки — не протечка: ядро кладёт
+                        // источник только туда, где вырез опустил дно под
+                        // зеркало, а выше могут остаться воздух или берег.
+                        // Раньше окно `top-2…top` считало такие блоки воды
+                        // протечкой, хотя это наша же вода (§4 п. 4, Д-127).
                         for (int yy = Math.max(LithoWaterFeature.SEA_LEVEL + 1, y - 2); yy <= y + 1; yy++) {
                             if (!level.getBlockState(new BlockPos(x, yy, z)).is(Blocks.WATER)) continue;
                             boolean coreHere = false;
                             for (int dx = -1; dx <= 1 && !coreHere; dx++) {
                                 for (int dz = -1; dz <= 1 && !coreHere; dz++) {
                                     LithoNative.WaterColumns near = gen.water(new double[] {x + dx}, new double[] {z + dz});
-                                    coreHere = near.level()[0] != LithoNative.WaterColumns.NONE
-                                            && near.level()[0] > yy;
+                                    if (near.level()[0] == LithoNative.WaterColumns.NONE) continue;
+                                    // Наша вода колонки (x+dx, z+dz) — от зеркала
+                                    // вниз до дна; выше зеркала её быть не должно.
+                                    coreHere = yy <= near.level()[0] - 1 && yy >= near.bed()[0] - 2;
                                 }
                             }
-                            if (!coreHere) leaks++;
+                            if (!coreHere) {
+                                boolean atSurface = level.getBlockState(new BlockPos(x, yy + 1, z)).isAir();
+                                if (atSurface) leaks++;
+                            }
                         }
                     }
                 }

@@ -146,7 +146,7 @@ fn worker_threads() -> usize {
 }
 
 type CoarseTiles = ShardedCache<(i64, i64), Arc<Nodes<COARSE_N>>>;
-type LastCoarse = Option<(u64, u64, i64, i64, Arc<Nodes<COARSE_N>>)>;
+type LastCoarse = Option<(u64, u64, u64, i64, i64, Arc<Nodes<COARSE_N>>)>;
 /// Д-061: тайл → плиты, чьи сети рек могут иметь узел рядом с запросом.
 type NetOwners = ShardedCache<(i64, i64), Arc<Vec<u64>>>;
 /// T79: блок решётки стока → владелец каждого узла блока.
@@ -163,7 +163,11 @@ thread_local! {
     static RAY_TILES: RefCell<[RayTileSlot; RAY_TILE_SLOTS]> =
         const { RefCell::new([const { None }; RAY_TILE_SLOTS]) };
     /// «Последний тайл» на поток: соседние запросы не трогают замки (6.6).
-    /// Ключ включает сид и масштаб, чтобы миры в одном процессе не путались (Р14).
+    /// Ключ включает сид, **хеш параметров** и масштаб (Р14, Д-128): мирам с
+    /// одним сидом и разными параметрами (`v1-dev` и `v1-dev-r2` в одном
+    /// процессе) нельзя читать тайлы друг друга. Это страховка, а не причина
+    /// паритета Ф4: `coarse_values` в поля не входит (только диагностика
+    /// `coarse_probe`), а расхождение C/E/W шло из гидрологии (Д-127).
     static LAST_COARSE: RefCell<LastCoarse> = const { RefCell::new(None) };
 }
 
@@ -316,6 +320,16 @@ pub struct Generator {
 /// номера ячеек 4×4 внутри квадрата.
 type ShoreEdge = Arc<Vec<[u8; 2]>>;
 
+/// R2 (PLAN-WATER-FABRIC §4): уровень звена стока по его сегментам.
+///
+/// `(start, end)` — зеркало в начале и в конце сегмента, блоки. Между ними
+/// уровень интерполируется по `along`, поэтому ступень остаётся не больше
+/// блока на блок русла. `None` — звено уже ушло на уровень моря.
+///
+/// Отдельный псевдоним, а не тип «в лоб»: clippy `type_complexity` валит
+/// `-D warnings` на вложенном `Arc<Vec<Option<(f64, f64)>>>`.
+type ReachLevels = Arc<Vec<Option<(f64, f64)>>>;
+
 /// R2 (PLAN-WATER-FABRIC §4): уровни воды плиты в блоках. Кэш плиты, потому
 /// что в них входит сухая поверхность `S` в точках контура и берегов.
 #[derive(Debug, Default)]
@@ -326,7 +340,7 @@ struct PlateLevels {
     /// конце. Уровень между ними интерполируется: так ступень остаётся не
     /// больше блока на блок русла. Считаются лениво, по одному звену: у плиты
     /// тысячи сегментов, и первая же колонка платила бы за все (замер В5).
-    reaches: Mutex<HashMap<usize, Arc<Vec<Option<(f64, f64)>>>>>,
+    reaches: Mutex<HashMap<usize, ReachLevels>>,
 }
 
 /// §4, п. 1: точки контура озера берутся не реже чем через 2 блока.
@@ -1209,7 +1223,7 @@ impl Generator {
         levels: &PlateLevels,
         net: &crate::drainage::RiverNet,
         reach: usize,
-    ) -> Result<Arc<Vec<Option<(f64, f64)>>>, RiverNetError> {
+    ) -> Result<ReachLevels, RiverNetError> {
         // Блокировку держим только на поиск и вставку: колонки чанка идут
         // параллельно, а ответ — чистая функция, повторный счёт не вреден.
         if let Some(found) = levels
@@ -1471,6 +1485,29 @@ impl Generator {
         }
         let geometry = self.cached_hydrology_queries(x, z, apply_water)?;
         let water = hydrology::resolve(geometry.channels, geometry.lakes, climate, &self.params);
+        // §4, п. 5 (Д-127): `v1-dev-r2` меняет только слой воды. Поля и рельеф
+        // обязаны совпасть с `v1-dev` побитово, поэтому C/E/W/биом и `S`
+        // считаются по гидрологии с пределом R1, а версия с уровнями идёт
+        // только в `with_water` и в `SurfaceFields.hydrology`. Иначе высокое
+        // озеро в R2 перестаёт быть `DeferredWater`, меняет сушу против
+        // `v1-dev` — и вода стоит на земле, которой мир не строил.
+        // Под пределом R1 поля не видят «чужой» воды: высокое озеро там —
+        // `DeferredWater`, и `own_kind = false` не даёт ему ни силы берега
+        // в E, ни водного биома (Д-127).
+        let (terrain_water, own_kind) = if self.params.version.is_water_relief_r2() {
+            (
+                hydrology::resolve_with_limit(
+                    geometry.channels,
+                    geometry.lakes,
+                    climate,
+                    &self.params,
+                    self.params.hydrology.r1_max_level_km,
+                ),
+                false,
+            )
+        } else {
+            (water, true)
+        };
         // T122: потенциал A и морфоклиматические зоны переводятся в C/E/W до
         // гидрологии T115/T116, чтобы русла/болота/дельты сохранили приоритет.
         let point = self.macro_point(x, z);
@@ -1507,9 +1544,21 @@ impl Generator {
             self.seed,
             &self.params,
         );
-        let vanilla = hydrology::apply_fields(base, local_river, &water, &self.params);
-        let class = hydrology::classify_surface(class, &water, climate, &self.params);
-        let river = local_river.max(water.river);
+        let vanilla = hydrology::apply_fields_with_limit(
+            base,
+            local_river,
+            &terrain_water,
+            &self.params,
+            own_kind,
+        );
+        let class = hydrology::classify_surface_with_limit(
+            class,
+            &terrain_water,
+            climate,
+            &self.params,
+            own_kind,
+        );
+        let river = local_river.max(terrain_water.river);
         // I2-lite: долины режут русла/низкие озёра, а не каждая смена знака W.
         let pv = crate::math::lerp(pv_relief, -1.0, crate::math::clamp01(river));
         // Д-057: в долине реки прибавка макровысоты (научный режим) гаснет,
@@ -1594,12 +1643,24 @@ impl Generator {
             let recast = classify(&cooled, false, x, z, self.seed, &self.params);
             let (t, h) = crate::vanilla::temperature_humidity(&cooled, &recast, &self.params);
             let base = VanillaSample { t, h, ..base };
-            let vanilla = hydrology::apply_fields(base, local_river, &water, &self.params);
+            let vanilla = hydrology::apply_fields_with_limit(
+                base,
+                local_river,
+                &terrain_water,
+                &self.params,
+                own_kind,
+            );
             // Д-118: горные биомы ванили — только на высокой горе (и снежные
             // склоны в снежном поясе); холм остаётся своим биомом.
             let vanilla =
                 crate::vanilla_biome::guard_mountain_biomes(vanilla, shape_y, &self.params);
-            let class = hydrology::classify_surface(recast, &water, &cooled, &self.params);
+            let class = hydrology::classify_surface_with_limit(
+                recast,
+                &terrain_water,
+                &cooled,
+                &self.params,
+                own_kind,
+            );
             (cooled, class, vanilla)
         };
         Ok(SurfaceFields {
@@ -1976,9 +2037,10 @@ impl Generator {
 
     fn coarse_tile_at(&self, tx: i64, tz: i64) -> Arc<Nodes<COARSE_N>> {
         let scale = self.params.block.l_blocks.to_bits();
+        let key = self.params.config_key;
         let cached = LAST_COARSE.with(|cell| {
-            cell.borrow().as_ref().and_then(|(seed, s, x, z, tile)| {
-                if *seed == self.seed && *s == scale && *x == tx && *z == tz {
+            cell.borrow().as_ref().and_then(|(seed, config, s, x, z, tile)| {
+                if *seed == self.seed && *config == key && *s == scale && *x == tx && *z == tz {
                     Some(tile.clone())
                 } else {
                     None
@@ -1992,7 +2054,7 @@ impl Generator {
             .coarse
             .get_or_insert((tx, tz), || self.compute_coarse_tile(tx, tz));
         LAST_COARSE.with(|cell| {
-            *cell.borrow_mut() = Some((self.seed, scale, tx, tz, tile.clone()));
+            *cell.borrow_mut() = Some((self.seed, key, scale, tx, tz, tile.clone()));
         });
         tile
     }

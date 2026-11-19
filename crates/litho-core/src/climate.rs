@@ -58,7 +58,7 @@ pub struct PrecipSample {
     pub slope: f64,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct ClimateSample {
     pub point: Vec2,
     pub surface: SurfaceSample,

@@ -101,15 +101,24 @@ public final class LithoWaterFeature implements Feature {
                 int z = (int) zs[k];
                 int from = Math.min(surface - 1, maxY);
                 int to = Math.max(water.bed()[k] - 2, minY);
+                // §4 пп. 3–4: колонка с водой выше моря не бывает сухой. Зеркало
+                // `level` — это срез: всё, что стоит между ним и дном русла,
+                // вынимается, а вода ставится от `level − 1` вниз. Раньше цикл
+                // останавливался на первом не-воздухе, поэтому трава, дресва и
+                // земля над зеркалом давали «сухое русло» — 20,6 % в научном
+                // режиме против порога 1 % (job `water`).
+                //
+                // Глубже `bed − 2` не режем никогда: дно задаёт ядро, а пещеры
+                // под руслом закрывает затычка ниже.
+                for (int y = from; y >= to; y--) {
+                    BlockPos pos = new BlockPos(x, y, z);
+                    if (level.getBlockState(pos).isAir()) continue;
+                    level.setBlock(pos, Blocks.AIR.defaultBlockState(), 2);
+                }
                 int lowest = from;
                 for (int y = from; y >= to; y--) {
                     BlockPos pos = new BlockPos(x, y, z);
-                    BlockState current = level.getBlockState(pos);
-                    // §4 п. 4: вырез только вниз, и уровень в §4 — это уровень воды.
-                    // Колонка, где почва стоит ровно под зеркалом, тоже вода: зеркало
-                    // задаёт ядро, а верхний слой почвы уходит под него. Камень,
-                    // глина и всё прочее — дно, на нём останавливаемся.
-                    if (!current.isAir() && !isSurface(current)) break;
+                    if (!level.getBlockState(pos).isAir()) break;
                     level.setBlock(pos, waterState, 2);
                     lowest = y;
                 }
