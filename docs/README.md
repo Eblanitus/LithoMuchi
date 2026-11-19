@@ -14,6 +14,7 @@
 | Журнал решений Д-001… (только дописывается) | [DECISIONS.md](DECISIONS.md) |
 | Параметры `v0` (заморожена) и `v1-dev` | [PARAMS.md](PARAMS.md), [PARAMS-V1-DEV.md](PARAMS-V1-DEV.md) |
 | Замеры T151 | `t151/` |
+| Замеры водного обновления ВО0 (`water-stats`, `s0-node-cost`) | [probe/water-update-vo0/probe.txt](probe/water-update-vo0/probe.txt) |
 | Картинки | `images/` |
 | История: старые статусы, отчёты, разведки | [archive/](archive/) |
 
