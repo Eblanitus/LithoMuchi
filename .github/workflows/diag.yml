@@ -1,11 +1,15 @@
 # Временный диагностический прогон ветки arena/4e4f066f-lithomuchi: в песочнице
-# нет Rust, а логи job'ов отсюда не скачиваются. Ошибки печатаются
-# workflow-командами `::error::` и читаются через annotations API.
+# нет Rust, а логи job'ов отсюда не скачиваются. Поэтому логи складываются в
+# каталог `diag/` и коммитятся в саму ветку — оттуда их читает агент.
 name: diag
 on:
   push:
     paths:
       - ".diag-trigger"
+    branches:
+      - "arena/4e4f066f-lithomuchi"
+permissions:
+  contents: write
 jobs:
   diag:
     runs-on: ubuntu-latest
@@ -15,26 +19,27 @@ jobs:
         with:
           components: rustfmt, clippy
       - name: fmt
-        run: |
-          set +e
-          cargo fmt --all --check > /tmp/fmt.log 2>&1
-          status=$?
-          grep -E "^Diff in" /tmp/fmt.log | head -20 | sed 's/^/::error::fmt /'
-          if [ $status -ne 0 ]; then head -c 1500 /tmp/fmt.log; fi
-          exit $status
+        continue-on-error: true
+        run: cargo fmt --all --check > diag/fmt.log 2>&1 || true
       - name: clippy
-        run: |
-          set +e
-          cargo clippy --workspace --all-targets -- -D warnings > /tmp/clippy.log 2>&1
-          status=$?
-          grep -E "^(error|warning)" /tmp/clippy.log | head -24 | sed 's/^/::error::clippy /'
-          if [ $status -ne 0 ]; then grep -A3 -E "^error" /tmp/clippy.log | head -80; fi
-          exit $status
+        continue-on-error: true
+        run: cargo clippy --workspace --all-targets -- -D warnings > diag/clippy.log 2>&1 || true
+      - name: build tests
+        continue-on-error: true
+        run: cargo test --workspace --no-run > diag/build.log 2>&1 || true
       - name: tests
+        continue-on-error: true
+        run: cargo test --workspace > diag/test.log 2>&1 || true
+      - name: commit logs
+        if: always()
         run: |
-          set +e
-          cargo test --workspace > /tmp/test.log 2>&1
-          status=$?
-          grep -E "panicked at|^error\[|^error:|^---- " /tmp/test.log | head -24 | sed 's/^/::error::test /'
-          if [ $status -ne 0 ]; then grep -B2 -A12 -E "panicked at" /tmp/test.log | head -120; fi
-          exit $status
+          mkdir -p diag
+          for f in diag/*.log; do
+            head -c 400000 "$f" > "$f.tmp" && mv "$f.tmp" "$f"
+          done
+          git config user.name "diag-bot"
+          git config user.email "diag-bot@users.noreply.github.com"
+          git add diag
+          if git diff --cached --quiet; then exit 0; fi
+          git commit -m "diag: логи fmt/clippy/tests"
+          git push
