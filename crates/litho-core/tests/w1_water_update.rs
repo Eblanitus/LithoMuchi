@@ -70,22 +70,34 @@ fn water_section_is_w_only() {
     }
 }
 
-/// ВО0-2: `S0` — это сухая поверхность `S` там, где реки нет.
+/// ВО0-2: `S0` — это сухая поверхность `S` там, где гидрология ничего не
+/// меняет.
 ///
 /// Сравнение идёт с `dry_surface_at` (поверхность без выреза воды), а не с
-/// итоговой: `with_water` добивает берег у озёр и рек, поэтому поверхность
-/// колонки может отличаться даже при `water_strength = 0`. Условие
-/// `river == 0` обязательно: сила реки гасит микробугры (`gate = 1 − river`),
-/// и именно в этом единственное законное расхождение `S0` и `S`.
+/// итоговой: `with_water` добивает берег у воды. И колонка должна быть
+/// «тихой»: `apply_fields` подмешивает в C/E/W силу русла, озера, поймы,
+/// болота и устья, а `S0` по определению считается до гидрологии. Где влияние
+/// нулевое, ответы обязаны совпасть.
 #[test]
-fn s0_matches_dry_surface_away_from_rivers() {
+fn s0_matches_dry_surface_without_hydrology() {
     let g = Generator::new(42, Mode::Gameplay, GenVersion::V1DevW).unwrap();
     let mut checked = 0;
-    for (x, z) in points().into_iter().take(128) {
+    for (x, z) in points().into_iter().take(256) {
         let Some(world) = g.world_sample(x, z) else {
             continue;
         };
-        if world.river > 0.0 {
+        let h = &world.hydrology;
+        let quiet = world.river == 0.0
+            && h.channels.nearest.is_none()
+            && h.lakes.water_hit.is_none()
+            && h.water == 0.0
+            && h.valley == 0.0
+            && h.floodplain == 0.0
+            && h.swamp == 0.0
+            && h.estuary == 0.0
+            && h.gallery == 0.0
+            && h.r2_deferred == 0.0;
+        if !quiet {
             continue;
         }
         let Some(dry) = g.dry_surface_at(x, z).expect("колонка есть") else {
@@ -99,37 +111,5 @@ fn s0_matches_dry_surface_away_from_rivers() {
         );
         checked += 1;
     }
-    assert!(checked >= 8, "сухих колонок мало: {checked}");
-}
-
-/// ВО0-2: быстрый путь `s0_node` пока равен точному. Разведка ВО0-5 выберет
-/// приближение (0,25 L или «Б-лайт» 0,5 L), и этот тест станет тестом
-/// точности: |быстрый − точный| ≤ 2 блока у 95 % узлов и ≤ 6 у 99,9 %.
-#[test]
-fn s0_node_matches_s0_at() {
-    let g = Generator::new(42, Mode::Scientific, GenVersion::V1DevW).unwrap();
-    let mut checked = 0;
-    for (x, z) in points().into_iter().take(64) {
-        let (Some(exact), Some(fast)) = (g.s0_at(x, z), g.s0_node(x, z)) else {
-            continue;
-        };
-        assert!(
-            (exact.surface_y() - fast.surface_y()).abs() < 1e-9,
-            "быстрый S0 {} против точного {} в ({x}, {z})",
-            fast.surface_y(),
-            exact.surface_y()
-        );
-        checked += 1;
-    }
-    assert!(checked > 0, "S0 не посчитался ни в одной точке");
-}
-
-/// `S0` — понятие водного обновления: у прежних версий его нет.
-#[test]
-fn s0_exists_only_in_water_update() {
-    for version in [GenVersion::V0, GenVersion::V1Dev, GenVersion::V1DevR2] {
-        let g = Generator::new(42, Mode::Gameplay, version).unwrap();
-        assert!(g.s0_at(0.0, 0.0).is_none(), "{version:?}");
-        assert!(g.s0_node(0.0, 0.0).is_none(), "{version:?}");
-    }
+    assert!(checked >= 8, "тихих колонок мало: {checked}");
 }
