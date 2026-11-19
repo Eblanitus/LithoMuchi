@@ -1,0 +1,66 @@
+// Minecraft 26.x идёт без обфускации: Loom без маппингов и без ремапа.
+plugins {
+    id 'net.fabricmc.fabric-loom'
+}
+
+version = project.mod_version
+group = 'dev.litospherity'
+base { archivesName = 'litospherity' }
+
+repositories { mavenCentral() }
+
+dependencies {
+    minecraft "com.mojang:minecraft:${project.minecraft_version}"
+    implementation "net.fabricmc:fabric-loader:${project.loader_version}"
+    implementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_api_version}"
+}
+
+java {
+    toolchain { languageVersion = JavaLanguageVersion.of(25) }
+}
+
+tasks.withType(JavaCompile).configureEach { it.options.release = 25 }
+
+processResources {
+    inputs.property 'version', project.version
+    inputs.property 'minecraft_version', project.minecraft_version
+    filesMatching('fabric.mod.json') {
+        expand version: project.version, minecraft_version: project.minecraft_version
+    }
+}
+
+// Ресурсы из пака Horizon и ванильных JSON кладёт CI (tools/fabric_resources.py).
+sourceSets.main.resources.srcDir 'src/generated/resources'
+
+// Нативные библиотеки litho-ffi кладёт CI в src/main/resources/natives/<os>-<arch>/.
+
+// CI: Ф4/Ф5 на headless-сервере (-Plitospherity_ci=<режим>).
+loom {
+    runs {
+        server {
+            if (project.hasProperty('litospherity_ci')) {
+                vmArg "-Dlitospherity.ci=${project.litospherity_ci}"
+            }
+        }
+    }
+}
+
+// ВРЕМЕННО (удалить): печать имён классов 26.3 для сверки API воды.
+tasks.register('probeApi') {
+    doLast {
+        def jars = sourceSets.main.compileClasspath.files.findAll { it.name.toLowerCase().contains('minecraft') }
+        println "PROBE jars=${jars.size()}"
+        jars.each { f ->
+            println "PROBEJAR ${f}"
+            def z = new java.util.zip.ZipFile(f)
+            try {
+                z.entries().each { e ->
+                    def n = e.name
+                    if (n.endsWith('.class') && (n.contains('levelgen/feature/') || n.contains('levelgen/features'))) {
+                        println "PROBE ${n.replace('/', '.').replace('.class', '')}"
+                    }
+                }
+            } finally { z.close() }
+        }
+    }
+}

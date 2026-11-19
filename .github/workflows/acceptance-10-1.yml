@@ -1,0 +1,43 @@
+name: acceptance-10-1
+# Ф6-В7 (docs/PLAN-WATER-FABRIC.md): полный объём приёмки 10.1 на v1-dev-r2,
+# 16 сидов Д-084 × 2 режима. Запускается только вручную (workflow_dispatch)
+# и только после влива арены: до неё parity и часть Rust-тестов красные по
+# коду арены. В обычный PR-гейт не входит (см. комментарий в ci.yml).
+#
+# Объём: span_l = boundary_size × boundary_step / L_blocks ≥ 200 L.
+# gameplay L = 250 блоков → размер 1600 при шаге 32 даёт ≈ 205 L;
+# scientific L = 1000 блоков → нужен размер 6250 при шаге 32 (≈ 200 L).
+# Сканы на scientific очень тяжёлые: один сид ~ часы, ориентир 16 × 2 — сутки.
+on:
+  workflow_dispatch:
+    inputs:
+      seeds:
+        description: "Сиды Д-084 (через запятую)"
+        default: "-123456789,-42,-1,0,1,2,7,42,123,777,1234,2024,12345,54321,99999,987654321"
+      gameplay_size:
+        description: "Размер сетки границ, gameplay"
+        default: "1600"
+      scientific_size:
+        description: "Размер сетки границ, scientific"
+        default: "6250"
+jobs:
+  acceptance:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    strategy:
+      fail-fast: false
+      matrix:
+        mode: [gameplay, scientific]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: "Приёмка 10.1, ${{ matrix.mode }}, 16 сидов"
+        run: |
+          set -o pipefail
+          size="${{ inputs.gameplay_size }}"
+          if [ "${{ matrix.mode }}" = "scientific" ]; then size="${{ inputs.scientific_size }}"; fi
+          cargo run -q -p litho-sandbox --release -- acceptance \
+            --version v1-dev-r2 --mode ${{ matrix.mode }} \
+            --seeds "${{ inputs.seeds }}" \
+            --span-l 200 --boundary-size "$size" --boundary-step 32 --json \
+            | python3 tools/ci_annotations.py report

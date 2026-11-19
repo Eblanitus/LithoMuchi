@@ -5,7 +5,11 @@
 | Что | Где |
 |---|---|
 | План до v1 (состояние, оставшиеся шаги, правила) | [PLAN.md](PLAN.md) |
-| Спецификация: формулы и критерии v1 (план v1.0 и пересмотр v1.1) | [spec/](spec/) |
+| Переход на Fabric (Ф0–Ф7) | [PLAN-FABRIC.md](PLAN-FABRIC.md) |
+| Вода выше уровня моря на Fabric, `v1-dev-r2` (В1–В5 сделаны; заменён водным обновлением, В6–В7 отменены) | [PLAN-WATER-FABRIC.md](PLAN-WATER-FABRIC.md) |
+| **Действующий план воды:** типы водоёмов, вода выше моря от `S0` (ВО0–ВО9, принят автором, Д-129; формулы — раздел 6, этапы — раздел 9) | [PLAN-WATER-UPDATE.md](PLAN-WATER-UPDATE.md) |
+| Сверка кода 26.3 и выбранная точка внедрения (Ф6-В0) | [FABRIC-WATER-NOTES.md](FABRIC-WATER-NOTES.md) |
+| Спецификация: формулы и критерии v1 (план v1.0 и пересмотр v1.1); формулы воды — в [PLAN-WATER-UPDATE.md](PLAN-WATER-UPDATE.md) раздел 6 | [spec/](spec/) |
 | Справочник: как устроен мир сейчас, по темам | [wiki/](wiki/README.md) |
 | Журнал решений Д-001… (только дописывается) | [DECISIONS.md](DECISIONS.md) |
 | Параметры `v0` (заморожена) и `v1-dev` | [PARAMS.md](PARAMS.md), [PARAMS-V1-DEV.md](PARAMS-V1-DEV.md) |

@@ -76,6 +76,34 @@ jobs:
           cat /tmp/v0-hashes.txt
           grep -Fxq 'scientific = 5cdbe1d36ef8d16a' /tmp/v0-hashes.txt
           grep -Fxq 'gameplay = b48e8037c4e85977' /tmp/v0-hashes.txt
+      - name: "Ф6-В1 — хеши: v0 и v1-dev не меняются, v1-dev-r2 печатается"
+        run: |
+          set -o pipefail
+          {
+            for version in v0 v1 v1-dev v1-dev-r2; do
+              echo "== $version"
+              cargo run -q -p xtask -- params-hash --version "$version"
+            done
+          } | python3 tools/ci_annotations.py report
+          cargo run -q -p xtask -- params-hash --version v0 > /tmp/h0.txt
+          grep -qx 'scientific 5cdbe1d36ef8d16a' /tmp/h0.txt
+          grep -qx 'gameplay b48e8037c4e85977' /tmp/h0.txt
+          cargo run -q -p xtask -- params-hash --version v1-dev > /tmp/h1d.txt
+          grep -qx 'scientific 35f888f82f3ba603' /tmp/h1d.txt
+          grep -qx 'gameplay 9cbf72e5fb90b9b7' /tmp/h1d.txt
+      - name: "Ф6-В1 — вода не уходит за берег (water-leaks, окно 1024 × 1024)"
+        # Гейт — 0 нарушений §4. Окно меньше приёмочных 4096 × 4096: полный
+        # прогон (4 центра × 2 сида × 2 режима + 16 сидов Д-084) идёт отдельной
+        # задачей автора, здесь дым на каждом PR.
+        run: |
+          set -o pipefail
+          for mode in gameplay scientific; do
+            for seed in 42 7; do
+              cargo run -q -p litho-sandbox --release -- water-leaks \
+                --seed "$seed" --mode "$mode" --version v1-dev-r2 --size 1024 --step 8 \
+                | python3 tools/ci_annotations.py report
+            done
+          done
       - name: "К4 / шаг 6 — скорость v1-dev на колонку и на чанк"
         run: |
           target=$(python3 -c 'import json; print(json.load(open("tools/bench-targets.json"))["v1_dev_chunk_ms"])')
