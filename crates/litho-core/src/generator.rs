@@ -720,7 +720,12 @@ impl Generator {
         // v0 сохраняет старый путь; v1-dev подключает сеть T115 ниже.
         let point = self.macro_point(x, z);
         let surface = &climate.surface;
-        let local = local_r(x, z, surface, self.seed, &self.params);
+        // ВО1-3 (§9): в `v1-dev-w` карандашных рек нет — воду ведёт профиль `W`.
+        let local = if self.params.version.is_water_update() {
+            0.0
+        } else {
+            local_r(x, z, surface, self.seed, &self.params)
+        };
         // T103: до сети T110 быстрый и эталонный пути v1-dev используют
         // одинаковые локальные реки. Старые трассы не создают расхождение путей.
         let traced = if self.params.version.is_water_relief_dev() {
@@ -762,7 +767,11 @@ impl Generator {
     pub fn river_sample(&self, x: f64, z: f64) -> f64 {
         let point = self.macro_point(x, z);
         let surface = self.surface_at(point);
-        let local = local_r(x, z, &surface, self.seed, &self.params);
+        let local = if self.params.version.is_water_update() {
+            0.0
+        } else {
+            local_r(x, z, &surface, self.seed, &self.params)
+        };
         let traced = if self.params.version.is_water_relief_dev() {
             0.0
         } else {
@@ -2358,7 +2367,11 @@ impl Generator {
         let c_value = continentalness(surface.e_km, surface.iota_l, &self.params);
         let is_ocean = c_value < self.params.climate.ocean_c_threshold;
         let class = self.class_before_height(&climate, is_ocean, x, z);
-        let local = local_r(x, z, &surface, self.seed, &self.params);
+        let local = if self.params.version.is_water_update() {
+            0.0
+        } else {
+            local_r(x, z, &surface, self.seed, &self.params)
+        };
         let fields = self.surface_fields(
             &climate,
             class,

@@ -82,8 +82,6 @@ pub struct Window {
     width: usize,
     height: usize,
     step: i64,
-    x0: i64,
-    z0: i64,
     cells: Vec<Cell>,
 }
 
@@ -112,8 +110,6 @@ impl Window {
             width,
             height,
             step,
-            x0,
-            z0,
             cells,
         })
     }
@@ -140,7 +136,7 @@ impl Window {
                 }
                 if cell.river {
                     out.river_columns += 1;
-                    if cell.water && cell.level >= SEA + 1 {
+                    if cell.water && cell.level > SEA {
                         out.river_above_sea += 1;
                     }
                     if cell.water {

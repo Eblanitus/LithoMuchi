@@ -320,6 +320,14 @@ impl ChannelNetwork {
             if chain.len() < 2 {
                 continue;
             }
+            // ВО1-3 (§9): в `v1-dev-w` выходы стока `Rift`/`Transform` русла не
+            // рисуют. Это «карандашные» трассы границы, а не сток: в W воду
+            // ведут уровень `W` и `S0`, и такая река дала бы воду без профиля.
+            if params.version.is_water_update()
+                && matches!(end, ReachEnd::Rift | ReachEnd::Transform)
+            {
+                continue;
+            }
             let base = chain_vertices(&chain, nodes, runoff, params);
             let mean_slope = base.iter().map(|v| v.slope_km_l).sum::<f64>() / base.len() as f64;
             let plain = mean_slope < params.channels.plain_slope_max;
