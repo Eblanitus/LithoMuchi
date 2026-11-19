@@ -245,6 +245,14 @@ hmod/
 
 **Отправлен 2026-11-18: horizon#18281.**
 
+**Ответ 2026-11-19:** мейнтейнер (NikitaMGrimm) взял задачу, реализация в PR horizon#18350:
+`registrar.register_density_function_type("field", T)`, узел `{"type": "litospherity:field", ...}` в любом JSON
+плотности; его читают заливка чанка, дальний LOD, высота структур, климат и биомы, спавн, аквиферы. Трейт:
+`decode(json)`, `range()`, `varies_with_y()`, `sample(pos, seed)`, `fill(origin, step, count, seed, out)` (y быстрее
+всего, потом x, потом z). Сид приходит в каждом вызове, не при `decode`; узел не может брать другие функции плотности
+на вход (нам не нужно). Только нативные моды. Для Г4 это ровно то, что нужно; режим передаём аргументом JSON
+(`"mode"`), а не через высоту мира, как на Fabric.
+
 > **Use case.** Litospherity is a world-generation mod: tectonic plates drive continentalness, erosion,
 > ridges, temperature, humidity and the terrain offset/factor of the Overworld router. On pin 66f3981 we
 > did this with a cancellable HEAD mixin on `horizon_core::density::graph::seeded::SeededContext::noise`.
