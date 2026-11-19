@@ -15,6 +15,8 @@
 - **Fabric** — переход по [PLAN-FABRIC.md](PLAN-FABRIC.md) (Д-105); начат до v1 по слову
   автора 2026-11-17, Ф1–Ф5 в PR #51. Вода выше моря на Fabric —
   [PLAN-WATER-FABRIC.md](PLAN-WATER-FABRIC.md).
+  Водное обновление (реки и озёра выше моря от рельефа без воды, типы водоёмов, ВО0–ВО9) —
+  [PLAN-WATER-UPDATE.md](PLAN-WATER-UPDATE.md), ждёт решения автора.
 - **параметры** — генерируются из кода, это источник правды по числам:
   - [PARAMS.md](PARAMS.md) для `v0`;
   - [PARAMS-V1-DEV.md](PARAMS-V1-DEV.md) для `v1-dev`.
