@@ -30,6 +30,34 @@ jobs:
       - name: tests
         continue-on-error: true
         run: cargo test --workspace --no-fail-fast > diag/test.log 2>&1 || true
+      - name: hashes
+        continue-on-error: true
+        run: |
+          : > diag/hash.log
+          for version in v0 v1 v1-dev v1-dev-r2 v1-dev-w; do
+            echo "== $version" >> diag/hash.log
+            cargo run -q -p xtask -- params-hash --version "$version" >> diag/hash.log 2>&1 || echo "ОШИБКА $version" >> diag/hash.log
+          done
+      - name: water-leaks
+        continue-on-error: true
+        run: |
+          : > diag/leaks.log
+          for mode in gameplay scientific; do
+            for seed in 42 7; do
+              echo "== $mode $seed" >> diag/leaks.log
+              cargo run -q -p litho-sandbox --release -- water-leaks --seed "$seed" --mode "$mode" --version v1-dev-r2 --size 1024 --step 8 >> diag/leaks.log 2>&1 || echo "ОШИБКА $mode $seed" >> diag/leaks.log
+            done
+          done
+      - name: water-stats baseline
+        continue-on-error: true
+        run: |
+          : > diag/water-stats.log
+          for mode in gameplay scientific; do
+            for seed in 42 7; do
+              echo "== $mode $seed" >> diag/water-stats.log
+              cargo run -q -p litho-sandbox --release -- water-stats "$seed" "$mode" --version v1-dev-r2 --window 1024 --step 16 >> diag/water-stats.log 2>&1 || echo "ОШИБКА $mode $seed" >> diag/water-stats.log
+            done
+          done
       - name: commit logs
         if: always()
         run: |
