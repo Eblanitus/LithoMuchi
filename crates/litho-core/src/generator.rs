@@ -2039,12 +2039,10 @@ impl Generator {
         let scale = self.params.block.l_blocks.to_bits();
         let key = self.params.config_key;
         let cached = LAST_COARSE.with(|cell| {
-            cell.borrow().as_ref().and_then(|(seed, config, s, x, z, tile)| {
-                if *seed == self.seed && *config == key && *s == scale && *x == tx && *z == tz {
-                    Some(tile.clone())
-                } else {
-                    None
-                }
+            let last = cell.borrow();
+            last.as_ref().and_then(|(seed, config, s, x, z, tile)| {
+                (*seed == self.seed && *config == key && *s == scale && *x == tx && *z == tz)
+                    .then(|| tile.clone())
             })
         });
         if let Some(tile) = cached {
