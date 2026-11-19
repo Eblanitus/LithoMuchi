@@ -307,9 +307,16 @@ mod tests {
             ..Lattice::default()
         };
         assert!(lattice.meets());
-        // Один выброс выше 6 блоков ломает 99,9 %, но не p95.
+        // Один выброс выше 6 блоков на 1000 значений 99,9 % не двигает:
+        // перцентиль интерполирует между соседями. Ломает его группа выбросов.
         lattice.errors[999] = 10.0;
         assert!(lattice.p95() <= TOL_P95);
+        assert!(lattice.meets());
+        for value in lattice.errors.iter_mut().skip(990) {
+            *value = 10.0;
+        }
+        assert!(lattice.p95() <= TOL_P95);
+        assert!(lattice.p999() > TOL_P999);
         assert!(!lattice.meets());
     }
 

@@ -37,7 +37,9 @@ fn w_levels_and_s0_are_sane() {
             let s0 = first.s0_at(x, z).expect("S0 есть у W");
             assert!(s0.macro_y.is_finite(), "S0 не число в ({x}, {z})");
             let column = first.water_column(x, z);
-            if column.level != 0 {
+            // `WaterColumn::default()` — «воды нет» с `level = i32::MIN`,
+            // поэтому спрашиваем `has_water`, а не сравниваем с нулём.
+            if column.has_water() {
                 assert!(
                     column.level >= 63,
                     "уровень ниже моря в ({x}, {z}), режим {mode:?}"
