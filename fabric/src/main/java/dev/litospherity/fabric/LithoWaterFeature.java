@@ -36,6 +36,11 @@ public final class LithoWaterFeature implements Feature {
     public static final int SEA_LEVEL = 63;
     /** Колонка чанка плюс один блок по краю: герметизации нужны соседи. */
     private static final int SIDE = 18;
+    /** Проба чанка: {@code PROBE × PROBE} колонок через {@code PROBE_STEP} блоков. */
+    private static final int PROBE = 6;
+    private static final int PROBE_STEP = 3;
+    /** Сколько блоков над зеркалом русла можно вынуть (бугры 3D-шума). */
+    private static final int UP_CLEAR = 8;
 
     /** Заделок герметизации (метрика В5: ≤ 2 на чанк с водой выше моря). */
     public static final AtomicLong SEALS = new AtomicLong();
@@ -73,20 +78,23 @@ public final class LithoWaterFeature implements Feature {
         }
         // Генератор общий и потокобезопасный (Ф1): не закрываем его здесь.
         LithoNative.Generator core = LithoFields.generator(binding);
-        // Дешёвая проба: 4x4 колонки через 5 блоков. Чанк без воды выше моря
-        // не платит за полный пакет 18x18 (цена колонки ядра — десятки мкс).
-        double[] probeX = new double[16];
-        double[] probeZ = new double[16];
-        for (int j = 0; j < 4; j++) {
-            for (int i = 0; i < 4; i++) {
-                probeX[j * 4 + i] = x0 + i * 5;
-                probeZ[j * 4 + i] = z0 + j * 5;
+        // Дешёвая проба: 6x6 колонок через 3 блока (от x0 − 1 до x0 + 14). Чанк
+        // без воды выше моря не платит за полный пакет 18x18 (цена колонки ядра —
+        // десятки мкс). Прежняя сетка 4x4 через 5 блоков пропускала русло шириной
+        // до 4 блоков целиком, и чанк оставался без воды: река рвалась по чанкам.
+        // Шаг 3 ловит любое русло шириной от 3 блоков (ядро русла — 4–6 блоков).
+        double[] probeX = new double[PROBE * PROBE];
+        double[] probeZ = new double[PROBE * PROBE];
+        for (int j = 0; j < PROBE; j++) {
+            for (int i = 0; i < PROBE; i++) {
+                probeX[j * PROBE + i] = x0 - 1 + i * PROBE_STEP;
+                probeZ[j * PROBE + i] = z0 - 1 + j * PROBE_STEP;
             }
         }
         LithoNative.WaterColumns probe = core.water(probeX, probeZ);
         boolean any = false;
         for (int probeLevel : probe.level()) {
-            if (probeLevel != LithoNative.WaterColumns.NONE && probeLevel > SEA_LEVEL) any = true;
+            if (probeLevel != LithoNative.WaterColumns.NONE && probeLevel >= SEA_LEVEL) any = true;
         }
         if (!any) return false;
         LithoNative.WaterColumns water = core.water(xs, zs);
@@ -101,7 +109,11 @@ public final class LithoWaterFeature implements Feature {
             for (int i = 1; i <= 16; i++) {
                 int k = j * SIDE + i;
                 int surface = water.level()[k];
-                if (surface == LithoNative.WaterColumns.NONE || surface <= SEA_LEVEL) continue;
+                if (surface == LithoNative.WaterColumns.NONE || surface < SEA_LEVEL) continue;
+                // Уровень 63 — русло у моря (вода до y = 62): ядро отдаёт его, чтобы
+                // прорезать русло по настоящим блокам. 3D-шум поднимает дно выше 62,
+                // и без этого ванильная вода стояла в русле лужами.
+                if (surface == SEA_LEVEL && water.kind()[k] != KIND_RIVER) continue;
                 int x = (int) xs[k];
                 int z = (int) zs[k];
                 int from = Math.min(surface - 1, maxY);
@@ -118,6 +130,27 @@ public final class LithoWaterFeature implements Feature {
                 for (int y = from; y >= to; y--) {
                     BlockPos pos = new BlockPos(x, y, z);
                     if (level.getBlockState(pos).isAir()) continue;
+                    level.setBlock(pos, Blocks.AIR.defaultBlockState(), 2);
+                }
+                // Русло у моря: над зеркалом тоже вынимаем. 3D-шум игры ставит над
+                // водой бугры и крышки, которых у ядра нет, и река уходит под
+                // землю. Не выше UP_CLEAR блоков: дальше это уже склон. Только у
+                // моря: там вода не выше 62 и протечь вверх не может; у русел R2
+                // вскрытие берега давало протечки (CI water scientific 9 → 27).
+                //
+                // Рядом с колонкой R2 (уровень выше моря) не вынимаем: её затычку
+                // сбоку мог уже поставить соседний чанк, и вскрытие её снимает, вода
+                // R2 стекает в русло у моря. Порядок чанков разный от запуска к
+                // запуску, поэтому рост текущей воды в CI скакал 5,2 → 7,9 → 11,9 %.
+                boolean nearR2 = false;
+                for (int[] step : new int[][] {{1, 0}, {-1, 0}, {0, 1}, {0, -1}}) {
+                    int nl = water.level()[(j + step[1]) * SIDE + (i + step[0])];
+                    if (nl != LithoNative.WaterColumns.NONE && nl > SEA_LEVEL) nearR2 = true;
+                }
+                for (int y = from + 1; surface == SEA_LEVEL && !nearR2 && y <= Math.min(from + UP_CLEAR, maxY); y++) {
+                    BlockPos pos = new BlockPos(x, y, z);
+                    BlockState above = level.getBlockState(pos);
+                    if (above.isAir() || above.is(Blocks.WATER)) break;
                     level.setBlock(pos, Blocks.AIR.defaultBlockState(), 2);
                 }
                 int lowest = from;
@@ -152,9 +185,29 @@ public final class LithoWaterFeature implements Feature {
                 int k = j * SIDE + i;
                 int surface = water.level()[k];
                 if (surface == LithoNative.WaterColumns.NONE || surface <= SEA_LEVEL) continue;
+                // Ступень сверху: соседняя колонка русла выше, и шаг ниже кладёт в
+                // эту колонку текущую воду на высоте `surface` (над её зеркалом).
+                // Этот слой тоже надо закрыть сбоку от колонок без воды R2, иначе
+                // вода ступени растекается за русло (устье в море, CI water
+                // gameplay: рост текущей 5,2 % при пороге 5 %).
+                boolean stepped = false;
+                if (water.kind()[k] == KIND_RIVER) {
+                    for (int[] step : new int[][] {{1, 0}, {-1, 0}, {0, 1}, {0, -1}}) {
+                        int uk = (j + step[1]) * SIDE + (i + step[0]);
+                        int upper = water.level()[uk];
+                        if (water.kind()[uk] == KIND_RIVER && upper != LithoNative.WaterColumns.NONE && upper > surface) stepped = true;
+                    }
+                }
                 for (int[] step : new int[][] {{1, 0}, {-1, 0}, {0, 1}, {0, -1}}) {
                     int nk = (j + step[1]) * SIDE + (i + step[0]);
                     int neighbour = water.level()[nk];
+                    if (stepped && surface <= maxY && (neighbour == LithoNative.WaterColumns.NONE || neighbour <= SEA_LEVEL)) {
+                        BlockPos lip = new BlockPos((int) xs[nk], surface, (int) zs[nk]);
+                        if (level.getBlockState(lip).isAir()) {
+                            level.setBlock(lip, Blocks.DIRT.defaultBlockState(), 2);
+                            seals++;
+                        }
+                    }
                     boolean riverStep = water.kind()[k] == KIND_RIVER && water.kind()[nk] == KIND_RIVER && neighbour != LithoNative.WaterColumns.NONE && neighbour > SEA_LEVEL && neighbour < surface;
                     int top = Math.min(surface - 1, maxY);
                     int bottom = Math.max(water.bed()[k] - 2, minY);

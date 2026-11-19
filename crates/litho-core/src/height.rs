@@ -17,6 +17,12 @@ pub const SEA_LEVEL: f64 = 63.0;
 /// дающая уровень 63,52; пак заменяет offset целиком, поэтому константа
 /// должна быть в нашей формуле, а не в паке (К2, шаг 2 плана).
 pub const SURFACE_BASE: f64 = 128.0;
+/// R2: насколько глубже сухой поверхности русло может прорезать бугор дна
+/// долины, блоки. Больше — уже не река, а каньон К3: колонка остаётся сушей.
+pub const RIVER_GORGE_MAX_BLOCKS: f64 = 8.0;
+/// R2: насколько уровень русла может стоять выше сухой поверхности колонки,
+/// блоки. Выше — это водопад, а не русло.
+pub const RIVER_MAX_ABOVE_LAND_BLOCKS: f64 = 3.0;
 pub const OFFSET_SCALE: f64 = 128.0;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -202,22 +208,55 @@ pub fn with_water(
             clamp01(hydrology.channels.bank)
         };
         // R2 (§4, п. 2): уровень вершины русла — низший берег минус 1,
-        // монотонно вниз по течению. Нет уровня (вода не выше моря) — R2
-        // здесь воду не ставит.
+        // монотонно вниз по течению.
+        //
+        // Нет уровня R2 (берег не выше 64, вода не выше моря) — русло всё
+        // равно режется, как в v1-dev, под зеркало `min(63, S − 1)`: воду
+        // до y = 62 ставит сама игра. Дно речных долин по таблице высот
+        // стоит на 63–65, поэтому без этого выреза все реки R2 оставались
+        // сухими на 63,5 с лужами там, где дно опустил 3D-шум (игровой тест
+        // 2026-11-19: 0 % мокрых осей русла против 66 % / 84 % в v1-dev).
+        // Уровень здесь не выше моря, так что `water_column` R2-воды не
+        // отдаёт, и инвариант §4 не затрагивается.
+        //
+        // Уровень R2 выше сухой поверхности больше чем на
+        // `RIVER_MAX_ABOVE_LAND_BLOCKS` — не русло, а водопад: уровень сегмента
+        // интерполируется между вершинами, и там, где рельеф круто падает
+        // (сид 42, (-6497, -2222) и (-8418, 1772): зеркало 74 над сушей 60),
+        // вода висела пластом над пустотой. Такая колонка берёт запасной
+        // уровень у моря.
+        let depth = hit.depth_blocks.max(1.0);
+        let r2_level = hit
+            .level_blocks
+            .filter(|level| *level <= land_y + RIVER_MAX_ABOVE_LAND_BLOCKS);
         let mirror = if r2 {
-            hit.level_blocks
+            r2_level.or(Some(SEA_LEVEL.min(land_y - 1.0)))
         } else {
             Some(hit.mirror_y.round().min(land_y - 1.0))
         };
+        // Ущелье только у русла с уровнем R2; русло у моря режется на глубину
+        // русла плюс блок, иначе на суше 70 выкапывалась бы траншея до 61.
+        let gorge = if r2_level.is_some() {
+            RIVER_GORGE_MAX_BLOCKS.max(depth)
+        } else {
+            depth + 1.0
+        };
         if let Some(mirror) = mirror.filter(|mirror| *mirror >= h.min_y) {
             if cut > 0.0 {
-                let depth = hit.depth_blocks.max(1.0);
                 let bed = (mirror - depth).max(h.min_y);
                 let carve = if r2 {
-                    // §4, п. 3: вырез не глубже русла под сушу. Иначе зеркало
-                    // с километровым уровнем выкапывало бы каньон в 30 блоков
-                    // (баг К3), а зеркало теперь берётся от берегов.
-                    lerp(land_y, bed, cut).max(land_y - depth).min(land_y)
+                    // §4, п. 3: вырез не глубже `RIVER_GORGE_MAX_BLOCKS` под
+                    // сушу. Иначе зеркало с километровым уровнем выкапывало бы
+                    // каньон в 30 блоков (баг К3).
+                    //
+                    // Раньше предел был глубиной русла (1,5–2 блока). Но уровень
+                    // реки — низший берег, только вниз по течению, а дно долины
+                    // по таблице высот идёт буграми ±5 блоков. Вода стояла лишь
+                    // в ямах между буграми: в окнах water-leaks 60–83 % осей
+                    // русла выше моря были сухими (игровой тест 2026-11-19,
+                    // «реки лужами»). Теперь русло прорезает бугор ущельем до
+                    // `RIVER_GORGE_MAX_BLOCKS`, как настоящая река.
+                    lerp(land_y, bed, cut).max(land_y - gorge).min(land_y)
                 } else {
                     lerp(land_y, bed, cut)
                 };
@@ -497,6 +536,54 @@ mod tests {
         assert_eq!(out.water_strength, 0.0);
         assert_eq!(out.surface_y, 100.0);
         assert_eq!(out.water_y, SEA_LEVEL);
+    }
+
+    /// Игровой тест 2026-11-19: русло на уровне моря (берег 63,5, уровня
+    /// R2 нет) режется как в v1-dev, иначе в игре вместо реки лужи.
+    #[test]
+    fn r2_sea_level_river_is_cut_below_vanilla_water() {
+        let p = params_r2(Mode::Gameplay);
+        let mut hydro = HydrologySample::default();
+        hydro.channels.core = 1.0;
+        hydro.channels.bank = 1.0;
+        hydro.channels.nearest = Some(channel_level(63.0, 1.93, None));
+        for land in [63.5, 63.9] {
+            let out = with_water(base_at(land), &hydro, &p);
+            assert!(out.water_strength > 0.0, "суша {land}: русло не вырезано");
+            assert!(
+                out.surface_y < SEA_LEVEL - 1.0,
+                "суша {land}: дно {} выше воды игры (y 62)",
+                out.surface_y
+            );
+            assert!(
+                out.water_y <= SEA_LEVEL,
+                "уровень {} выше моря",
+                out.water_y
+            );
+            assert!(out.surface_y >= land - 3.0, "каньон: {}", out.surface_y);
+        }
+    }
+
+    /// Игровой тест 2026-11-19, сид 42 (-6497, -2222): уровень сегмента 74
+    /// над сушей 60 давал пласт воды над пустотой. Такая колонка — водопад:
+    /// воды R2 нет, уровень берётся у моря.
+    #[test]
+    fn r2_level_far_above_land_is_a_fall_not_a_river() {
+        let p = params_r2(Mode::Gameplay);
+        let mut hydro = HydrologySample::default();
+        hydro.channels.core = 1.0;
+        hydro.channels.bank = 1.0;
+        hydro.channels.nearest = Some(channel_level(120.0, 2.0, Some(74.0)));
+        let out = with_water(base_at(60.0), &hydro, &p);
+        assert!(
+            out.water_y <= SEA_LEVEL,
+            "вода {} над сушей 60",
+            out.water_y
+        );
+        assert!(out.surface_y <= 60.0);
+        // Уровень на 2 блока выше суши — ещё русло.
+        let near = with_water(base_at(72.0), &hydro, &p);
+        assert_eq!(near.water_y, 74.0);
     }
 
     #[test]
