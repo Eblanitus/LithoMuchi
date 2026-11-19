@@ -42,8 +42,17 @@ jobs:
           mkdir -p ../out
           jar=$(grep -oE "^PROBEJAR .*" ../out/probe.log | head -1 | cut -d' ' -f2)
           echo "PROBE javap jar=$jar"
-          for c in net.minecraft.world.level.levelgen.feature.Feature \
-                   net.minecraft.world.level.levelgen.feature.FeaturePlaceContext \
-                   net.minecraft.world.level.WorldGenLevel; do
-            javap -classpath "$jar" "$c" 2>&1 | head -25 | sed "s/^/JAVAP $c: /"
-          done | python3 ../tools/ci_annotations.py report || true
+          probe() {
+            echo "JAVAP $1 grep=$2"
+            javap -classpath "$jar" "$1" 2>&1 | grep -iE "$2" | head -12
+          }
+          {
+          probe net.minecraft.core.registries.BuiltInRegistries "feature"
+          probe net.minecraft.core.registries.Registries "feature"
+          probe net.minecraft.world.level.levelgen.NoiseBasedChunkGenerator "settings"
+          probe net.minecraft.server.level.ServerChunkCache "chunk"
+          probe com.mojang.serialization.MapCodec "unit"
+          probe net.minecraft.core.Registry "register"
+          probe net.minecraft.world.level.levelgen.feature.LakeFeature "codec|place|class"
+          probe net.minecraft.world.level.levelgen.feature.FeatureTypes "feature|register"
+          } | python3 ../tools/ci_annotations.py report || true
