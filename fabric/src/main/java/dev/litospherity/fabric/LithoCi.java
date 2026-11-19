@@ -28,6 +28,7 @@ final class LithoCi {
     }
 
     private static void run(MinecraftServer server, String mode) {
+        if (mode.startsWith("water-live-")) { LithoWaterFeature.LIVE_STEPS = true; LithoCiWater.run(server, mode.substring("water-live-".length())); return; }
         if (mode.startsWith("water-")) {
             LithoCiWater.run(server, mode.substring("water-".length()));
             return;
