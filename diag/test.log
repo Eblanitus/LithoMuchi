@@ -24,36 +24,36 @@
 [1m[96mhelp[0m: consider removing the dependency on `litho-core`
 [1m[96mhelp[0m: to still use for development builds, move to `dev-dependencies`
 [1m[33mwarning[0m: `litho-tests` (manifest) generated 1 warning
-[1m[92m    Finished[0m `test` profile [unoptimized + debuginfo] target(s) in 0.01s
+[1m[92m    Finished[0m `test` profile [unoptimized + debuginfo] target(s) in 0.00s
 [1m[92m     Running[0m unittests src/lib.rs (target/debug/build/litho-core/f278baeed2b586c4/out/litho_core-f278baeed2b586c4)
 
 running 195 tests
-test channel::mirror_tests::mirror_is_rounded_monotone_and_step_limited ... ok
-test channel::mirror_tests::adverse_raw_slope_does_not_make_water_flow_uphill ... ok
 test cache::tests::compute_runs_only_once_per_key_while_cached ... ok
+test channel::mirror_tests::adverse_raw_slope_does_not_make_water_flow_uphill ... ok
+test channel::mirror_tests::mirror_is_rounded_monotone_and_step_limited ... ok
 test cache::tests::cold_warm_and_tiny_cache_give_the_same_answer ... ok
 test channel::tests::dry_network_has_no_channels_and_meanders_are_deterministic ... ok
 test channel::tests::large_gentle_mouth_splits_into_two_to_four_delta_arms ... ok
 test channel::tests::gallery_corridor_is_gated_by_discharge_and_fades_with_distance ... ok
-test channel::tests::steep_or_small_mouths_do_not_grow_deltas ... ok
 test channel::tests::ring_outlets_keep_their_kind_and_queries_merge_deterministically ... ok
-test channel::tests::width_grows_downstream_and_basket_query_matches_brute_force ... ok
+test channel::tests::steep_or_small_mouths_do_not_grow_deltas ... ok
 test classify::t133_tests::step_toward_moves_one_step_and_keeps_reached_target ... ok
+test channel::tests::width_grows_downstream_and_basket_query_matches_brute_force ... ok
+test classify::t133_tests::jitter_of_v1_dev_is_the_v0_jitter ... ok
 test classify::t135_tests::v0_table_is_untouched_by_the_ladder ... ok
 test classify::t135_tests::v1_dev_h_is_constant_inside_a_province ... ok
-test classify::t133_tests::jitter_of_v1_dev_is_the_v0_jitter ... ok
+test classify::t135_tests::v1_dev_table_neighbors_differ_by_at_most_one_h_step ... ok
 test classify::tests::cold_winter_moves_boreal_and_temperate_biomes_one_row_colder ... ok
 test classify::tests::dry_places_with_freezing_winters_are_plains_not_sand ... ok
 test classify::tests::dryness_and_temperature_select_expected_belts ... ok
-test classify::t135_tests::v1_dev_table_neighbors_differ_by_at_most_one_h_step ... ok
+test classify::tests::every_table_cell_is_a_valid_vanilla_cell ... ok
 test classify::tests::ocean_bands_are_monotonic ... ok
 test climate::t131_tests::t131_north_is_unit_and_fallback_is_continuous_at_zero_gradient ... ok
-test classify::tests::every_table_cell_is_a_valid_vanilla_cell ... ok
-test climate::t131_tests::t131_phi_scalar_is_continuous_and_v0_pole_sample_is_bitwise_unchanged ... ok
 test classify::t133_tests::ecotone_is_one_step_only_near_humidity_thresholds_and_never_in_ocean ... ok
+test climate::t131_tests::t131_phi_scalar_is_continuous_and_v0_pole_sample_is_bitwise_unchanged ... ok
 test climate::t136_tests::default_fan_is_the_three_ray_weighted_sum ... ok
-test climate::t136_tests::fan_parameters_validate ... ok
 test climate::t136_tests::fan_averages_real_ray_paths_and_stays_bounded ... ok
+test climate::t136_tests::fan_parameters_validate ... ok
 test climate::t136_tests::v0_ignores_fan_parameters_bit_for_bit ... ok
 test climate::tests::climate_sample_is_finite_on_flat_and_mountainous_surfaces ... ok
 test climate::tests::control_points_a_to_f_match_plan_7_7_6 ... ok
@@ -88,16 +88,14 @@ test generator::net_owner_tests::skipped_river_nets_are_silent_at_the_point ... 
 test generator::ray_lattice_tests::frozen_v0_never_uses_the_lattice ... ok
 test classify::t133_tests::v1_dev_table_and_desert_rim_never_jump_a_step ... ok
 test generator::ray_lattice_tests::node_reproduces_the_reference_ray_at_its_own_point ... ok
-test generator::ray_lattice_tests::column_on_a_lattice_node_traces_one_ray ... ok
 test generator::ray_lattice_tests::ray_field_node_holds_exact_height_and_wind ... ok
 test generator::ray_lattice_tests::ray_field_tiles_are_not_shared_between_worlds ... ok
+test generator::ray_lattice_tests::column_on_a_lattice_node_traces_one_ray ... ok
 test generator::t141_tests::v0_pv_keeps_the_old_derivative_of_w ... ok
 test generator::t144_tests::owned_height_fields_match_the_world_sample_on_both_paths ... ok
 test generator::t160_tests::column_cache_does_not_change_field_answers_or_order ... ok
 test generator::tests::macro_coordinates_scale_with_mode ... ok
 test generator::tests::owner_blocks_match_direct_window ... ok
-test generator::ray_lattice_tests::fast_path_does_not_depend_on_query_order has been running for over 60 seconds
-test generator::ray_lattice_tests::lattice_stays_close_to_the_reference has been running for over 60 seconds
 test generator::ray_lattice_tests::fast_path_does_not_depend_on_query_order ... ok
 test generator::t141_tests::pv_field_is_exposed_and_rivers_cut_their_own_valley ... ok
 test generator::tests::t121_morpho_weights_are_dev_only_and_sum_to_one ... ok
@@ -220,8 +218,7 @@ test vanilla::tests::c_e_w_are_continuous_on_a_smooth_transect ... ok
 test vanilla::tests::continentalness_matches_plan_knots_and_is_continuous_at_coast ... ok
 test vanilla_biome::tests::guard_keeps_forest_on_hill_and_snow_on_mountain ... ok
 test vanilla_biome::tests::known_points ... ok
-test generator::tests::t115_network_lake_delta_and_cross_plate_reach_the_game_fields has been running for over 60 seconds
-test generator::tests::t116_gallery_forest_reaches_a_real_dry_corridor has been running for over 60 seconds
+test generator::ray_lattice_tests::lattice_stays_close_to_the_reference has been running for over 60 seconds
 test generator::tests::t116_gallery_forest_reaches_a_real_dry_corridor ... ok
 test version::tests::parse_roundtrip ... ok
 test vanilla_biome::tests::table_covers_every_inland_cell ... ok
@@ -232,7 +229,7 @@ failures:
 
 ---- hydrology::r2_limit_tests::r1_limit_hides_high_lake_from_fields stdout ----
 
-thread 'hydrology::r2_limit_tests::r1_limit_hides_high_lake_from_fields' (7380) panicked at crates/litho-core/src/hydrology.rs:436:9:
+thread 'hydrology::r2_limit_tests::r1_limit_hides_high_lake_from_fields' (7188) panicked at crates/litho-core/src/hydrology.rs:436:9:
 assertion `left == right` failed: сила берега не должна попадать в E
   left: 1.0
  right: 0.0
@@ -242,6 +239,311 @@ note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
 failures:
     hydrology::r2_limit_tests::r1_limit_hides_high_lake_from_fields
 
-test result: FAILED. 194 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 185.64s
+test result: FAILED. 194 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 94.02s
 
 [1m[91merror[0m: test failed, to rerun pass `-p litho-core --lib`
+[1m[92m     Running[0m tests/k4a_slopes.rs (target/debug/build/litho-core/698b06fe5121073e/out/k4a_slopes-698b06fe5121073e)
+
+running 6 tests
+test crust_is_continuous_where_second_and_third_plates_swap ... ok
+test shore_distance_changes_by_at_most_a_block_per_block ... ok
+test arid_remap_has_no_wall_in_scientific ... ok
+test foothills_do_not_end_in_a_moat ... ok
+test shore_ramp_is_not_a_staircase ... ok
+test plan_point_has_no_wall ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 5.14s
+
+[1m[92m     Running[0m tests/k5_altitude.rs (target/debug/build/litho-core/9989ce6099530a9f/out/k5_altitude-9989ce6099530a9f)
+
+running 3 tests
+test v0_keeps_lapse_by_model_height ... ok
+test cooling_follows_game_height_scientific ... ok
+test cooling_follows_game_height_gameplay ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 20.57s
+
+[1m[92m     Running[0m tests/r2_fields_parity.rs (target/debug/build/litho-core/40a829e9dcfea130/out/r2_fields_parity-40a829e9dcfea130)
+
+running 3 tests
+test r2_fields_match_v1_dev_when_both_live_in_one_thread ... FAILED
+test r2_alone_still_matches_v1_dev has been running for over 60 seconds
+test r2_never_puts_water_biome_where_v1_dev_has_land has been running for over 60 seconds
+test r2_alone_still_matches_v1_dev ... FAILED
+test r2_never_puts_water_biome_where_v1_dev_has_land ... FAILED
+
+failures:
+
+---- r2_fields_match_v1_dev_when_both_live_in_one_thread stdout ----
+litho-core: сеть рек №3, плита 11093486938870342492: 3389 узлов за 2068 мс
+litho-core: сеть рек №6, плита 12849900705836662619: 5963 узлов за 609 мс
+litho-core: сеть рек №9, плита 14060354939718790513: 4006 узлов за 795 мс
+litho-core: сеть рек №12, плита 11093486938870342492: 3389 узлов за 2484 мс
+litho-core: сеть рек №48, плита 7921362888439761013: 4569 узлов за 484 мс
+litho-core: сеть рек №112, плита 15322092776631131159: 4127 узлов за 726 мс
+
+thread 'r2_fields_match_v1_dev_when_both_live_in_one_thread' (11622) panicked at crates/litho-core/tests/r2_fields_parity.rs:98:13:
+Erosion в (11271, 2561): v1-dev 0.41470202078100366, v1-dev-r2 0.38377504684283315
+ v1: c=-0.6784677468080479 e=-0.16179855712517585 w=0.26685349471919595 ocean=true surface=42.72 S=Some(42.71774177306507) pv=-0.627 e_km=-4.38038 kind=Land water=0.000
+ r2: c=-0.6784677468080479 e=-0.16179855712517585 w=0.26685349471919595 ocean=true surface=42.72 S=Some(42.71774177306507) pv=-0.627 e_km=-4.38038 kind=Land water=0.000
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+---- r2_alone_still_matches_v1_dev stdout ----
+litho-core: сеть рек №2, плита 11093486938870342492: 3389 узлов за 1929 мс
+litho-core: сеть рек №4, плита 12849900705836662619: 5963 узлов за 415 мс
+litho-core: сеть рек №7, плита 14060354939718790513: 4006 узлов за 978 мс
+litho-core: сеть рек №11, плита 1552031522129305247: 4782 узлов за 1947 мс
+litho-core: сеть рек №16, плита 6564756037768855268: 4250 узлов за 1758 мс
+litho-core: сеть рек №32, плита 15982103017678222557: 3845 узлов за 407 мс
+litho-core: сеть рек №96, плита 356150445216138105: 5162 узлов за 1595 мс
+
+thread 'r2_alone_still_matches_v1_dev' (11621) panicked at crates/litho-core/tests/r2_fields_parity.rs:122:13:
+Erosion в (11271, 2561): v1-dev 0.41470202078100366 (отдельно), v1-dev-r2 0.38377504684283315
+ v1: c=-0.6784677468080479 e=-0.16179855712517585 w=0.26685349471919595 ocean=true surface=42.72 S=Some(42.71774177306507) pv=-0.627 e_km=-4.38038 kind=Land water=0.000
+ r2: c=-0.6784677468080479 e=-0.16179855712517585 w=0.26685349471919595 ocean=true surface=42.72 S=Some(42.71774177306507) pv=-0.627 e_km=-4.38038 kind=Land water=0.000
+
+---- r2_never_puts_water_biome_where_v1_dev_has_land stdout ----
+litho-core: сеть рек №1, плита 7255016080304068616: 4795 узлов за 1489 мс
+litho-core: сеть рек №5, плита 13431354682420811005: 6631 узлов за 873 мс
+litho-core: сеть рек №8, плита 16748381885456808237: 4325 узлов за 1062 мс
+litho-core: сеть рек №10, плита 7255016080304068616: 4795 узлов за 1470 мс
+litho-core: сеть рек №64, плита 578371708293958641: 4089 узлов за 618 мс
+litho-core: сеть рек №80, плита 6403878254234111115: 4862 узлов за 1057 мс
+litho-core: сеть рек №128, плита 14121592594727853458: 3065 узлов за 656 мс
+litho-core: сеть рек №144, плита 831998402167081169: 5628 узлов за 721 мс
+litho-core: сеть рек №160, плита 2512523699695717500: 2215 узлов за 814 мс
+litho-core: сеть рек №176, плита 14060354939718790513: 4006 узлов за 610 мс
+litho-core: сеть рек №192, плита 6310839946956026079: 3016 узлов за 97 мс
+litho-core: сеть рек №208, плита 3928696694593045479: 3499 узлов за 93 мс
+litho-core: сеть рек №224, плита 2640110249401201744: 3954 узлов за 106 мс
+litho-core: сеть рек №240, плита 13772284079244703911: 4045 узлов за 106 мс
+litho-core: сеть рек №256, плита 6575420181168535509: 7166 узлов за 61 мс
+litho-core: сеть рек №272, плита 14549552723633818706: 2489 узлов за 247 мс
+litho-core: сеть рек №288, плита 4605400185979851761: 3486 узлов за 91 мс
+litho-core: сеть рек №304, плита 16089720017951820898: 3554 узлов за 137 мс
+litho-core: сеть рек №320, плита 12103679836638439308: 3229 узлов за 50 мс
+litho-core: сеть рек №336, плита 15404663516717957771: 3017 узлов за 89 мс
+litho-core: сеть рек №352, плита 18346600389473078418: 3446 узлов за 146 мс
+litho-core: сеть рек №368, плита 14850477579655489407: 4856 узлов за 487 мс
+
+thread 'r2_never_puts_water_biome_where_v1_dev_has_land' (11623) panicked at crates/litho-core/tests/r2_fields_parity.rs:152:13:
+(-13072, -10352): v1-dev суша «forest», v1-dev-r2 вода «river»
+ v1: c=0.4259028323900181 e=0.38586437276902275 w=0.25 ocean=false surface=69.86 S=Some(69.85515020885168) pv=0.091 e_km=0.54972 kind=DeferredWater water=0.000
+ r2: c=0.4259028323900181 e=0.1468593631472328 w=0.11753248248671586 ocean=false surface=66.76 S=Some(66.7619133207193) pv=-0.647 e_km=0.54972 kind=Lake water=0.000
+
+
+failures:
+    r2_alone_still_matches_v1_dev
+    r2_fields_match_v1_dev_when_both_live_in_one_thread
+    r2_never_puts_water_biome_where_v1_dev_has_land
+
+test result: FAILED. 0 passed; 3 failed; 0 ignored; 0 measured; 0 filtered out; finished in 130.64s
+
+[1m[91merror[0m: test failed, to rerun pass `-p litho-core --test r2_fields_parity`
+[1m[92m     Running[0m tests/w1_water_update.rs (target/debug/build/litho-core/94c4a8ab3094c79e/out/w1_water_update-94c4a8ab3094c79e)
+
+running 5 tests
+test s0_exists_only_in_water_update ... ok
+test water_section_is_w_only ... ok
+test w_keeps_land_fields_and_takes_own_levels ... FAILED
+test s0_node_matches_s0_at ... ok
+test s0_is_independent_of_the_water_layer ... ok
+
+failures:
+
+---- w_keeps_land_fields_and_takes_own_levels stdout ----
+litho-core: сеть рек №2, плита 17566568418101676856: 3387 узлов за 339 мс
+litho-core: сеть рек №4, плита 17566568418101676856: 3387 узлов за 613 мс
+
+thread 'w_keeps_land_fields_and_takes_own_levels' (23325) panicked at crates/litho-core/tests/w1_water_update.rs:44:17:
+уровень ниже моря в (-20000, -20000), режим Scientific
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    w_keeps_land_fields_and_takes_own_levels
+
+test result: FAILED. 4 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 52.81s
+
+[1m[91merror[0m: test failed, to rerun pass `-p litho-core --test w1_water_update`
+[1m[92m     Running[0m unittests src/lib.rs (target/debug/build/litho-ffi/d2fcd5d7d0037ccf/out/litho_ffi-d2fcd5d7d0037ccf)
+
+running 4 tests
+test tests::bad_arguments_are_rejected ... ok
+test tests::generator_is_thread_safe ... ok
+test tests::batch_matches_core_bitwise has been running for over 60 seconds
+test tests::water_batch_matches_core_bitwise has been running for over 60 seconds
+test tests::batch_matches_core_bitwise ... ok
+test tests::water_batch_matches_core_bitwise ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 164.18s
+
+[1m[92m     Running[0m unittests src/main.rs (target/debug/build/litho-sandbox/8819528787a32225/out/litho_sandbox-8819528787a32225)
+
+running 80 tests
+test acceptance::tests::acceptance_targets_match_section_10_1 ... ok
+test acceptance::tests::advisory_targets_match_section_12_4 ... ok
+test acceptance::tests::bad_spawn_is_only_an_advisory ... ok
+test acceptance::tests::climate124_outside_ranges_does_not_fail_10_1 ... ok
+test acceptance::tests::empty_scan_has_no_12_4_data ... ok
+test acceptance::tests::climate124_within_ranges_is_reported_but_not_a_verdict ... ok
+test acceptance::tests::full_volume_with_bad_climate_jump_fails ... ok
+test acceptance::tests::full_volume_with_good_numbers_passes ... ok
+test acceptance::tests::nan_12_4_value_is_no_data_not_within ... ok
+test acceptance::tests::nan_is_a_failure_not_a_pass ... ok
+test acceptance::tests::one_failed_run_makes_summary_fail ... ok
+test acceptance::tests::small_scan_is_not_acceptance_even_when_numbers_are_good ... ok
+test acceptance::tests::run_json_12_4_block_is_advisory ... ok
+test acceptance::tests::summary_needs_all_32_runs_for_full_volume ... ok
+test acceptance::tests::json_verdict_is_parseable ... ok
+test acceptance::tests::hydrology_jump_without_target_does_not_change_verdict ... ok
+test acceptance::tests::wind_above_five_degrees_fails ... ok
+test acceptance::tests::thin_strips_fail_above_tolerance ... ok
+test height::tests::hermite_spline_uses_slopes_and_clamps_ends ... ok
+test height::tests::arithmetic_and_named_inputs ... ok
+test height::tests::missing_game_data_is_actionable_error ... ok
+test height::tests::new_chunk_branch_does_not_evaluate_old_blend_offset ... ok
+test acceptance::tests::summary_counts_12_4_rows_and_json_is_parseable ... ok
+test height::tests::pv_override_replaces_only_the_pv_input ... ok
+test height::tests::owned_height_uses_core_sample_and_ignores_splines ... ok
+test height::tests::rejects_unknown_nodes_and_bad_splines_instead_of_guessing ... ok
+test height_stats::boundary_tests::field_jump_ignores_biome_labels_and_counts_real_h_steps ... ok
+test height::tests::synthetic_is_explicit_and_deterministic ... ok
+test height_stats::boundary_tests::diagonal_staircase_longer_than_512_blocks_is_straight ... ok
+test height_stats::boundary_tests::hydrological_override_is_kept_in_all_land_but_not_in_climate_metric ... ok
+test height_stats::boundary_tests::no_land_means_zero_percentages_not_nan ... ok
+test height_stats::boundary_tests::axis_metrics_detect_jump_straight_run_and_thin_strip ... ok
+test height_stats::boundary_tests::short_diagonal_is_not_a_long_straight_boundary ... ok
+test height_stats::boundary_tests::vanilla_humidity_bands_match_26_3_edges_and_core_centers ... ok
+test height_stats::boundary_tests::wavy_diagonal_beyond_sixteen_blocks_is_not_straight ... ok
+test height_stats::coast_tests::coast_json_is_parseable ... ok
+test height_stats::coast_tests::east_and_west_coasts_are_separated ... ok
+test height_stats::coast_tests::north_only_coast_and_out_of_band_are_ignored ... ok
+test height_stats::coast_tests::pole_east_decides_orientation ... ok
+test height_stats::boundary_tests::straight_edges_are_a_union_not_double_counted_at_junctions ... ok
+test height_stats::coast_tests::verdict_needs_min_samples_on_both_sides ... ok
+test height_stats::dust_tests::diagonal_cells_are_two_specks ... ok
+test height_stats::dust_tests::dust_json_is_parseable ... ok
+test height_stats::dust_resolution_tests::coarse_cell_is_no_data_not_a_pass ... ok
+test height_stats::dust_tests::small_island_counts_big_and_border_do_not ... ok
+test height_stats::plate_tests::median_of_single_plate_and_empty_is_none ... ok
+test height_stats::plate_tests::border_plates_are_excluded_from_diameters ... ok
+test height_stats::dust_tests::verdict_needs_ten_square_l ... ok
+test height_stats::plate_tests::plate_json_is_parseable ... ok
+test height_stats::shadow_tests::lee_side_is_drier_downwind ... ok
+test height_stats::shadow_tests::low_mountains_and_calm_are_ignored ... ok
+test height_stats::shadow_tests::shadow_json_is_parseable ... ok
+test height_stats::shadow_tests::verdict_needs_min_ridge_samples ... ok
+test height_stats::zonal_tests::pole_boundary_belongs_to_last_band ... ok
+test height_stats::zonal_tests::sparse_bands_and_non_finite_values_are_no_data ... ok
+test height_stats::zonal_tests::textbook_profile_is_within_12_4_orientation ... ok
+test height_stats::zonal_tests::wrong_max_or_min_is_outside_orientation ... ok
+test json::tests::parses_nested_json_and_unicode ... ok
+test height_stats::zonal_tests::zonal_json_is_parseable_and_no_data_is_null ... ok
+test json::tests::quotes_control_characters ... ok
+test palette::tests::hash_palette_uses_independent_channels ... ok
+test plan_metrics::tests::e_band_matches_plan_edges ... ok
+test json::tests::rejects_malformed_and_ambiguous_json ... ok
+test plan_metrics::tests::lakes_are_counted_as_bodies_not_as_node_area ... ok
+test plan_metrics::tests::reach_report_counts_ends ... ok
+test plan_metrics::tests::pct_is_zero_without_total ... ok
+test plan_metrics::tests::zone_water_is_counted_in_the_zone_not_only_on_dry_land ... ok
+test plan_metrics::tests::river_rows_mark_failures ... ok
+test png::tests::crc_and_adler_known_values ... ok
+test png::tests::png_starts_with_signature ... ok
+test s0_node_cost::tests::lattice_meets_needs_both_percentiles ... FAILED
+test s0_node_cost::tests::path_names_are_stable ... ok
+test s0_node_cost::tests::percentile_interpolates_between_neighbors ... ok
+test tune::tests::unknown_key_and_bad_index_are_errors ... ok
+test tune::tests::set_changes_scalar_array_and_table ... ok
+test height_stats::tests::v1_dev_owned_stats_use_core_height_without_synthetic_warning ... ok
+test water::tests::v1_dev_has_no_water_above_the_sea ... ok
+test height_stats::tests::tiny_stats_are_finite_and_json_is_valid ... ok
+test water::tests::r2_has_no_leaks_where_water_exists ... ok
+test water::tests::points_are_capped_and_above_the_sea has been running for over 60 seconds
+test water::tests::points_are_capped_and_above_the_sea ... ok
+
+failures:
+
+---- s0_node_cost::tests::lattice_meets_needs_both_percentiles stdout ----
+
+thread 's0_node_cost::tests::lattice_meets_needs_both_percentiles' (44419) panicked at crates/litho-sandbox/src/s0_node_cost.rs:313:9:
+assertion failed: !lattice.meets()
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    s0_node_cost::tests::lattice_meets_needs_both_percentiles
+
+test result: FAILED. 79 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 68.28s
+
+[1m[91merror[0m: test failed, to rerun pass `-p litho-sandbox --bin litho-sandbox`
+[1m[92m     Running[0m unittests src/lib.rs (target/debug/build/litho-tests/819d3bd6af2acee9/out/litho_tests-819d3bd6af2acee9)
+
+running 20 tests
+test drainage_dev::frozen_v0_rejects_the_new_network ... ok
+test drainage_dev::real_plate_network_is_deterministic_cached_and_mode_independent ... ok
+test drainage_dev::channel_query_crosses_the_nearest_plate_boundary_in_fixed_order ... ok
+test drainage_dev::discharge_is_handed_across_plate_boundaries ... ok
+test fast_path::adjacent_blocks_are_continuous ... ok
+test drainage_dev::surface_query_finds_lake_water_and_delta_arms_in_v1_dev ... ok
+test fast_path::fields_are_finite_at_the_world_edge ... ok
+test golden::primitives_match_bit_for_bit ... ok
+test invariants::all_values_are_finite ... ok
+test invariants::crust_matches_across_scales ... ok
+test invariants::noise_is_bounded_on_a_large_grid ... ok
+test invariants::one_planet_two_scales ... ok
+test invariants::plate_ids_do_not_depend_on_order ... ok
+test fast_path::fast_path_matches_reference ... ok
+test fast_path::cache_does_not_change_the_answer ... ok
+test water_relief_dev::dev_sign_is_saturated_away_from_narrow_zero_lines ... ok
+test water_relief_dev::unit_noise_has_the_calibrated_spread ... ok
+test drainage_dev::handoff_does_not_depend_on_query_order ... ok
+test water_relief_dev::dev_paths_agree_and_preserve_macro_scale ... ok
+test water_relief_dev::dev_fields_are_finite_and_bounded ... ok
+
+test result: ok. 20 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 58.80s
+
+[1m[92m     Running[0m tests/horizon_bridge.rs (target/debug/build/litho-tests/eb489f54889b646f/out/horizon_bridge-eb489f54889b646f)
+
+running 8 tests
+test aquifer_contract::is_lava_is_cancelled_only_while_the_thread_works_on_our_aquifer ... ok
+test aquifer_contract::barrier_walls_only_the_border_of_lava_and_water_cells ... ok
+test hook_contract::aquifer_lava_is_ours_only_in_a_v1_dev_world ... ok
+test bulk_matches_scalar_and_preserves_tail ... ok
+test hook_contract::hook_replaces_our_noise_and_passes_through_others ... ok
+test aquifer_contract::compile_hook_wraps_our_world_and_keeps_vanilla_and_errors ... ok
+test aquifer_contract::our_world_gets_wrapped_fields_and_vanilla_world_does_not ... ok
+test names_and_smoke ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 6.53s
+
+[1m[92m     Running[0m unittests src/main.rs (target/debug/build/xtask/5a6f613a12aa7e53/out/xtask-5a6f613a12aa7e53)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+[1m[92m   Doc-tests[0m litho_core
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+[1m[92m   Doc-tests[0m litho_ffi
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+[1m[92m   Doc-tests[0m litho_tests
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+[1m[91merror[0m: 4 targets failed:
+    `-p litho-core --lib`
+    `-p litho-core --test r2_fields_parity`
+    `-p litho-core --test w1_water_update`
+    `-p litho-sandbox --bin litho-sandbox`
