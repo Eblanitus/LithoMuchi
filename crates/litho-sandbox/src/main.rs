@@ -15,6 +15,7 @@ mod tune;
 mod vanilla_biomes;
 mod walls;
 mod water;
+mod water_stats;
 
 use std::path::Path;
 use std::time::Instant;
@@ -676,6 +677,120 @@ fn cmd_water_points(args: &[String]) -> Result<(), String> {
     }
     if points.is_empty() {
         return Err("мест с водой выше моря не нашлось: увеличьте --radius-l".into());
+    }
+    Ok(())
+}
+
+fn cmd_water_stats(args: &[String]) -> Result<(), String> {
+    let mut opts = options_from(args)?;
+    // §10.1: допускается и позиционная форма `water-stats SEED MODE`.
+    if let Some(text) = args.first() {
+        if let Ok(seed) = text.parse::<i64>() {
+            opts.seed = seed;
+        }
+    }
+    if let Some(text) = args.get(1) {
+        if let Some(mode) = Mode::parse(text) {
+            opts.mode = mode;
+        }
+    }
+    let generator = generator(&opts)?;
+    if !opts.version.is_water_relief_r2() {
+        return Err(format!(
+            "water-stats нужен версии с водой выше моря (v1-dev-r2, v1-dev-w), сейчас {}",
+            opts.version.as_str()
+        ));
+    }
+    let window = match value(args, "--window") {
+        Some(text) => text.parse::<i64>().map_err(|e| format!("--window: {e}"))?,
+        // Полный плановый объём (±8000 / ±24000) — отдельной задачей: он в
+        // разы дороже дымового окна, а метрика та же.
+        None => match opts.mode {
+            Mode::Gameplay => 2048,
+            Mode::Scientific => 4096,
+        },
+    };
+    let step = match value(args, "--step") {
+        Some(text) => text.parse::<i64>().map_err(|e| format!("--step: {e}"))?,
+        None => match opts.mode {
+            Mode::Gameplay => 8,
+            Mode::Scientific => 16,
+        },
+    };
+    if window <= 0 || step <= 0 {
+        return Err("--window и --step должны быть > 0".into());
+    }
+    let started = Instant::now();
+    let grid = water_stats::Window::new(&generator, (opts.center_x, opts.center_z), window, step)?;
+    let stats = grid.stats(opts.mode == Mode::Scientific);
+    let seconds = started.elapsed().as_secs_f64();
+    let json = args.iter().any(|arg| arg == "--json");
+    let above_sea = if stats.river_columns == 0 {
+        0.0
+    } else {
+        100.0 * stats.river_above_sea as f64 / stats.river_columns as f64
+    };
+    if json {
+        let zones: Vec<String> = stats
+            .zone_names()
+            .iter()
+            .enumerate()
+            .map(|(index, name)| {
+                format!("{{\"name\":\"{name}\",\"lakes\":{}}}", stats.zone_lakes[index])
+            })
+            .collect();
+        let mut fields: Vec<String> = Vec::new();
+        fields.push(format!("\"seed\":{}", opts.seed));
+        fields.push(format!("\"mode\":\"{}\"", opts.mode.as_str()));
+        fields.push(format!("\"version\":\"{}\"", opts.version.as_str()));
+        fields.push(format!("\"window\":{window}"));
+        fields.push(format!("\"step\":{step}"));
+        fields.push(format!("\"seconds\":{seconds:.2}"));
+        fields.push(format!("\"land\":{}", stats.land));
+        fields.push(format!("\"river_columns\":{}", stats.river_columns));
+        fields.push(format!("\"river_above_sea_pct\":{above_sea:.2}"));
+        fields.push(format!("\"gorge_p50\":{:.2}", stats.gorge_p50));
+        fields.push(format!("\"gorge_p90\":{:.2}", stats.gorge_p90));
+        fields.push(format!("\"gorge_p99\":{:.2}", stats.gorge_p99));
+        fields.push(format!("\"lakes\":{}", stats.lakes));
+        fields.push(format!("\"lakes_per_100l2\":{:.3}", stats.lakes_per_100l2));
+        fields.push(format!("\"lake_area_pct\":{:.3}", stats.lake_area_pct));
+        fields.push(format!("\"lake_fit_pct\":{:.2}", stats.lake_fit_pct));
+        fields.push(format!("\"lakes_ge_80\":{}", stats.lakes_ge_80));
+        fields.push(format!("\"walls_pct\":{:.2}", stats.walls_pct));
+        fields.push(format!("\"zones\":[{}]", zones.join(",")));
+        println!("{{{}}}", fields.join(","));
+        return Ok(());
+    }
+    println!(
+        "water-stats: сид {} режим {} версия {} · окно ±{} шаг {} · суши {} колонок · {seconds:.1} с",
+        opts.seed,
+        opts.mode.as_str(),
+        opts.version.as_str(),
+        window / 2,
+        step,
+        stats.land
+    );
+    println!(
+        "  реки: вода выше моря {above_sea:.2} % колонок русла; врез p50 {:.2}, p90 {:.2}, p99 {:.2} блока",
+        stats.gorge_p50, stats.gorge_p90, stats.gorge_p99
+    );
+    println!(
+        "  озёра: {} водоёмов, {:.2} % площади суши, в котловине {:.2} % площади, ≥ 80 блоков — {}",
+        stats.lakes, stats.lake_area_pct, stats.lake_fit_pct, stats.lakes_ge_80
+    );
+    println!(
+        "  на 100 L² суши: {:.2} озера; стены у воды: {:.2} % колонок берега",
+        stats.lakes_per_100l2, stats.walls_pct
+    );
+    let mut parts = Vec::new();
+    for (index, name) in stats.zone_names().iter().enumerate() {
+        if stats.zone_lakes[index] > 0 {
+            parts.push(format!("{name} {}", stats.zone_lakes[index]));
+        }
+    }
+    if !parts.is_empty() {
+        println!("  по зонам: {}", parts.join(", "));
     }
     Ok(())
 }
@@ -2093,6 +2208,7 @@ fn usage() -> &'static str {
        water-leaks  R2: инвариант «вода не уходит за берега» (v1-dev-r2),\n\
                     --size 2048 --step 4, три центра\n\
        water-points R2: до 20 мест с водой выше моря для CI и автора (v1-dev-r2),\n\
+       water-stats  ВО0-3: реки (вода выше моря, врез), озёра по водоёмам, стены (v1-dev-r2),\n\
                     --radius-l 32\n\
 vanilla-biomes биом игры (копия ванильной таблицы) против нашего, горы на холмах (Д-118);\n\
              --report ПУТЬ: сверка копии с отчётом datagen biome_parameters\n\
@@ -2140,6 +2256,7 @@ fn main() -> Result<(), String> {
         "walls" => cmd_walls(&args[1..]),
         "water-leaks" => cmd_water_leaks(&args[1..]),
         "water-points" => cmd_water_points(&args[1..]),
+        "water-stats" => cmd_water_stats(&args[1..]),
         "vanilla-biomes" => cmd_vanilla_biomes(&args[1..]),
         "paths" => cmd_paths(&args[1..]),
         "drainage" => cmd_drainage(&args[1..]),

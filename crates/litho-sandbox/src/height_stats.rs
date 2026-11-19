@@ -1346,7 +1346,7 @@ impl HeightStats {
                     } else {
                         plan_metrics::Basin::None
                     };
-                    plan.add(c_land, v.e, river, h.water > 0.5, basin, dominant);
+                    plan.add_cell(i, j, c_land, v.e, river, h.water > 0.5, basin, dominant);
                     // T123: те же величины, что входят в перевод E, чтобы
                     // видеть перекрытие гор/плато, а не догадываться о нём.
                     let params = generator.params();
