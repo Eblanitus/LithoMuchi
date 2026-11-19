@@ -37,14 +37,14 @@ jobs:
           jar=$(grep -oE "^PROBEJAR .*" ../out/probe.log | head -1 | sed 's/^PROBEJAR //')
           {
             echo "JAR $(basename "$jar")"
-            echo "--- BuiltInRegistries.FEATURE"
-            javap -classpath "$jar" net.minecraft.core.registries.BuiltInRegistries 2>&1 | grep -iE "FEATURE" | head -5
-            echo "--- NoiseBasedChunkGenerator"
-            javap -classpath "$jar" net.minecraft.world.level.levelgen.NoiseBasedChunkGenerator 2>&1 | grep -iE "settings|getCodec" | head -8
-            echo "--- ServerChunkCache"
-            javap -classpath "$jar" net.minecraft.server.level.ServerChunkCache 2>&1 | grep -iE "loaded|getChunk" | head -8
-            echo "--- MapCodec.unit"
-            javap -classpath "$jar" com.mojang.serialization.MapCodec 2>&1 | grep -iE "unit" | head -4
-            echo "--- Registry.register"
-            javap -classpath "$jar" net.minecraft.core.Registry 2>&1 | grep -iE "register" | head -4
+            echo "--- MapCodec статические"
+            javap -classpath "$jar" com.mojang.serialization.MapCodec 2>&1 | grep -E "static" | head -10
+            echo "--- NoOpFeature"
+            javap -classpath "$jar" net.minecraft.world.level.levelgen.feature.NoOpFeature 2>&1 | head -12
+            echo "--- FeatureTypes"
+            javap -classpath "$jar" net.minecraft.world.level.levelgen.feature.FeatureTypes 2>&1 | head -12
+            echo "--- Holder"
+            javap -classpath "$jar" net.minecraft.core.Holder 2>&1 | grep -iE "unwrap|key" | head -6
+            echo "--- ResourceKey"
+            javap -classpath "$jar" net.minecraft.resources.ResourceKey 2>&1 | grep -iE "location|identifier|registry" | head -6
           } | python3 ../tools/ci_annotations.py report || true
