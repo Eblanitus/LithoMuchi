@@ -17,32 +17,6 @@
 [1m[92m    Checking[0m litho-core v0.1.0 (/home/runner/work/LithoMuchi/LithoMuchi/crates/litho-core)
 [1m[92m    Checking[0m litho-tests v0.1.0 (/home/runner/work/LithoMuchi/LithoMuchi/crates/litho-tests)
 [1m[92m    Checking[0m litho-sandbox v0.1.0 (/home/runner/work/LithoMuchi/LithoMuchi/crates/litho-sandbox)
-[1m[92m    Checking[0m litho-ffi v0.1.0 (/home/runner/work/LithoMuchi/LithoMuchi/crates/litho-ffi)
 [1m[92m    Checking[0m xtask v0.1.0 (/home/runner/work/LithoMuchi/LithoMuchi/tools/xtask)
-[1m[91merror[0m[1m: unnecessary `>= y + 1` or `x - 1 >=`[0m
-   [1m[94m--> [0mcrates/litho-sandbox/src/water_stats.rs:143:38
-    [1m[94m|[0m
-[1m[94m143[0m [1m[94m|[0m                     if cell.water && cell.level >= SEA + 1 {
-    [1m[94m|[0m                                      [1m[91m^^^^^^^^^^^^^^^^^^^^^[0m [1m[91mhelp: change it to: `cell.level > SEA`[0m
-    [1m[94m|[0m
-    [1m[94m= [0m[1mhelp[0m: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#int_plus_one
-    [1m[94m= [0m[1mnote[0m: `-D clippy::int-plus-one` implied by `-D warnings`
-    [1m[94m= [0m[1mhelp[0m: to override `-D warnings` add `#[allow(clippy::int_plus_one)]`
-
-[1m[91merror[0m[1m: fields `x0` and `z0` are never read[0m
-  [1m[94m--> [0mcrates/litho-sandbox/src/water_stats.rs:85:5
-   [1m[94m|[0m
-[1m[94m81[0m [1m[94m|[0m pub struct Window {
-   [1m[94m|[0m            [1m[94m------[0m [1m[94mfields in this struct[0m
-[1m[94m...[0m
-[1m[94m85[0m [1m[94m|[0m     x0: i64,
-   [1m[94m|[0m     [1m[91m^^[0m
-[1m[94m86[0m [1m[94m|[0m     z0: i64,
-   [1m[94m|[0m     [1m[91m^^[0m
-   [1m[94m|[0m
-   [1m[94m= [0m[1mnote[0m: `-D dead-code` implied by `-D warnings`
-   [1m[94m= [0m[1mhelp[0m: to override `-D warnings` add `#[expect(dead_code)]` or `#[allow(dead_code)]`
-
-[1m[91merror[0m: could not compile `litho-sandbox` (bin "litho-sandbox") due to 2 previous errors
-[1m[33mwarning[0m: build failed, waiting for other jobs to finish...
-[1m[91merror[0m: could not compile `litho-sandbox` (bin "litho-sandbox" test) due to 2 previous errors
+[1m[92m    Checking[0m litho-ffi v0.1.0 (/home/runner/work/LithoMuchi/LithoMuchi/crates/litho-ffi)
+[1m[92m    Finished[0m `dev` profile [unoptimized + debuginfo] target(s) in 7.80s

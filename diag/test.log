@@ -14,20 +14,6 @@
    [1m[94m|[0m
 [1m[96mhelp[0m: consider removing the field `workspace.package.repository`
 [1m[33mwarning[0m: workspace (manifest) generated 2 warnings
-[1m[33mwarning[0m[1m: fields `x0` and `z0` are never read[0m
-  [1m[94m--> [0mcrates/litho-sandbox/src/water_stats.rs:85:5
-   [1m[94m|[0m
-[1m[94m81[0m [1m[94m|[0m pub struct Window {
-   [1m[94m|[0m            [1m[94m------[0m [1m[94mfields in this struct[0m
-[1m[94m...[0m
-[1m[94m85[0m [1m[94m|[0m     x0: i64,
-   [1m[94m|[0m     [1m[33m^^[0m
-[1m[94m86[0m [1m[94m|[0m     z0: i64,
-   [1m[94m|[0m     [1m[33m^^[0m
-   [1m[94m|[0m
-   [1m[94m= [0m[1mnote[0m: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
-
-[1m[33mwarning[0m: `litho-sandbox` (bin "litho-sandbox" test) generated 1 warning
 [1m[33mwarning[0m[1m: unused dependency `litho-core`[0m
   [1m[94m--> [0mcrates/litho-tests/Cargo.toml:13:1
    [1m[94m|[0m
@@ -42,32 +28,32 @@
 [1m[92m     Running[0m unittests src/lib.rs (target/debug/build/litho-core/f278baeed2b586c4/out/litho_core-f278baeed2b586c4)
 
 running 195 tests
-test cache::tests::compute_runs_only_once_per_key_while_cached ... ok
 test channel::mirror_tests::mirror_is_rounded_monotone_and_step_limited ... ok
 test channel::mirror_tests::adverse_raw_slope_does_not_make_water_flow_uphill ... ok
+test cache::tests::compute_runs_only_once_per_key_while_cached ... ok
 test cache::tests::cold_warm_and_tiny_cache_give_the_same_answer ... ok
 test channel::tests::dry_network_has_no_channels_and_meanders_are_deterministic ... ok
 test channel::tests::large_gentle_mouth_splits_into_two_to_four_delta_arms ... ok
 test channel::tests::gallery_corridor_is_gated_by_discharge_and_fades_with_distance ... ok
 test channel::tests::steep_or_small_mouths_do_not_grow_deltas ... ok
 test channel::tests::ring_outlets_keep_their_kind_and_queries_merge_deterministically ... ok
-test classify::t133_tests::step_toward_moves_one_step_and_keeps_reached_target ... ok
 test channel::tests::width_grows_downstream_and_basket_query_matches_brute_force ... ok
+test classify::t133_tests::step_toward_moves_one_step_and_keeps_reached_target ... ok
 test classify::t135_tests::v0_table_is_untouched_by_the_ladder ... ok
-test classify::t133_tests::jitter_of_v1_dev_is_the_v0_jitter ... ok
 test classify::t135_tests::v1_dev_h_is_constant_inside_a_province ... ok
+test classify::t133_tests::jitter_of_v1_dev_is_the_v0_jitter ... ok
 test classify::tests::cold_winter_moves_boreal_and_temperate_biomes_one_row_colder ... ok
 test classify::tests::dry_places_with_freezing_winters_are_plains_not_sand ... ok
 test classify::tests::dryness_and_temperature_select_expected_belts ... ok
-test classify::tests::every_table_cell_is_a_valid_vanilla_cell ... ok
+test classify::t135_tests::v1_dev_table_neighbors_differ_by_at_most_one_h_step ... ok
 test classify::tests::ocean_bands_are_monotonic ... ok
 test climate::t131_tests::t131_north_is_unit_and_fallback_is_continuous_at_zero_gradient ... ok
-test classify::t135_tests::v1_dev_table_neighbors_differ_by_at_most_one_h_step ... ok
+test classify::tests::every_table_cell_is_a_valid_vanilla_cell ... ok
 test climate::t131_tests::t131_phi_scalar_is_continuous_and_v0_pole_sample_is_bitwise_unchanged ... ok
 test classify::t133_tests::ecotone_is_one_step_only_near_humidity_thresholds_and_never_in_ocean ... ok
-test climate::t136_tests::fan_averages_real_ray_paths_and_stays_bounded ... ok
 test climate::t136_tests::default_fan_is_the_three_ray_weighted_sum ... ok
 test climate::t136_tests::fan_parameters_validate ... ok
+test climate::t136_tests::fan_averages_real_ray_paths_and_stays_bounded ... ok
 test climate::t136_tests::v0_ignores_fan_parameters_bit_for_bit ... ok
 test climate::tests::climate_sample_is_finite_on_flat_and_mountainous_surfaces ... ok
 test climate::tests::control_points_a_to_f_match_plan_7_7_6 ... ok
@@ -102,9 +88,9 @@ test generator::net_owner_tests::skipped_river_nets_are_silent_at_the_point ... 
 test generator::ray_lattice_tests::frozen_v0_never_uses_the_lattice ... ok
 test classify::t133_tests::v1_dev_table_and_desert_rim_never_jump_a_step ... ok
 test generator::ray_lattice_tests::node_reproduces_the_reference_ray_at_its_own_point ... ok
+test generator::ray_lattice_tests::column_on_a_lattice_node_traces_one_ray ... ok
 test generator::ray_lattice_tests::ray_field_node_holds_exact_height_and_wind ... ok
 test generator::ray_lattice_tests::ray_field_tiles_are_not_shared_between_worlds ... ok
-test generator::ray_lattice_tests::column_on_a_lattice_node_traces_one_ray ... ok
 test generator::t141_tests::v0_pv_keeps_the_old_derivative_of_w ... ok
 test generator::t144_tests::owned_height_fields_match_the_world_sample_on_both_paths ... ok
 test generator::t160_tests::column_cache_does_not_change_field_answers_or_order ... ok
@@ -246,7 +232,7 @@ failures:
 
 ---- hydrology::r2_limit_tests::r1_limit_hides_high_lake_from_fields stdout ----
 
-thread 'hydrology::r2_limit_tests::r1_limit_hides_high_lake_from_fields' (7323) panicked at crates/litho-core/src/hydrology.rs:436:9:
+thread 'hydrology::r2_limit_tests::r1_limit_hides_high_lake_from_fields' (7380) panicked at crates/litho-core/src/hydrology.rs:436:9:
 assertion `left == right` failed: сила берега не должна попадать в E
   left: 1.0
  right: 0.0
@@ -256,6 +242,6 @@ note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
 failures:
     hydrology::r2_limit_tests::r1_limit_hides_high_lake_from_fields
 
-test result: FAILED. 194 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 187.09s
+test result: FAILED. 194 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 185.64s
 
 [1m[91merror[0m: test failed, to rerun pass `-p litho-core --lib`
