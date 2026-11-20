@@ -368,7 +368,11 @@ impl ChannelNetwork {
                 // рифт, трансформ) или передача воды сети соседней плиты.
                 // Продолжение за границей рисует сеть соседа с суммарным Q.
                 node.depression.is_none()
-                    && node.route_km >= 0.0
+                    && if params.version.is_water_update() {
+                        node.outlet != crate::drainage::DrainageOutlet::Sea
+                    } else {
+                        node.route_km >= 0.
+                    }
                     && runoff.nodes()[k].discharge_mm_l2 >= q_min
             })
             .collect();
@@ -379,6 +383,16 @@ impl ChannelNetwork {
                     if down < nodes.len() && active[down] {
                         upstream[down] += 1;
                     }
+                }
+            }
+        }
+        // An active discharge from the other plate is a parent too. Otherwise
+        // one local upstream hides the confluence inside a smoothed polyline;
+        // no reach starts at the handoff cell and its level is never inherited.
+        if params.version.is_water_update() {
+            for (k, flow) in runoff.nodes().iter().enumerate() {
+                if flow.inflow_mm_l2 >= q_min && upstream[k] == 1 {
+                    upstream[k] += 1;
                 }
             }
         }

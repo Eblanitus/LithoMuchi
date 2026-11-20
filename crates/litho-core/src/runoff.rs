@@ -394,11 +394,11 @@ impl Runoff {
                     reason: "неконечный или отрицательный приток от соседей",
                 });
             }
-            let land = node.in_plate && node.route_km >= 0.0 && node.outlet != DrainageOutlet::Sea;
+            let land = node.in_plate && land_for_runoff(node.route_km, node.outlet, params);
             // Д-094: климат читают только узлы, которым он нужен. Море и
             // кольцо соседа воды не дают и не испаряют; их поля климата
             // остаются нулевыми, а узлы решётки под ними не считаются.
-            let climate = if needs_climate(node) {
+            let climate = if needs_climate(node, params) {
                 grid.sample(node.point)?
             } else {
                 RunoffClimate {
@@ -612,13 +612,19 @@ fn basin_terminal(balance: BasinBalance) -> FlowTerminal {
     }
 }
 
+/// In W the sign of route_km is the height of the *visible surface*
+/// relative to sea level. Ocean outlets are classified by crust, not that sign.
+/// A low inland saddle still receives rain and routes discharge.
+pub(crate) fn land_for_runoff(route: f64, outlet: DrainageOutlet, params: &Params) -> bool {
+    outlet != DrainageOutlet::Sea && (params.version.is_water_update() || route >= 0.)
+}
+
 /// Нужен ли узлу климат: свой узел суши даёт сток, свой узел впадины —
 /// дождь на зеркало и испарение. Остальные (море, кольцо соседа) климат не
 /// читают. Точки для [`ClimateGrid::build`] берутся только у таких узлов.
-pub fn needs_climate(node: &DrainageNode) -> bool {
+pub fn needs_climate(node: &DrainageNode, params: &Params) -> bool {
     node.in_plate
-        && (node.depression.is_some()
-            || (node.route_km >= 0.0 && node.outlet != DrainageOutlet::Sea))
+        && (node.depression.is_some() || land_for_runoff(node.route_km, node.outlet, params))
 }
 
 /// Шаг 2 плана (T113): узлы, вода которых приходит в `targets`, и сами
@@ -1010,6 +1016,25 @@ mod tests {
         assert!(dry.nodes().iter().all(|n| n.discharge_mm_l2 == 0.0));
     }
 
+    #[test]
+    fn w_low_inland_node_feeds_sea_even_below_sea_route() {
+        let nodes = [
+            node(0, -0.02, Some(1), DrainageOutlet::None),
+            node(1, 0.03, None, DrainageOutlet::Sea),
+        ];
+        let g = grid(&[nodes[0].point, nodes[1].point], 100., 0.);
+        let mut p = params();
+        let before = Runoff::calculate(&nodes, &[], &g, &p).unwrap();
+        assert_eq!(before.nodes()[0].local_supply_mm_l2, 0.);
+        p.version = crate::GenVersion::V1DevW;
+        let w = Runoff::calculate(&nodes, &[], &g, &p).unwrap();
+        assert!(w.nodes()[0].local_supply_mm_l2 > 0.);
+        assert_eq!(w.nodes()[1].local_supply_mm_l2, 0.);
+        assert_eq!(
+            w.nodes()[1].discharge_mm_l2,
+            w.nodes()[0].local_supply_mm_l2
+        );
+    }
     #[test]
     fn neighbour_inflow_is_added_and_handed_on_with_balance() {
         // Шаг 2 плана (T113): 0 → 1 → 2 (передача соседу), 3 → 4 (море).

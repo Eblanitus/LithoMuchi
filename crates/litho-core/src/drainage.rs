@@ -720,7 +720,7 @@ impl RiverNet {
         let mut t = std::time::Instant::now();
         let points: Vec<_> = nodes
             .iter()
-            .filter(|node| crate::runoff::needs_climate(node))
+            .filter(|node| crate::runoff::needs_climate(node, params))
             .map(|node| node.point)
             .collect();
         let grid = ClimateGrid::build(&points, p.climate_step_l, climate)?;

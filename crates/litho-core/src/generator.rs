@@ -1427,7 +1427,7 @@ impl Generator {
                     .nodes()
                     .iter()
                     .zip(&mask)
-                    .filter(|(node, m)| **m && crate::runoff::needs_climate(node))
+                    .filter(|(node, m)| **m && crate::runoff::needs_climate(node, &self.params))
                     .map(|(node, _)| node.point)
                     .collect();
                 let grid = crate::runoff::ClimateGrid::build(
@@ -1493,7 +1493,8 @@ impl Generator {
             .nodes()
             .iter()
             .filter(|node| {
-                node.in_plate && node.route_km >= 0.0 && node.outlet != DrainageOutlet::Sea
+                node.in_plate
+                    && crate::runoff::land_for_runoff(node.route_km, node.outlet, &self.params)
             })
             .map(|node| node.point)
             .collect();
@@ -4159,6 +4160,65 @@ mod tests {
         assert_eq!(at(1, 1.), 101.);
         assert_eq!(profile.locate(2, 0.), None);
     }
+    #[test]
+    fn w_handoff_joins_two_real_plate_profiles() {
+        let g = Generator::new(42, Mode::Gameplay, GenVersion::V1DevW).unwrap();
+        // Fixed by world cell and plate id, *not* by reach index: changing
+        // the segmentation must still find both sides of the same wet seam.
+        let plates = crate::plates::plates_near(g.macro_point(0., 0.), 18., g.seed(), &g.params);
+        for (pid, cell) in [
+            (740586887323708627, (640, -59)),
+            (740586887323708627, (660, -78)),
+            (1934230653671805316, (567, -71)),
+        ] {
+            let plate = plates.iter().find(|p| p.id == pid).unwrap();
+            let upstream = g.drainage_network(plate).unwrap();
+            let node = upstream.routing().node_index(cell).unwrap();
+            let i = upstream
+                .channels()
+                .reaches()
+                .iter()
+                .position(|r| r.mouth_node == node && r.end == crate::channel::ReachEnd::Handoff)
+                .unwrap();
+            let p = upstream.nodes()[node]
+                .point
+                .sub(g.spawn_shift)
+                .scale(g.params.block.l_blocks);
+            let other = g.plate_sample(p.x, p.z).unwrap().a;
+            assert_ne!(plate.id, other.id);
+            let downstream = g.drainage_network(&other).unwrap();
+            let receiving = downstream.routing().node_index(cell).unwrap();
+            let j = downstream
+                .channels()
+                .reaches()
+                .iter()
+                .position(|r| r.source_node == receiving)
+                .unwrap();
+            let ds = g.w_plate_levels(&other, &downstream).unwrap();
+            let lower = g
+                .w_reach_profile(&ds, &downstream, j)
+                .unwrap()
+                .levels
+                .first()
+                .unwrap()
+                .unwrap()
+                .0;
+            let us = g.w_plate_levels(plate, &upstream).unwrap();
+            let upper = g
+                .w_reach_profile(&us, &upstream, i)
+                .unwrap()
+                .levels
+                .last()
+                .unwrap()
+                .unwrap()
+                .1;
+            assert!(
+                lower > crate::height::SEA_LEVEL && (0.0..=1.0).contains(&(upper - lower)),
+                "handoff {cell:?}: {upper} -> {lower}"
+            );
+        }
+    }
+
     /// ВО1-4: профиль `W` вниз по течению не поднимается. Подпор (п. 4)
     /// поднимает только верховья, а выравнивание притока — только низовья,
     /// поэтому `(up, down)` каждого сегмента остаётся убывающим.
