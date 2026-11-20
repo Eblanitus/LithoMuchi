@@ -419,6 +419,7 @@ pub fn with_water_w(
     s0_macro: HeightSample,
     micro_dy: f64,
     water: &HydrologySample,
+    point_lake: Option<crate::PointLakeHit>,
     params: &Params,
 ) -> HeightSample {
     let w = &params.water;
@@ -603,6 +604,47 @@ pub fn with_water_w(
             }
         }
     }
+    // ВО4-2 (§6.6): точечные озёра — вырез по уровню от S0, дно = S0 − k_deep·(L − S0).
+    if let Some(hit) = point_lake.filter(|h| h.inside && h.water_strength > 0.0) {
+        if let Some(lake) = hit.lake {
+            let mirror = lake.level_blocks;
+            if mirror >= h.min_y {
+                let k_deep = match lake.r#type {
+                    crate::water_features::PointLakeType::Cirque => 1.0,
+                    crate::water_features::PointLakeType::Glacial => 1.0,
+                    crate::water_features::PointLakeType::Thermokarst => 0.0,
+                    crate::water_features::PointLakeType::Crater => 1.5,
+                    crate::water_features::PointLakeType::Oxbow => 0.0,
+                    crate::water_features::PointLakeType::SagPond => 1.0,
+                };
+                let d_max = match lake.r#type {
+                    crate::water_features::PointLakeType::Cirque => if scientific { 12.0 } else { 8.0 },
+                    crate::water_features::PointLakeType::Glacial => if scientific { 12.0 } else { 8.0 },
+                    crate::water_features::PointLakeType::Thermokarst => if scientific { 3.0 } else { 3.0 },
+                    crate::water_features::PointLakeType::Crater => if scientific { 24.0 } else { 16.0 },
+                    crate::water_features::PointLakeType::Oxbow => if scientific { 4.0 } else { 3.0 },
+                    crate::water_features::PointLakeType::SagPond => if scientific { 5.0 } else { 3.0 },
+                };
+                let s0_full = land_y + micro_dy;
+                if s0_full < mirror {
+                    let depth = (k_deep * (mirror - s0_full)).clamp(0.0, d_max);
+                    let bed = (mirror - 1.0 - d_max).max(s0_full - depth).max(h.min_y);
+                    let carve = lerp(surface, bed, hit.water_strength).min(surface);
+                    if carve < mirror - 0.5 {
+                        surface = carve;
+                        water_y = mirror;
+                        bed_y = bed;
+                        cut = hit.water_strength;
+                        height.surface_y = surface;
+                        height.water_y = water_y;
+                        height.bed_y = bed_y;
+                        height.water_strength = cut;
+                        height.offset = (surface - SURFACE_BASE) / OFFSET_SCALE;
+                    }
+                }
+            }
+        }
+    }
     // ВО2-1 (§6.7): маска calm — ноль в воде и у воды, снаружи затухает
     // smoothstep-ом по d_floor; для озёра действует тот же профиль (паду у
     // озера можно расширить зону позже, сейчас d_floor от русла покрывает
@@ -746,7 +788,7 @@ mod tests {
             crate::water_profile::ValleyClass::Plain,
             0.0,
         ));
-        let cut = with_water_w(s0(90.0), 0.0, &hydro, &p);
+        let cut = with_water_w(s0(90.0), 0.0, &hydro, None, &p);
         assert_eq!(cut.surface_y, 70.0 - 2.0, "параболическое дно ядра");
         assert_eq!(cut.water_y, 70.0);
         assert_eq!(cut.water_strength, 1.0);
@@ -757,7 +799,7 @@ mod tests {
             crate::water_profile::ValleyClass::Plain,
             0.0,
         ));
-        let cut = with_water_w(s0(90.0), 0.0, &hydro, &p);
+        let cut = with_water_w(s0(90.0), 0.0, &hydro, None, &p);
         assert_eq!(cut.surface_y, 70.0 - 2.0 * 0.75, "(2d/w)² = 0,25");
     }
 
@@ -773,7 +815,7 @@ mod tests {
             crate::water_profile::ValleyClass::Plain,
             0.0,
         ));
-        let cut = with_water_w(s0(90.0), 7.0, &hydro, &p);
+        let cut = with_water_w(s0(90.0), 7.0, &hydro, None, &p);
         assert_eq!(cut.surface_y, 71.0, "пойма: +1 над зеркалом");
         assert_eq!(cut.water_strength, 0.0, "пойма — суша");
         assert_eq!(cut.water_y, SEA_LEVEL);
@@ -793,7 +835,7 @@ mod tests {
             crate::water_profile::ValleyClass::Canyon,
             90.0,
         ));
-        let cut = with_water_w(s0(200.0), 0.0, &hydro, &p);
+        let cut = with_water_w(s0(200.0), 0.0, &hydro, None, &p);
         assert_eq!(cut.surface_y, 70.0 + 1.0 + 6.0 * (2.0_f64 / 2.0).ceil());
     }
 
@@ -801,7 +843,7 @@ mod tests {
     fn w_micro_gate_smooths_out_far_from_water() {
         let p = params_w(Mode::Gameplay);
         let hydro_dry = HydrologySample::default(); // канала нет: gate = 1
-        let cut = with_water_w(s0(90.0), 7.0, &hydro_dry, &p);
+        let cut = with_water_w(s0(90.0), 7.0, &hydro_dry, None, &p);
         assert_eq!(cut.surface_y, 97.0);
         let mut hydro = HydrologySample::default();
         hydro.channels.nearest = Some(w_hit(
@@ -813,7 +855,7 @@ mod tests {
         ));
         // Рядом с руслом (d_floor < 0) микробугры выключены, но поверхность
         // выравнивается полкой поймы (71).
-        let cut = with_water_w(s0(90.0), 7.0, &hydro, &p);
+        let cut = with_water_w(s0(90.0), 7.0, &hydro, None, &p);
         assert_eq!(cut.surface_y, 71.0);
     }
 

@@ -2662,7 +2662,14 @@ impl Generator {
                     &self.params,
                 );
                 let micro_dy = dry.surface_y - macro_h.surface_y;
-                crate::height::with_water_w(macro_h, micro_dy, &water, &self.params)
+                // ВО4-2: точечные озёра — запрос 3×3 ячеек вокруг точки.
+                let point_lake = if water_update {
+                    let mut engine = crate::water_features::PointLakeEngine::new(&self.params);
+                    Some(engine.query(self, x, z))
+                } else {
+                    None
+                };
+                crate::height::with_water_w(macro_h, micro_dy, &water, point_lake, &self.params)
             } else {
                 crate::height::with_water(dry, &water, &self.params)
             }
