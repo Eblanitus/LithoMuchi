@@ -34,6 +34,7 @@ final class LithoCiWater {
 
     static void run(MinecraftServer server, String mode) {
         LithoWaterFeature.STEPS.set(0);
+        LithoWaterFeature.STATIC_MARKS_REMOVED.set(0);
         LithoWaterFeature.COLUMNS.set(0);
         LithoWaterFeature.SEALS.set(0);
         LithoWaterFeature.CHUNKS.set(0);
@@ -66,6 +67,7 @@ final class LithoCiWater {
             double ms = (System.nanoTime() - t0) / 1e6;
             report.add(String.format("вода: сгенерировано %d чанков за %.0f мс, %.1f мс/чанк",
                     generated.size(), ms, ms / Math.max(1, generated.size())));
+            report.add("снято меток postProcess в статичной воде: " + LithoWaterFeature.STATIC_MARKS_REMOVED.get());
             long generationSeals = LithoWaterFeature.SEALS.get();
             long chunksWithWater = LithoWaterFeature.CHUNKS.get();
             long sourcesBefore = countWater(level, true);
@@ -267,6 +269,7 @@ final class LithoCiWater {
     private static long[] measureVo2(ServerLevel level, LithoNative.Generator gen, List<String> report) {
         final int side = 20;
         long corridor = 0, fit = 0, shore = 0, walls = 0, wet = 0, covered = 0;
+        long groundFit = 0;
         var highLand = new java.util.TreeMap<String, Integer>();
         var roofBlocks = new java.util.TreeMap<String, Integer>();
         long[] misses = new long[4]; // dry low/high, wet low/high
@@ -303,6 +306,15 @@ final class LithoCiWater {
                             (int) xs[k], (int) zs[k]) - 1;
                     if (expected != Integer.MIN_VALUE) {
                         corridor++;
+                        // Diagnostic alongside the unchanged raw-height gate. Dry
+                        // foliage at VEGETAL_DECORATION is not a density surface.
+                        int ground = top;
+                        if (dry && top > expected + 2 && level.getBlockState(new BlockPos((int) xs[k], top, (int) zs[k]))
+                                .is(net.minecraft.tags.BlockTags.LEAVES)) {
+                            while (ground >= level.getMinY() && !level.getBlockState(new BlockPos((int) xs[k], ground, (int) zs[k]))
+                                    .is(net.minecraft.tags.BlockTags.BLOCKS_MOTION_IN_HEIGHTMAP_NO_LEAVES)) ground--;
+                        }
+                        if (Math.abs(ground - expected) <= 2) groundFit++;
                         if (Math.abs(top - expected) <= 2) fit++;
                         else {
                             misses[(dry ? 0 : 2) + (top > expected ? 1 : 0)]++;
@@ -325,6 +337,7 @@ final class LithoCiWater {
             }
         }
         report.add(String.format("calm_fit промахи: суша ниже/выше %d/%d, вода ниже/выше %d/%d", misses[0], misses[1], misses[2], misses[3]));
+        report.add(String.format("calm_fit без крон (диагностика): %d из %d, %.2f %%", groundFit, corridor, 100.0 * groundFit / Math.max(1, corridor)));
         report.add("верх сухих колонок выше прогноза: " + highLand);
         report.add("верх накрытых колонок: " + roofBlocks);
         return new long[] {corridor, fit, shore, walls, wet, covered};

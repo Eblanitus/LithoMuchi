@@ -5,9 +5,11 @@ import java.util.concurrent.atomic.AtomicLong;
 import net.minecraft.core.BlockPos;
 import net.minecraft.util.RandomSource;
 import net.minecraft.world.level.WorldGenLevel;
+import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.chunk.ChunkGenerator;
+import net.minecraft.world.level.chunk.ProtoChunk;
 import net.minecraft.world.level.levelgen.feature.Feature;
 import net.minecraft.world.level.material.Fluids;
 
@@ -50,6 +52,7 @@ public final class LithoWaterFeature implements Feature {
     private static final byte KIND_RIVER = 1;
     public static volatile boolean LIVE_STEPS = Boolean.getBoolean("litospherity.water.liveSteps");
     public static final AtomicLong STEPS = new AtomicLong();
+    public static final AtomicLong STATIC_MARKS_REMOVED = new AtomicLong();
 
     /** 26.3: {@code Feature} — интерфейс без параметра конфигурации, а реестр
      *  {@code FEATURE_TYPE} держит кодеки. Типу воды конфигурация не нужна. */
@@ -88,6 +91,7 @@ public final class LithoWaterFeature implements Feature {
         // two is only a search limit for an open cave, not a wet face.
         int[] lowestSource = new int[SIDE * SIDE];
         java.util.Arrays.fill(lowestSource, Integer.MAX_VALUE);
+        int fluidFlags = LIVE_STEPS ? Block.UPDATE_CLIENTS : Block.UPDATE_CLIENTS | Block.UPDATE_KNOWN_SHAPE;
         // Заливка и правка дна.
         for (int j = 1; j <= 16; j++) {
             for (int i = 1; i <= 16; i++) {
@@ -120,7 +124,7 @@ public final class LithoWaterFeature implements Feature {
                     BlockPos pos = new BlockPos(x, y, z);
                     BlockState old = level.getBlockState(pos);
                     if (old.is(Blocks.BEDROCK) || (y <= floor && !old.isAir())) break;
-                    if (!old.equals(waterState)) level.setBlock(pos, waterState, 2);
+                    if (!old.equals(waterState)) level.setBlock(pos, waterState, fluidFlags);
                     lowest = y;
                 }
                 if (lowest > from) continue;
@@ -198,13 +202,38 @@ public final class LithoWaterFeature implements Feature {
                     BlockPos pos = new BlockPos((int) xs[k], y, (int) zs[k]);
                     BlockState old = level.getBlockState(pos);
                     if (old.is(Blocks.BEDROCK) || (!fall && !old.isAir())) continue;
-                    level.setBlock(pos, flow, 2);
+                    level.setBlock(pos, flow, fluidFlags);
                     if (!fall) {
                         if (LIVE_STEPS) level.scheduleTick(pos, Fluids.FLOWING_WATER, 1);
                         steps++;
                     }
                 }
             }
+        }
+        // WorldGenRegion uses UPDATE_KNOWN_SHAPE to skip new postprocess
+        // marks, but an aquifer or a carver can have marked this position
+        // *before* we replaced it. LevelChunk.postProcessGeneration ticks
+        // the fluid found there NOW. Keep all non-owned and non-water marks.
+        if (placed > 0 && !LIVE_STEPS) {
+            var chunk = level.getChunk(x0 >> 4, z0 >> 4);
+            var sections = chunk.getPostProcessing();
+            int removed = 0;
+            for (int section = 0; section < sections.length; section++) {
+                var marked = sections[section];
+                if (marked == null || marked.isEmpty()) continue;
+                var offsets = marked.iterator();
+                while (offsets.hasNext()) {
+                    var p = ProtoChunk.unpackOffsetCoordinates(offsets.nextShort(),
+                            chunk.getSectionYFromSectionIndex(section), chunk.getPos());
+                    int k = (p.getZ() - z0 + 1) * SIDE + (p.getX() - x0 + 1);
+                    if (p.getY() < lowestSource[k] || water.level()[k] <= SEA_LEVEL) continue;
+                    if (p.getY() > Math.max(water.level()[k] - 1, incomingTop(water, k))) continue;
+                    if (!chunk.getBlockState(p).is(Blocks.WATER)) continue;
+                    offsets.remove();
+                    removed++;
+                }
+            }
+            STATIC_MARKS_REMOVED.addAndGet(removed);
         }
         if (placed > 0) CHUNKS.incrementAndGet();
         SEALS.addAndGet(seals);
