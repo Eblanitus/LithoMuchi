@@ -485,8 +485,20 @@ fn w_parents_of(net: &crate::drainage::RiverNet) -> Vec<Vec<usize>> {
 /// ВО1-1: профиль одного звена — уровни и классы (6.3, п. 7).
 #[derive(Debug)]
 struct WReachProfile {
+    /// Prefix offsets into subsegments; the final entry is the one-past-end sentinel.
+    starts: Vec<usize>,
     levels: Vec<Option<(f64, f64)>>,
     classes: Vec<crate::water_profile::SegmentClass>,
+}
+
+impl WReachProfile {
+    fn locate(&self, segment: usize, along: f64) -> Option<(usize, f64)> {
+        let first = *self.starts.get(segment)?;
+        let end = *self.starts.get(segment + 1)?;
+        let t = along.clamp(0., 1.) * (end - first) as f64;
+        let offset = (t.floor() as usize).min(end - first - 1);
+        Some((first + offset, t - offset as f64))
+    }
 }
 
 /// §4, п. 1: точки контура озера берутся не реже чем через 2 блока.
@@ -553,24 +565,31 @@ struct WProbe {
     lake_signals: crate::water_profile::LakeSignals,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ProbeClimate {
+    HeightOnly,
+    Game,
+    Reference,
+}
+
 impl Generator {
     /// ВО1: общая точка `S0` для профиля. `None` — версия без водного
     /// обновления или точка без климата/плиты.
     fn w_probe(&self, x: f64, z: f64) -> Option<WProbe> {
-        self.w_probe_impl(x, z, true)
+        self.w_probe_impl(x, z, ProbeClimate::Reference)
     }
 
     // Only a profile center needs the point climate (temperature and aridity
     // for valley classification). Heights depend on C/E/PV and the interpolated
     // 1 L morpho grid, not the biome T/H or the sign of W.
-    fn w_probe_impl(&self, x: f64, z: f64, classify_flow: bool) -> Option<WProbe> {
+    fn w_probe_impl(&self, x: f64, z: f64, kind: ProbeClimate) -> Option<WProbe> {
         if !self.params.version.is_water_update() {
             return None;
         }
         let point = self.macro_point(x, z);
         let plate = plate_query(point, self.seed, &self.params)?;
         let crust = crust_from_sample(point, &plate, self.seed, &self.params);
-        self.w_probe_known(Vec2::new(x, z), &plate, &crust, classify_flow)
+        self.w_probe_known(Vec2::new(x, z), &plate, &crust, kind)
     }
 
     fn w_probe_known(
@@ -578,25 +597,29 @@ impl Generator {
         blocks: Vec2,
         plate: &PlateSample,
         crust: &CrustSample,
-        classify_flow: bool,
+        kind: ProbeClimate,
     ) -> Option<WProbe> {
         let (x, z) = (blocks.x, blocks.z);
         let crust_c = continentalness(crust.e_km, crust.iota_l, &self.params);
-        let (climate, base) = if classify_flow {
-            let climate = self.climate_sample(x, z)?;
+        let surface = SurfaceSample {
+            e_km: crust.e_km,
+            iota_l: crust.iota_l,
+            mountain: crust.mountain,
+            plateau: crust.plateau,
+            boundary_weights: crust.boundary_weights,
+            sigma_l: plate.d_ab_l,
+        };
+        let (climate, base) = if kind != ProbeClimate::HeightOnly {
+            let climate = if kind == ProbeClimate::Reference {
+                self.climate_sample(x, z)?
+            } else {
+                self.fast_climate(self.macro_point(x, z), x, z, surface)?
+            };
             let ocean = crust_c < self.params.climate.ocean_c_threshold;
             let class = self.class_before_height(&climate, ocean, x, z);
             let base = crate::vanilla::sample(&climate, &class, x, z, self.seed, &self.params, 0.0);
             (climate, base)
         } else {
-            let surface = SurfaceSample {
-                e_km: crust.e_km,
-                iota_l: crust.iota_l,
-                mountain: crust.mountain,
-                plateau: crust.plateau,
-                boundary_weights: crust.boundary_weights,
-                sigma_l: plate.d_ab_l,
-            };
             let base = VanillaSample {
                 c: crust_c,
                 e: crate::vanilla::erosion(
@@ -1171,8 +1194,12 @@ impl Generator {
                                 let blocks = point
                                     .sub(self.spawn_shift)
                                     .scale(self.params.block.l_blocks);
-                                let Some(probe) = self.w_probe_known(blocks, sample, &crust, false)
-                                else {
+                                let Some(probe) = self.w_probe_known(
+                                    blocks,
+                                    sample,
+                                    &crust,
+                                    ProbeClimate::HeightOnly,
+                                ) else {
                                     return invalid;
                                 };
                                 let tie = self.params.water.route_tau_blocks_per_km
@@ -1624,12 +1651,18 @@ impl Generator {
                         let first = net.channels().reach_first_segment(hit.reach);
                         let index = hit.segment - first;
                         let profile = self.w_reach_profile(&levels, &net, hit.reach)?;
+                        let (index, along) = profile.locate(index, hit.along).ok_or(
+                            RiverNetError::BrokenInvariant {
+                                node: index,
+                                reason: "сегмент вне профиля W",
+                            },
+                        )?;
                         hit.level_blocks = profile
                             .levels
                             .get(index)
                             .copied()
                             .flatten()
-                            .map(|(up, down)| (up + (down - up) * hit.along).floor());
+                            .map(|(up, down)| (up + (down - up) * along).floor());
                         if let Some(class) = profile.classes.get(index) {
                             hit.valley_class = class.valley;
                             hit.flow_class = class.flow;
@@ -2043,12 +2076,12 @@ impl Generator {
                     crate::height::SEA_LEVEL + spill * self.params.height.water_km_to_blocks;
                 for p in ring_probes(ring, l) {
                     let b = p.sub(self.spawn_shift).scale(l);
-                    let probe = self.w_probe_impl(b.x, b.z, false).ok_or(
-                        RiverNetError::BrokenInvariant {
+                    let probe = self
+                        .w_probe_impl(b.x, b.z, ProbeClimate::HeightOnly)
+                        .ok_or(RiverNetError::BrokenInvariant {
                             node: lake.depression,
                             reason: "нет S0 на берегу озера",
-                        },
-                    )?;
+                        })?;
                     lowest = lowest.min(probe.macro_y.floor() - 1.0);
                 }
                 Some(lowest.floor().max(crate::height::SEA_LEVEL))
@@ -2112,19 +2145,51 @@ impl Generator {
         let source = channels.reach_segments(reach);
         if source.is_empty() {
             return Ok(WReachProfile {
+                starts: vec![0],
                 levels: Vec::new(),
                 classes: Vec::new(),
             });
         }
-        let n = source.len() + 1;
-        // Длина оси по вершинам в блоках: окно уклона и сглаживание класса.
-        let mut cum_blocks: Vec<f64> = Vec::with_capacity(n);
-        let mut acc = 0.0_f64;
-        cum_blocks.push(0.0);
-        for segment in source {
-            acc += segment.b.point.sub(segment.a.point).len() * l;
-            cum_blocks.push(acc);
+        let acc = source
+            .iter()
+            .map(|s| s.b.point.sub(s.a.point).len() * l)
+            .sum::<f64>();
+        // Estimate work from physical length, not vertex count: long segments
+        // need real interior samples. Never let elapsed time affect the world.
+        let doubled =
+            (acc / water.profile_step_blocks).ceil() * 5. > water.profile_budget_ms as f64;
+        let step = water.profile_step_blocks * if doubled { 2. } else { 1. };
+        let mut starts = Vec::with_capacity(source.len() + 1);
+        let mut axis = Vec::new();
+        let mut cum_blocks = vec![0.0];
+        for (index, segment) in source.iter().enumerate() {
+            let delta = segment.b.point.sub(segment.a.point);
+            let length = delta.len() * l;
+            let normal = delta.normalized().perp();
+            let parts = ((length / step).ceil() as usize).max(1);
+            starts.push(cum_blocks.len() - 1);
+            if index == 0 {
+                axis.push((segment.a.point, segment.a.core_l, normal, true));
+            }
+            let start = *cum_blocks.last().unwrap();
+            for j in 1..=parts {
+                let t = j as f64 / parts as f64;
+                let p = if j == parts {
+                    segment.b.point
+                } else {
+                    segment.a.point.add(delta.scale(t))
+                };
+                axis.push((
+                    p,
+                    crate::math::lerp(segment.a.core_l, segment.b.core_l, t),
+                    normal,
+                    parts > 1,
+                ));
+                cum_blocks.push(start + length * t);
+            }
         }
+        let n = axis.len();
+        starts.push(n - 1);
         // п. 3/8 (6.3): уровень входа — от притока (п. 4) или от верхней плиты.
         let entry = self.w_entry_level(levels, net, reach)?;
         // п. 1–2: берег `B`, проба долины `Gp` и входы классов в пробах оси.
@@ -2135,33 +2200,26 @@ impl Generator {
         let mut gp: Vec<Option<f64>> = vec![None; n];
         let mut inputs: Vec<Option<crate::water_profile::ValleyClassInput>> = vec![None; n];
         let mut last_sample = f64::NEG_INFINITY;
-        // Budget is a deterministic work estimate, never a wall clock: a cache
-        // miss or a busy C2ME thread must not change the shape of a river.
-        // VO0-5 measured ~1 ms per exact probe. Bound the estimate by the
-        // actual number of vertices: at most five probes per sampled section.
-        let sections = (acc / water.profile_step_blocks).ceil().min(n as f64);
-        let doubled = sections * 5.0 > water.profile_budget_ms as f64;
-        let step = water.profile_step_blocks * if doubled { 2.0 } else { 1.0 };
-        for (index, &distance) in cum_blocks.iter().enumerate() {
-            let segment = &source[index.saturating_sub(1)];
-            let b = if index == 0 { segment.a } else { segment.b };
-            let direction = b.point.sub(segment.a.point);
-            if direction.len() <= 1e-12 {
-                continue;
-            }
-            let due = distance - last_sample >= step || index == n - 1;
-            if !due {
+        for (index, &(point, core_l, normal, interior_probe)) in axis.iter().enumerate() {
+            let distance = cum_blocks[index];
+            if !interior_probe && distance - last_sample < step && index != n - 1 {
                 continue;
             }
             last_sample = distance;
-            // п. 1: ось, нормаль и полуширина воды; берег — низший из трёх `S0`.
-            let normal = direction.normalized().perp();
-            let edge_l = 0.5 * b.core_l + water.bank_probe_blocks / l;
+            let edge_l = 0.5 * core_l + water.bank_probe_blocks / l;
             let mut bank: Option<f64> = None;
             let mut center: Option<WProbe> = None;
             for offset_l in [0.0, edge_l, -edge_l] {
-                let (px, pz) = to_blocks(b.point.add(normal.scale(offset_l)));
-                if let Some(probe) = self.w_probe_impl(px, pz, offset_l == 0.0) {
+                let (px, pz) = to_blocks(point.add(normal.scale(offset_l)));
+                if let Some(probe) = self.w_probe_impl(
+                    px,
+                    pz,
+                    if offset_l == 0. {
+                        ProbeClimate::Game
+                    } else {
+                        ProbeClimate::HeightOnly
+                    },
+                ) {
                     bank = Some(bank.map_or(probe.macro_y, |old: f64| old.min(probe.macro_y)));
                     if offset_l == 0.0 {
                         center = Some(probe);
@@ -2169,11 +2227,11 @@ impl Generator {
                 }
             }
             // п. 1: две пробы для ширины долины `Gp`, `R_v = h + 2 + R_wall`.
-            let rv_l = 0.5 * b.core_l + (2.0 + water.wall_reach_blocks) / l;
+            let rv_l = 0.5 * core_l + (2.0 + water.wall_reach_blocks) / l;
             let mut gp_max: Option<f64> = None;
             for offset_l in [rv_l, -rv_l] {
-                let (px, pz) = to_blocks(b.point.add(normal.scale(offset_l)));
-                if let Some(probe) = self.w_probe_impl(px, pz, false) {
+                let (px, pz) = to_blocks(point.add(normal.scale(offset_l)));
+                if let Some(probe) = self.w_probe_impl(px, pz, ProbeClimate::HeightOnly) {
                     gp_max = Some(gp_max.map_or(probe.macro_y, |old: f64| old.max(probe.macro_y)));
                 }
             }
@@ -2209,6 +2267,33 @@ impl Generator {
             };
             current = Some(here);
             level[index] = here;
+        }
+        // Geometry vertices between two measured sections are not independent
+        // level targets. Interpolate across them instead of holding the level
+        // and dumping the entire drop into the final (sometimes tiny) segment.
+        let mut prev = 0;
+        for next in 1..n {
+            if targets[next].is_none() {
+                continue;
+            }
+            let span = cum_blocks[next] - cum_blocks[prev];
+            for i in prev + 1..next {
+                if span > 0. {
+                    level[i] = crate::math::lerp(
+                        level[prev],
+                        level[next],
+                        (cum_blocks[i] - cum_blocks[prev]) / span,
+                    );
+                }
+                let near = if cum_blocks[i] - cum_blocks[prev] <= cum_blocks[next] - cum_blocks[i] {
+                    prev
+                } else {
+                    next
+                };
+                gp[i] = gp[near];
+                inputs[i] = inputs[near];
+            }
+            prev = next;
         }
         // п. 3/8: конец звена ДО коррекции приёмника — в общую ячейку.
         // Приёмник (п. 4) и соседние слияния читают его отсюда вместо
@@ -2277,22 +2362,6 @@ impl Generator {
                 raw[i] = crate::water_profile::valley_class(valley_input, water);
             }
         }
-        let mut carry = None;
-        for i in 0..n {
-            if inputs[i].is_some() {
-                carry = Some(raw[i]);
-            } else if let Some(value) = carry {
-                raw[i] = value;
-            }
-        }
-        let mut carry = None;
-        for i in (0..n).rev() {
-            if inputs[i].is_some() {
-                carry = Some(raw[i]);
-            } else if let Some(value) = carry {
-                raw[i] = value;
-            }
-        }
         let valley = crate::water_profile::smooth_valley_classes(
             &cum_blocks,
             &raw,
@@ -2315,6 +2384,7 @@ impl Generator {
         // интерполяция по `along`, поэтому ступень ≤ 1 блок на блок русла.
         let segments = level.windows(2).map(|v| Some((v[0], v[1]))).collect();
         Ok(WReachProfile {
+            starts,
             levels: segments,
             classes,
         })
@@ -2342,7 +2412,7 @@ impl Generator {
             let here = b.point.add(normal.scale(offset_l));
             let px = (here.x - shift.x) * l;
             let pz = (here.z - shift.z) * l;
-            if let Some(probe) = self.w_probe_impl(px, pz, false) {
+            if let Some(probe) = self.w_probe_impl(px, pz, ProbeClimate::HeightOnly) {
                 bank = Some(bank.map_or(probe.macro_y, |old: f64| old.min(probe.macro_y)));
             }
         }
@@ -3346,12 +3416,55 @@ impl Generator {
             boundary_weights: crust.boundary_weights,
             sigma_l: plates.d_ab_l,
         };
+        let Some(climate) = self.fast_climate(point, x, z, surface) else {
+            return Ok(None);
+        };
+        let c_value = continentalness(surface.e_km, surface.iota_l, &self.params);
+        let is_ocean = c_value < self.params.climate.ocean_c_threshold;
+        let class = self.class_before_height(&climate, is_ocean, x, z);
+        let local = if self.params.version.is_water_update() {
+            0.0
+        } else {
+            local_r(x, z, &surface, self.seed, &self.params)
+        };
+        let fields = self.surface_fields(
+            &climate,
+            class,
+            is_ocean,
+            x,
+            z,
+            local,
+            Some((&plates, &crust)),
+            stage,
+        )?;
+        let world = WorldSample {
+            climate: fields.climate,
+            class: fields.class,
+            vanilla: fields.vanilla,
+            river: fields.river,
+            hydrology: fields.hydrology,
+            is_ocean: fields.is_ocean,
+            pv: fields.pv,
+            height: fields.height,
+        };
+        let mut full = self.full_from_world(x, z, world);
+        full.plate = Some(plates);
+        Ok(Some(full))
+    }
+
+    // The water profile and the game classify the same point with the same
+    // humidity ray lattice. This helper computes no hydrology or height cuts.
+    fn fast_climate(
+        &self,
+        point: Vec2,
+        x: f64,
+        z: f64,
+        surface: SurfaceSample,
+    ) -> Option<ClimateSample> {
         // Д-021: φ и направление ветра берутся точными в самой точке, иначе
         // t_bio дрожит на ±0,4 °C и перескакивает через порог пояса 18 °C.
         // coarse-решётка экономит только на 32 шагах линии тока влаги.
-        let Some(pole) = crate::climate::pole_sample(point, self.seed, &self.params) else {
-            return Ok(None);
-        };
+        let pole = crate::climate::pole_sample(point, self.seed, &self.params)?;
         let wind = crate::climate::wind(pole.phi_deg, pole.north, pole.east, &self.params);
         let wind_len = wind.len();
         let dir = if wind_len > 1e-9 {
@@ -3399,7 +3512,7 @@ impl Generator {
         let p_mm =
             crate::climate::precipitation(pole.phi_deg, ray.mu, wind_len, ray.slope, &self.params);
         let (pet_mm, ratio) = dryness(temperature.t_bio, p_mm, &self.params);
-        let climate = ClimateSample {
+        Some(ClimateSample {
             point,
             surface,
             pole,
@@ -3419,38 +3532,7 @@ impl Generator {
                 ratio,
                 slope: ray.slope,
             },
-        };
-        let c_value = continentalness(surface.e_km, surface.iota_l, &self.params);
-        let is_ocean = c_value < self.params.climate.ocean_c_threshold;
-        let class = self.class_before_height(&climate, is_ocean, x, z);
-        let local = if self.params.version.is_water_update() {
-            0.0
-        } else {
-            local_r(x, z, &surface, self.seed, &self.params)
-        };
-        let fields = self.surface_fields(
-            &climate,
-            class,
-            is_ocean,
-            x,
-            z,
-            local,
-            Some((&plates, &crust)),
-            stage,
-        )?;
-        let world = WorldSample {
-            climate: fields.climate,
-            class: fields.class,
-            vanilla: fields.vanilla,
-            river: fields.river,
-            hydrology: fields.hydrology,
-            is_ocean: fields.is_ocean,
-            pv: fields.pv,
-            height: fields.height,
-        };
-        let mut full = self.full_from_world(x, z, world);
-        full.plate = Some(plates);
-        Ok(Some(full))
+        })
     }
 
     /// `WorldSample` быстрого пути — для слоёв песочницы с `--path fast`.
@@ -3467,6 +3549,10 @@ impl Generator {
     pub fn with_ray_lattice(mut self, step_l: f64) -> Self {
         self.params.boundaries.ray_lattice_l = step_l;
         let shards = self.params.lattice.cache_shards.max(1);
+        if self.params.version.is_water_update() {
+            self.w_levels = Arc::new(PlateCache::new(shards, crate::drainage::NET_CACHE_CAPACITY));
+            self.hydrology_levels = Arc::new(ShardedCache::new(shards, 4096));
+        }
         self.pond_sites = Arc::new(ShardedCache::new(shards, 8192));
         self.pond_tiles = Arc::new(ShardedCache::new(shards, 4096));
         self.rays = Arc::new(crate::cache::ShardedCache::new(
@@ -3791,7 +3877,7 @@ impl Generator {
     /// §6.2: узловая высота по коре и рельефу в точке; климат берётся
     /// только из интерполированных весов сетки 1 L. Не строит сеть стока.
     pub fn s0_node(&self, x: f64, z: f64) -> Option<S0Sample> {
-        Some(self.s0_from_probe(self.w_probe_impl(x, z, false)?))
+        Some(self.s0_from_probe(self.w_probe_impl(x, z, ProbeClimate::HeightOnly)?))
     }
 
     /// ВО2-2: класс течения колонки. Озёра, болота и приморские русла —
@@ -4048,6 +4134,31 @@ mod tests {
     use crate::mode::Mode;
     use crate::version::GenVersion;
 
+    #[test]
+    fn w_profile_lookup_respects_internal_knots_and_segment_seams() {
+        let profile = super::WReachProfile {
+            starts: vec![0, 4, 5],
+            levels: vec![
+                Some((110., 109.)),
+                Some((109., 106.)),
+                Some((106., 106.)),
+                Some((106., 102.)),
+                Some((102., 101.)),
+            ],
+            classes: vec![],
+        };
+        let at = |seg, t| {
+            let (i, frac) = profile.locate(seg, t).unwrap();
+            let (a, b) = profile.levels[i].unwrap();
+            a + (b - a) * frac
+        };
+        assert_eq!(at(0, 0.), 110.);
+        assert_eq!(at(0, 0.5), 106.);
+        assert_eq!(at(0, 0.625), 106.);
+        assert_eq!(at(0, 1.), at(1, 0.));
+        assert_eq!(at(1, 1.), 101.);
+        assert_eq!(profile.locate(2, 0.), None);
+    }
     /// ВО1-4: профиль `W` вниз по течению не поднимается. Подпор (п. 4)
     /// поднимает только верховья, а выравнивание притока — только низовья,
     /// поэтому `(up, down)` каждого сегмента остаётся убывающим.

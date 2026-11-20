@@ -13,7 +13,7 @@
 //!    блока у 95 % узлов и ≤ 6 у 99,9 %.
 //!
 //! Считается только `macro_y`: микробугры в уровень реки не входят (§6.3).
-//! Маршрут пока старый. Дополнительно меряется аналитический `s0_node` до
+//! Сохранённый `route_km` сравнивается с независимым `S0_macro + τ·clamp(e_km)` после перевода в блоки. Дополнительно меряется аналитический `s0_node` до
 //! прогрева точным `s0_at`; `--analytic-only` пропускает исторические решётки.
 
 use std::collections::HashMap;
@@ -85,6 +85,7 @@ pub struct Survey {
     pub exact_ms: f64,
     pub analytic_ms: f64,
     pub analytic_errors: Vec<f64>,
+    pub route_errors: Vec<f64>,
     pub lattices: Vec<Lattice>,
 }
 
@@ -135,7 +136,7 @@ pub fn survey(
     let point = generator.macro_point(center.0, center.1);
     let radius_l = 10.0;
     let mut survey = Survey::default();
-    let mut nodes: Vec<(f64, f64)> = Vec::new();
+    let mut nodes: Vec<(f64, f64, f64)> = Vec::new();
     for plate in plates_near(point, radius_l, generator.seed(), params) {
         if survey.plates >= plates_wanted {
             break;
@@ -158,7 +159,11 @@ pub fn survey(
                 continue;
             }
             // `point` — макро-координата со сдвигом спавна; в блоки — обратно.
-            nodes.push(((node.point.x - shift.x) * l, (node.point.z - shift.z) * l));
+            nodes.push((
+                (node.point.x - shift.x) * l,
+                (node.point.z - shift.z) * l,
+                node.route_km,
+            ));
         }
     }
     if survey.plates == 0 {
@@ -172,24 +177,38 @@ pub fn survey(
     let start = Instant::now();
     let analytic: Vec<_> = nodes
         .iter()
-        .map(|&(x, z)| generator.s0_node(x, z))
+        .map(|&(x, z, _)| generator.s0_node(x, z))
         .collect();
     survey.analytic_ms = start.elapsed().as_secs_f64() * 1000.0;
     // Точный `S0`: только узлы, для которых он определён (климат и плита есть).
     let start = Instant::now();
     let mut exact: Vec<f64> = Vec::with_capacity(nodes.len());
     let mut kept: Vec<(f64, f64)> = Vec::with_capacity(nodes.len());
-    for ((x, z), fast) in nodes.into_iter().zip(analytic) {
-        if let Some(sample) = generator.s0_at(x, z) {
-            let fast = fast.ok_or_else(|| format!("нет узловой высоты в ({x}, {z})"))?;
-            survey
-                .analytic_errors
-                .push((fast.macro_y - sample.macro_y).abs());
-            kept.push((x, z));
-            exact.push(sample.macro_y);
-        }
+    let mut stored = Vec::with_capacity(nodes.len());
+    for ((x, z, route), fast) in nodes.into_iter().zip(analytic) {
+        let sample = generator
+            .s0_at(x, z)
+            .ok_or_else(|| format!("нет точной высоты в ({x}, {z})"))?;
+        let fast = fast.ok_or_else(|| format!("нет узловой высоты в ({x}, {z})"))?;
+        survey
+            .analytic_errors
+            .push((fast.macro_y - sample.macro_y).abs());
+        kept.push((x, z));
+        exact.push(sample.macro_y);
+        stored.push(route);
     }
     survey.exact_ms = start.elapsed().as_secs_f64() * 1000.0;
+    for ((&(x, z), &height), route) in kept.iter().zip(&exact).zip(stored) {
+        let crust = generator
+            .crust_sample(x, z)
+            .ok_or_else(|| format!("нет коры в ({x}, {z})"))?;
+        let reference = height + params.water.route_tau_blocks_per_km * crust.e_km.clamp(0., 0.8);
+        let actual = litho_core::height::SEA_LEVEL + route * params.height.water_km_to_blocks;
+        if !actual.is_finite() || !reference.is_finite() {
+            return Err(format!("нечисловой маршрут в ({x}, {z})"));
+        }
+        survey.route_errors.push((actual - reference).abs());
+    }
     if kept.is_empty() {
         return Err("`s0_at` не дал значений ни на одном узле".into());
     }

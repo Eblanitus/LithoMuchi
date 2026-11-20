@@ -9,6 +9,7 @@ mod json;
 mod palette;
 mod plan_metrics;
 mod png;
+mod point_lake_cost;
 mod render;
 mod s0_node_cost;
 mod shores;
@@ -822,6 +823,8 @@ fn cmd_s0_node_cost(args: &[String]) -> Result<(), String> {
     let analytic_us = 1000.0 * survey.analytic_ms / survey.nodes as f64;
     let analytic_p95 = s0_node_cost::percentile(&survey.analytic_errors, 95.0);
     let analytic_p999 = s0_node_cost::percentile(&survey.analytic_errors, 99.9);
+    let route_p95 = s0_node_cost::percentile(&survey.route_errors, 95.);
+    let route_p999 = s0_node_cost::percentile(&survey.route_errors, 99.9);
     let decision = s0_node_cost::decision(&survey);
     if args.iter().any(|arg| arg == "--json") {
         let lattices: Vec<String> = survey
@@ -859,6 +862,8 @@ fn cmd_s0_node_cost(args: &[String]) -> Result<(), String> {
         ));
         fields.push(format!("\"analytic_us_per_node\":{analytic_us:.2}"));
         fields.push(format!("\"analytic_error_p95\":{analytic_p95:.3}"));
+        fields.push(format!("\"stored_route_error_p95\":{route_p95:.3}"));
+        fields.push(format!("\"stored_route_error_p999\":{route_p999:.3}"));
         fields.push(format!("\"analytic_error_p999\":{analytic_p999:.3}"));
         fields.push("\"net_budget_ms\":200.0".to_string());
         fields.push(format!("\"lattices\":[{}]", lattices.join(",")));
@@ -889,6 +894,7 @@ fn cmd_s0_node_cost(args: &[String]) -> Result<(), String> {
     println!(
         "  аналитический S0: {analytic_us:.2} мкс/узел, ошибка p95 {analytic_p95:.3}, p99.9 {analytic_p999:.3} блока"
     );
+    println!("  сохранённый маршрут против S0+τ: p95 {route_p95:.3}, p99.9 {route_p999:.3} блока");
     for lattice in &survey.lattices {
         println!(
             "  {} ({:.2} L): выборок {} ({:.3} на узел), сборка {:.1} мс, ошибка p95 {:.2}, p99.9 {:.2}, max {:.2} блока{}",
@@ -2476,6 +2482,7 @@ fn usage() -> &'static str {
                     --size 2048 --step 4, три центра\n\
        water-points R2: до 20 мест с водой выше моря для CI и автора (v1-dev-r2),\n\
        water-stats  ВО0-3: реки (вода выше моря, врез), озёра по водоёмам, стены (v1-dev-r2),\n\
+       point-lake-cost ВО4: парное время чанков W без/с точечными озёрами (--chunks-side N),\n\
        s0-node-cost ВО0-5: цена S0 в узлах стока и точность решётки S0 (v1-dev-w),\n\
                     --radius-l 32\n\
 vanilla-biomes биом игры (копия ванильной таблицы) против нашего, горы на холмах (Д-118);\n\
@@ -2525,6 +2532,18 @@ fn main() -> Result<(), String> {
         "water-leaks" => cmd_water_leaks(&args[1..]),
         "water-points" => cmd_water_points(&args[1..]),
         "water-stats" => cmd_water_stats(&args[1..]),
+        "point-lake-cost" => {
+            let opts = options_from(&args[1..])?;
+            if value(&args[1..], "--version").is_some() && !opts.version.is_water_update() {
+                return Err("point-lake-cost только для v1-dev-w".into());
+            }
+            let side = value(&args[1..], "--chunks-side")
+                .map(|s| s.parse::<usize>())
+                .transpose()
+                .map_err(|e| e.to_string())?
+                .unwrap_or(4);
+            point_lake_cost::run(opts.seed, opts.mode, (opts.center_x, opts.center_z), side)
+        }
         "s0-node-cost" => cmd_s0_node_cost(&args[1..]),
         "vanilla-biomes" => cmd_vanilla_biomes(&args[1..]),
         "paths" => cmd_paths(&args[1..]),

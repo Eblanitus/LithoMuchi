@@ -228,7 +228,7 @@ impl Generator {
                 c,
                 &plate,
                 &crust_from_sample(self.macro_point(c.x, c.z), &plate, self.seed, &self.params),
-                false,
+                ProbeClimate::HeightOnly,
             )
             .ok_or(RiverNetError::InvalidInput {
                 cell: (c.x as i64, c.z as i64),

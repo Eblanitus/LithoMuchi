@@ -155,6 +155,12 @@ pub enum WaterBody {
 }
 
 impl WaterBody {
+    pub const fn is_point_lake(self) -> bool {
+        matches!(
+            self,
+            Self::Tarn | Self::GlacialPond | Self::Thermokarst | Self::SagPond
+        )
+    }
     pub(crate) fn point_material(self) -> BedMaterial {
         if self == Self::Thermokarst {
             BedMaterial::Mud
@@ -367,13 +373,19 @@ pub fn smooth_valley_classes(
 ) -> Vec<ValleyClass> {
     let half = 0.5 * window_blocks.max(0.0);
     let mut out = Vec::with_capacity(classes.len());
+    // Along-distance is nondecreasing. A sliding tally gives exactly the same
+    // inclusive votes (including coincident vertices), in linear work.
+    let mut votes = [0_u32; ValleyClass::COUNT];
+    let (mut left, mut right) = (0, 0);
     for i in 0..classes.len() {
         let center = along_blocks[i];
-        let mut votes = [0_u32; ValleyClass::COUNT];
-        for (j, class) in classes.iter().enumerate() {
-            if (along_blocks[j] - center).abs() <= half {
-                votes[class.table_index()] += 1;
-            }
+        while right < classes.len() && along_blocks[right] - center <= half {
+            votes[classes[right].table_index()] += 1;
+            right += 1;
+        }
+        while left < right && center - along_blocks[left] > half {
+            votes[classes[left].table_index()] -= 1;
+            left += 1;
         }
         let mut best_votes = 0_u32;
         let mut best = classes[i];
