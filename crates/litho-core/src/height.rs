@@ -455,15 +455,17 @@ pub fn with_water_w(
         };
         let w_blocks = (hit.core_l * l).max(1.0);
         let half = 0.5 * w_blocks;
-        let bank_edge = half + 2.0;
+        let bend = hit.bank_bend();
+        let bank_edge = half + 2.0 + hit.bar_width(l);
         let d_abs = hit.distance_l * l;
-        let fp = w.floodplain_w[hit.valley_class.table_index()] * w_blocks;
+        let fp = w.floodplain_w[hit.valley_class.table_index()] * w_blocks * (1. + bend.min(0.));
         let dp = d_abs - bank_edge;
         let d_floor = dp - fp;
         if d_floor < d_floor_min {
             d_floor_min = d_floor;
         }
-        let s_wall = w.wall_slope[hit.valley_class.table_index()];
+        let s_wall =
+            w.wall_slope[hit.valley_class.table_index()] * (1. - 0.5 * bend.max(0.) - bend.min(0.));
         let s_eff = if hit.gp > 0.0 {
             s_wall.max((hit.gp - level - 1.0) / w.wall_reach_blocks)
         } else {
@@ -503,7 +505,25 @@ pub fn with_water_w(
                 }
                 _ => {
                     // Обычный склон: +1 + s_eff·(d' − fp).
-                    level + 1.0 + s_eff * x
+                    // A terrace is a cut into a tall wall, never a fill. The
+                    // slope resumes after the ledge and rejoins Gp by R_wall.
+                    let g = hit.gp - level;
+                    let target = if g >= w.terrace_gorge_blocks && s_eff > 0. {
+                        let start = (w.terrace_height_blocks - 1.) / s_eff;
+                        let end = start + w.terrace_width_blocks;
+                        if x < start || end >= w.wall_reach_blocks {
+                            1. + s_eff * x
+                        } else {
+                            w.terrace_height_blocks
+                                + (x - end).max(0.)
+                                    * s_eff.max(
+                                        (g - w.terrace_height_blocks) / (w.wall_reach_blocks - end),
+                                    )
+                        }
+                    } else {
+                        1. + s_eff * x
+                    };
+                    level + target
                 }
             }
         };
@@ -845,6 +865,33 @@ mod tests {
         assert_eq!(outer.calm, 1.0, "за 16 блоками от дна долины шум полный");
     }
 
+    #[test]
+    fn w_bend_builds_a_bar_only_on_the_inside_and_terraces_a_high_wall() {
+        use crate::water_profile::ValleyClass::Plain;
+        let p = params_w(Mode::Gameplay);
+        let mut hydro = HydrologySample::default();
+        let mut hit = w_hit(8., 9., 80., Plain, 0.);
+        hit.bend = 1.;
+        let sample = |hydro: &mut HydrologySample, hit| {
+            hydro.channels.nearest = Some(hit);
+            with_water_w(s0(150.), 0., hydro, &p).surface_y
+        };
+        let inside = sample(&mut hydro, hit);
+        hit.side = -1.;
+        let outside = sample(&mut hydro, hit);
+        assert!(inside < outside, "inside={inside}, outside={outside}");
+        hit.bend = 0.;
+        hit.gp = 120.;
+        let fp = p.water.floodplain_w[Plain.table_index()] * 8.;
+        let slope = ((hit.gp - 81.) / p.water.wall_reach_blocks)
+            .max(p.water.wall_slope[Plain.table_index()]);
+        let start = (p.water.terrace_height_blocks - 1.) / slope;
+        for extra in [0.2, 0.8] {
+            hit.distance_l =
+                (6. + fp + start + extra * p.water.terrace_width_blocks) / p.block.l_blocks;
+            assert_eq!(sample(&mut hydro, hit), 80. + p.water.terrace_height_blocks);
+        }
+    }
     #[test]
     fn w_canyon_walls_step_up() {
         let p = params_w(Mode::Gameplay);
@@ -1218,6 +1265,7 @@ mod tests {
             level_blocks: None,
             along: 0.0,
             side: 1.0,
+            bend: 0.,
             valley_class: crate::water_profile::ValleyClass::Plain,
             flow_class: crate::water_profile::FlowClass::Calm,
             gp: 0.0,

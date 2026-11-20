@@ -84,6 +84,8 @@ pub struct ChannelPoint {
     pub valley_l: f64,
     pub depth_blocks: f64,
     pub meander_amplitude_l: f64,
+    /// Curvature toward the inside of the bend in ChannelHit::side coordinates.
+    pub bend: f64,
     pub meander_lambda_l: f64,
     pub slope_km_l: f64,
     /// T145: высота стока узла, км; источник зеркала русла.
@@ -104,6 +106,7 @@ impl ChannelPoint {
             valley_l: lerp(self.valley_l, other.valley_l, t),
             depth_blocks: lerp(self.depth_blocks, other.depth_blocks, t),
             meander_amplitude_l: lerp(self.meander_amplitude_l, other.meander_amplitude_l, t),
+            bend: lerp(self.bend, other.bend, t),
             meander_lambda_l: lerp(self.meander_lambda_l, other.meander_lambda_l, t),
             slope_km_l: lerp(self.slope_km_l, other.slope_km_l, t),
             route_km: lerp(self.route_km, other.route_km, t),
@@ -162,6 +165,7 @@ pub struct ChannelHit {
     /// `-1.0` — справа. Пара `distance_l * side` — знаковое расстояние
     /// `d` от оси в `L` (§6.5 плана: «+ слева по течению»).
     pub side: f64,
+    pub bend: f64,
     /// ВО1-1 (6.3, п. 7): класс долины (5.2), сглаженный по звену. У R2 —
     /// `Plain` (классы есть только у `v1-dev-w`).
     pub valley_class: ValleyClass,
@@ -284,6 +288,16 @@ impl ChannelQuery {
     }
 }
 
+impl ChannelHit {
+    /// Positive on the deposition side, negative on the undercut side.
+    pub(crate) fn bank_bend(&self) -> f64 {
+        self.side * self.bend
+    }
+    pub(crate) fn bar_width(&self, blocks_per_l: f64) -> f64 {
+        0.5 * self.bank_bend().max(0.) * self.core_l * blocks_per_l
+    }
+}
+
 /// ВО1-2 (6.5): ширина коридора W вокруг оси в L — полуширина ядра,
 /// береговая полоса (2 блока), самая широкая пойма и дальность склона
 /// `R_wall`. Ноль у версий без водного обновления.
@@ -293,7 +307,7 @@ pub fn w_corridor_l(params: &Params, core_l: f64) -> f64 {
     }
     let w = &params.water;
     let fp = w.floodplain_w.iter().copied().fold(0.0_f64, f64::max);
-    (0.5 + fp) * core_l + 2.0 / params.block.l_blocks + w.wall_reach_blocks / params.block.l_blocks
+    (1.0 + fp) * core_l + 2.0 / params.block.l_blocks + w.wall_reach_blocks / params.block.l_blocks
 }
 
 /// Верхняя граница радиуса общего запроса по параметрам, ещё до построения
@@ -337,11 +351,13 @@ pub struct ChannelNetwork {
 impl ChannelNetwork {
     /// ВО1-2 (6.5): ширина коридора W вокруг оси в L (ядро + береговая
     /// полоса + пойма + дальность склона). Ноль — версия без W.
-    fn w_corridor_l(&self, core_l: f64) -> f64 {
+    fn w_corridor_l(&self, core_l: f64, bank_bend: f64) -> f64 {
         if self.w_corridor_k <= 0.0 {
             return 0.0;
         }
-        self.w_corridor_k * core_l + self.w_shore_l + self.w_wall_reach_l
+        (self.w_corridor_k + 0.5 * bank_bend.max(0.)) * core_l
+            + self.w_shore_l
+            + self.w_wall_reach_l
     }
 
     pub fn build(
@@ -731,12 +747,16 @@ impl ChannelNetwork {
         let distance_l = point.sub(at.point).len();
         let fade = (self.bank_fraction * at.core_l).max(self.field_fade_l);
         let gallery_l = at.core_l * self.gallery_width_factor;
+        // Знак стороны: `d = distance_l * side`, «+ слева по течению» (§6.5).
+        // Левая нормаль `ab` — `(ab.z, −ab.x)`; знак её проекции точки на ось.
+        let cross = ab.x * (point.z - segment.a.point.z) - ab.z * (point.x - segment.a.point.x);
+        let side = if cross < 0.0 { 1.0 } else { -1.0 };
         // ВО1-2 (6.5): у W влияние шире — пойма и склон долины.
         let influence_l = at
             .valley_l
             .max(at.core_l + fade)
             .max(gallery_l)
-            .max(self.w_corridor_l(at.core_l));
+            .max(self.w_corridor_l(at.core_l, at.bend * side));
         if distance_l > influence_l {
             return None;
         }
@@ -762,10 +782,6 @@ impl ChannelNetwork {
                 .iter()
                 .map(|s| s.a.point.sub(s.b.point).len())
                 .sum::<f64>();
-        // Знак стороны: `d = distance_l * side`, «+ слева по течению» (§6.5).
-        // Левая нормаль `ab` — `(ab.z, −ab.x)`; знак её проекции точки на ось.
-        let cross = ab.x * (point.z - segment.a.point.z) - ab.z * (point.x - segment.a.point.x);
-        let side = if cross < 0.0 { 1.0 } else { -1.0 };
         Some(SegmentHit {
             bank_strength,
             gallery,
@@ -787,6 +803,7 @@ impl ChannelNetwork {
                 level_blocks: None,
                 along: t,
                 side,
+                bend: at.bend,
                 valley_class: ValleyClass::default(),
                 flow_class: FlowClass::default(),
                 gp: 0.0,
@@ -1058,6 +1075,7 @@ fn vertex(point: Vec2, q: f64, slope: f64, route_km: f64, params: &Params) -> Ch
         valley_l: valley_k * core_blocks / l,
         depth_blocks: c.depth0_blocks * dpow(ratio, 0.4),
         meander_amplitude_l: meander_k * 2.0 * core_blocks / l,
+        bend: 0.,
         meander_lambda_l: 11.0 * 2.0 * core_blocks / l,
         slope_km_l: slope,
         route_km,
@@ -1176,6 +1194,13 @@ fn meander(input: &[ChannelPoint], seed: u64, plate_id: u64, reach: usize) -> Ve
             .perp()
             .scale(input[k].meander_amplitude_l * wave * gain * envelope);
         let mut moved = input[k];
+        // Positive wave displaces to tangent.perp (cross>0); the centre of
+        // curvature then lies on the opposite side (cross<0 = positive side).
+        moved.bend = if input[k].meander_amplitude_l > 0. {
+            wave * envelope
+        } else {
+            0.
+        };
         moved.point = input[k].point.add(shift);
         if k == 0 {
             moved.point = input[0].point;
@@ -1307,6 +1332,7 @@ mod tests {
                             mirror_y: at.mirror_y,
                             level_blocks: None,
                             along: t,
+                            bend: at.bend,
                             side: if cross < 0.0 { 1.0 } else { -1.0 },
                             valley_class: super::ValleyClass::Plain,
                             flow_class: super::FlowClass::Calm,

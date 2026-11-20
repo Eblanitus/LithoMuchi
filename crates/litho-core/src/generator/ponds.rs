@@ -376,6 +376,7 @@ impl Generator {
             hit.distance_l * l
                 < 0.5 * width
                     + 2.
+                    + hit.bar_width(l)
                     + self.params.water.floodplain_w[hit.valley_class.table_index()] * width
                     + 4.
         };

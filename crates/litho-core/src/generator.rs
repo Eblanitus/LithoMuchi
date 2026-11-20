@@ -3959,7 +3959,7 @@ impl Generator {
         let l = self.params.block.l_blocks;
         let beach = self.params.water.beach_blocks;
         let river = water.channels.nearest.and_then(|hit| {
-            let edge = ((hit.distance_l - 0.5 * hit.core_l) * l).max(0.0);
+            let edge = ((hit.distance_l - 0.5 * hit.core_l) * l - hit.bar_width(l)).max(0.0);
             Some((edge, hit.level_blocks?, SurfaceKind::River, hit.flow_class))
         });
         let lake = water.lakes.shore_hit.and_then(|hit| {
@@ -3983,7 +3983,16 @@ impl Generator {
                 .shore_hit
                 .is_some_and(|lake| lake.body != WaterBody::Lake);
         Some((
-            if rocky_lake {
+            if kind == SurfaceKind::River
+                && water.channels.nearest.is_some_and(|h| h.bank_bend() > 0.)
+            {
+                BedMaterial::Sand
+            } else if kind == SurfaceKind::River
+                && water.channels.nearest.is_some_and(|h| h.bank_bend() < 0.)
+                && full.world.height.surface_y >= level + 2.
+            {
+                BedMaterial::Underwash
+            } else if rocky_lake {
                 BedMaterial::Gravel
             } else {
                 self.water_materials(full, kind, flow).1
