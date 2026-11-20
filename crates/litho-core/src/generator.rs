@@ -3660,6 +3660,11 @@ impl Generator {
     /// Ошибка/нечисловое значение больше не тихие: первые FIELD_LOG_LIMIT
     /// случаев попадают в stderr, все случаи считаются field_error_log_count().
     pub fn field(&self, field: Field, x: f64, _y: f64, z: f64) -> f64 {
+        // Legacy base_3d_noise is multiplied by exactly one, even where
+        // hydrology is absent. Do not build a column to return a constant.
+        if field == Field::Calm && !self.params.version.is_water_update() {
+            return 1.0;
+        }
         let full = match self.cached_full(x, z) {
             Ok(Some(full)) => full,
             Ok(None) => {
@@ -3698,13 +3703,7 @@ impl Generator {
             }
             Field::Factor => full.world.height.factor,
             Field::Jaggedness => full.world.height.jaggedness,
-            Field::Calm => {
-                if self.params.version.is_water_update() {
-                    full.world.height.calm
-                } else {
-                    1.0
-                }
-            }
+            Field::Calm => full.world.height.calm,
         };
         if value.is_finite() {
             value

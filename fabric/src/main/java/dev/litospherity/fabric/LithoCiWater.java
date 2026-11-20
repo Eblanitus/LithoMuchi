@@ -10,7 +10,7 @@ import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
-import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.material.Fluids;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.chunk.status.ChunkStatus;
 
@@ -171,7 +171,7 @@ final class LithoCiWater {
                 line.append(" | вокруг верха:");
                 for (BlockPos n : new BlockPos[] {top.above(), top.east(), top.west(), top.south(), top.north()}) {
                     BlockState st = level.getBlockState(n);
-                    String name = st.is(Blocks.WATER) ? (st.getFluidState().isSource() ? "water-src" : "water-flow" + st.getFluidState().getAmount())
+                    String name = containsWater(st) ? (st.getFluidState().isSource() ? "water-src" : "water-flow" + st.getFluidState().getAmount())
                             : net.minecraft.core.registries.BuiltInRegistries.BLOCK.getKey(st.getBlock()).getPath();
                     line.append(' ').append(name);
                 }
@@ -190,7 +190,7 @@ final class LithoCiWater {
                         if (top == LithoNative.WaterColumns.NONE || top <= LithoWaterFeature.SEA_LEVEL) continue;
                         int y = top - 1;
                         BlockState state = level.getBlockState(new BlockPos(x, y, z));
-                        if (state.is(Blocks.WATER)) {
+                        if (containsWater(state)) {
                             wet++;
                         } else {
                             dry++;
@@ -203,7 +203,7 @@ final class LithoCiWater {
                         // Раньше окно `top-2…top` считало такие блоки воды
                         // протечкой, хотя это наша же вода (§4 п. 4, Д-127).
                         for (int yy = Math.max(LithoWaterFeature.SEA_LEVEL + 1, y - 2); yy <= y + 1; yy++) {
-                            if (!level.getBlockState(new BlockPos(x, yy, z)).is(Blocks.WATER)) continue;
+                            if (!containsWater(level.getBlockState(new BlockPos(x, yy, z)))) continue;
                             boolean coreHere = false;
                             for (int dx = -1; dx <= 1 && !coreHere; dx++) {
                                 for (int dz = -1; dz <= 1 && !coreHere; dz++) {
@@ -216,7 +216,10 @@ final class LithoCiWater {
                             }
                             if (!coreHere) {
                                 boolean atSurface = level.getBlockState(new BlockPos(x, yy + 1, z)).isAir();
-                                if (atSurface) leaks++;
+                                if (atSurface) {
+                                    if (leaks < 5) report.add(String.format("протечка (%d,%d,%d), зеркало %d, дно %d", x, yy, z, top, core.bed()[0]));
+                                    leaks++;
+                                }
                             }
                         }
                     }
@@ -226,7 +229,7 @@ final class LithoCiWater {
             report.add(String.format("протечки: %d (порог 0)", leaks));
             report.add(String.format("сухое русло: %d из %d, %.2f %% (порог 1 %%)", dry, wet + dry, dryPct));
             report.add("вместо воды на зеркале: " + dryBlocks);
-            long[] vo2 = measureVo2(level, gen);
+            long[] vo2 = measureVo2(level, gen, report);
             long corridor = vo2[0], fit = vo2[1];
             double fitPct = corridor == 0 ? 100.0 : 100.0 * fit / (double) corridor;
             long waterColumns = vo2[4];
@@ -261,9 +264,10 @@ final class LithoCiWater {
 
     /** §8.3: inspect each generated column once, after generation and fluid ticks.
      * Include a two-block halo of core predictions, but score only the chunk interior. */
-    private static long[] measureVo2(ServerLevel level, LithoNative.Generator gen) {
+    private static long[] measureVo2(ServerLevel level, LithoNative.Generator gen, List<String> report) {
         final int side = 20;
         long corridor = 0, fit = 0, shore = 0, walls = 0, wet = 0, covered = 0;
+        long[] misses = new long[4]; // dry low/high, wet low/high
         double[] xs = new double[side * side], zs = new double[xs.length];
         for (var chunk : loadedChunks(level)) {
             for (int i = 0; i < xs.length; i++) {
@@ -298,6 +302,7 @@ final class LithoCiWater {
                     if (expected != Integer.MIN_VALUE) {
                         corridor++;
                         if (Math.abs(top - expected) <= 2) fit++;
+                        else misses[(dry ? 0 : 2) + (top > expected ? 1 : 0)]++;
                     }
                     if (!dry) {
                         wet++;
@@ -309,7 +314,15 @@ final class LithoCiWater {
                 }
             }
         }
+        report.add(String.format("calm_fit промахи: суша ниже/выше %d/%d, вода ниже/выше %d/%d", misses[0], misses[1], misses[2], misses[3]));
         return new long[] {corridor, fit, shore, walls, wet, covered};
+    }
+
+    // Vegetation runs after RAW_GENERATION. Seagrass and bubble columns
+    // still contain source water even though their block is not Blocks.WATER.
+    private static boolean containsWater(BlockState state) {
+        var fluid = state.getFluidState().getType();
+        return fluid == Fluids.WATER || fluid == Fluids.FLOWING_WATER;
     }
 
     /** Текущая вода выше моря до тиков: ключи {@link BlockPos#asLong()}. */
@@ -322,7 +335,7 @@ final class LithoCiWater {
                     for (int y = LithoWaterFeature.SEA_LEVEL; y < level.getMaxY(); y++) {
                         BlockPos pos = new BlockPos(chunk.getPos().getMinBlockX() + x, y, chunk.getPos().getMinBlockZ() + z);
                         BlockState state = chunk.getBlockState(pos);
-                        if (state.is(Blocks.WATER) && !state.getFluidState().isSource()) out.add(pos.asLong());
+                        if (containsWater(state) && !state.getFluidState().isSource()) out.add(pos.asLong());
                     }
                 }
             }
@@ -338,7 +351,7 @@ final class LithoCiWater {
                     for (int y = LithoWaterFeature.SEA_LEVEL + 1; y < level.getMaxY(); y++) {
                         BlockState state = chunk.getBlockState(new BlockPos(
                                 chunk.getPos().getMinBlockX() + x, y, chunk.getPos().getMinBlockZ() + z));
-                        if (!state.is(Blocks.WATER)) continue;
+                        if (!containsWater(state)) continue;
                         boolean source = state.getFluidState().isSource();
                         if (source == sources) count++;
                     }
