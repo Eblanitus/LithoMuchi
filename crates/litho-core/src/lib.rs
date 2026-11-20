@@ -48,6 +48,7 @@ pub mod vanilla;
 pub mod vanilla_biome;
 pub mod version;
 pub mod water_profile;
+pub mod water_features;
 
 pub use classify::{ClassSample, LifeZone, VanillaCell};
 pub use climate::{ClimateSample, PoleSample, PrecipSample, TemperatureSample};
@@ -58,6 +59,7 @@ pub use generator::{
 };
 pub use hydrology::{HydrologySample, SurfaceKind};
 pub use math::Vec2;
+pub use water_features::{PointLakeEngine, PointLakeHit, PointLakeType};
 pub use mode::{BlockParams, Mode};
 pub use morphoclimate::{MorphoMix, MorphoWeights};
 pub use params::Params;

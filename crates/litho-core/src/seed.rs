@@ -102,6 +102,11 @@ pub const SALT_CRUST_PASS: &str = "crust.pass";
 /// T77: жребий ячейки аквифера для лавы (только v1-dev).
 pub const SALT_LAVA_AQUIFER: &str = "lava.aquifer";
 
+// ВО4 (PLAN-WATER-UPDATE §6.6): соли точечных озёр.
+// Не меняют миры v0/v1/v1-dev/v1-dev-r2 — используются только в v1-dev-w.
+pub const SALT_WATER_FEATURE_CANDIDATE: &str = "water.feature.candidate";
+pub const SALT_WATER_FEATURE_GEOMETRY: &str = "water.feature.geometry";
+
 #[cfg(test)]
 mod tests {
     use super::{CellRng, SALT_PLATES_SEED, SALT_PLATES_VELOCITY, from_world_seed, subseed};
