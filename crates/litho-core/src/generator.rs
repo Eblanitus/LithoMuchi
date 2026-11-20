@@ -3453,9 +3453,18 @@ impl Generator {
                     full.climate.surface.e_km
                 }
             }
-            Field::Pv => full.world.pv,
+            Field::Pv => {
+                // ВО2-1 (§6.7): в зоне calm < 1 ванильный PV −1 — там нет
+                // иголок jaggedness над водой.
+                if full.world.height.calm < 1.0 {
+                    -1.0
+                } else {
+                    full.world.pv
+                }
+            }
             Field::Factor => full.world.height.factor,
             Field::Jaggedness => full.world.height.jaggedness,
+            Field::Calm => full.world.height.calm,
         };
         if value.is_finite() {
             value
@@ -4071,10 +4080,17 @@ mod t160_tests {
                 Field::Ridges => full.vanilla.w,
                 Field::Temperature => full.vanilla.t,
                 Field::Vegetation => full.vanilla.h,
-                Field::Pv => full.world.pv,
+                Field::Pv => {
+                    if full.world.height.calm < 1.0 {
+                        -1.0
+                    } else {
+                        full.world.pv
+                    }
+                }
                 Field::Offset => full.world.height.offset,
                 Field::Factor => full.world.height.factor,
                 Field::Jaggedness => full.world.height.jaggedness,
+                Field::Calm => full.world.height.calm,
                 Field::Lava => full.lava,
             };
             for f in fields {

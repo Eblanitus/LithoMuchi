@@ -39,8 +39,20 @@ def main(pack, jar, out):
     get = vanilla(jar)
     df = pack / "data/minecraft/worldgen/density_function"
     for f in sorted(df.rglob("*.json")):
+        data = convert(json.loads(f.read_text(encoding="utf-8")))
+        # ВО2-1 (§6.7/§8.1): base_3d_noise — ванильный шум, приглушённый маской calm.
+        # Для v1-dev и R2 calm ≡ 1.0, мир не меняется; для v1-dev-w гасит 3D-шум у воды.
+        if f.name == "base_3d_noise.json":
+            data = {
+                "type": "minecraft:mul",
+                "value1": {
+                    "type": "minecraft:cache_2d",
+                    "value": {"type": "litospherity:field", "field": "calm"},
+                },
+                "value2": data,
+            }
         write(out, f"data/minecraft/worldgen/density_function/{f.relative_to(df).as_posix()}",
-              convert(json.loads(f.read_text(encoding="utf-8"))))
+              data)
     settings = get("worldgen/noise_settings/overworld.json")
     dim = get("dimension_type/overworld.json")
     preset = get("worldgen/world_preset/normal.json")

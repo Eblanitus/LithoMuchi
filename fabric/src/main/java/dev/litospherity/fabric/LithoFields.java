@@ -32,7 +32,7 @@ public final class LithoFields {
     /** Порядок как Field::ALL в litho-core. */
     public static final List<String> FIELDS = List.of(
             "continents", "erosion", "ridges", "temperature", "vegetation",
-            "lava", "offset", "pv", "factor", "jaggedness");
+            "lava", "offset", "pv", "factor", "jaggedness", "calm");
 
     /** Версия генератора: 2 = v1-dev (как паки Horizon). */
     public static final int VERSION_V1_DEV = 2;

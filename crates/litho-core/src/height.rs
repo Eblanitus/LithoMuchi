@@ -42,6 +42,10 @@ pub struct HeightSample {
     pub bed_y: f64,
     /// T145: сила выреза русла/озера, 0…1.
     pub water_strength: f64,
+    /// ВО2-1 (PLAN-WATER-UPDATE §6.7): маска `calm` — ноль в воде, на берегу,
+    /// дне долины и озере (плюс отступ), снаружи затухает smoothstep-ом.
+    /// Для версий, кроме `v1-dev-w`, ровно 1.0.
+    pub calm: f64,
 }
 
 impl Default for HeightSample {
@@ -54,6 +58,7 @@ impl Default for HeightSample {
             water_y: SEA_LEVEL,
             bed_y: SEA_LEVEL,
             water_strength: 0.0,
+            calm: 1.0,
         }
     }
 }
@@ -163,6 +168,7 @@ pub fn sample_micro(
         water_y: SEA_LEVEL,
         bed_y: y,
         water_strength: 0.0,
+        calm: 1.0,
     }
 }
 
@@ -567,6 +573,21 @@ pub fn with_water_w(
             }
         }
     }
+    // ВО2-1 (§6.7): маска calm — ноль в воде и у воды, снаружи затухает
+    // smoothstep-ом по d_floor; для озёра действует тот же профиль (паду у
+    // озера можно расширить зону позже, сейчас d_floor от русла покрывает
+    // близость к любой воде).
+    let (calm_lo, calm_hi) = (w.calm_blocks[0], w.calm_blocks[1]);
+    let in_water = cut > 0.0;
+    let calm = if in_water {
+        0.0
+    } else if d_floor_min.is_finite() {
+        smoothstep(calm_lo, calm_hi, d_floor_min)
+    } else {
+        1.0
+    };
+    height.calm = calm;
+
     if cut > 0.0 {
         return height;
     }
