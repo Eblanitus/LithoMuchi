@@ -56,6 +56,7 @@ jobs:
       - name: Ресурсы мода из пака v1-dev и ванильного 26.3 (Ф3)
         run: |
           set -e
+          python3 tools/test_fabric_resources.py
           cargo run -q -p xtask -- pack --out out/packs
           mv=$(grep '^minecraft_version=' fabric/gradle.properties | cut -d= -f2)
           url=$(curl -fsS https://piston-meta.mojang.com/mc/game/version_manifest_v2.json | jq -r --arg v "$mv" '.versions[]|select(.id==$v).url')
