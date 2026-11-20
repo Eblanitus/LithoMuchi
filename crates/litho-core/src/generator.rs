@@ -126,9 +126,7 @@ fn log_field_error_with(counter: &AtomicU64, message: impl FnOnce() -> String) {
             message()
         );
     } else if number == FIELD_LOG_LIMIT + 1 {
-        eprintln!(
-            "litho-core: дальше сообщения field() подавляются; всего ошибок см. field_error_log_count()"
-        );
+        eprintln!("litho-core: дальше сообщения field() подавляются");
     }
 }
 
@@ -378,6 +376,19 @@ struct PlateLevels {
     /// ВО1-1 (6.3, п. 7): профиль звена целиком — уровни и классы, только W.
     /// R2 этот словарь не читает.
     w_profiles: Mutex<HashMap<usize, Arc<WReachProfile>>>,
+    /// Уровень входа звена (п. 3) — мемоизация отдельно от профиля: он
+    /// считается в самом начале сборки звена и не меняется потом, а приёмник
+    /// достраивает его же из соседних звеньев (п. 4). Без этой ячейки
+    /// слияние двух притоков собирало бы их профили друг в друга без конца.
+    w_entries: Mutex<HashMap<usize, Option<f64>>>,
+    /// Уровень на конце звена ДО коррекции приёмника (п. 4): бегущий минимум
+    /// уже посчитан, приёмник сюда не входит. Пишется один раз в начале
+    /// сборки и никогда не переписывается, поэтому все читатели видят одно
+    /// и то же значение независимо от порядка обхода. Без этой ячейки два
+    /// слияния одной реки собирали бы профили друг друга заново до переполнения
+    /// стека: коррекция приёмника (п. 4) смотрит вниз по течению и заново
+    /// запрашивает звенья, которые ещё стоят на стеке вызова.
+    w_ends: Mutex<HashMap<usize, f64>>,
 }
 
 /// ВО1-1: профиль одного звена — уровни и классы (6.3, п. 7).
@@ -1741,9 +1752,16 @@ impl Generator {
             current = Some(here);
             level[index] = here;
         }
-        // п. 4: приёмник и подпор. Слияние и озеро требуют уровня соседа,
-        // поэтому это отдельный проход уже по готовому профилю.
+        // п. 3/8: конец звена ДО коррекции приёмника — в общую ячейку.
+        // Приёмник (п. 4) и соседние слияния читают его отсюда вместо
+        // повторной сборки звена, которое всё ещё стоит на стеке.
         let end_level = *level.last().expect("звено непусто");
+        levels
+            .w_ends
+            .lock()
+            .expect("уровни концов W не отравлены")
+            .entry(reach)
+            .or_insert(end_level);
         if let Some(receiver) = self.w_receiver_level(levels, net, reach, Some(end_level))? {
             let mouth_level = *level.last().expect("звено непусто");
             if mouth_level + 1.0 < receiver {
@@ -1815,8 +1833,11 @@ impl Generator {
                 raw[i] = value;
             }
         }
-        let valley =
-            crate::water_profile::smooth_valley_classes(&cum_blocks, &raw, water.class_window_blocks);
+        let valley = crate::water_profile::smooth_valley_classes(
+            &cum_blocks,
+            &raw,
+            water.class_window_blocks,
+        );
         // п. 7 / 6.3: класс потока сверху вниз; каскад глушит водопад.
         let mut classes = Vec::with_capacity(n);
         let mut upstream = crate::water_profile::FlowClass::Calm;
@@ -1853,11 +1874,7 @@ impl Generator {
     /// `T` звена по его первой вершине: низший из трёх `S0` (ось и два
     /// берега), блок под ней, не ниже моря. Та же формула, что в начале
     /// профиля, но одна проба.
-    fn w_first_target(
-        &self,
-        net: &crate::drainage::RiverNet,
-        reach: usize,
-    ) -> Option<f64> {
+    fn w_first_target(&self, net: &crate::drainage::RiverNet, reach: usize) -> Option<f64> {
         let l = self.params.block.l_blocks;
         let shift = self.spawn_shift;
         let sea = crate::height::SEA_LEVEL;
@@ -1884,6 +1901,48 @@ impl Generator {
         Some((bank.floor() - 1.0).max(sea))
     }
 
+    /// п. 3/8 (6.3): уровень конца звена-родителя. Порядок источников:
+    /// звено, которое строится прямо сейчас (`in_progress`) — его конец уже
+    /// посчитан; затем ячейка `w_ends` — пред-подпорное значение, одинаковое
+    /// для всех путей обхода; и только потом сборка звена (после неё ячейка
+    /// всегда заполнена, либо звено пустое). Первые два источника не дают
+    /// слияниям собирать профили друг друга заново, пока они стоят на стеке
+    /// вызова (иначе — переполнение стека на слиянии двух притоков).
+    /// Все три источника отдают пред-подпорный уровень: вход звена (п. 3)
+    /// не зависит от порядка обхода и остаётся детерминированным.
+    fn w_parent_end(
+        &self,
+        levels: &PlateLevels,
+        net: &crate::drainage::RiverNet,
+        reach: usize,
+        in_progress: Option<(usize, f64)>,
+    ) -> Result<Option<f64>, RiverNetError> {
+        if let Some((active, end)) = in_progress {
+            if active == reach {
+                return Ok(Some(end));
+            }
+        }
+        if let Some(end) = levels
+            .w_ends
+            .lock()
+            .expect("уровни концов W не отравлены")
+            .get(&reach)
+        {
+            return Ok(Some(*end));
+        }
+        let _ = self.w_reach_profile(levels, net, reach)?;
+        // После сборки ячейка заполнена; звено с пустым источником — None.
+        if let Some(end) = levels
+            .w_ends
+            .lock()
+            .expect("уровни концов W не отравлены")
+            .get(&reach)
+        {
+            return Ok(Some(*end));
+        }
+        Ok(None)
+    }
+
     /// п. 3/8 (6.3): уровень входа в звено — низший из родителей
     /// (`mouth_node == source_node`), включая передачи от соседних плит.
     /// `None` — голова реки. Подпор (п. 4) сюда не входит: он смотрит вниз
@@ -1894,7 +1953,21 @@ impl Generator {
         net: &crate::drainage::RiverNet,
         reach: usize,
     ) -> Result<Option<f64>, RiverNetError> {
-        self.w_entry_level_inner(levels, net, reach, None)
+        if let Some(found) = levels
+            .w_entries
+            .lock()
+            .expect("уровни входа W не отравлены")
+            .get(&reach)
+        {
+            return Ok(*found);
+        }
+        let entry = self.w_entry_level_inner(levels, net, reach, None)?;
+        levels
+            .w_entries
+            .lock()
+            .expect("уровни входа W не отравлены")
+            .insert(reach, entry);
+        Ok(entry)
     }
 
     /// `in_progress`: (номер звена в этой сети, его уровень на конце) —
@@ -1923,17 +1996,7 @@ impl Generator {
             if index == reach || candidate.mouth_node != source {
                 continue;
             }
-            // Звено, которое строитель строит прямо сейчас (в `w_receiver_level`):
-            // его конец уже известен по `level`, собирать его заново нельзя — цикл.
-            if let Some((active, end)) = in_progress {
-                if index == active {
-                    best = Some(best.map_or(end, |old: f64| old.min(end)));
-                    continue;
-                }
-            }
-            let profile = self.w_reach_profile(levels, net, index)?;
-            let parent_end = profile.levels.last().copied().flatten().map(|(_, down)| down);
-            if let Some(level) = parent_end {
+            if let Some(level) = self.w_parent_end(levels, net, index, in_progress)? {
                 best = Some(best.map_or(level, |old: f64| old.min(level)));
             }
         }
@@ -1957,9 +2020,7 @@ impl Generator {
                 if mouth.point.sub(node_point).len() > 1e-9 {
                     continue;
                 }
-                let profile = self.w_reach_profile(&other_levels, &other_net, index)?;
-                let parent_end = profile.levels.last().copied().flatten().map(|(_, down)| down);
-                if let Some(level) = parent_end {
+                if let Some(level) = self.w_parent_end(&other_levels, &other_net, index, None)? {
                     best = Some(best.map_or(level, |old: f64| old.min(level)));
                 }
             }
@@ -2012,7 +2073,7 @@ impl Generator {
                 // Уровень начала звена ниже по течению — формула входа (п. 3):
                 // минимум цели по первой вершине и концам его родителей.
                 // Звено `reach` уже строится, его конец — `this_end`.
-                let target = self.w_first_target(net, next)?;
+                let target = self.w_first_target(net, next);
                 let in_progress = this_end.map(|end| (reach, end));
                 let entry = self.w_entry_level_inner(levels, net, next, in_progress)?;
                 let mut best: Option<f64> = None;
@@ -2267,22 +2328,59 @@ impl Generator {
         } else {
             shore_dist
         };
+        let water_update = self.params.version.is_water_update();
         // R2 (§4): `S` — сухая поверхность колонки. Уровень воды считается от
         // неё (`dry_surface_at`), поэтому вырез только опускает рельеф.
-        let dry = crate::height::sample_micro(
-            vanilla.c,
-            vanilla.e,
-            pv,
-            e_valley_km,
-            morpho.values[6],
-            morpho.values[7],
-            micro,
-            1.0 - crate::math::clamp01(river),
-            shore_dist,
-            &self.params,
-        );
+        // W (6.1/6.5): `S0` считается БЕЗ гидрологии (pv_relief, e_km), вырез
+        // ниже — профилем от `S0` (`with_water_w`).
+        let dry = if water_update {
+            crate::height::sample_micro(
+                vanilla.c,
+                vanilla.e,
+                pv_relief,
+                e_km,
+                morpho.values[6],
+                morpho.values[7],
+                micro,
+                1.0,
+                shore_dist,
+                &self.params,
+            )
+        } else {
+            crate::height::sample_micro(
+                vanilla.c,
+                vanilla.e,
+                pv,
+                e_valley_km,
+                morpho.values[6],
+                morpho.values[7],
+                micro,
+                1.0 - crate::math::clamp01(river),
+                shore_dist,
+                &self.params,
+            )
+        };
         let height = if apply_water {
-            crate::height::with_water(dry, &water, &self.params)
+            if water_update {
+                // Вклад микробугров — отдельное слагаемое (6.1): разность
+                // двух вызовов; `gate` гасит бугры у воды в `with_water_w`.
+                let macro_h = crate::height::sample_micro(
+                    vanilla.c,
+                    vanilla.e,
+                    pv_relief,
+                    e_km,
+                    morpho.values[6],
+                    morpho.values[7],
+                    0.0,
+                    0.0,
+                    shore_dist,
+                    &self.params,
+                );
+                let micro_dy = dry.surface_y - macro_h.surface_y;
+                crate::height::with_water_w(macro_h, micro_dy, &water, &self.params)
+            } else {
+                crate::height::with_water(dry, &water, &self.params)
+            }
         } else {
             dry
         };

@@ -165,7 +165,12 @@ impl FlowClass {
 /// Класс потока по падению `W` и локальному перепаду. `drop_blocks` —
 /// перепад между соседними пробами вниз по течению. Водопад (п. 6) не
 /// размечается, если выше по течению уже каскад.
-pub fn flow_class(slope: f64, drop_blocks: f64, upstream: FlowClass, water: &WaterUpdateParams) -> FlowClass {
+pub fn flow_class(
+    slope: f64,
+    drop_blocks: f64,
+    upstream: FlowClass,
+    water: &WaterUpdateParams,
+) -> FlowClass {
     if drop_blocks >= water.fall_min_drop_blocks && upstream != FlowClass::Cascade {
         return FlowClass::FallTop;
     }
@@ -294,13 +299,25 @@ mod tests {
     #[test]
     fn flow_class_marks_falls_and_respects_cascade() {
         let w = water();
-        assert_eq!(flow_class(0.5, 4.0, FlowClass::Calm, &w), FlowClass::FallTop);
+        assert_eq!(
+            flow_class(0.5, 4.0, FlowClass::Calm, &w),
+            FlowClass::FallTop
+        );
         // Выше по течению каскад — водопад не размечается.
-        assert_eq!(flow_class(0.5, 4.0, FlowClass::Cascade, &w), FlowClass::Cascade);
+        assert_eq!(
+            flow_class(0.5, 4.0, FlowClass::Cascade, &w),
+            FlowClass::Cascade
+        );
         assert_eq!(flow_class(0.001, 0.0, FlowClass::Calm, &w), FlowClass::Calm);
-        assert_eq!(flow_class(0.02, 0.0, FlowClass::Calm, &w), FlowClass::Riffle);
+        assert_eq!(
+            flow_class(0.02, 0.0, FlowClass::Calm, &w),
+            FlowClass::Riffle
+        );
         assert_eq!(flow_class(0.1, 0.0, FlowClass::Calm, &w), FlowClass::Rapid);
-        assert_eq!(flow_class(0.3, 0.0, FlowClass::Calm, &w), FlowClass::Cascade);
+        assert_eq!(
+            flow_class(0.3, 0.0, FlowClass::Calm, &w),
+            FlowClass::Cascade
+        );
     }
 
     #[test]
@@ -316,7 +333,7 @@ mod tests {
         let out = smooth_valley_classes(&along, &classes, 64.0);
         // В окне ±32 блока вокруг каждой пробы — по 3 равнинные и 2 каньона,
         // поэтому везде равнинная.
-        assert_eq!(out.iter().copied().collect::<Vec<_>>(), vec![ValleyClass::Plain; 5]);
+        assert_eq!(out, [ValleyClass::Plain; 5]);
         // Узкое окно (10) — каждая проба видит только себя и соседей на 5 бл.:
         // решения не смешиваются на весь массив.
         let out = smooth_valley_classes(&along, &classes, 10.0);

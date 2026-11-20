@@ -184,17 +184,9 @@ struct SegmentHit {
 /// `nearest`; здесь — остальные (копия ближайшего тоже допустима: вырезу
 /// проще перебрать всех, чем разбирать случаи). По одному отрезку на звено,
 /// по возрастанию расстояния. `Copy`, как и сам запрос.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct ExtraHits {
     hits: [Option<ChannelHit>; 3],
-}
-
-impl Default for ExtraHits {
-    fn default() -> Self {
-        Self {
-            hits: [None, None, None],
-        }
-    }
 }
 
 impl ExtraHits {
@@ -476,7 +468,12 @@ impl ChannelNetwork {
         let (reaches, segments) = append_deltas(reaches, segments, seed, plate_id, params);
         // ВО1-2 (6.5): ширина коридора W для корзин и отсечки влияния.
         let w_corridor_k = if params.version.is_water_update() {
-            0.5 + params.water.floodplain_w.iter().copied().fold(0.0_f64, f64::max)
+            0.5 + params
+                .water
+                .floodplain_w
+                .iter()
+                .copied()
+                .fold(0.0_f64, f64::max)
         } else {
             0.0
         };
@@ -630,7 +627,10 @@ impl ChannelNetwork {
             out.valley = out.valley.max(hit.valley_strength);
             out.gallery = out.gallery.max(segment_hit.gallery);
             out.delta = out.delta.max(hit.delta_strength);
-            if out.nearest.is_none_or(|old| hit.distance_l < old.distance_l) {
+            if out
+                .nearest
+                .is_none_or(|old| hit.distance_l < old.distance_l)
+            {
                 out.nearest = Some(hit);
             }
         }
@@ -664,11 +664,9 @@ impl ChannelNetwork {
             }
         }
         out.sort_by(|a, b| {
-            a.distance_l.total_cmp(&b.distance_l).then((a.plate_id, a.reach, a.segment).cmp(&(
-                b.plate_id,
-                b.reach,
-                b.segment,
-            )))
+            a.distance_l
+                .total_cmp(&b.distance_l)
+                .then((a.plate_id, a.reach, a.segment).cmp(&(b.plate_id, b.reach, b.segment)))
         });
         out.truncate(limit);
         out
@@ -1247,8 +1245,8 @@ mod tests {
                         .nearest
                         .is_none_or(|old: super::ChannelHit| d < old.distance_l)
                     {
-                        let cross =
-                            ab.x * (point.z - segment.a.point.z) - ab.z * (point.x - segment.a.point.x);
+                        let cross = ab.x * (point.z - segment.a.point.z)
+                            - ab.z * (point.x - segment.a.point.x);
                         brute.nearest = Some(super::ChannelHit {
                             plate_id: 7,
                             segment: s,

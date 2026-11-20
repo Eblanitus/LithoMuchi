@@ -166,15 +166,19 @@ pub fn resolve_with_limit(
     out.water = lakes.r1_water;
     out.river = out.river.max(lakes.river_lake);
     if r1 {
-        out.valley = out.valley.max(lakes.shore);
-        // Д-127: `LakeNetwork::query` под R2 отдаёт `r1_water` только низким
-        // озёрам, а под пределом R1 в поле идут все. Поскольку предел R1
-        // означает «как в `v1-dev`», низкая вода возвращается как есть.
+        // Д-127: предел R1 означает «как в `v1-dev`». Ровно те силы озера
+        // идут в поля, которые видел `v1-dev`: низкое озеро (уровень не
+        // выше предела) восстанавливается целиком, высокое — нет. Силу
+        // берега без опознанного низкого озера (`inside` пуст или уровень
+        // выше предела) в E не отдаём: иначе поля `v1-dev-r2` разойдутся
+        // с `v1-dev` на высоких озёрах.
         if inside.is_some_and(|hit| hit.level_km.is_some_and(|level| level <= r1_max_km)) {
-            // Поле `water` — та же «геометрическая вода», что `r1_water` в
-            // `LakeQuery`: в `v1-dev` низкое озеро идёт и в C/E, и в биом.
+            out.valley = out.valley.max(lakes.shore);
             out.water = 1.0;
         }
+    } else {
+        // Без предела (слой воды R2): сила берега остаётся.
+        out.valley = out.valley.max(lakes.shore);
     }
     out.swamp = lakes.swamp;
     out.dry_basin = lakes.dry_basin;
@@ -793,7 +797,9 @@ mod tests {
         assert_eq!(high.r2_deferred, 1.0);
         let v = apply_fields(base(), 0.0, &high, &p);
         assert!(v.c >= p.climate.ocean_c_threshold);
-        assert_eq!(v.e, p.hydrology.dry_basin_e);
+        // Сухая котловина тянет E к `dry_basin_e`; `lerp(a, b, 1)` не
+        // гарантирует побитовое равенство, поэтому сравниваем с допуском.
+        assert!((v.e - p.hydrology.dry_basin_e).abs() < 1e-12);
     }
 
     #[test]
