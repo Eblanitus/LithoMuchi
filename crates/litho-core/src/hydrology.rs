@@ -166,21 +166,20 @@ pub fn resolve_with_limit(
     out.water = lakes.r1_water;
     out.river = out.river.max(lakes.river_lake);
     if r1 {
-        out.valley = out.valley.max(lakes.shore);
-        // Д-127: `LakeNetwork::query` под R2 отдаёт `r1_water` только низким
-        // озёрам, а под пределом R1 в поле идут все. Поскольку предел R1
-        // означает «как в `v1-dev`», низкая вода возвращается как есть.
+        // Д-127: предел R1 означает «как в `v1-dev`». Геометрия уже приходит
+        // с этим пределом (`LakeNetwork::query_with_limit`), поэтому здесь
+        // ровно те силы озера, которые видел `v1-dev`.
         if inside.is_some_and(|hit| hit.level_km.is_some_and(|level| level <= r1_max_km)) {
-            // Поле `water` — та же «геометрическая вода», что `r1_water` в
-            // `LakeQuery`: в `v1-dev` низкое озеро идёт и в C/E, и в биом.
+            out.valley = out.valley.max(lakes.shore);
             out.water = 1.0;
         }
+    } else {
+        // Без предела (слой воды R2): сила берега остаётся.
+        out.valley = out.valley.max(lakes.shore);
     }
     out.swamp = lakes.swamp;
     out.dry_basin = lakes.dry_basin;
     out.r2_deferred = lakes.deferred_water;
-    // R2: у всех озёр с водой предел снят, вид воды — как у R1 (В1).
-    // Предел приходит аргументом: поля всегда считаются с пределом R1.
     out.kind = if lakes.inland_sea > 0.0
         || inside.is_some_and(|hit| {
             matches!(hit.kind, LakeKind::InlandSea | LakeKind::SeaConnected)
@@ -203,8 +202,7 @@ pub fn resolve_with_limit(
         SurfaceKind::Land
     };
     // Д-127: под пределом R1 высокое озеро — это отложенная вода, а не суша
-    // с болотом: тот же кадр, что у `v1-dev`. Без этого `v1-dev-r2` давал бы
-    // на высоких озёрах E6 вместо DeferredWater и менял сушу.
+    // с болотом: тот же кадр, что у `v1-dev`.
     if r1 && out.kind == SurfaceKind::Land && lakes.deferred_water > 0.0 {
         out.kind = SurfaceKind::DeferredWater;
     }
@@ -717,6 +715,10 @@ mod tests {
             mouth_distance_l: 1.0,
             level_blocks: None,
             along: 0.0,
+            side: 1.0,
+            valley_class: crate::water_profile::ValleyClass::Plain,
+            flow_class: crate::water_profile::FlowClass::Calm,
+            gp: 0.0,
         };
         let q = ChannelQuery {
             core: 1.0,
@@ -789,7 +791,9 @@ mod tests {
         assert_eq!(high.r2_deferred, 1.0);
         let v = apply_fields(base(), 0.0, &high, &p);
         assert!(v.c >= p.climate.ocean_c_threshold);
-        assert_eq!(v.e, p.hydrology.dry_basin_e);
+        // Сухая котловина тянет E к `dry_basin_e`; `lerp(a, b, 1)` не
+        // гарантирует побитовое равенство, поэтому сравниваем с допуском.
+        assert!((v.e - p.hydrology.dry_basin_e).abs() < 1e-12);
     }
 
     #[test]
@@ -819,6 +823,10 @@ mod tests {
             mouth_distance_l: 0.0,
             level_blocks: None,
             along: 0.0,
+            side: 1.0,
+            valley_class: crate::water_profile::ValleyClass::Plain,
+            flow_class: crate::water_profile::FlowClass::Calm,
+            gp: 0.0,
         };
         let q = ChannelQuery {
             core: 1.0,

@@ -273,6 +273,43 @@ mod fast_path {
         }
     }
 
+    /// ВО1-4: на стыке соседних колонок уровень воды не прыгает больше чем
+    /// на блок (`seams` в §10.2 плана водного обновления).
+    #[test]
+    fn water_levels_are_continuous() {
+        let generator = Generator::new(42, Mode::Gameplay, GenVersion::V1DevW).unwrap();
+        for (x, z) in points(40) {
+            let here = generator.water_column(x, z);
+            let east = generator.water_column(x + 1.0, z);
+            let south = generator.water_column(x, z + 1.0);
+            for other in [east, south] {
+                if here.has_water() && other.has_water() {
+                    assert!(
+                        (here.level - other.level).abs() <= 1,
+                        "ступень воды {x:.0},{z:.0}: {} → {}",
+                        here.level,
+                        other.level
+                    );
+                }
+            }
+        }
+    }
+
+    /// ВО1-4: вода выше моря не ломает швы C/E/W «seams».
+    #[test]
+    fn water_update_fields_are_continuous() {
+        let generator = Generator::new(42, Mode::Gameplay, GenVersion::V1DevW).unwrap();
+        for (x, z) in points(60) {
+            for field in [Field::Continents, Field::Erosion, Field::Ridges] {
+                let here = generator.field(field, x, 64.0, z);
+                let east = generator.field(field, x + 1.0, 64.0, z);
+                let south = generator.field(field, x, 64.0, z + 1.0);
+                assert!((here - east).abs() <= 0.02, "ВО1 {field:?} на восток");
+                assert!((here - south).abs() <= 0.02, "ВО1 {field:?} на юг");
+            }
+        }
+    }
+
     /// 14.2: ни NaN, ни бесконечности, в том числе на краю мира.
     #[test]
     fn fields_are_finite_at_the_world_edge() {

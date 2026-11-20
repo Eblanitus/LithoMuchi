@@ -468,6 +468,13 @@ impl LakeNetwork {
     }
 
     pub fn query(&self, point: Vec2) -> LakeQuery {
+        self.query_with_limit(point, self.r1_max_level_km)
+    }
+
+    /// Д-127: fields `v1-dev-r2` are built by the R1 lake picture even though
+    /// the water layer uses unlimited levels. The limit is passed explicitly
+    /// so the same network can answer both questions without rebuilding.
+    pub fn query_with_limit(&self, point: Vec2, r1_max_level_km: f64) -> LakeQuery {
         let mut out = LakeQuery {
             networks_considered: 1,
             ..LakeQuery::default()
@@ -514,9 +521,7 @@ impl LakeNetwork {
             out.water = out.water.max(water_strength);
             out.shore = out.shore.max(shore_strength);
             out.basin = out.basin.max(shore_strength);
-            let r1 = lake
-                .level_km
-                .is_some_and(|level| level <= self.r1_max_level_km);
+            let r1 = lake.level_km.is_some_and(|level| level <= r1_max_level_km);
             if inside && lake.kind.has_water() && r1 {
                 out.r1_water = 1.0;
             }

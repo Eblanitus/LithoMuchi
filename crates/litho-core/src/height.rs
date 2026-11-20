@@ -393,6 +393,187 @@ fn raise_bank(
     height
 }
 
+/// ВО1-2 (6.5, `PLAN-WATER-UPDATE.md`): вырез итоговой поверхности `W`.
+///
+/// `s0_macro` — `S0` без микробугров (строка таблицы высот `W`,
+/// `macro_y`/`sample_micro(…, 0.0, 0.0, …)`); `micro_dy` — вклад микробугров
+/// отдельным слагаемым (`S0 = S0_macro + micro`, 6.1). Поверхность —
+/// **только ниже** `S0`: `min(S0_macro + micro·gate, V_river…, V_озеро,
+/// V_feature)`; озёра — как в R2 (6.4, ВО1–ВО2), подпор/русло по профилю W.
+/// `raise_bank` добивается ≤ 2 блока, как в R2.
+///
+/// Параметры берутся из `params.water` (6.9) и классов хита
+/// (`valley_class`, `flow_class`, `gp`): каньон — ступенями
+/// `canyon_step_*`, ледниковая U — `1 + x²/8` до 16 блоков и дальше по
+/// 4 блока на блок вбок, иначе `s_wall(class)` с максимумом
+/// `(Gp − W − 1)/R_wall`. `gate` микробугров — `smoothstep` по `d_floor`.
+/// Русло без уровня `level_blocks` (не считался/нет профиля) не вырезается.
+#[allow(clippy::too_many_lines)]
+pub fn with_water_w(
+    s0_macro: HeightSample,
+    micro_dy: f64,
+    water: &HydrologySample,
+    params: &Params,
+) -> HeightSample {
+    let w = &params.water;
+    let h = &params.height;
+    let l = params.block.l_blocks;
+    let sea = SEA_LEVEL;
+    let land_y = s0_macro.surface_y;
+    let s0_full = land_y + micro_dy;
+    // Собираем звенья-кандидаты: ближайшее плюс до двух из коридора 6.5.
+    let mut candidates: Vec<crate::channel::ChannelHit> = Vec::with_capacity(4);
+    if let Some(hit) = water.channels.nearest {
+        candidates.push(hit);
+    }
+    for hit in water.channels.extra.iter() {
+        candidates.push(*hit);
+    }
+    // Дубль ближайшего звена в `extra` допустим: min() от него не меняется.
+    let (gate_lo, gate_hi) = (w.gate_blocks[0], w.gate_blocks[1]);
+    let scientific = matches!(params.mode, crate::mode::Mode::Scientific);
+    let depth_min = 2.0_f64;
+    let depth_max = if scientific { 8.0 } else { 5.0 };
+    let mut best: Option<(f64, f64, f64, f64)> = None; // (v_y, water_y, bed_y, strength)
+    let mut d_floor_min = f64::INFINITY;
+    for hit in &candidates {
+        let Some(level) = hit.level_blocks else {
+            continue;
+        };
+        let w_blocks = (hit.core_l * l).max(1.0);
+        let half = 0.5 * w_blocks;
+        let bank_edge = half + 2.0;
+        let d_abs = hit.distance_l * l;
+        let fp = w.floodplain_w[hit.valley_class.table_index()] * w_blocks;
+        let dp = d_abs - bank_edge;
+        let d_floor = dp - fp;
+        if d_floor < d_floor_min {
+            d_floor_min = d_floor;
+        }
+        let s_wall = w.wall_slope[hit.valley_class.table_index()];
+        let s_eff = if hit.gp > 0.0 {
+            s_wall.max((hit.gp - level - 1.0) / w.wall_reach_blocks)
+        } else {
+            s_wall
+        };
+        let candidate = if d_abs <= half {
+            // Ядро |d| ≤ w/2: параболическое дно под зеркалом.
+            let depth = hit.depth_blocks.clamp(depth_min, depth_max);
+            let shape = (1.0 - (2.0 * d_abs / w_blocks).powi(2)).max(0.35);
+            level - depth * shape
+        } else if d_abs <= bank_edge {
+            // Береговая полоса 2 блока: вровень; у равнинной реки при w ≥ 8 —
+            // прирусловый вал +1, если `S0` выше.
+            let mut y = level;
+            let plain = hit.valley_class == crate::water_profile::ValleyClass::Plain;
+            if plain && w_blocks >= 8.0 && s0_full > level + 1.0 {
+                y += 1.0;
+            }
+            y
+        } else if dp <= fp {
+            // Пойма: +1 над зеркалом.
+            level + 1.0
+        } else {
+            let x = d_floor; // d' − fp ≥ 0
+            match hit.valley_class {
+                crate::water_profile::ValleyClass::Canyon => {
+                    // Ступени каньона: +1 + H_step · ceil(x / L_step).
+                    level + 1.0 + w.canyon_step_blocks * (x / w.canyon_step_every).ceil()
+                }
+                crate::water_profile::ValleyClass::GlacialU => {
+                    // Парабола до 16 блоков, дальше 4 блока вверх на блок вбок.
+                    if x <= 16.0 {
+                        level + 1.0 + x * x / 8.0
+                    } else {
+                        level + 1.0 + 16.0 * 16.0 / 8.0 + 4.0 * (x - 16.0)
+                    }
+                }
+                _ => {
+                    // Обычный склон: +1 + s_eff·(d' − fp).
+                    level + 1.0 + s_eff * x
+                }
+            }
+        };
+        // Кандидат участвует в min() безусловно: сравнение с S0 — ниже.
+        let bed = candidate;
+        let strength = if d_abs <= half {
+            1.0
+        } else if dp <= 0.0 {
+            0.5
+        } else {
+            0.0
+        };
+        let take = match best {
+            Some((old, _, _, _)) => candidate < old,
+            None => true,
+        };
+        if take {
+            best = Some((candidate, level, bed, strength));
+        }
+    }
+    // Итоговая поверхность: S0 с гаснущими у воды микробуграми, не выше неё.
+    let gate = if d_floor_min.is_finite() {
+        smoothstep(gate_lo, gate_hi, d_floor_min)
+    } else {
+        1.0
+    };
+    let mut surface = land_y + micro_dy * gate;
+    let mut water_y = sea;
+    let mut bed_y = surface;
+    let mut cut = 0.0_f64;
+    if let Some((v_y, mirror, bed, strength)) = best {
+        if v_y < surface {
+            surface = v_y;
+            bed_y = bed;
+            cut = strength;
+            // Вода стоит, где дно ниже зеркала; береговая полоса — вровень,
+            // поэтому у самой кромки воды нет.
+            if v_y < mirror {
+                water_y = mirror;
+            }
+        }
+    }
+    let mut height = HeightSample {
+        surface_y: surface,
+        water_y,
+        bed_y,
+        water_strength: cut,
+        ..s0_macro
+    };
+    height.offset = (surface - SURFACE_BASE) / OFFSET_SCALE;
+    // Озёра — правило R2 (6.4, ВО1–ВО2): плоское зеркало min(S) по контуру −1.
+    if let Some(hit) = water.lakes.water_hit.filter(|hit| hit.inside) {
+        if let Some(mirror) = hit.level_blocks.filter(|level| *level >= h.min_y) {
+            let lake_cut = clamp01(hit.water_strength);
+            if lake_cut > 0.0 && surface < mirror {
+                let depth = clamp(
+                    hit.max_depth_km * h.water_km_to_blocks,
+                    1.0,
+                    h.lake_depth_max_blocks,
+                );
+                let bed = (mirror - depth).max(h.min_y);
+                let carve = lerp(surface, bed, lake_cut).min(surface);
+                if carve < mirror - 0.5 {
+                    surface = carve;
+                    water_y = mirror;
+                    bed_y = bed;
+                    cut = lake_cut;
+                    height.surface_y = surface;
+                    height.water_y = water_y;
+                    height.bed_y = bed_y;
+                    height.water_strength = cut;
+                    height.offset = (surface - SURFACE_BASE) / OFFSET_SCALE;
+                }
+            }
+        }
+    }
+    if cut > 0.0 {
+        return height;
+    }
+    // Вода не выбрала колонку: добивка берега как в R2 (≤ `bank_raise_max_blocks`).
+    raise_bank(height, water, params, 0.0)
+}
+
 pub fn validate(params: &Params) -> Result<(), &'static str> {
     let h = &params.height;
     let increasing = |xs: &[f64]| xs.windows(2).all(|w| w[0].is_finite() && w[1] > w[0]);
@@ -471,6 +652,118 @@ mod tests {
         let mut hit = channel_hit(mirror_y, depth_blocks);
         hit.level_blocks = level;
         hit
+    }
+
+    fn params_w(mode: Mode) -> Params {
+        Params::defaults(GenVersion::V1DevW, mode)
+    }
+
+    fn w_hit(
+        core_blocks: f64,
+        distance_blocks: f64,
+        level: f64,
+        class: crate::water_profile::ValleyClass,
+        gp: f64,
+    ) -> crate::channel::ChannelHit {
+        let l = Mode::Gameplay.l_blocks();
+        let mut hit = channel_level(70.0, 2.0, Some(level));
+        hit.core_l = core_blocks / l;
+        hit.distance_l = distance_blocks / l;
+        hit.valley_class = class;
+        hit.gp = gp;
+        hit
+    }
+
+    fn s0(surface_y: f64) -> HeightSample {
+        HeightSample {
+            surface_y,
+            offset: (surface_y - SURFACE_BASE) / OFFSET_SCALE,
+            bed_y: surface_y,
+            ..HeightSample::default()
+        }
+    }
+
+    #[test]
+    fn w_core_cuts_parabolic_bed_below_level() {
+        let p = params_w(Mode::Gameplay);
+        let mut hydro = HydrologySample::default();
+        // Ядро w=8: d=0 → дно на depth ниже зеркала; d=2 → на 0,75·depth.
+        hydro.channels.nearest = Some(w_hit(
+            8.0,
+            0.0,
+            70.0,
+            crate::water_profile::ValleyClass::Plain,
+            0.0,
+        ));
+        let cut = with_water_w(s0(90.0), 0.0, &hydro, &p);
+        assert_eq!(cut.surface_y, 70.0 - 2.0, "параболическое дно ядра");
+        assert_eq!(cut.water_y, 70.0);
+        assert_eq!(cut.water_strength, 1.0);
+        hydro.channels.nearest = Some(w_hit(
+            8.0,
+            2.0,
+            70.0,
+            crate::water_profile::ValleyClass::Plain,
+            0.0,
+        ));
+        let cut = with_water_w(s0(90.0), 0.0, &hydro, &p);
+        assert_eq!(cut.surface_y, 70.0 - 2.0 * 0.75, "(2d/w)² = 0,25");
+    }
+
+    #[test]
+    fn w_valley_floor_is_cut_to_level_plus_one() {
+        let p = params_w(Mode::Gameplay);
+        let mut hydro = HydrologySample::default();
+        // Равнинная река w=8: fp=3·8=24; до поймы d' ≤ 24 блоков — дно µ +1.
+        hydro.channels.nearest = Some(w_hit(
+            8.0,
+            7.0,
+            70.0,
+            crate::water_profile::ValleyClass::Plain,
+            0.0,
+        ));
+        let cut = with_water_w(s0(90.0), 7.0, &hydro, &p);
+        assert_eq!(cut.surface_y, 71.0, "пойма: +1 над зеркалом");
+        assert_eq!(cut.water_strength, 0.0, "пойма — суша");
+        assert_eq!(cut.water_y, SEA_LEVEL);
+        // Микробугры у воды гаснут: gate=0 (d_floor < 0).
+        assert_eq!(cut.offset, (71.0 - SURFACE_BASE) / OFFSET_SCALE);
+    }
+
+    #[test]
+    fn w_canyon_walls_step_up() {
+        let p = params_w(Mode::Gameplay);
+        let mut hydro = HydrologySample::default();
+        // Каньон: fp = 0,5·w = 4 блока; d' = 6 → x = 2 → 1 + 6·ceil(2/2) = 7.
+        hydro.channels.nearest = Some(w_hit(
+            8.0,
+            4.0 + 2.0 + 6.0,
+            70.0,
+            crate::water_profile::ValleyClass::Canyon,
+            90.0,
+        ));
+        let cut = with_water_w(s0(200.0), 0.0, &hydro, &p);
+        assert_eq!(cut.surface_y, 70.0 + 1.0 + 6.0 * (2.0_f64 / 2.0).ceil());
+    }
+
+    #[test]
+    fn w_micro_gate_smooths_out_far_from_water() {
+        let p = params_w(Mode::Gameplay);
+        let hydro_dry = HydrologySample::default(); // канала нет: gate = 1
+        let cut = with_water_w(s0(90.0), 7.0, &hydro_dry, &p);
+        assert_eq!(cut.surface_y, 97.0);
+        let mut hydro = HydrologySample::default();
+        hydro.channels.nearest = Some(w_hit(
+            8.0,
+            7.0,
+            70.0,
+            crate::water_profile::ValleyClass::Plain,
+            0.0,
+        ));
+        // Рядом с руслом (d_floor < 0) микробугры выключены, но поверхность
+        // выравнивается полкой поймы (71).
+        let cut = with_water_w(s0(90.0), 7.0, &hydro, &p);
+        assert_eq!(cut.surface_y, 71.0);
     }
 
     fn lake_level(level_km: f64, max_depth_km: f64, level: Option<f64>) -> crate::lake::LakeHit {
@@ -752,6 +1045,10 @@ mod tests {
             mirror_y,
             level_blocks: None,
             along: 0.0,
+            side: 1.0,
+            valley_class: crate::water_profile::ValleyClass::Plain,
+            flow_class: crate::water_profile::FlowClass::Calm,
+            gp: 0.0,
         }
     }
 

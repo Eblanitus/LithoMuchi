@@ -47,6 +47,7 @@ pub mod spawn;
 pub mod vanilla;
 pub mod vanilla_biome;
 pub mod version;
+pub mod water_profile;
 
 pub use classify::{ClassSample, LifeZone, VanillaCell};
 pub use climate::{ClimateSample, PoleSample, PrecipSample, TemperatureSample};
@@ -64,3 +65,4 @@ pub use plates::{BoundaryType, Plate, PlateSample};
 pub use relief::ReliefSample;
 pub use vanilla::VanillaSample;
 pub use version::GenVersion;
+pub use water_profile::{FlowClass, SegmentClass, SlopeClass, ValleyClass};
