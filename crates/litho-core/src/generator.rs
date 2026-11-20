@@ -1392,7 +1392,15 @@ impl Generator {
             }
             let net = self.drainage_network(&plate)?;
             let mut channels_here = net.channels().query(point);
-            let mut lakes_here = net.lakes().query(point);
+            // Д-127: путь полей (`with_levels = false`) всегда видит R1-озёра,
+            // даже в `v1-dev-r2`. Слой воды (`true`) сохраняет свой предел.
+            // Иначе высокое озеро меняет C/E/W против `v1-dev`.
+            let mut lakes_here = if self.params.version.is_water_relief_r2() && !with_levels {
+                net.lakes()
+                    .query_with_limit(point, self.params.hydrology.r1_max_level_km)
+            } else {
+                net.lakes().query(point)
+            };
             if with_levels && self.params.version.is_water_relief_r2() {
                 // ВО1-1 (6.3): у `v1-dev-w` уровень реки — профиль от `S0`, у
                 // R2 — прежний «низший берег минус 1». Озёра в ВО1–ВО2 у обеих
@@ -2434,23 +2442,23 @@ impl Generator {
         // только в `with_water` и в `SurfaceFields.hydrology`. Иначе высокое
         // озеро в R2 перестаёт быть `DeferredWater`, меняет сушу против
         // `v1-dev` — и вода стоит на земле, которой мир не строил.
-        // Под пределом R1 поля не видят «чужой» воды: высокое озеро там —
-        // `DeferredWater`, и `own_kind = false` не даёт ему ни силы берега
-        // в E, ни водного биома (Д-127).
-        let (terrain_water, own_kind) = if self.params.version.is_water_relief_r2() {
-            (
-                hydrology::resolve_with_limit(
-                    geometry.channels,
-                    geometry.lakes,
-                    climate,
-                    &self.params,
-                    self.params.hydrology.r1_max_level_km,
-                ),
-                false,
+        // Геометрия для полей и для слоя воды разная: `geometry` (с уровнями)
+        // остаётся версионной, а поля R2 берут R1-геометрию из кэша `false`.
+        let terrain_water = if self.params.version.is_water_relief_r2() {
+            let fields_geometry = self.cached_hydrology_queries(x, z, false)?;
+            hydrology::resolve_with_limit(
+                fields_geometry.channels,
+                fields_geometry.lakes,
+                climate,
+                &self.params,
+                self.params.hydrology.r1_max_level_km,
             )
         } else {
-            (water, true)
+            water
         };
+        // Поля всегда строятся по R1-гидрологии, поэтому здесь обычные
+        // `apply_fields`/`classify_surface`: настоящие болота дают swamp_e,
+        // а высокое озеро уже стало `DeferredWater` и водного биома не даёт.
         // T122: потенциал A и морфоклиматические зоны переводятся в C/E/W до
         // гидрологии T115/T116, чтобы русла/болота/дельты сохранили приоритет.
         let point = self.macro_point(x, z);
@@ -2487,20 +2495,8 @@ impl Generator {
             self.seed,
             &self.params,
         );
-        let vanilla = hydrology::apply_fields_with_limit(
-            base,
-            local_river,
-            &terrain_water,
-            &self.params,
-            own_kind,
-        );
-        let class = hydrology::classify_surface_with_limit(
-            class,
-            &terrain_water,
-            climate,
-            &self.params,
-            own_kind,
-        );
+        let vanilla = hydrology::apply_fields(base, local_river, &terrain_water, &self.params);
+        let class = hydrology::classify_surface(class, &terrain_water, climate, &self.params);
         let river = local_river.max(terrain_water.river);
         // I2-lite: долины режут русла/низкие озёра, а не каждая смена знака W.
         let pv = crate::math::lerp(pv_relief, -1.0, crate::math::clamp01(river));
@@ -2623,24 +2619,12 @@ impl Generator {
             let recast = classify(&cooled, false, x, z, self.seed, &self.params);
             let (t, h) = crate::vanilla::temperature_humidity(&cooled, &recast, &self.params);
             let base = VanillaSample { t, h, ..base };
-            let vanilla = hydrology::apply_fields_with_limit(
-                base,
-                local_river,
-                &terrain_water,
-                &self.params,
-                own_kind,
-            );
+            let vanilla = hydrology::apply_fields(base, local_river, &terrain_water, &self.params);
             // Д-118: горные биомы ванили — только на высокой горе (и снежные
             // склоны в снежном поясе); холм остаётся своим биомом.
             let vanilla =
                 crate::vanilla_biome::guard_mountain_biomes(vanilla, shape_y, &self.params);
-            let class = hydrology::classify_surface_with_limit(
-                recast,
-                &terrain_water,
-                &cooled,
-                &self.params,
-                own_kind,
-            );
+            let class = hydrology::classify_surface(recast, &terrain_water, &cooled, &self.params);
             (cooled, class, vanilla)
         };
         Ok(SurfaceFields {
@@ -3612,6 +3596,44 @@ mod tests {
     use super::{GenError, Generator};
     use crate::mode::Mode;
     use crate::version::GenVersion;
+
+    /// ВО1-4: профиль `W` вниз по течению не поднимается. Подпор (п. 4)
+    /// поднимает только верховья, а выравнивание притока — только низовья,
+    /// поэтому `(up, down)` каждого сегмента остаётся убывающим.
+    #[test]
+    fn w_levels_never_rise_downstream() {
+        let mut reaches = 0;
+        for seed in [42, 7, 1, -1] {
+            for mode in Mode::ALL {
+                let generator = Generator::new(seed, mode, GenVersion::V1DevW).unwrap();
+                let point = generator.macro_point(0.0, 0.0);
+                for plate in
+                    crate::plates::plates_near(point, 10.0, generator.seed(), &generator.params)
+                        .into_iter()
+                        .take(1)
+                {
+                    let Ok(net) = generator.drainage_network(&plate) else {
+                        continue;
+                    };
+                    let levels = generator.w_plate_levels(&plate, &net).unwrap();
+                    for reach in 0..net.channels().reaches().len() {
+                        let Ok(profile) = generator.w_reach_profile_inner(&levels, &net, reach)
+                        else {
+                            continue;
+                        };
+                        for &(up, down) in profile.levels.iter().flatten() {
+                            assert!(
+                                down <= up + 1e-9,
+                                "уровень вырос вниз по течению: {up} → {down}, звено {reach}, сид {seed}, {mode:?}"
+                            );
+                        }
+                        reaches += 1;
+                    }
+                }
+            }
+        }
+        assert!(reaches > 0, "ни одного профиля W не построено");
+    }
 
     /// T79: список плит из блоков совпадает с прямым расчётом Д-061, в том
     /// числе для окон через границы блоков и в отрицательных координатах.

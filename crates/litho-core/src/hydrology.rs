@@ -166,12 +166,9 @@ pub fn resolve_with_limit(
     out.water = lakes.r1_water;
     out.river = out.river.max(lakes.river_lake);
     if r1 {
-        // Д-127: предел R1 означает «как в `v1-dev`». Ровно те силы озера
-        // идут в поля, которые видел `v1-dev`: низкое озеро (уровень не
-        // выше предела) восстанавливается целиком, высокое — нет. Силу
-        // берега без опознанного низкого озера (`inside` пуст или уровень
-        // выше предела) в E не отдаём: иначе поля `v1-dev-r2` разойдутся
-        // с `v1-dev` на высоких озёрах.
+        // Д-127: предел R1 означает «как в `v1-dev`». Геометрия уже приходит
+        // с этим пределом (`LakeNetwork::query_with_limit`), поэтому здесь
+        // ровно те силы озера, которые видел `v1-dev`.
         if inside.is_some_and(|hit| hit.level_km.is_some_and(|level| level <= r1_max_km)) {
             out.valley = out.valley.max(lakes.shore);
             out.water = 1.0;
@@ -183,8 +180,6 @@ pub fn resolve_with_limit(
     out.swamp = lakes.swamp;
     out.dry_basin = lakes.dry_basin;
     out.r2_deferred = lakes.deferred_water;
-    // R2: у всех озёр с водой предел снят, вид воды — как у R1 (В1).
-    // Предел приходит аргументом: поля всегда считаются с пределом R1.
     out.kind = if lakes.inland_sea > 0.0
         || inside.is_some_and(|hit| {
             matches!(hit.kind, LakeKind::InlandSea | LakeKind::SeaConnected)
@@ -207,8 +202,7 @@ pub fn resolve_with_limit(
         SurfaceKind::Land
     };
     // Д-127: под пределом R1 высокое озеро — это отложенная вода, а не суша
-    // с болотом: тот же кадр, что у `v1-dev`. Без этого `v1-dev-r2` давал бы
-    // на высоких озёрах E6 вместо DeferredWater и менял сушу.
+    // с болотом: тот же кадр, что у `v1-dev`.
     if r1 && out.kind == SurfaceKind::Land && lakes.deferred_water > 0.0 {
         out.kind = SurfaceKind::DeferredWater;
     }
