@@ -403,6 +403,22 @@ fn pass_factor(a: &Plate, neighbor: &Plate, q: Vec2, seed: u64, params: &Params)
     1.0 - b.pass_depth * saddle
 }
 
+/// Centre used by both the crust uplift and W crater generation. Coordinates
+/// are macro L including the spawn shift. `salt` is subseed(seed,SALT_HOTSPOT).
+pub(crate) fn hotspot_center(i: i64, j: i64, salt: u64, params: &Params) -> Option<Vec2> {
+    let c = &params.crust;
+    let cell = cell_hash(salt, i, j, 0);
+    if unit(cell) >= c.hotspot_probability {
+        return None;
+    }
+    let mut rng = CellRng::from_hash(cell);
+    let _ = rng.next_unit();
+    Some(Vec2::new(
+        (i as f64 + rng.next_range(c.hotspot_inset, 1. - c.hotspot_inset)) * c.hotspot_cell_l,
+        (j as f64 + rng.next_range(c.hotspot_inset, 1. - c.hotspot_inset)) * c.hotspot_cell_l,
+    ))
+}
+
 /// Горячие точки и цепочки затонувших гор (7.4.4). Смотрим ячейки 3×3 вокруг
 /// точки, но для каждой близкой точки, которая действительно близка, один раз
 /// запрашиваем плиту — так стоимость остаётся локальной и небольшой.
@@ -417,16 +433,9 @@ pub fn hotspot_height(point: Vec2, seed: u64, params: &Params) -> f64 {
     let mut result = 0.0;
     for dj in -1..=1_i64 {
         for di in -1..=1_i64 {
-            let cell = cell_hash(salt, ci + di, cj + dj, 0);
-            if unit(cell) >= c.hotspot_probability {
+            let Some(h) = hotspot_center(ci + di, cj + dj, salt, params) else {
                 continue;
-            }
-            let mut rng = CellRng::from_hash(cell);
-            let _ = rng.next_unit(); // то же число, что решило «есть точка»
-            let h = Vec2::new(
-                ((ci + di) as f64 + rng.next_range(c.hotspot_inset, 1.0 - c.hotspot_inset)) * grid,
-                ((cj + dj) as f64 + rng.next_range(c.hotspot_inset, 1.0 - c.hotspot_inset)) * grid,
-            );
+            };
             if h.dist2(point).sqrt() > consider {
                 continue;
             }

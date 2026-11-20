@@ -11,18 +11,36 @@ pub(super) enum Family {
     Glacial,
     Thermokarst,
     Sag,
+    Hotspot,
+    ArcPeak,
 }
-const FAMILIES: [Family; 4] = [
+const FAMILIES: [Family; 6] = [
     Family::Cirque,
     Family::Glacial,
     Family::Thermokarst,
     Family::Sag,
+    Family::Hotspot,
+    Family::ArcPeak,
 ];
 impl Family {
-    fn dimensions(self, mode: Mode) -> (f64, f64, f64, f64) {
+    fn dimensions(self, p: &Params) -> (f64, f64, f64, f64) {
         use Family::*;
         // cell side, range of *major* radii, max depth (blocks)
-        match (self, mode) {
+        match (self, p.mode) {
+            (Hotspot | ArcPeak, mode) => {
+                let side = if self == Hotspot {
+                    p.crust.hotspot_cell_l * p.block.l_blocks
+                } else if mode == Mode::Gameplay {
+                    512.
+                } else {
+                    2048.
+                };
+                if mode == Mode::Gameplay {
+                    (side, 16., 32., 12.)
+                } else {
+                    (side, 32., 80., 20.)
+                }
+            }
             (Cirque, Mode::Gameplay) => (160., 8., 20., 6.),
             (Cirque, Mode::Scientific) => (320., 12., 32., 10.),
             (Glacial, Mode::Gameplay) => (96., 10., 28., 4.),
@@ -33,12 +51,25 @@ impl Family {
             (Sag, Mode::Scientific) => (256., 16., 48., 5.),
         }
     }
+    fn crater(self) -> bool {
+        matches!(self, Self::Hotspot | Self::ArcPeak)
+    }
+    fn search(self, mode: Mode) -> f64 {
+        if self != Self::ArcPeak {
+            0.
+        } else if mode == Mode::Gameplay {
+            32.
+        } else {
+            64.
+        }
+    }
     fn body(self) -> WaterBody {
         match self {
             Self::Cirque => WaterBody::Tarn,
             Self::Glacial => WaterBody::GlacialPond,
             Self::Thermokarst => WaterBody::Thermokarst,
             Self::Sag => WaterBody::SagPond,
+            Self::Hotspot | Self::ArcPeak => WaterBody::Crater,
         }
     }
 }
@@ -53,8 +84,9 @@ struct Site {
     roll: f64,
 }
 impl Site {
-    fn new(seed: u64, mode: Mode, family: Family, i: i64, j: i64) -> Self {
-        let (side, lo, hi, depth) = family.dimensions(mode);
+    fn new(seed: u64, params: &Params, family: Family, i: i64, j: i64) -> Self {
+        let (side, lo, hi, depth) = family.dimensions(params);
+        let mode = params.mode;
         let mut rng = CellRng::from_hash(cell_hash(
             subseed(seed, "water.point_lakes"),
             i,
@@ -64,13 +96,14 @@ impl Site {
         let roll = rng.next_unit() * if mode == Mode::Scientific { 1.5 } else { 1. };
         let major = rng.next_range(lo, hi);
         let ratio = match family {
-            Family::Cirque => 1.,
+            Family::Cirque | Family::Hotspot | Family::ArcPeak => 1.,
             Family::Glacial => rng.next_range(1., 2.),
             Family::Thermokarst => rng.next_range(1.5, 2.5),
             Family::Sag => 3.,
         };
         let minor = major / ratio;
-        let pad = major + 4.;
+        let pad =
+            major + 4. + family.search(mode) + if family == Family::ArcPeak { 1. } else { 0. };
         let center = Vec2::new(
             i as f64 * side + rng.next_range(pad, side - pad),
             j as f64 * side + rng.next_range(pad, side - pad),
@@ -115,11 +148,13 @@ impl Site {
 }
 #[derive(Clone, Copy, Debug)]
 pub(super) struct Pond {
+    wet: bool,
     site: Site,
     level: f64,
 }
 #[derive(Clone, Copy, Debug)]
 pub(super) struct Hit {
+    pub wet: bool,
     pub body: WaterBody,
     pub level: f64,
     pub depth: f64,
@@ -139,16 +174,18 @@ impl Hit {
             d,
         ));
         if self.rho <= 1.0 {
-            h.point_body = Some(self.body);
-            h.water_y = self.level;
             h.bed_y = h
                 .surface_y
                 .min(self.level - 1. - self.depth * (1. - self.rho * self.rho));
             h.surface_y = h.bed_y;
             h.offset = (h.surface_y - crate::height::SURFACE_BASE) / crate::height::OFFSET_SCALE;
-            h.wet_kind = hydrology::SurfaceKind::Lake;
-            h.water_strength = 1.;
-        } else if self.edge <= p.water.beach_blocks {
+            if self.wet {
+                h.point_body = Some(self.body);
+                h.water_y = self.level;
+                h.wet_kind = hydrology::SurfaceKind::Lake;
+                h.water_strength = 1.;
+            }
+        } else if self.wet && self.edge <= p.water.beach_blocks {
             h.point_shore = Some((self.body.point_material(), self.level as u16));
         }
         h
@@ -192,18 +229,101 @@ impl Generator {
         };
         Ok((h.surface_y, h.water_strength > 0., s.surface_y()))
     }
+    fn site_origin(&self, f: Family) -> Vec2 {
+        if f == Family::Hotspot {
+            self.spawn_shift.scale(-self.params.block.l_blocks)
+        } else {
+            Vec2::default()
+        }
+    }
+    fn site_for(&self, f: Family, i: i64, j: i64) -> Option<Site> {
+        let mut site = Site::new(self.seed, &self.params, f, i, j);
+        if f == Family::Hotspot {
+            let h = crate::crust::hotspot_center(
+                i,
+                j,
+                subseed(self.seed, crate::seed::SALT_HOTSPOT),
+                &self.params,
+            )?;
+            site.center = h.sub(self.spawn_shift).scale(self.params.block.l_blocks);
+        }
+        Some(site)
+    }
+    // Find a nearby summit, then prove it is a maximum in its full disk. A
+    // coarse search can miss a candidate but cannot accept a ridge flank.
+    fn arc_peak(&self, origin: Vec2, r: i64) -> Option<Vec2> {
+        let arc = |p: Vec2| {
+            self.crust_sample(p.x, p.z)
+                .is_some_and(|c| c.boundary_weights[1].max(c.boundary_weights[2]) >= 0.5)
+        };
+        if !arc(origin) {
+            return None;
+        }
+        let center = Vec2::new(origin.x.round(), origin.z.round());
+        let mut best = center;
+        let mut high = self.s0_node(best.x, best.z)?.macro_y;
+        for step in [8, 2, 1] {
+            let base = best;
+            let reach = match step {
+                8 => r,
+                2 => 8,
+                _ => 2,
+            };
+            for dz in (-reach..=reach).step_by(step) {
+                for dx in (-reach..=reach).step_by(step) {
+                    let p = base.add(Vec2::new(dx as f64, dz as f64));
+                    if p.dist2(center) > (r * r) as f64 {
+                        continue;
+                    }
+                    let y = self.s0_node(p.x, p.z)?.macro_y;
+                    if y > high {
+                        high = y;
+                        best = p;
+                    }
+                }
+            }
+        }
+        if !arc(best) {
+            return None;
+        }
+        let mut lower = false;
+        for dz in -r..=r {
+            for dx in -r..=r {
+                if dx * dx + dz * dz > r * r {
+                    continue;
+                }
+                let y = self
+                    .s0_node(best.x + dx as f64, best.z + dz as f64)?
+                    .macro_y;
+                if y > high {
+                    return None;
+                }
+                lower |= y < high;
+            }
+        }
+        lower.then_some(best)
+    }
     fn build_pond(&self, mut site: Site) -> Result<Option<Pond>, RiverNetError> {
         use Family::*;
-        let c = site.center;
         let max_prob = match site.family {
             Cirque => 0.35,
             Glacial => 0.5,
             Thermokarst => 0.6,
             Sag => 0.4,
+            Hotspot | ArcPeak => 0.5,
         };
         if site.roll >= max_prob {
             return Ok(None);
         }
+        if site.family == ArcPeak {
+            let Some(peak) =
+                self.arc_peak(site.center, site.family.search(self.params.mode) as i64)
+            else {
+                return Ok(None);
+            };
+            site.center = peak;
+        }
+        let c = site.center;
         let Some(weights) = self.morpho_weights(c.x, c.z) else {
             return Ok(None);
         };
@@ -223,13 +343,12 @@ impl Generator {
         if site.family == Sag && plate.d_ab_l.abs() >= 0.1 {
             return Ok(None);
         }
+        let crust = crust_from_sample(self.macro_point(c.x, c.z), &plate, self.seed, &self.params);
+        if site.family == Hotspot && crust.chi < 0.5 {
+            return Ok(None);
+        }
         let probe = self
-            .w_probe_known(
-                c,
-                &plate,
-                &crust_from_sample(self.macro_point(c.x, c.z), &plate, self.seed, &self.params),
-                ProbeClimate::HeightOnly,
-            )
+            .w_probe_known(c, &plate, &crust, ProbeClimate::HeightOnly)
             .ok_or(RiverNetError::InvalidInput {
                 cell: (c.x as i64, c.z as i64),
             })?;
@@ -278,7 +397,7 @@ impl Generator {
                 return Ok(None);
             }
             site.axis = plate.n_ab.perp().normalized();
-        } else {
+        } else if !site.family.crater() {
             if site.family == Cirque
                 && weights.values[6] < 0.4
                 && !(center.class.zone.belt <= 2 && probe.erosion_e < self.params.height.e_knots[2])
@@ -305,11 +424,13 @@ impl Generator {
                 Cirque => !(0.15..=0.8).contains(&slope),
                 Glacial => slope > 0.1,
                 Thermokarst => slope > 0.05,
-                Sag => false,
+                Sag | Hotspot | ArcPeak => false,
             } {
                 return Ok(None);
             }
         }
+        let wet = !site.family.crater() || climate.precip.ratio <= 1. / 0.6;
+        let max_cut = if site.family.crater() { 32. } else { 8. };
         let mut low = f64::INFINITY;
         for pad in [0., 2., 4.] {
             let n = (std::f64::consts::PI * (site.major + pad) * 1.2).ceil() as usize;
@@ -321,7 +442,7 @@ impl Generator {
                 let p = site.ring_point(dir, pad);
                 let (height, wet, s0) = self.pond_terrain(p)?;
                 low = low.min(height);
-                if wet || low.floor() - 1. <= 64. || terrain - low.floor() + 1. > 8. {
+                if wet || low.floor() - 1. <= 64. || terrain - low.floor() + 1. > max_cut {
                     return Ok(None);
                 }
                 if pad == 4. && s0 < 65. {
@@ -330,6 +451,9 @@ impl Generator {
             }
         }
         let level = low.floor() - 1.;
+        if !wet && level - 1. - site.depth < crate::height::SEA_LEVEL {
+            return Ok(None);
+        }
         // Check the *maximum*, not the mean of a few probes: a single hill in
         // an otherwise flat bowl is grounds for rejecting the whole feature.
         for z in (c.z - site.major).ceil() as i64..=(c.z + site.major).floor() as i64 {
@@ -339,12 +463,12 @@ impl Generator {
                     continue;
                 }
                 let (height, wet, _) = self.pond_terrain(p)?;
-                if wet || height - level > 8. {
+                if wet || height - level > max_cut {
                     return Ok(None);
                 }
             }
         }
-        Ok(Some(Pond { site, level }))
+        Ok(Some(Pond { site, level, wet }))
     }
     fn cached_pond(&self, site: Site, i: i64, j: i64) -> Result<Option<Pond>, RiverNetError> {
         let slot = self
@@ -362,9 +486,6 @@ impl Generator {
         limit: usize,
     ) -> Result<Vec<(i64, i64, WaterColumn)>, RiverNetError> {
         let mut out = Vec::new();
-        let Some(family) = FAMILIES.into_iter().find(|f| f.body() == body) else {
-            return Ok(out);
-        };
         if !self.params.version.is_water_update()
             || !self.params.water.point_lakes
             || !radius.is_finite()
@@ -373,24 +494,36 @@ impl Generator {
         {
             return Ok(out);
         }
-        let (side, _, _, _) = family.dimensions(self.params.mode);
-        for i in ((center.x - radius) / side).floor() as i64
-            ..=((center.x + radius) / side).floor() as i64
-        {
-            for j in ((center.z - radius) / side).floor() as i64
-                ..=((center.z + radius) / side).floor() as i64
+        for family in FAMILIES.into_iter().filter(|f| f.body() == body) {
+            let (side, ..) = family.dimensions(&self.params);
+            let origin = self.site_origin(family);
+            let local = center.sub(origin);
+            for i in ((local.x - radius) / side).floor() as i64
+                ..=((local.x + radius) / side).floor() as i64
             {
-                let site = Site::new(self.seed, self.params.mode, family, i, j);
-                if site.center.sub(center).len() > radius || self.cached_pond(site, i, j)?.is_none()
+                for j in ((local.z - radius) / side).floor() as i64
+                    ..=((local.z + radius) / side).floor() as i64
                 {
-                    continue;
-                }
-                let (x, z) = (site.center.x.round(), site.center.z.round());
-                let column = self.water_column(x, z);
-                if column.body == body && column.has_water() {
-                    out.push((x as i64, z as i64, column));
-                    if out.len() == limit {
-                        return Ok(out);
+                    let Some(site) = self.site_for(family, i, j) else {
+                        continue;
+                    };
+                    if site.center.sub(center).len() > radius + family.search(self.params.mode) + 1.
+                    {
+                        continue;
+                    }
+                    let Some(pond) = self.cached_pond(site, i, j)? else {
+                        continue;
+                    };
+                    if !pond.wet || pond.site.center.sub(center).len() > radius {
+                        continue;
+                    }
+                    let (x, z) = (pond.site.center.x.round(), pond.site.center.z.round());
+                    let column = self.water_column(x, z);
+                    if column.body == body && column.has_water() {
+                        out.push((x as i64, z as i64, column));
+                        if out.len() == limit {
+                            return Ok(out);
+                        }
                     }
                 }
             }
@@ -404,18 +537,21 @@ impl Generator {
             let lo = Vec2::new(tx as f64 * 16., tz as f64 * 16.);
             let mut out = Vec::new();
             for family in FAMILIES {
-                let (side, _, _, _) = family.dimensions(self.params.mode);
-                for i in ((lo.x - halo) / side).floor() as i64
-                    ..=((lo.x + 16. + halo) / side).floor() as i64
+                let (side, ..) = family.dimensions(&self.params);
+                let local = lo.sub(self.site_origin(family));
+                for i in ((local.x - halo) / side).floor() as i64
+                    ..=((local.x + 16. + halo) / side).floor() as i64
                 {
-                    for j in ((lo.z - halo) / side).floor() as i64
-                        ..=((lo.z + 16. + halo) / side).floor() as i64
+                    for j in ((local.z - halo) / side).floor() as i64
+                        ..=((local.z + 16. + halo) / side).floor() as i64
                     {
-                        let site = Site::new(self.seed, self.params.mode, family, i, j);
+                        let Some(site) = self.site_for(family, i, j) else {
+                            continue;
+                        };
                         let d = site.center.sub(lo);
                         let gap =
                             Vec2::new((-d.x).max(d.x - 16.).max(0.), (-d.z).max(d.z - 16.).max(0.));
-                        if gap.len() > site.major + halo {
+                        if gap.len() > site.major + halo + family.search(self.params.mode) + 1. {
                             continue;
                         }
                         if let Some(pond) = self.cached_pond(site, i, j)? {
@@ -440,6 +576,7 @@ impl Generator {
                 continue;
             }
             let hit = Hit {
+                wet: pond.wet,
                 body: pond.site.family.body(),
                 level: pond.level,
                 depth: pond.site.depth,
@@ -461,8 +598,9 @@ mod tests {
     fn contour_matches_inclusion_and_stays_in_cell() {
         for mode in Mode::ALL {
             for f in FAMILIES {
-                let s = Site::new(7, mode, f, -2, 3);
-                let (side, ..) = f.dimensions(mode);
+                let p = Params::defaults(GenVersion::V1DevW, mode);
+                let s = Site::new(7, &p, f, -2, 3);
+                let (side, ..) = f.dimensions(&p);
                 assert_eq!(s.rho(s.center), 0.);
                 for k in 0..64 {
                     let dir = rotate_unit(
@@ -500,9 +638,56 @@ mod tests {
         assert!(baseline.surface_y >= full.world.height.surface_y);
     }
     #[test]
+    fn volcanic_bowl_can_be_dry_without_claiming_a_water_biome() {
+        let p = Params::defaults(GenVersion::V1DevW, Mode::Gameplay);
+        let h = crate::height::HeightSample {
+            surface_y: 113.,
+            ..Default::default()
+        };
+        let hit = Hit {
+            body: WaterBody::Crater,
+            wet: false,
+            rho: 0.,
+            edge: 0.,
+            depth: 12.,
+            level: 110.,
+        };
+        let dry = hit.apply(h, &p);
+        assert_eq!(dry.surface_y, 97.);
+        assert_eq!(dry.water_strength, 0.);
+        assert_eq!(dry.point_body, None);
+        assert_eq!(dry.wet_kind, hydrology::SurfaceKind::Land);
+        assert_eq!(
+            Hit {
+                rho: 1.1,
+                edge: 1.,
+                ..hit
+            }
+            .apply(h, &p)
+            .point_shore,
+            None
+        );
+        let wet = Hit { wet: true, ..hit }.apply(h, &p);
+        assert_eq!(wet.bed_y, dry.surface_y);
+        assert_eq!(wet.point_body, Some(WaterBody::Crater));
+        assert_eq!(wet.water_y, 110.);
+    }
+    #[test]
+    fn crater_survives_chunk_lookup_and_abi_packing() {
+        let g = Generator::new(-1, Mode::Gameplay, GenVersion::V1DevW).unwrap();
+        let col = g.water_column(-6423., 2933.);
+        assert!(col.has_water());
+        assert_eq!(col.level, 113);
+        assert_eq!(col.body, WaterBody::Crater);
+        assert_eq!(col.bed_mat, BedMaterial::Tuff);
+        assert!(col.wall_exempt);
+        assert_eq!((col.info_code() >> 12) & 63, 15);
+    }
+    #[test]
     fn column_is_cut_only_inside_and_never_raised() {
         let p = Params::defaults(GenVersion::V1DevW, Mode::Gameplay);
         let hit = Hit {
+            wet: true,
             body: WaterBody::Thermokarst,
             level: 84.,
             depth: 2.,

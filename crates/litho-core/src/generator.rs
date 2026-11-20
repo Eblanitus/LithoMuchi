@@ -2780,7 +2780,7 @@ impl Generator {
         } else {
             None
         };
-        if pond.is_some_and(|p| p.rho <= 1.) {
+        if pond.is_some_and(|p| p.wet && p.rho <= 1.) {
             terrain_water.kind = hydrology::SurfaceKind::Lake;
             terrain_water.river = 1.;
             terrain_water.water = 1.;
@@ -4093,7 +4093,8 @@ impl Generator {
             column.shore_mat = column.bed_mat;
         }
         use crate::water_profile::ValleyClass;
-        column.wall_exempt = flow == FlowClass::FallTop
+        column.wall_exempt = matches!(column.body, WaterBody::Tarn | WaterBody::Crater)
+            || flow == FlowClass::FallTop
             || full.world.hydrology.channels.nearest.is_some_and(|hit| {
                 kind == crate::hydrology::SurfaceKind::River
                     && matches!(

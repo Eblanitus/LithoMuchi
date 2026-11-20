@@ -152,18 +152,21 @@ pub enum WaterBody {
     GlacialPond,
     Thermokarst,
     SagPond,
+    Crater,
 }
 
 impl WaterBody {
     pub const fn is_point_lake(self) -> bool {
         matches!(
             self,
-            Self::Tarn | Self::GlacialPond | Self::Thermokarst | Self::SagPond
+            Self::Tarn | Self::GlacialPond | Self::Thermokarst | Self::SagPond | Self::Crater
         )
     }
     pub(crate) fn point_material(self) -> BedMaterial {
         if self == Self::Thermokarst {
             BedMaterial::Mud
+        } else if self == Self::Crater {
+            BedMaterial::Tuff
         } else {
             BedMaterial::Gravel
         }
@@ -186,6 +189,7 @@ impl WaterBody {
             Self::GlacialPond => "glacial_pond",
             Self::Thermokarst => "thermokarst",
             Self::SagPond => "sag_pond",
+            Self::Crater => "crater",
         }
     }
     /// Биты 12–17 в `info_code()` (§6.8).
@@ -206,6 +210,7 @@ impl WaterBody {
             Self::GlacialPond => 12,
             Self::Thermokarst => 13,
             Self::SagPond => 14,
+            Self::Crater => 15,
         }
     }
 }

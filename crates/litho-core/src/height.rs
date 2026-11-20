@@ -437,13 +437,11 @@ pub fn with_water_w(
     let land_y = s0_macro.surface_y;
     let s0_full = land_y + micro_dy;
     // Собираем звенья-кандидаты: ближайшее плюс до двух из коридора 6.5.
-    let mut candidates: Vec<crate::channel::ChannelHit> = Vec::with_capacity(4);
-    if let Some(hit) = water.channels.nearest {
-        candidates.push(hit);
-    }
-    for hit in water.channels.extra.iter() {
-        candidates.push(*hit);
-    }
+    let candidates = water
+        .channels
+        .nearest
+        .iter()
+        .chain(water.channels.extra.iter());
     // Дубль ближайшего звена в `extra` допустим: min() от него не меняется.
     let (gate_lo, gate_hi) = (w.gate_blocks[0], w.gate_blocks[1]);
     let scientific = matches!(params.mode, crate::mode::Mode::Scientific);
@@ -451,7 +449,7 @@ pub fn with_water_w(
     let depth_max = if scientific { 8.0 } else { 5.0 };
     let mut best: Option<(f64, f64, f64)> = None; // (v_y, water_y, strength)
     let mut d_floor_min = f64::INFINITY;
-    for hit in &candidates {
+    for hit in candidates {
         let Some(level) = hit.level_blocks else {
             continue;
         };
