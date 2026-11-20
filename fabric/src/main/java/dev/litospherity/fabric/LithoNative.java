@@ -162,6 +162,7 @@ public final class LithoNative {
          * биты {@code info}: поток (0–3), дно (4–7), берег (8–11), вид воды (12–17).
          */
         public WaterColumns water(double[] xs, double[] zs) {
+            if (xs.length != zs.length) throw new IllegalArgumentException("xs и zs разной длины");
             int n = xs.length;
             try (Arena arena = Arena.ofConfined()) {
                 MemorySegment inX = arena.allocateFrom(ValueLayout.JAVA_DOUBLE, xs);

@@ -439,7 +439,7 @@ pub fn with_water_w(
     let scientific = matches!(params.mode, crate::mode::Mode::Scientific);
     let depth_min = 2.0_f64;
     let depth_max = if scientific { 8.0 } else { 5.0 };
-    let mut best: Option<(f64, f64, f64, f64)> = None; // (v_y, water_y, bed_y, strength)
+    let mut best: Option<(f64, f64, f64)> = None; // (v_y, water_y, strength)
     let mut d_floor_min = f64::INFINITY;
     for hit in &candidates {
         let Some(level) = hit.level_blocks else {
@@ -500,7 +500,6 @@ pub fn with_water_w(
             }
         };
         // Кандидат участвует в min() безусловно: сравнение с S0 — ниже.
-        let bed = candidate;
         let strength = if d_abs <= half {
             1.0
         } else if dp <= 0.0 {
@@ -509,11 +508,11 @@ pub fn with_water_w(
             0.0
         };
         let take = match best {
-            Some((old, _, _, _)) => candidate < old,
+            Some((old, _, _)) => candidate < old,
             None => true,
         };
         if take {
-            best = Some((candidate, level, bed, strength));
+            best = Some((candidate, level, strength));
         }
     }
     // ВО2-1 (§6.7): маска 3D-шума. Вода, берег, пойма и озеро плюс подушка
@@ -547,24 +546,20 @@ pub fn with_water_w(
     };
     let mut surface = land_y + micro_dy * gate;
     let mut water_y = sea;
-    let mut bed_y = surface;
     let mut cut = 0.0_f64;
-    if let Some((v_y, mirror, bed, strength)) = best {
-        if v_y < surface {
-            surface = v_y;
-            bed_y = bed;
+    if let Some((v_y, mirror, strength)) = best {
+        surface = surface.min(v_y);
+        // A naturally deep channel is wet too: no fill or excavation is needed.
+        // A bank, even one cut down to its target, is not a sea-level channel.
+        if v_y < mirror && strength > 0.0 {
             cut = strength;
-            // Вода стоит, где дно ниже зеркала; береговая полоса — вровень,
-            // поэтому у самой кромки воды нет.
-            if v_y < mirror {
-                water_y = mirror;
-            }
+            water_y = mirror;
         }
     }
     let mut height = HeightSample {
         surface_y: surface,
         water_y,
-        bed_y,
+        bed_y: surface,
         water_strength: cut,
         calm: clamp01(calm),
         ..s0_macro
@@ -585,11 +580,10 @@ pub fn with_water_w(
                 if carve < mirror - 0.5 {
                     surface = carve;
                     water_y = mirror;
-                    bed_y = bed;
                     cut = lake_cut;
                     height.surface_y = surface;
                     height.water_y = water_y;
-                    height.bed_y = bed_y;
+                    height.bed_y = surface;
                     height.water_strength = cut;
                     height.offset = (surface - SURFACE_BASE) / OFFSET_SCALE;
                 }
@@ -728,6 +722,12 @@ mod tests {
         assert_eq!(cut.surface_y, 70.0 - 2.0, "параболическое дно ядра");
         assert_eq!(cut.water_y, 70.0);
         assert_eq!(cut.water_strength, 1.0);
+        let deep = with_water_w(s0(65.0), 0.0, &hydro, &p);
+        assert_eq!(
+            (deep.surface_y, deep.bed_y, deep.water_y),
+            (65.0, 65.0, 70.0)
+        );
+        assert_eq!(deep.water_strength, 1.0);
         hydro.channels.nearest = Some(w_hit(
             8.0,
             2.0,

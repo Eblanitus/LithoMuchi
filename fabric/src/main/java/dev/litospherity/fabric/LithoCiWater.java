@@ -34,8 +34,6 @@ final class LithoCiWater {
 
     static void run(MinecraftServer server, String mode) {
         LithoWaterFeature.STEPS.set(0);
-        LithoWaterFeature.COVERED.set(0);
-        LithoWaterFeature.WALLS.set(0);
         LithoWaterFeature.COLUMNS.set(0);
         LithoWaterFeature.SEALS.set(0);
         LithoWaterFeature.CHUNKS.set(0);
@@ -59,7 +57,7 @@ final class LithoCiWater {
                 for (int dx = -RADIUS; dx <= RADIUS; dx++) {
                     for (int dz = -RADIUS; dz <= RADIUS; dz++) {
                         level.getChunk(cx + dx, cz + dz, ChunkStatus.FULL, true);
-                        if (generated.add((((long) (cx + dx)) << 32) ^ (cz + dz))) {
+                        if (generated.add((((long) (cx + dx)) << 32) ^ Integer.toUnsignedLong(cz + dz))) {
                             level.setChunkForced(cx + dx, cz + dz, true);
                         }
                     }
@@ -68,7 +66,7 @@ final class LithoCiWater {
             double ms = (System.nanoTime() - t0) / 1e6;
             report.add(String.format("вода: сгенерировано %d чанков за %.0f мс, %.1f мс/чанк",
                     generated.size(), ms, ms / Math.max(1, generated.size())));
-            long sealsAtStart = LithoWaterFeature.SEALS.get();
+            long generationSeals = LithoWaterFeature.SEALS.get();
             long chunksWithWater = LithoWaterFeature.CHUNKS.get();
             long sourcesBefore = countWater(level, true);
             long flowingBefore = countWater(level, false);
@@ -80,7 +78,7 @@ final class LithoCiWater {
             ServerTickEvents.END_SERVER_TICK.register(s -> {
                 if (done[0]) return; if (tickStart[0] != 0L) { long dt = System.nanoTime() - tickStart[0]; totalTickNanos[0] += dt; if (dt > maxTickNanos[0]) maxTickNanos[0] = dt; measuredTicks[0]++; }
                 if (left[0]-- > 0) return; done[0] = true; double avgTickMs = measuredTicks[0] == 0 ? 0.0 : (totalTickNanos[0] / (double) measuredTicks[0]) / 1_000_000.0; double maxTickMs = maxTickNanos[0] / 1_000_000.0;
-                measure(server, level, gen, points, report, sealsAtStart, chunksWithWater, sourcesBefore, flowingBefore, ms / Math.max(1, generated.size()), avgTickMs, maxTickMs);
+                measure(server, level, gen, points, report, generationSeals, chunksWithWater, sourcesBefore, flowingBefore, ms / Math.max(1, generated.size()), avgTickMs, maxTickMs);
             });
         } catch (Throwable t) {
             report.add("FAIL: " + t);
@@ -90,14 +88,14 @@ final class LithoCiWater {
     }
 
     private static void measure(MinecraftServer server, ServerLevel level, LithoNative.Generator gen,
-                                List<int[]> points, List<String> report, long sealsAtStart, long chunksWithWater,
+                                List<int[]> points, List<String> report, long generationSeals, long chunksWithWater,
                                 long sourcesBefore, long flowingBefore, double msPerChunk, double avgTickMs, double maxTickMs) {
         boolean ok = true;
         try {
             long flowingAfter = countWater(level, false);
             long sourcesAfter = countWater(level, true);
             long growthAll = flowingAfter - flowingBefore;
-            long seals = LithoWaterFeature.SEALS.get() - sealsAtStart;
+            long seals = generationSeals;
             double sealsPerChunk = chunksWithWater == 0 ? 0.0 : seals / (double) chunksWithWater;
 
             // Где выросла текущая вода: первые места с ядром колонки и соседей,
@@ -225,20 +223,20 @@ final class LithoCiWater {
             double dryPct = wet + dry == 0 ? 0.0 : 100.0 * dry / (double) (wet + dry);
             report.add(String.format("протечки: %d (порог 0)", leaks));
             report.add(String.format("сухое русло: %d из %d, %.2f %% (порог 1 %%)", dry, wet + dry, dryPct));
-            long[] vo2 = measureVo2(level, gen, points);
+            long[] vo2 = measureVo2(level, gen);
             long corridor = vo2[0], fit = vo2[1];
             double fitPct = corridor == 0 ? 100.0 : 100.0 * fit / (double) corridor;
-            long waterColumns = Math.max(1, LithoWaterFeature.COLUMNS.get());
-            double coveredPct = 100.0 * LithoWaterFeature.COVERED.get() / (double) waterColumns;
+            long waterColumns = vo2[4];
+            double coveredPct = 100.0 * vo2[5] / Math.max(1, waterColumns);
             long shoreColumns = vo2[2];
             double wallPct = shoreColumns == 0 ? 0.0 : 100.0 * vo2[3] / (double) shoreColumns;
             report.add(String.format("calm_fit: %d из %d, %.2f %% (порог 95 %%)", fit, corridor, fitPct));
             report.add(String.format("накрытая вода: %d из %d колонок, %.2f %% (порог 0,5 %%)",
-                    LithoWaterFeature.COVERED.get(), waterColumns, coveredPct));
+                    vo2[5], waterColumns, coveredPct));
             report.add(String.format("стены у воды: %d из %d колонок, %.2f %% (порог 2 %%)", vo2[3], shoreColumns, wallPct));
             report.add(String.format("рост текущей воды за %d тиков: %d, %.2f %% источников (порог 5 %%); всего %d, из них чужой (родники, склоны) %d",
                     TICKS, growth, growthPct, growthAll, foreign));
-            report.add(String.format("заделки герметизации: %d на %d чанков, %.2f на чанк (порог 2)",
+            report.add(String.format("заделки герметизации: %d на %d чанков, %.2f на чанк (порог 1)",
                     seals, chunksWithWater, sealsPerChunk)); report.add(String.format(java.util.Locale.ROOT, "steps: %d, liveSteps=%s, avgTick=%.2f ms, maxTick=%.2f ms", LithoWaterFeature.STEPS.get(), LithoWaterFeature.LIVE_STEPS, avgTickMs, maxTickMs));
             report.add(String.format("время генерации: %.1f мс/чанк (замер Ф5 — в отчёте job'а)", msPerChunk));
             report.add(String.format("вода выше моря: колонок с водой %d, источников %d, текущей %d",
@@ -246,8 +244,8 @@ final class LithoCiWater {
             if (leaks > 0) ok = false;
             if (dryPct > 1.0) ok = false;
             if (growthPct > 5.0) ok = false;
-            if (sealsPerChunk > 2.0) ok = false;
-            if (fitPct < 95.0) ok = false;
+            if (chunksWithWater == 0 || sealsPerChunk > 1.0) ok = false;
+            if (corridor == 0 || wet == 0 || fitPct < 95.0) ok = false;
             if (coveredPct > 0.5) ok = false;
             if (wallPct > 2.0) ok = false;
         } catch (Throwable t) {
@@ -258,67 +256,57 @@ final class LithoCiWater {
         finish(server, report, ok);
     }
 
-    /**
-     * ВО2-4 (§8.3): `calm_fit`, накрытая вода и стены по настоящим блокам.
-     * Коридор — колонки с водой выше моря и сухие колонки с материалом берега;
-     * стены — суша в 2 блоках от воды, где верхний блок выше зеркала на ≥ 4
-     * (каньоны/водопады не считаем: у них в `info` не спокойный поток).
-     *
-     * @return {corridor, fit, shore, walls}
-     */
-    private static long[] measureVo2(ServerLevel level, LithoNative.Generator gen, List<int[]> points) {
-        long corridor = 0;
-        long fit = 0;
-        long shore = 0;
-        long walls = 0;
-        int minWorldY = level.getMinY();
-        int maxWorldY = level.getMaxY();
-        for (int[] p : points) {
-            for (int x = (p[0] & ~15) - RADIUS * 16; x < (p[0] & ~15) + (RADIUS + 1) * 16; x++) {
-                for (int z = (p[1] & ~15) - RADIUS * 16; z < (p[1] & ~15) + (RADIUS + 1) * 16; z++) {
-                    LithoNative.WaterColumns core = gen.water(new double[] {x}, new double[] {z});
-                    int lv = core.level()[0];
-                    int shoreCode = LithoNative.WaterColumns.shoreMat(core.info()[0]);
-                    if (lv != LithoNative.WaterColumns.NONE && lv > LithoWaterFeature.SEA_LEVEL) {
+    /** §8.3: inspect each generated column once, after generation and fluid ticks.
+     * Include a two-block halo of core predictions, but score only the chunk interior. */
+    private static long[] measureVo2(ServerLevel level, LithoNative.Generator gen) {
+        final int side = 20;
+        long corridor = 0, fit = 0, shore = 0, walls = 0, wet = 0, covered = 0;
+        double[] xs = new double[side * side], zs = new double[xs.length];
+        for (var chunk : loadedChunks(level)) {
+            for (int i = 0; i < xs.length; i++) {
+                xs[i] = chunk.getPos().getMinBlockX() + i % side - 2;
+                zs[i] = chunk.getPos().getMinBlockZ() + i / side - 2;
+            }
+            var core = gen.water(xs, zs);
+            for (int j = 2; j < 18; j++) {
+                for (int i = 2; i < 18; i++) {
+                    int k = j * side + i;
+                    int lv = core.level()[k];
+                    boolean dry = lv == LithoNative.WaterColumns.NONE;
+                    int nearby = Integer.MIN_VALUE;
+                    boolean exempt = false;
+                    if (dry) {
+                        for (int dz = -2; dz <= 2; dz++) {
+                            for (int dx = -2; dx <= 2; dx++) {
+                                if (dx * dx + dz * dz > 4) continue;
+                                int n = k + dz * side + dx;
+                                if (core.level()[n] < LithoWaterFeature.SEA_LEVEL) continue;
+                                nearby = Math.max(nearby, core.level()[n]);
+                                exempt |= (core.info()[n] & (1 << 18)) != 0;
+                            }
+                        }
+                    }
+                    int expected = core.bed()[k];
+                    if (expected == Integer.MIN_VALUE && nearby == Integer.MIN_VALUE) continue;
+                    // Do not search just expected +/- 2: that would mistake a block
+                    // buried in a tall wall for the top of a well-fitting bank.
+                    int top = level.getHeight(net.minecraft.world.level.levelgen.Heightmap.Types.OCEAN_FLOOR,
+                            (int) xs[k], (int) zs[k]) - 1;
+                    if (expected != Integer.MIN_VALUE) {
                         corridor++;
-                        int expected = core.bed()[0];
-                        int top = topSolid(level, x, z, lv - 1, expected - 4, minWorldY, maxWorldY);
-                        if (top != Integer.MIN_VALUE && Math.abs(top - expected) <= 2) fit++;
-                        continue;
+                        if (Math.abs(top - expected) <= 2) fit++;
                     }
-                    if (shoreCode == 0) continue;
-                    corridor++;
-                    int expected = core.bed()[0];
-                    int top = topSolid(level, x, z, expected + 2, expected - 2, minWorldY, maxWorldY);
-                    if (top != Integer.MIN_VALUE && Math.abs(top - expected) <= 2) fit++;
-                    // Стены: берег выше воды на ≥ 4. Подмыв (`Underwash`) — это
-                    // стенка излучины, класс долины отдельно не экспортируется.
-                    if (shoreCode == 9) continue;
-                    int waterLevel = Integer.MIN_VALUE;
-                    for (int[] d : new int[][] {{1, 0}, {-1, 0}, {0, 1}, {0, -1}, {2, 0}, {-2, 0}, {0, 2}, {0, -2}}) {
-                        LithoNative.WaterColumns near = gen.water(new double[] {x + d[0]}, new double[] {z + d[1]});
-                        int nl = near.level()[0];
-                        if (nl == LithoNative.WaterColumns.NONE) continue;
-                        if (LithoNative.WaterColumns.flow(near.info()[0]) != 0) continue;
-                        if (nl > LithoWaterFeature.SEA_LEVEL) waterLevel = Math.max(waterLevel, nl);
+                    if (!dry) {
+                        wet++;
+                        if (top >= lv) covered++;
+                    } else if (nearby != Integer.MIN_VALUE && !exempt) {
+                        shore++;
+                        if (top - nearby >= 4) walls++;
                     }
-                    if (waterLevel == Integer.MIN_VALUE) continue;
-                    shore++;
-                    if (top != Integer.MIN_VALUE && top - waterLevel >= 4) walls++;
                 }
             }
         }
-        return new long[] {corridor, fit, shore, walls};
-    }
-
-    /** Верхний твёрдый блок (не воздух, не вода) от `fromY` вниз до `toY`. */
-    private static int topSolid(ServerLevel level, int x, int z, int fromY, int toY, int minWorldY, int maxWorldY) {
-        for (int y = Math.min(fromY, maxWorldY - 1); y >= Math.max(toY, minWorldY); y--) {
-            BlockState st = level.getBlockState(new BlockPos(x, y, z));
-            if (st.isAir() || st.is(Blocks.WATER)) continue;
-            return y;
-        }
-        return Integer.MIN_VALUE;
+        return new long[] {corridor, fit, shore, walls, wet, covered};
     }
 
     /** Текущая вода выше моря до тиков: ключи {@link BlockPos#asLong()}. */

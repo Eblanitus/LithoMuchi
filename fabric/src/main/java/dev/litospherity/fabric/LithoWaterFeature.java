@@ -37,9 +37,6 @@ public final class LithoWaterFeature implements Feature {
     public static final int SEA_LEVEL = 63;
     /** Колонка чанка плюс один блок по краю: герметизации нужны соседи. */
     private static final int SIDE = 18;
-    /** Проба чанка: {@code PROBE × PROBE} колонок через {@code PROBE_STEP} блоков. */
-    private static final int PROBE = 6;
-    private static final int PROBE_STEP = 3;
     /** Сколько блоков над зеркалом можно убрать (§8.1 `clear_above_blocks`). */
     private static final int CLEAR_ABOVE = 6;
 
@@ -49,10 +46,6 @@ public final class LithoWaterFeature implements Feature {
     public static final AtomicLong CHUNKS = new AtomicLong();
     /** Колонок, где вода выше моря поставлена. */
     public static final AtomicLong COLUMNS = new AtomicLong();
-    /** ВО2-4: колонок воды, над которой твёрдое идёт выше лимита. */
-    public static final AtomicLong COVERED = new AtomicLong();
-    /** ВО2-4: колонок у воды со стеной выше 2 блоков (§10.1). */
-    public static final AtomicLong WALLS = new AtomicLong();
     private static final byte KIND_RIVER = 1;
     public static volatile boolean LIVE_STEPS = Boolean.getBoolean("litospherity.water.liveSteps");
     public static final AtomicLong STEPS = new AtomicLong();
@@ -83,25 +76,6 @@ public final class LithoWaterFeature implements Feature {
         }
         // Генератор общий и потокобезопасный (Ф1): не закрываем его здесь.
         LithoNative.Generator core = LithoFields.generator(binding);
-        // Дешёвая проба: 6x6 колонок через 3 блока (от x0 − 1 до x0 + 14). Чанк
-        // без воды выше моря не платит за полный пакет 18x18 (цена колонки ядра —
-        // десятки мкс). Прежняя сетка 4x4 через 5 блоков пропускала русло шириной
-        // до 4 блоков целиком, и чанк оставался без воды: река рвалась по чанкам.
-        // Шаг 3 ловит любое русло шириной от 3 блоков (ядро русла — 4–6 блоков).
-        double[] probeX = new double[PROBE * PROBE];
-        double[] probeZ = new double[PROBE * PROBE];
-        for (int j = 0; j < PROBE; j++) {
-            for (int i = 0; i < PROBE; i++) {
-                probeX[j * PROBE + i] = x0 - 1 + i * PROBE_STEP;
-                probeZ[j * PROBE + i] = z0 - 1 + j * PROBE_STEP;
-            }
-        }
-        LithoNative.WaterColumns probe = core.water(probeX, probeZ);
-        boolean any = false;
-        for (int probeLevel : probe.level()) {
-            if (probeLevel != LithoNative.WaterColumns.NONE && probeLevel >= SEA_LEVEL) any = true;
-        }
-        if (!any) return false;
         LithoNative.WaterColumns water = core.water(xs, zs);
         int minY = level.getMinY();
         int maxY = level.getMaxY();
@@ -122,59 +96,38 @@ public final class LithoWaterFeature implements Feature {
                 int x = (int) xs[k];
                 int z = (int) zs[k];
                 int from = Math.min(surface - 1, maxY);
-                int to = Math.max(water.bed()[k] - 2, minY);
-                // §4 пп. 3–4: колонка с водой выше моря не бывает сухой. Зеркало
-                // `level` — это срез: всё, что стоит между ним и дном русла,
-                // вынимается, а вода ставится от `level − 1` вниз. Раньше цикл
-                // останавливался на первом не-воздухе, поэтому трава, дресва и
-                // земля над зеркалом давали «сухое русло» — 20,6 % в научном
-                // режиме против порога 1 % (job `water`).
-                //
-                // Глубже `bed − 2` не режем никогда: дно задаёт ядро, а пещеры
-                // под руслом закрывает затычка ниже.
-                for (int y = from; y >= to; y--) {
-                    BlockPos pos = new BlockPos(x, y, z);
-                    if (level.getBlockState(pos).isAir()) continue;
-                    level.setBlock(pos, Blocks.AIR.defaultBlockState(), 2);
-                }
+                // bed is the highest solid block, not the lowest source. Keep
+                // at least one source when the fractional bank rounds to level-1.
+                int floor = Math.min(water.bed()[k], from - 1);
                 // ВО2-1: над водой твёрдое снимаем на CLEAR_ABOVE блоков. Если
                 // твёрдое продолжается дальше — колонка идёт в метрику
                 // «накрытая вода» (§8.3), а не режется бесконечно.
                 for (int y = from + 1; y <= Math.min(from + CLEAR_ABOVE, maxY); y++) {
                     BlockPos pos = new BlockPos(x, y, z);
                     BlockState above = level.getBlockState(pos);
-                    if (above.isAir() || above.is(Blocks.WATER)) continue;
+                    if (above.isAir() || above.is(Blocks.WATER) || above.is(Blocks.BEDROCK)) continue;
                     level.setBlock(pos, Blocks.AIR.defaultBlockState(), 2);
                 }
-                BlockPos coverPos = new BlockPos(x, Math.min(from + CLEAR_ABOVE + 1, maxY), z);
-                if (!level.getBlockState(coverPos).isAir()
-                        && !level.getBlockState(coverPos).is(Blocks.WATER)) {
-                    COVERED.incrementAndGet();
-                }
-                int lowest = from;
-                for (int y = from; y >= to; y--) {
+                int lowest = from + 1;
+                for (int y = from; y >= Math.max(minY, floor - 2); y--) {
                     BlockPos pos = new BlockPos(x, y, z);
-                    if (!level.getBlockState(pos).isAir()) break;
-                    level.setBlock(pos, waterState, 2);
+                    BlockState old = level.getBlockState(pos);
+                    if (old.is(Blocks.BEDROCK) || (y <= floor && !old.isAir())) break;
+                    if (!old.equals(waterState)) level.setBlock(pos, waterState, 2);
                     lowest = y;
                 }
-                if (lowest < from) {
-                    placed++;
-                    COLUMNS.incrementAndGet();
-                    // Дно под водой: материал из ядра (§7.5), а не земля.
+                if (lowest > from) continue;
+                placed++;
+                COLUMNS.incrementAndGet();
+                if (lowest <= minY) continue;
+                BlockPos under = new BlockPos(x, lowest - 1, z);
+                BlockState old = level.getBlockState(under);
+                if (old.isAir()) {
+                    level.setBlock(under, Blocks.STONE.defaultBlockState(), 2);
+                    seals++;
+                } else if (!old.is(Blocks.BEDROCK)) {
                     BlockState bedMat = material(LithoNative.WaterColumns.bedMat(water.info()[k]));
-                    if (lowest - 1 >= minY && bedMat != null) {
-                        BlockPos bed = new BlockPos(x, lowest - 1, z);
-                        if (isSurface(level.getBlockState(bed))) {
-                            level.setBlock(bed, bedMat, 2);
-                        }
-                    }
-                    // Затычка: под водой остался воздух (пещера под руслом).
-                    BlockPos under = new BlockPos(x, lowest - 1, z);
-                    if (lowest - 1 >= minY && level.getBlockState(under).isAir()) {
-                        level.setBlock(under, Blocks.STONE.defaultBlockState(), 2);
-                        seals++;
-                    }
+                    if (bedMat != null) level.setBlock(under, bedMat, 2);
                 }
             }
         }
@@ -244,16 +197,10 @@ public final class LithoWaterFeature implements Feature {
                 int shoreCode = LithoNative.WaterColumns.shoreMat(water.info()[k]);
                 BlockState shore = material(shoreCode);
                 if (shore == null) continue;
-                int top = Math.max(water.bed()[k], minY);
-                if (top > maxY) continue;
-                int waterLevel = Integer.MIN_VALUE;
-                for (int[] step : new int[][] {{1, 0}, {-1, 0}, {0, 1}, {0, -1}}) {
-                    int nl = water.level()[(j + step[1]) * SIDE + (i + step[0])];
-                    if (nl != LithoNative.WaterColumns.NONE && nl > SEA_LEVEL) {
-                        waterLevel = Math.max(waterLevel, nl);
-                    }
-                }
-                if (waterLevel == Integer.MIN_VALUE || top > waterLevel + 2) continue;
+                int top = level.getHeight(net.minecraft.world.level.levelgen.Heightmap.Types.OCEAN_FLOOR_WG,
+                        (int) xs[k], (int) zs[k]) - 1;
+                int waterLevel = water.info()[k] >>> 19;
+                if (top < minY || top > waterLevel + 2) continue;
                 BlockPos pos = new BlockPos((int) xs[k], top, (int) zs[k]);
                 if (isSurface(level.getBlockState(pos))) {
                     level.setBlock(pos, shore, 2);
@@ -277,7 +224,7 @@ public final class LithoWaterFeature implements Feature {
                     for (int y = Math.min(upper - 1, maxY); y >= Math.max(lower, minY); y--) {
                         BlockPos pos = new BlockPos((int) xs[nk], y, (int) zs[nk]);
                         BlockState there = level.getBlockState(pos);
-                        if (there.is(Blocks.WATER)) continue;
+                        if (there.is(Blocks.BEDROCK)) continue;
                         level.setBlock(pos, fallingWater(), 2);
                     }
                 }

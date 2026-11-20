@@ -87,6 +87,9 @@ pub unsafe extern "C" fn litho_fields_batch(
     if generator.is_null() || (n > 0 && (xz.is_null() || out.is_null())) {
         return -2;
     }
+    if n == 0 {
+        return 0;
+    }
     let generator = unsafe { &*generator };
     let xz = unsafe { std::slice::from_raw_parts(xz, n * 2) };
     let out = unsafe { std::slice::from_raw_parts_mut(out, n * FIELD_COUNT) };
@@ -133,6 +136,9 @@ pub unsafe extern "C" fn litho_water_batch(
                 || out_kind.is_null()))
     {
         return -2;
+    }
+    if n == 0 {
+        return 0;
     }
     let generator = unsafe { &*generator };
     let xs = unsafe { std::slice::from_raw_parts(xs, n) };
@@ -196,6 +202,9 @@ pub unsafe extern "C" fn litho_water_batch2(
                 || out_info.is_null()))
     {
         return -2;
+    }
+    if n == 0 {
+        return 0;
     }
     let generator = unsafe { &*generator };
     let xs = unsafe { std::slice::from_raw_parts(xs, n) };
