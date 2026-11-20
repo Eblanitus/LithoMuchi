@@ -44,23 +44,3 @@ loom {
         }
     }
 }
-
-// ВРЕМЕННО (удалить): печать имён классов 26.3 для сверки API воды.
-tasks.register('probeApi') {
-    doLast {
-        def jars = sourceSets.main.compileClasspath.files.findAll { it.name.toLowerCase().contains('minecraft') }
-        println "PROBE jars=${jars.size()}"
-        jars.each { f ->
-            println "PROBEJAR ${f}"
-            def z = new java.util.zip.ZipFile(f)
-            try {
-                z.entries().each { e ->
-                    def n = e.name
-                    if (n.endsWith('.class') && (n.contains('levelgen/feature/') || n.contains('levelgen/features'))) {
-                        println "PROBE ${n.replace('/', '.').replace('.class', '')}"
-                    }
-                }
-            } finally { z.close() }
-        }
-    }
-}

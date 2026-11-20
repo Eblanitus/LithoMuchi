@@ -81,6 +81,24 @@ final class LithoCi {
             }
             report.add("привязка: " + LithoFields.binding(rs) + ", мир против v1-dev "
                     + badDev + ", R2 против v1-dev " + badCross);
+            // ВРЕМЕННО: тот же R2-генератор второй раз и свежий экземпляр R2 —
+            // отличает «состояние общего генератора» от «версия считает иначе».
+            LithoNative.Generator fresh = LithoFields.generator(
+                    new LithoFields.Binding(seed, m, LithoFields.VERSION_R2));
+            int sameInstance = 0;
+            int freshDiff = 0;
+            for (int i = 0; i < 1000; i++) {
+                int x = (int) Math.floorMod(i * 7919L, 40000) - 20000;
+                int z = (int) Math.floorMod(i * 104729L, 40000) - 20000;
+                for (int f = 0; f < fns.length; f++) {
+                    double again = gen.field(f, x, z);
+                    if (Math.abs(again - dev.field(f, x, z)) > 1e-6
+                            && Math.abs(again - gen.field(f, x, z)) > 1e-12) sameInstance++;
+                    if (Math.abs(fresh.field(f, x, z) - dev.field(f, x, z)) > 1e-6) freshDiff++;
+                }
+            }
+            report.add("диагностика2: R2 повторно против v1-dev " + sameInstance
+                    + ", свежий R2 против v1-dev " + freshDiff);
             if (bad > 0) ok = false;
             if (badCross > 0) {
                 ok = false;
