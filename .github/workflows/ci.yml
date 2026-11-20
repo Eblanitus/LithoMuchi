@@ -89,8 +89,8 @@ jobs:
           grep -qx 'scientific 5cdbe1d36ef8d16a' /tmp/h0.txt
           grep -qx 'gameplay b48e8037c4e85977' /tmp/h0.txt
           cargo run -q -p xtask -- params-hash --version v1-dev > /tmp/h1d.txt
-          grep -qx 'scientific 35f888f82f3ba603' /tmp/h1d.txt
-          grep -qx 'gameplay 9cbf72e5fb90b9b7' /tmp/h1d.txt
+          grep -qx 'scientific 0079371c3c2f7f35' /tmp/h1d.txt
+          grep -qx 'gameplay 13ca6fd2452c807c' /tmp/h1d.txt
       - name: "Ф6-В1 — вода не уходит за берег (water-leaks, окно 1024 × 1024)"
         # Гейт — 0 нарушений §4. Окно меньше приёмочных 4096 × 4096: полный
         # прогон (4 центра × 2 сида × 2 режима + 16 сидов Д-084) идёт отдельной

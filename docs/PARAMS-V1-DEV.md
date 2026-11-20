@@ -439,4 +439,4 @@
 > до зеркала) и `height.bank_raise_max_blocks` = `2.0` (добивка только при нехватке
 > не больше двух блоков). В `v1-dev` этих ключей нет, поэтому её хеш не меняется.
 
-params_hash: scientific = 35f888f82f3ba603, gameplay = 9cbf72e5fb90b9b7
+params_hash: scientific = 0079371c3c2f7f35, gameplay = 13ca6fd2452c807c
