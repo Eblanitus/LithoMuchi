@@ -855,6 +855,19 @@ fn cmd_s0_node_cost(args: &[String]) -> Result<(), String> {
         fields.push(format!("\"plates\":{}", survey.plates));
         fields.push(format!("\"nodes\":{}", survey.nodes));
         fields.push(format!("\"with_levels\":{with_levels}"));
+        let stages = survey
+            .stages
+            .iter()
+            .map(|(id, network, levels)| {
+                format!(
+                    "{{\"plate\":\"{id}\",\"drainage_ms\":{network:.2},\"levels_ms\":{}}}",
+                    levels
+                        .map(|ms| format!("{ms:.2}"))
+                        .unwrap_or_else(|| "null".to_string())
+                )
+            })
+            .collect::<Vec<_>>();
+        fields.push(format!("\"plate_stages\":[{}]", stages.join(",")));
         fields.push(format!("\"net_ms_p50\":{:.1}", survey.net_pct(50.0)));
         fields.push(format!("\"net_ms_p95\":{:.1}", survey.net_p95()));
         fields.push(format!("\"net_ms_max\":{:.1}", survey.net_max()));

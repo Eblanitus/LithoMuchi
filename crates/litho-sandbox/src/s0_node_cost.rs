@@ -81,6 +81,8 @@ pub struct Survey {
     pub nodes: usize,
     /// Сборка сети по плитам, мс.
     pub net_ms: Vec<f64>,
+    /// Same (possibly neighbour-warmed) plate as each net_ms sample, in order.
+    pub stages: Vec<(u64, f64, Option<f64>)>,
     /// Полное время точного `S0` на всех узлах, мс.
     pub exact_ms: f64,
     pub analytic_ms: f64,
@@ -147,12 +149,19 @@ pub fn survey(
             Err(litho_core::drainage::RiverNetError::NoOwnedNode { .. }) => continue,
             Err(error) => return Err(error.to_string()),
         };
+        let routing_end = Instant::now();
         if with_levels {
             generator
                 .prepare_w_levels(&plate)
                 .map_err(|e| e.to_string())?;
         }
-        survey.net_ms.push(start.elapsed().as_secs_f64() * 1000.0);
+        let end = Instant::now();
+        survey.net_ms.push((end - start).as_secs_f64() * 1000.);
+        survey.stages.push((
+            plate.id,
+            (routing_end - start).as_secs_f64() * 1000.,
+            with_levels.then(|| (end - routing_end).as_secs_f64() * 1000.),
+        ));
         survey.plates += 1;
         for node in net.nodes() {
             if !node.in_plate {

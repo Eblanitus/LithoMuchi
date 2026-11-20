@@ -1,6 +1,6 @@
 {
-  "name": "water-update-vo4-network-types",
-  "note": "Сетевые озёра W после классификации ВО4-3. Нужна мокрая целочисленная колонка; отсутствие в радиусе — тоже результат.",
+  "name": "water-update-vo3-plate-stages",
+  "note": "Время сети отдельно от уровней на тех же двух плитах в обоих режимах; ошибки сохранённого маршрута относительно S0. Порог 200 мс неизменен.",
   "mode": "gameplay",
   "version": "v1-dev-w",
   "seeds": [
@@ -10,56 +10,32 @@
   "step": 0,
   "commands": [
     [
-      "water-points",
+      "s0-node-cost",
       "--version",
       "v1-dev-w",
       "--seed",
       "42",
       "--mode",
       "gameplay",
-      "--type",
-      "lake",
-      "--radius-l",
-      "24"
+      "--plates",
+      "2",
+      "--analytic-only",
+      "--with-levels",
+      "--json"
     ],
     [
-      "water-points",
+      "s0-node-cost",
       "--version",
       "v1-dev-w",
       "--seed",
       "42",
       "--mode",
       "scientific",
-      "--type",
-      "lake",
-      "--radius-l",
-      "24"
-    ],
-    [
-      "water-points",
-      "--version",
-      "v1-dev-w",
-      "--seed",
-      "7",
-      "--mode",
-      "gameplay",
-      "--type",
-      "lake",
-      "--radius-l",
-      "24"
-    ],
-    [
-      "water-points",
-      "--version",
-      "v1-dev-w",
-      "--seed",
-      "7",
-      "--mode",
-      "scientific",
-      "--type",
-      "lake",
-      "--radius-l",
-      "24"
+      "--plates",
+      "2",
+      "--analytic-only",
+      "--with-levels",
+      "--json"
     ]
   ]
 }
