@@ -35,6 +35,10 @@ final class LithoCiWater {
     static void run(MinecraftServer server, String mode) {
         LithoWaterFeature.STEPS.set(0);
         LithoWaterFeature.COVERED.set(0);
+        LithoWaterFeature.WALLS.set(0);
+        LithoWaterFeature.COLUMNS.set(0);
+        LithoWaterFeature.SEALS.set(0);
+        LithoWaterFeature.CHUNKS.set(0);
         List<String> report = new ArrayList<>();
         try {
             ServerLevel level = server.overworld();
