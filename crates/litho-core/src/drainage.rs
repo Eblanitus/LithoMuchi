@@ -418,9 +418,6 @@ impl PlateRouting {
         if !params.version.is_water_relief_dev() {
             return Err(RiverNetError::UnsupportedVersion(params.version));
         }
-        let timings = std::env::var_os("LITHO_DRAINAGE_TIMINGS").is_some();
-        let t_total = std::time::Instant::now();
-        let mut t = std::time::Instant::now();
         validate_params(params)?;
         let p = &params.drainage;
         let timings = timings_enabled();

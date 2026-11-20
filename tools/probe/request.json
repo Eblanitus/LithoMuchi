@@ -1,159 +1,25 @@
 {
-  "name": "issue7-jumps-2",
-  "note": "К8: счётчик К2 на всех 16 приёмочных сидах в v1-dev (gameplay) — прыжков через ступень не должно быть ни на одном. Первый заход (issue7-jumps-1) дал v0 на сиде 42: 82 пары с прыжком, 28,9 % смен биома, среди пар plains ↔ snowy_taiga; v1-dev на сидах 42 и 7 — ноль.",
+  "name": "water-update-vo0",
+  "note": "ВО0 (PLAN-WATER-UPDATE §9): база water-stats на v1-dev-r2 (сиды 42, 1, 7 × оба режима, окна по умолчанию 2048/4096 шаг 8/16) и числа s0-node-cost для решения «путь А / Б-лайт» на v1-dev-w (§6.2, ВО0-5).",
   "mode": "gameplay",
-  "version": "v1-dev",
+  "version": "v1-dev-w",
   "seeds": [
     42
   ],
   "at": [
-    "1287,832"
+    "0,0"
   ],
   "step": 0,
   "commands": [
-    [
-      "biomes",
-      "--seed",
-      "-123456789",
-      "--mode",
-      "gameplay",
-      "--version",
-      "v1-dev"
-    ],
-    [
-      "biomes",
-      "--seed",
-      "-42",
-      "--mode",
-      "gameplay",
-      "--version",
-      "v1-dev"
-    ],
-    [
-      "biomes",
-      "--seed",
-      "-1",
-      "--mode",
-      "gameplay",
-      "--version",
-      "v1-dev"
-    ],
-    [
-      "biomes",
-      "--seed",
-      "0",
-      "--mode",
-      "gameplay",
-      "--version",
-      "v1-dev"
-    ],
-    [
-      "biomes",
-      "--seed",
-      "1",
-      "--mode",
-      "gameplay",
-      "--version",
-      "v1-dev"
-    ],
-    [
-      "biomes",
-      "--seed",
-      "2",
-      "--mode",
-      "gameplay",
-      "--version",
-      "v1-dev"
-    ],
-    [
-      "biomes",
-      "--seed",
-      "7",
-      "--mode",
-      "gameplay",
-      "--version",
-      "v1-dev"
-    ],
-    [
-      "biomes",
-      "--seed",
-      "42",
-      "--mode",
-      "gameplay",
-      "--version",
-      "v1-dev"
-    ],
-    [
-      "biomes",
-      "--seed",
-      "123",
-      "--mode",
-      "gameplay",
-      "--version",
-      "v1-dev"
-    ],
-    [
-      "biomes",
-      "--seed",
-      "777",
-      "--mode",
-      "gameplay",
-      "--version",
-      "v1-dev"
-    ],
-    [
-      "biomes",
-      "--seed",
-      "1234",
-      "--mode",
-      "gameplay",
-      "--version",
-      "v1-dev"
-    ],
-    [
-      "biomes",
-      "--seed",
-      "2024",
-      "--mode",
-      "gameplay",
-      "--version",
-      "v1-dev"
-    ],
-    [
-      "biomes",
-      "--seed",
-      "12345",
-      "--mode",
-      "gameplay",
-      "--version",
-      "v1-dev"
-    ],
-    [
-      "biomes",
-      "--seed",
-      "54321",
-      "--mode",
-      "gameplay",
-      "--version",
-      "v1-dev"
-    ],
-    [
-      "biomes",
-      "--seed",
-      "99999",
-      "--mode",
-      "gameplay",
-      "--version",
-      "v1-dev"
-    ],
-    [
-      "biomes",
-      "--seed",
-      "987654321",
-      "--mode",
-      "gameplay",
-      "--version",
-      "v1-dev"
-    ]
+    ["water-stats", "--seed", "42", "--mode", "gameplay", "--version", "v1-dev-r2", "--json"],
+    ["water-stats", "--seed", "1", "--mode", "gameplay", "--version", "v1-dev-r2", "--json"],
+    ["water-stats", "--seed", "7", "--mode", "gameplay", "--version", "v1-dev-r2", "--json"],
+    ["water-stats", "--seed", "42", "--mode", "scientific", "--version", "v1-dev-r2", "--json"],
+    ["water-stats", "--seed", "1", "--mode", "scientific", "--version", "v1-dev-r2", "--json"],
+    ["water-stats", "--seed", "7", "--mode", "scientific", "--version", "v1-dev-r2", "--json"],
+    ["s0-node-cost", "--seed", "42", "--mode", "gameplay", "--version", "v1-dev-w", "--json"],
+    ["s0-node-cost", "--seed", "7", "--mode", "gameplay", "--version", "v1-dev-w", "--json"],
+    ["s0-node-cost", "--seed", "42", "--mode", "scientific", "--version", "v1-dev-w", "--json"],
+    ["s0-node-cost", "--seed", "7", "--mode", "scientific", "--version", "v1-dev-w", "--json"]
   ]
 }
