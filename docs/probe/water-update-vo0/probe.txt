@@ -13,165 +13,165 @@
 ## sandbox water-stats --seed 42 --mode gameplay --version v1-dev-r2 --json
 
 ```
-{"seed":42,"mode":"gameplay","version":"v1-dev-r2","window":2048,"step":8,"seconds":5.26,"land":54188,"river_columns":6520,"river_above_sea_pct":0.00,"gorge_p50":0.00,"gorge_p90":0.00,"gorge_p99":0.00,"lakes":0,"lakes_per_100l2":0.000,"lake_area_pct":0.000,"lake_fit_pct":0.00,"lakes_ge_80":0,"walls_pct":0.00,"zones":[{"name":"polar","lakes":0},{"name":"boreal","lakes":0},{"name":"temperate_humid","lakes":0},{"name":"semiarid","lakes":0},{"name":"arid","lakes":0},{"name":"tropical_humid","lakes":0},{"name":"mountain_cold","lakes":0},{"name":"mountain_warm","lakes":0}]}
-litho-core: сеть рек №1, плита 356150445216138105: 5162 узлов за 261 мс
-litho-core: сеть рек №2, плита 7921362888439761013: 4569 узлов за 47 мс
-litho-core: сеть рек №3, плита 1552031522129305247: 4782 узлов за 91 мс
-litho-core: сеть рек №4, плита 12257214645282878660: 4341 узлов за 100 мс
-litho-core: сеть рек №5, плита 11999692540933592931: 6170 узлов за 138 мс
-litho-core: сеть рек №6, плита 3829022694335313590: 2655 узлов за 52 мс
-litho-core: сеть рек №7, плита 216878075925460450: 1499 узлов за 44 мс
-litho-core: сеть рек №8, плита 6564756037768855268: 4250 узлов за 98 мс
-litho-core: сеть рек №9, плита 8464724724605848963: 3003 узлов за 66 мс
+{"seed":42,"mode":"gameplay","version":"v1-dev-r2","window":2048,"step":8,"seconds":4.07,"land":54435,"river_columns":6520,"river_above_sea_pct":0.00,"gorge_p50":0.00,"gorge_p90":0.00,"gorge_p99":0.00,"lakes":0,"lakes_per_100l2":0.000,"lake_area_pct":0.000,"lake_fit_pct":0.00,"lakes_ge_80":0,"walls_pct":0.00,"zones":[{"name":"polar","lakes":0},{"name":"boreal","lakes":0},{"name":"temperate_humid","lakes":0},{"name":"semiarid","lakes":0},{"name":"arid","lakes":0},{"name":"tropical_humid","lakes":0},{"name":"mountain_cold","lakes":0},{"name":"mountain_warm","lakes":0}]}
+litho-core: сеть рек №1, плита 356150445216138105: 5162 узлов за 206 мс
+litho-core: сеть рек №2, плита 7921362888439761013: 4569 узлов за 38 мс
+litho-core: сеть рек №3, плита 1552031522129305247: 4782 узлов за 74 мс
+litho-core: сеть рек №4, плита 12257214645282878660: 4341 узлов за 80 мс
+litho-core: сеть рек №5, плита 11999692540933592931: 6170 узлов за 111 мс
+litho-core: сеть рек №6, плита 3829022694335313590: 2655 узлов за 39 мс
+litho-core: сеть рек №7, плита 216878075925460450: 1499 узлов за 36 мс
+litho-core: сеть рек №8, плита 6564756037768855268: 4250 узлов за 80 мс
+litho-core: сеть рек №9, плита 8464724724605848963: 3003 узлов за 51 мс
 ```
 
 ## sandbox water-stats --seed 1 --mode gameplay --version v1-dev-r2 --json
 
 ```
-{"seed":1,"mode":"gameplay","version":"v1-dev-r2","window":2048,"step":8,"seconds":5.83,"land":51245,"river_columns":4367,"river_above_sea_pct":0.00,"gorge_p50":0.00,"gorge_p90":0.00,"gorge_p99":0.00,"lakes":0,"lakes_per_100l2":0.000,"lake_area_pct":0.000,"lake_fit_pct":0.00,"lakes_ge_80":0,"walls_pct":0.00,"zones":[{"name":"polar","lakes":0},{"name":"boreal","lakes":0},{"name":"temperate_humid","lakes":0},{"name":"semiarid","lakes":0},{"name":"arid","lakes":0},{"name":"tropical_humid","lakes":0},{"name":"mountain_cold","lakes":0},{"name":"mountain_warm","lakes":0}]}
-litho-core: сеть рек №1, плита 3276329293976481952: 3874 узлов за 211 мс
-litho-core: сеть рек №2, плита 461213203820944897: 3032 узлов за 89 мс
-litho-core: сеть рек №3, плита 4242385322882883960: 3583 узлов за 238 мс
-litho-core: сеть рек №4, плита 6815529086746453708: 6167 узлов за 39 мс
-litho-core: сеть рек №5, плита 5074675542501436397: 3028 узлов за 50 мс
-litho-core: сеть рек №6, плита 9085929089081196164: 4431 узлов за 121 мс
-litho-core: сеть рек №7, плита 8230928234900495337: 3527 узлов за 102 мс
-litho-core: сеть рек №8, плита 221371838762669527: 3528 узлов за 50 мс
-litho-core: сеть рек №9, плита 17590864970387529092: 2524 узлов за 47 мс
-litho-core: сеть рек №10, плита 8197145233698615257: 4651 узлов за 107 мс
-litho-core: сеть рек №11, плита 16620885291724926645: 2945 узлов за 60 мс
+{"seed":1,"mode":"gameplay","version":"v1-dev-r2","window":2048,"step":8,"seconds":4.53,"land":51380,"river_columns":4367,"river_above_sea_pct":0.00,"gorge_p50":0.00,"gorge_p90":0.00,"gorge_p99":0.00,"lakes":0,"lakes_per_100l2":0.000,"lake_area_pct":0.000,"lake_fit_pct":0.00,"lakes_ge_80":0,"walls_pct":0.00,"zones":[{"name":"polar","lakes":0},{"name":"boreal","lakes":0},{"name":"temperate_humid","lakes":0},{"name":"semiarid","lakes":0},{"name":"arid","lakes":0},{"name":"tropical_humid","lakes":0},{"name":"mountain_cold","lakes":0},{"name":"mountain_warm","lakes":0}]}
+litho-core: сеть рек №1, плита 3276329293976481952: 3874 узлов за 143 мс
+litho-core: сеть рек №2, плита 461213203820944897: 3032 узлов за 63 мс
+litho-core: сеть рек №3, плита 4242385322882883960: 3583 узлов за 181 мс
+litho-core: сеть рек №4, плита 6815529086746453708: 6167 узлов за 30 мс
+litho-core: сеть рек №5, плита 5074675542501436397: 3028 узлов за 38 мс
+litho-core: сеть рек №6, плита 9085929089081196164: 4431 узлов за 99 мс
+litho-core: сеть рек №7, плита 8230928234900495337: 3527 узлов за 80 мс
+litho-core: сеть рек №8, плита 221371838762669527: 3528 узлов за 40 мс
+litho-core: сеть рек №9, плита 17590864970387529092: 2524 узлов за 35 мс
+litho-core: сеть рек №10, плита 8197145233698615257: 4651 узлов за 82 мс
+litho-core: сеть рек №11, плита 16620885291724926645: 2945 узлов за 49 мс
 ```
 
 ## sandbox water-stats --seed 7 --mode gameplay --version v1-dev-r2 --json
 
 ```
-{"seed":7,"mode":"gameplay","version":"v1-dev-r2","window":2048,"step":8,"seconds":5.07,"land":49675,"river_columns":15,"river_above_sea_pct":0.00,"gorge_p50":0.00,"gorge_p90":0.00,"gorge_p99":0.00,"lakes":0,"lakes_per_100l2":0.000,"lake_area_pct":0.000,"lake_fit_pct":0.00,"lakes_ge_80":0,"walls_pct":0.00,"zones":[{"name":"polar","lakes":0},{"name":"boreal","lakes":0},{"name":"temperate_humid","lakes":0},{"name":"semiarid","lakes":0},{"name":"arid","lakes":0},{"name":"tropical_humid","lakes":0},{"name":"mountain_cold","lakes":0},{"name":"mountain_warm","lakes":0}]}
-litho-core: сеть рек №1, плита 5354352894765796435: 4659 узлов за 222 мс
-litho-core: сеть рек №2, плита 5541190326557849136: 5284 узлов за 326 мс
-litho-core: сеть рек №3, плита 10847349844277299905: 3476 узлов за 18 мс
-litho-core: сеть рек №4, плита 15975369569995673993: 3760 узлов за 92 мс
-litho-core: сеть рек №5, плита 4876678345067852895: 3042 узлов за 32 мс
-litho-core: сеть рек №6, плита 10320294175096412896: 2594 узлов за 18 мс
+{"seed":7,"mode":"gameplay","version":"v1-dev-r2","window":2048,"step":8,"seconds":3.94,"land":49685,"river_columns":15,"river_above_sea_pct":0.00,"gorge_p50":0.00,"gorge_p90":0.00,"gorge_p99":0.00,"lakes":0,"lakes_per_100l2":0.000,"lake_area_pct":0.000,"lake_fit_pct":0.00,"lakes_ge_80":0,"walls_pct":0.00,"zones":[{"name":"polar","lakes":0},{"name":"boreal","lakes":0},{"name":"temperate_humid","lakes":0},{"name":"semiarid","lakes":0},{"name":"arid","lakes":0},{"name":"tropical_humid","lakes":0},{"name":"mountain_cold","lakes":0},{"name":"mountain_warm","lakes":0}]}
+litho-core: сеть рек №1, плита 5354352894765796435: 4659 узлов за 171 мс
+litho-core: сеть рек №2, плита 5541190326557849136: 5284 узлов за 257 мс
+litho-core: сеть рек №3, плита 10847349844277299905: 3476 узлов за 13 мс
+litho-core: сеть рек №4, плита 15975369569995673993: 3760 узлов за 72 мс
+litho-core: сеть рек №5, плита 4876678345067852895: 3042 узлов за 27 мс
+litho-core: сеть рек №6, плита 10320294175096412896: 2594 узлов за 14 мс
 ```
 
 ## sandbox water-stats --seed 42 --mode scientific --version v1-dev-r2 --json
 
 ```
-{"seed":42,"mode":"scientific","version":"v1-dev-r2","window":4096,"step":16,"seconds":5.18,"land":62501,"river_columns":1721,"river_above_sea_pct":0.00,"gorge_p50":0.00,"gorge_p90":0.00,"gorge_p99":0.00,"lakes":0,"lakes_per_100l2":0.000,"lake_area_pct":0.000,"lake_fit_pct":0.00,"lakes_ge_80":0,"walls_pct":0.00,"zones":[{"name":"polar","lakes":0},{"name":"boreal","lakes":0},{"name":"temperate_humid","lakes":0},{"name":"semiarid","lakes":0},{"name":"arid","lakes":0},{"name":"tropical_humid","lakes":0},{"name":"mountain_cold","lakes":0},{"name":"mountain_warm","lakes":0}]}
-litho-core: сеть рек №1, плита 356150445216138105: 5162 узлов за 290 мс
-litho-core: сеть рек №2, плита 7921362888439761013: 4569 узлов за 49 мс
-litho-core: сеть рек №3, плита 1552031522129305247: 4782 узлов за 98 мс
-litho-core: сеть рек №4, плита 12257214645282878660: 4341 узлов за 105 мс
-litho-core: сеть рек №5, плита 11999692540933592931: 6170 узлов за 152 мс
-litho-core: сеть рек №6, плита 216878075925460450: 1499 узлов за 60 мс
-litho-core: сеть рек №7, плита 3829022694335313590: 2655 узлов за 42 мс
-litho-core: сеть рек №8, плита 6564756037768855268: 4250 узлов за 101 мс
-litho-core: сеть рек №9, плита 8464724724605848963: 3003 узлов за 67 мс
+{"seed":42,"mode":"scientific","version":"v1-dev-r2","window":4096,"step":16,"seconds":3.87,"land":62323,"river_columns":1721,"river_above_sea_pct":0.00,"gorge_p50":0.00,"gorge_p90":0.00,"gorge_p99":0.00,"lakes":0,"lakes_per_100l2":0.000,"lake_area_pct":0.000,"lake_fit_pct":0.00,"lakes_ge_80":0,"walls_pct":0.00,"zones":[{"name":"polar","lakes":0},{"name":"boreal","lakes":0},{"name":"temperate_humid","lakes":0},{"name":"semiarid","lakes":0},{"name":"arid","lakes":0},{"name":"tropical_humid","lakes":0},{"name":"mountain_cold","lakes":0},{"name":"mountain_warm","lakes":0}]}
+litho-core: сеть рек №1, плита 356150445216138105: 5162 узлов за 205 мс
+litho-core: сеть рек №2, плита 7921362888439761013: 4569 узлов за 37 мс
+litho-core: сеть рек №3, плита 1552031522129305247: 4782 узлов за 72 мс
+litho-core: сеть рек №4, плита 12257214645282878660: 4341 узлов за 81 мс
+litho-core: сеть рек №5, плита 11999692540933592931: 6170 узлов за 109 мс
+litho-core: сеть рек №6, плита 216878075925460450: 1499 узлов за 42 мс
+litho-core: сеть рек №7, плита 3829022694335313590: 2655 узлов за 32 мс
+litho-core: сеть рек №8, плита 6564756037768855268: 4250 узлов за 79 мс
+litho-core: сеть рек №9, плита 8464724724605848963: 3003 узлов за 54 мс
 ```
 
 ## sandbox water-stats --seed 1 --mode scientific --version v1-dev-r2 --json
 
 ```
-{"seed":1,"mode":"scientific","version":"v1-dev-r2","window":4096,"step":16,"seconds":5.64,"land":59737,"river_columns":2850,"river_above_sea_pct":0.00,"gorge_p50":0.00,"gorge_p90":0.00,"gorge_p99":0.00,"lakes":0,"lakes_per_100l2":0.000,"lake_area_pct":0.000,"lake_fit_pct":0.00,"lakes_ge_80":0,"walls_pct":0.00,"zones":[{"name":"polar","lakes":0},{"name":"boreal","lakes":0},{"name":"temperate_humid","lakes":0},{"name":"semiarid","lakes":0},{"name":"arid","lakes":0},{"name":"tropical_humid","lakes":0},{"name":"mountain_cold","lakes":0},{"name":"mountain_warm","lakes":0}]}
-litho-core: сеть рек №1, плита 461213203820944897: 3032 узлов за 141 мс
-litho-core: сеть рек №2, плита 221371838762669527: 3528 узлов за 198 мс
-litho-core: сеть рек №3, плита 4242385322882883960: 3583 узлов за 97 мс
-litho-core: сеть рек №4, плита 17590864970387529092: 2524 узлов за 50 мс
-litho-core: сеть рек №5, плита 3276329293976481952: 3874 узлов за 126 мс
-litho-core: сеть рек №6, плита 8230928234900495337: 3527 узлов за 121 мс
-litho-core: сеть рек №7, плита 9085929089081196164: 4431 узлов за 124 мс
-litho-core: сеть рек №8, плита 6815529086746453708: 6167 узлов за 39 мс
-litho-core: сеть рек №9, плита 5074675542501436397: 3028 узлов за 42 мс
-litho-core: сеть рек №10, плита 8197145233698615257: 4651 узлов за 111 мс
-litho-core: сеть рек №11, плита 16620885291724926645: 2945 узлов за 62 мс
+{"seed":1,"mode":"scientific","version":"v1-dev-r2","window":4096,"step":16,"seconds":4.33,"land":59526,"river_columns":2850,"river_above_sea_pct":0.00,"gorge_p50":0.00,"gorge_p90":0.00,"gorge_p99":0.00,"lakes":0,"lakes_per_100l2":0.000,"lake_area_pct":0.000,"lake_fit_pct":0.00,"lakes_ge_80":0,"walls_pct":0.00,"zones":[{"name":"polar","lakes":0},{"name":"boreal","lakes":0},{"name":"temperate_humid","lakes":0},{"name":"semiarid","lakes":0},{"name":"arid","lakes":0},{"name":"tropical_humid","lakes":0},{"name":"mountain_cold","lakes":0},{"name":"mountain_warm","lakes":0}]}
+litho-core: сеть рек №1, плита 461213203820944897: 3032 узлов за 102 мс
+litho-core: сеть рек №2, плита 221371838762669527: 3528 узлов за 140 мс
+litho-core: сеть рек №3, плита 4242385322882883960: 3583 узлов за 72 мс
+litho-core: сеть рек №4, плита 17590864970387529092: 2524 узлов за 37 мс
+litho-core: сеть рек №5, плита 3276329293976481952: 3874 узлов за 92 мс
+litho-core: сеть рек №6, плита 8230928234900495337: 3527 узлов за 88 мс
+litho-core: сеть рек №7, плита 9085929089081196164: 4431 узлов за 94 мс
+litho-core: сеть рек №8, плита 6815529086746453708: 6167 узлов за 31 мс
+litho-core: сеть рек №9, плита 5074675542501436397: 3028 узлов за 31 мс
+litho-core: сеть рек №10, плита 8197145233698615257: 4651 узлов за 82 мс
+litho-core: сеть рек №11, плита 16620885291724926645: 2945 узлов за 48 мс
 ```
 
 ## sandbox water-stats --seed 7 --mode scientific --version v1-dev-r2 --json
 
 ```
-{"seed":7,"mode":"scientific","version":"v1-dev-r2","window":4096,"step":16,"seconds":4.80,"land":61268,"river_columns":0,"river_above_sea_pct":0.00,"gorge_p50":0.00,"gorge_p90":0.00,"gorge_p99":0.00,"lakes":0,"lakes_per_100l2":0.000,"lake_area_pct":0.000,"lake_fit_pct":0.00,"lakes_ge_80":0,"walls_pct":0.00,"zones":[{"name":"polar","lakes":0},{"name":"boreal","lakes":0},{"name":"temperate_humid","lakes":0},{"name":"semiarid","lakes":0},{"name":"arid","lakes":0},{"name":"tropical_humid","lakes":0},{"name":"mountain_cold","lakes":0},{"name":"mountain_warm","lakes":0}]}
-litho-core: сеть рек №1, плита 5354352894765796435: 4659 узлов за 219 мс
-litho-core: сеть рек №2, плита 5541190326557849136: 5284 узлов за 332 мс
-litho-core: сеть рек №3, плита 10847349844277299905: 3476 узлов за 19 мс
-litho-core: сеть рек №4, плита 15975369569995673993: 3760 узлов за 98 мс
-litho-core: сеть рек №5, плита 10320294175096412896: 2594 узлов за 17 мс
+{"seed":7,"mode":"scientific","version":"v1-dev-r2","window":4096,"step":16,"seconds":3.68,"land":61286,"river_columns":0,"river_above_sea_pct":0.00,"gorge_p50":0.00,"gorge_p90":0.00,"gorge_p99":0.00,"lakes":0,"lakes_per_100l2":0.000,"lake_area_pct":0.000,"lake_fit_pct":0.00,"lakes_ge_80":0,"walls_pct":0.00,"zones":[{"name":"polar","lakes":0},{"name":"boreal","lakes":0},{"name":"temperate_humid","lakes":0},{"name":"semiarid","lakes":0},{"name":"arid","lakes":0},{"name":"tropical_humid","lakes":0},{"name":"mountain_cold","lakes":0},{"name":"mountain_warm","lakes":0}]}
+litho-core: сеть рек №1, плита 5354352894765796435: 4659 узлов за 172 мс
+litho-core: сеть рек №2, плита 5541190326557849136: 5284 узлов за 259 мс
+litho-core: сеть рек №3, плита 10847349844277299905: 3476 узлов за 13 мс
+litho-core: сеть рек №4, плита 15975369569995673993: 3760 узлов за 71 мс
+litho-core: сеть рек №5, плита 10320294175096412896: 2594 узлов за 14 мс
 ```
 
 ## sandbox s0-node-cost --seed 42 --mode gameplay --version v1-dev-w --json
 
 ```
-{"seed":42,"mode":"gameplay","version":"v1-dev-w","seconds":51.15,"plates":6,"nodes":22401,"net_ms_p50":94.7,"net_ms_p95":188.3,"net_ms_max":208.4,"exact_us_per_node":1031.40,"net_budget_ms":200.0,"lattices":[{"path":"путь А","spacing_l":0.25,"samples":23260,"samples_per_node":1.038,"build_ms":21234.6,"error_p95":3.37,"error_p99_9":16.32,"error_max":28.14,"meets":false},{"path":"Б-лайт","spacing_l":0.5,"samples":6219,"samples_per_node":0.278,"build_ms":6214.9,"error_p95":7.39,"error_p99_9":29.70,"error_max":43.08,"meets":false}],"decision":"ни 0,25 L, ни 0,5 L не укладываются в 2 / 6 блоков: нужен «быстрый S0» с решётки стока 1 L (климат и морозоны), а не грубая решётка S0"}
-litho-core: сеть рек №1, плита 216878075925460450: 1499 узлов за 128 мс
-litho-core: сеть рек №2, плита 356150445216138105: 5162 узлов за 208 мс
-litho-core: сеть рек №3, плита 1534972872467770187: 5251 узлов за 47 мс
-litho-core: сеть рек №4, плита 1552031522129305247: 4782 узлов за 97 мс
-litho-core: сеть рек №5, плита 2527502807603398137: 3086 узлов за 93 мс
-litho-core: сеть рек №6, плита 2640110249401201744: 3954 узлов за 23 мс
-litho-core: сеть рек №7, плита 3829022694335313590: 2655 узлов за 45 мс
-litho-core: сеть рек №8, плита 12257214645282878660: 4341 узлов за 89 мс
-litho-core: сеть рек №9, плита 8464724724605848963: 3003 узлов за 60 мс
-litho-core: сеть рек №10, плита 17028336448358945867: 1707 узлов за 25 мс
-litho-core: сеть рек №11, плита 8686466293757039852: 3672 узлов за 41 мс
-litho-core: сеть рек №12, плита 7921362888439761013: 4569 узлов за 37 мс
-litho-core: сеть рек №16, плита 6564756037768855268: 4250 узлов за 81 мс
+{"seed":42,"mode":"gameplay","version":"v1-dev-w","seconds":39.83,"plates":6,"nodes":22401,"net_ms_p50":75.0,"net_ms_p95":148.2,"net_ms_max":166.2,"exact_us_per_node":804.25,"net_budget_ms":200.0,"lattices":[{"path":"путь А","spacing_l":0.25,"samples":23260,"samples_per_node":1.038,"build_ms":16519.5,"error_p95":3.32,"error_p99_9":16.34,"error_max":28.13,"meets":false},{"path":"Б-лайт","spacing_l":0.5,"samples":6219,"samples_per_node":0.278,"build_ms":4824.7,"error_p95":7.28,"error_p99_9":29.59,"error_max":43.36,"meets":false}],"decision":"ни 0,25 L, ни 0,5 L не укладываются в 2 / 6 блоков: нужен «быстрый S0» с решётки стока 1 L (климат и морозоны), а не грубая решётка S0"}
+litho-core: сеть рек №1, плита 216878075925460450: 1499 узлов за 94 мс
+litho-core: сеть рек №2, плита 356150445216138105: 5162 узлов за 166 мс
+litho-core: сеть рек №3, плита 1534972872467770187: 5251 узлов за 39 мс
+litho-core: сеть рек №4, плита 1552031522129305247: 4782 узлов за 75 мс
+litho-core: сеть рек №5, плита 2527502807603398137: 3086 узлов за 75 мс
+litho-core: сеть рек №6, плита 2640110249401201744: 3954 узлов за 18 мс
+litho-core: сеть рек №7, плита 3829022694335313590: 2655 узлов за 36 мс
+litho-core: сеть рек №8, плита 12257214645282878660: 4341 узлов за 73 мс
+litho-core: сеть рек №9, плита 8464724724605848963: 3003 узлов за 46 мс
+litho-core: сеть рек №10, плита 17028336448358945867: 1707 узлов за 20 мс
+litho-core: сеть рек №11, плита 8686466293757039852: 3672 узлов за 33 мс
+litho-core: сеть рек №12, плита 7921362888439761013: 4569 узлов за 29 мс
+litho-core: сеть рек №16, плита 6564756037768855268: 4250 узлов за 63 мс
 ```
 
 ## sandbox s0-node-cost --seed 7 --mode gameplay --version v1-dev-w --json
 
 ```
-{"seed":7,"mode":"gameplay","version":"v1-dev-w","seconds":51.03,"plates":6,"nodes":21547,"net_ms_p50":119.3,"net_ms_p95":179.7,"net_ms_max":179.8,"exact_us_per_node":1094.08,"net_budget_ms":200.0,"lattices":[{"path":"путь А","spacing_l":0.25,"samples":22466,"samples_per_node":1.043,"build_ms":20700.1,"error_p95":6.24,"error_p99_9":19.14,"error_max":37.38,"meets":false},{"path":"Б-лайт","spacing_l":0.5,"samples":6071,"samples_per_node":0.282,"build_ms":6079.8,"error_p95":13.74,"error_p99_9":34.51,"error_max":52.34,"meets":false}],"decision":"ни 0,25 L, ни 0,5 L не укладываются в 2 / 6 блоков: нужен «быстрый S0» с решётки стока 1 L (климат и морозоны), а не грубая решётка S0"}
-litho-core: сеть рек №1, плита 66121835681084742: 5492 узлов за 180 мс
-litho-core: сеть рек №2, плита 279708671678723481: 3249 узлов за 131 мс
-litho-core: сеть рек №3, плита 300616811978723022: 3904 узлов за 179 мс
-litho-core: сеть рек №4, плита 367702533016628490: 4559 узлов за 108 мс
-litho-core: сеть рек №5, плита 579110969429698826: 2193 узлов за 60 мс
-litho-core: сеть рек №6, плита 2685564944463833998: 3460 узлов за 15 мс
-litho-core: сеть рек №7, плита 9314872905938759376: 3492 узлов за 78 мс
-litho-core: сеть рек №8, плита 11775534949179085032: 2228 узлов за 55 мс
-litho-core: сеть рек №9, плита 17671504861887615023: 2961 узлов за 70 мс
-litho-core: сеть рек №10, плита 18322773240960685705: 3291 узлов за 78 мс
-litho-core: сеть рек №11, плита 1214903880574006190: 3578 узлов за 61 мс
-litho-core: сеть рек №12, плита 7058952335977744064: 6126 узлов за 36 мс
-litho-core: сеть рек №16, плита 6330674745532109855: 3563 узлов за 80 мс
-litho-core: сеть рек №32, плита 4876678345067852895: 3042 узлов за 25 мс
+{"seed":7,"mode":"gameplay","version":"v1-dev-w","seconds":39.64,"plates":6,"nodes":21547,"net_ms_p50":92.2,"net_ms_p95":141.4,"net_ms_max":143.6,"exact_us_per_node":849.73,"net_budget_ms":200.0,"lattices":[{"path":"путь А","spacing_l":0.25,"samples":22466,"samples_per_node":1.043,"build_ms":16067.9,"error_p95":6.23,"error_p99_9":19.25,"error_max":37.30,"meets":false},{"path":"Б-лайт","spacing_l":0.5,"samples":6071,"samples_per_node":0.282,"build_ms":4738.7,"error_p95":13.75,"error_p99_9":34.98,"error_max":52.31,"meets":false}],"decision":"ни 0,25 L, ни 0,5 L не укладываются в 2 / 6 блоков: нужен «быстрый S0» с решётки стока 1 L (климат и морозоны), а не грубая решётка S0"}
+litho-core: сеть рек №1, плита 66121835681084742: 5492 узлов за 144 мс
+litho-core: сеть рек №2, плита 279708671678723481: 3249 узлов за 102 мс
+litho-core: сеть рек №3, плита 300616811978723022: 3904 узлов за 135 мс
+litho-core: сеть рек №4, плита 367702533016628490: 4559 узлов за 82 мс
+litho-core: сеть рек №5, плита 579110969429698826: 2193 узлов за 46 мс
+litho-core: сеть рек №6, плита 2685564944463833998: 3460 узлов за 12 мс
+litho-core: сеть рек №7, плита 9314872905938759376: 3492 узлов за 63 мс
+litho-core: сеть рек №8, плита 11775534949179085032: 2228 узлов за 40 мс
+litho-core: сеть рек №9, плита 17671504861887615023: 2961 узлов за 53 мс
+litho-core: сеть рек №10, плита 18322773240960685705: 3291 узлов за 60 мс
+litho-core: сеть рек №11, плита 1214903880574006190: 3578 узлов за 47 мс
+litho-core: сеть рек №12, плита 7058952335977744064: 6126 узлов за 30 мс
+litho-core: сеть рек №16, плита 6330674745532109855: 3563 узлов за 63 мс
+litho-core: сеть рек №32, плита 4876678345067852895: 3042 узлов за 19 мс
 ```
 
 ## sandbox s0-node-cost --seed 42 --mode scientific --version v1-dev-w --json
 
 ```
-{"seed":42,"mode":"scientific","version":"v1-dev-w","seconds":54.65,"plates":6,"nodes":22401,"net_ms_p50":96.2,"net_ms_p95":185.6,"net_ms_max":205.8,"exact_us_per_node":1104.19,"net_budget_ms":200.0,"lattices":[{"path":"путь А","spacing_l":0.25,"samples":23260,"samples_per_node":1.038,"build_ms":23059.3,"error_p95":6.21,"error_p99_9":23.87,"error_max":54.65,"meets":false},{"path":"Б-лайт","spacing_l":0.5,"samples":6219,"samples_per_node":0.278,"build_ms":6256.4,"error_p95":14.23,"error_p99_9":48.58,"error_max":80.39,"meets":false}],"decision":"ни 0,25 L, ни 0,5 L не укладываются в 2 / 6 блоков: нужен «быстрый S0» с решётки стока 1 L (климат и морозоны), а не грубая решётка S0"}
-litho-core: сеть рек №1, плита 216878075925460450: 1499 узлов за 125 мс
-litho-core: сеть рек №2, плита 356150445216138105: 5162 узлов за 206 мс
-litho-core: сеть рек №3, плита 1534972872467770187: 5251 узлов за 50 мс
-litho-core: сеть рек №4, плита 1552031522129305247: 4782 узлов за 97 мс
-litho-core: сеть рек №5, плита 2527502807603398137: 3086 узлов за 95 мс
-litho-core: сеть рек №6, плита 2640110249401201744: 3954 узлов за 24 мс
-litho-core: сеть рек №7, плита 3829022694335313590: 2655 узлов за 45 мс
-litho-core: сеть рек №8, плита 12257214645282878660: 4341 узлов за 93 мс
-litho-core: сеть рек №9, плита 8464724724605848963: 3003 узлов за 57 мс
-litho-core: сеть рек №10, плита 17028336448358945867: 1707 узлов за 26 мс
-litho-core: сеть рек №11, плита 8686466293757039852: 3672 узлов за 40 мс
-litho-core: сеть рек №12, плита 7921362888439761013: 4569 узлов за 37 мс
-litho-core: сеть рек №16, плита 6564756037768855268: 4250 узлов за 83 мс
+{"seed":42,"mode":"scientific","version":"v1-dev-w","seconds":42.58,"plates":6,"nodes":22401,"net_ms_p50":75.9,"net_ms_p95":148.1,"net_ms_max":164.5,"exact_us_per_node":863.05,"net_budget_ms":200.0,"lattices":[{"path":"путь А","spacing_l":0.25,"samples":23260,"samples_per_node":1.038,"build_ms":17923.1,"error_p95":6.21,"error_p99_9":23.87,"error_max":54.65,"meets":false},{"path":"Б-лайт","spacing_l":0.5,"samples":6219,"samples_per_node":0.278,"build_ms":4853.6,"error_p95":14.23,"error_p99_9":48.58,"error_max":80.39,"meets":false}],"decision":"ни 0,25 L, ни 0,5 L не укладываются в 2 / 6 блоков: нужен «быстрый S0» с решётки стока 1 L (климат и морозоны), а не грубая решётка S0"}
+litho-core: сеть рек №1, плита 216878075925460450: 1499 узлов за 99 мс
+litho-core: сеть рек №2, плита 356150445216138105: 5162 узлов за 164 мс
+litho-core: сеть рек №3, плита 1534972872467770187: 5251 узлов за 37 мс
+litho-core: сеть рек №4, плита 1552031522129305247: 4782 узлов за 78 мс
+litho-core: сеть рек №5, плита 2527502807603398137: 3086 узлов за 73 мс
+litho-core: сеть рек №6, плита 2640110249401201744: 3954 узлов за 18 мс
+litho-core: сеть рек №7, плита 3829022694335313590: 2655 узлов за 36 мс
+litho-core: сеть рек №8, плита 12257214645282878660: 4341 узлов за 69 мс
+litho-core: сеть рек №9, плита 8464724724605848963: 3003 узлов за 46 мс
+litho-core: сеть рек №10, плита 17028336448358945867: 1707 узлов за 20 мс
+litho-core: сеть рек №11, плита 8686466293757039852: 3672 узлов за 31 мс
+litho-core: сеть рек №12, плита 7921362888439761013: 4569 узлов за 29 мс
+litho-core: сеть рек №16, плита 6564756037768855268: 4250 узлов за 62 мс
 ```
 
 ## sandbox s0-node-cost --seed 7 --mode scientific --version v1-dev-w --json
 
 ```
-{"seed":7,"mode":"scientific","version":"v1-dev-w","seconds":54.87,"plates":6,"nodes":21547,"net_ms_p50":117.7,"net_ms_p95":179.4,"net_ms_max":180.8,"exact_us_per_node":1174.51,"net_budget_ms":200.0,"lattices":[{"path":"путь А","spacing_l":0.25,"samples":22466,"samples_per_node":1.043,"build_ms":22686.5,"error_p95":8.85,"error_p99_9":25.77,"error_max":54.16,"meets":false},{"path":"Б-лайт","spacing_l":0.5,"samples":6071,"samples_per_node":0.282,"build_ms":6209.2,"error_p95":18.24,"error_p99_9":50.99,"error_max":79.44,"meets":false}],"decision":"ни 0,25 L, ни 0,5 L не укладываются в 2 / 6 блоков: нужен «быстрый S0» с решётки стока 1 L (климат и морозоны), а не грубая решётка S0"}
-litho-core: сеть рек №1, плита 66121835681084742: 5492 узлов за 181 мс
-litho-core: сеть рек №2, плита 279708671678723481: 3249 узлов за 129 мс
-litho-core: сеть рек №3, плита 300616811978723022: 3904 узлов за 175 мс
-litho-core: сеть рек №4, плита 367702533016628490: 4559 узлов за 106 мс
-litho-core: сеть рек №5, плита 579110969429698826: 2193 узлов за 60 мс
-litho-core: сеть рек №6, плита 2685564944463833998: 3460 узлов за 15 мс
-litho-core: сеть рек №7, плита 9314872905938759376: 3492 узлов за 80 мс
-litho-core: сеть рек №8, плита 11775534949179085032: 2228 узлов за 56 мс
-litho-core: сеть рек №9, плита 17671504861887615023: 2961 узлов за 71 мс
-litho-core: сеть рек №10, плита 18322773240960685705: 3291 узлов за 78 мс
-litho-core: сеть рек №11, плита 1214903880574006190: 3578 узлов за 61 мс
-litho-core: сеть рек №12, плита 7058952335977744064: 6126 узлов за 36 мс
-litho-core: сеть рек №16, плита 6330674745532109855: 3563 узлов за 80 мс
-litho-core: сеть рек №32, плита 12941531667439822709: 2377 узлов за 24 мс
+{"seed":7,"mode":"scientific","version":"v1-dev-w","seconds":42.68,"plates":6,"nodes":21547,"net_ms_p50":92.3,"net_ms_p95":139.2,"net_ms_max":140.5,"exact_us_per_node":915.62,"net_budget_ms":200.0,"lattices":[{"path":"путь А","spacing_l":0.25,"samples":22466,"samples_per_node":1.043,"build_ms":17609.6,"error_p95":8.85,"error_p99_9":25.77,"error_max":54.16,"meets":false},{"path":"Б-лайт","spacing_l":0.5,"samples":6071,"samples_per_node":0.282,"build_ms":4823.4,"error_p95":18.24,"error_p99_9":50.99,"error_max":79.44,"meets":false}],"decision":"ни 0,25 L, ни 0,5 L не укладываются в 2 / 6 блоков: нужен «быстрый S0» с решётки стока 1 L (климат и морозоны), а не грубая решётка S0"}
+litho-core: сеть рек №1, плита 66121835681084742: 5492 узлов за 141 мс
+litho-core: сеть рек №2, плита 279708671678723481: 3249 узлов за 102 мс
+litho-core: сеть рек №3, плита 300616811978723022: 3904 узлов за 135 мс
+litho-core: сеть рек №4, плита 367702533016628490: 4559 узлов за 83 мс
+litho-core: сеть рек №5, плита 579110969429698826: 2193 узлов за 46 мс
+litho-core: сеть рек №6, плита 2685564944463833998: 3460 узлов за 12 мс
+litho-core: сеть рек №7, плита 9314872905938759376: 3492 узлов за 62 мс
+litho-core: сеть рек №8, плита 11775534949179085032: 2228 узлов за 42 мс
+litho-core: сеть рек №9, плита 17671504861887615023: 2961 узлов за 51 мс
+litho-core: сеть рек №10, плита 18322773240960685705: 3291 узлов за 61 мс
+litho-core: сеть рек №11, плита 1214903880574006190: 3578 узлов за 47 мс
+litho-core: сеть рек №12, плита 7058952335977744064: 6126 узлов за 28 мс
+litho-core: сеть рек №16, плита 6330674745532109855: 3563 узлов за 61 мс
+litho-core: сеть рек №32, плита 12941531667439822709: 2377 узлов за 18 мс
 ```
 
