@@ -2785,7 +2785,8 @@ impl Generator {
                     &self.params,
                 );
                 let micro_dy = dry.surface_y - macro_h.surface_y;
-                crate::height::with_water_w(macro_h, micro_dy, &water, &self.params)
+                let cut = crate::height::with_water_w(macro_h, micro_dy, &water, &self.params);
+                crate::height::lake_beach_w(cut, &water, climate.precip.ratio <= 1.0, &self.params)
             } else {
                 crate::height::with_water(dry, &water, &self.params)
             }
@@ -3762,7 +3763,8 @@ impl Generator {
         flow: FlowClass,
     ) -> (BedMaterial, BedMaterial) {
         use crate::hydrology::SurfaceKind;
-        let dry = full.climate.precip.ratio < 0.6;
+        // Holdridge aridity is PET / P (not precipitation / PET).
+        let dry = full.climate.precip.ratio >= 2.0;
         let cold = full.climate.temperature.t_bio < 0.0;
         let (bed, shore) = match kind {
             SurfaceKind::Swamp => (BedMaterial::Mud, BedMaterial::Mud),
@@ -3770,9 +3772,7 @@ impl Generator {
                 (BedMaterial::Salt, BedMaterial::Salt)
             }
             SurfaceKind::InlandSea => {
-                if dry {
-                    (BedMaterial::Salt, BedMaterial::Salt)
-                } else if cold {
+                if cold {
                     (BedMaterial::Gravel, BedMaterial::Gravel)
                 } else {
                     (BedMaterial::Sand, BedMaterial::Sand)
@@ -3781,15 +3781,13 @@ impl Generator {
             SurfaceKind::Lake => {
                 if cold {
                     (BedMaterial::Gravel, BedMaterial::Gravel)
-                } else if dry {
-                    (BedMaterial::Salt, BedMaterial::Sand)
                 } else {
                     (BedMaterial::Sand, BedMaterial::Sand)
                 }
             }
             SurfaceKind::River => {
                 let bed = match flow {
-                    FlowClass::Calm if full.climate.precip.ratio > 1.0 => BedMaterial::Clay,
+                    FlowClass::Calm if full.climate.precip.ratio < 1.0 => BedMaterial::Clay,
                     FlowClass::Calm => BedMaterial::Sand,
                     FlowClass::Riffle => BedMaterial::Gravel,
                     FlowClass::Rapid
@@ -4544,6 +4542,22 @@ mod t141_tests {
         );
         assert_eq!(Field::parse("pv"), Some(Field::Pv));
         assert_eq!(Field::ALL.len(), 11);
+    }
+
+    #[test]
+    fn w_ring_caps_samples_without_truncating_far_shore() {
+        let ring = [
+            Vec2::new(0., 0.),
+            Vec2::new(1., 0.),
+            Vec2::new(1., 1.),
+            Vec2::new(0., 1.),
+        ];
+        let samples = ring_probes(&ring, 1000.);
+        assert_eq!(samples.len(), LAKE_RING_MAX_SAMPLES);
+        for i in 0..4 {
+            assert_eq!(samples[i * 96], ring[i]);
+        }
+        assert_eq!(ring_probes(&ring, 2.), ring);
     }
 
     #[test]

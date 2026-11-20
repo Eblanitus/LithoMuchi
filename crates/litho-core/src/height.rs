@@ -599,6 +599,38 @@ pub fn with_water_w(
     raise_bank(height, water, params, 0.0)
 }
 
+/// §6.4: a wet-zone beach is an exterior cut, not a ring of filled blocks.
+/// It cannot raise natural low terrain or replace an overlapping riverbed.
+pub(crate) fn lake_beach_w(
+    mut height: HeightSample,
+    water: &HydrologySample,
+    wet_zone: bool,
+    params: &Params,
+) -> HeightSample {
+    if !wet_zone || height.water_strength > 0.0 {
+        return height;
+    }
+    if let Some(hit) = water
+        .lakes
+        .shore_hit
+        .filter(|h| !h.inside && !h.rift && h.kind == crate::lake::LakeKind::Lake)
+    {
+        let distance = hit.distance_l * params.block.l_blocks;
+        if let Some(level) = hit
+            .level_blocks
+            .filter(|_| distance <= params.water.beach_blocks)
+        {
+            let bank = level + (0.5 * distance).ceil();
+            if bank < height.surface_y {
+                height.surface_y = bank;
+                height.bed_y = bank;
+                height.offset = (bank - SURFACE_BASE) / OFFSET_SCALE;
+            }
+        }
+    }
+    height
+}
+
 pub fn validate(params: &Params) -> Result<(), &'static str> {
     let h = &params.height;
     let increasing = |xs: &[f64]| xs.windows(2).all(|w| w[0].is_finite() && w[1] > w[0]);
@@ -952,6 +984,25 @@ mod tests {
         assert_eq!(basin.water_y, 90.0);
         assert!(basin.surface_y <= 89.0);
         assert!(basin.surface_y <= 88.0);
+    }
+
+    #[test]
+    fn w_beach_cuts_only_the_outer_wet_zone_band() {
+        let p = Params::defaults(GenVersion::V1DevW, Mode::Gameplay);
+        let mut hit = lake_level(1.0, 0.5, Some(80.0));
+        hit.inside = false;
+        let at = |mut h: crate::lake::LakeHit, d, wet| {
+            h.distance_l = d / p.block.l_blocks;
+            let mut water = HydrologySample::default();
+            water.lakes.shore_hit = Some(h);
+            lake_beach_w(base_at(90.0), &water, wet, &p).surface_y
+        };
+        assert_eq!(at(hit, 2.0, true), 81.0);
+        assert_eq!(at(hit, 3.0, true), 82.0);
+        assert_eq!(at(hit, 4.0, true), 90.0);
+        assert_eq!(at(hit, 1.0, false), 90.0);
+        hit.rift = true;
+        assert_eq!(at(hit, 1.0, true), 90.0);
     }
 
     #[test]
