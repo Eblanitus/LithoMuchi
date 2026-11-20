@@ -361,6 +361,8 @@ type ShoreEdge = Arc<Vec<[u8; 2]>>;
 /// Отдельный псевдоним, а не тип «в лоб»: clippy `type_complexity` валит
 /// `-D warnings` на вложенном `Arc<Vec<Option<(f64, f64)>>>`.
 type ReachLevels = Arc<Vec<Option<(f64, f64)>>>;
+/// ВО1-1: классы звена по его сегментам.
+type ReachProfiles = Arc<WReachProfile>;
 
 /// R2 (PLAN-WATER-FABRIC §4): уровни воды плиты в блоках. Кэш плиты, потому
 /// что в них входит сухая поверхность `S` в точках контура и берегов.
@@ -373,6 +375,16 @@ struct PlateLevels {
     /// больше блока на блок русла. Считаются лениво, по одному звену: у плиты
     /// тысячи сегментов, и первая же колонка платила бы за все (замер В5).
     reaches: Mutex<HashMap<usize, ReachLevels>>,
+    /// ВО1-1 (6.3, п. 7): профиль звена целиком — уровни и классы, только W.
+    /// R2 этот словарь не читает.
+    w_profiles: Mutex<HashMap<usize, Arc<WReachProfile>>>,
+}
+
+/// ВО1-1: профиль одного звена — уровни и классы (6.3, п. 7).
+#[derive(Debug)]
+struct WReachProfile {
+    levels: Vec<Option<(f64, f64)>>,
+    classes: Vec<crate::water_profile::SegmentClass>,
 }
 
 /// §4, п. 1: точки контура озера берутся не реже чем через 2 блока.
@@ -388,6 +400,118 @@ const RIVER_LEVEL_BUDGET_MS: u128 = 120;
 const SHORE_CELL: f64 = 4.0;
 /// К4а/часть 2 (Д-110): сторона квадрата, по которому кэшируется кромка океана.
 const SHORE_BLOCK: f64 = 32.0;
+
+/// ВО1: точка `S0` с входами классов 5.2. Один и тот же путь во всех
+/// пробах профиля `W` и в `s0_at`: `macro_y` совпадает побитово, расхождения
+/// «уровни против мира» нет по построению.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+struct WProbe {
+    /// `S0_macro` в блоках.
+    macro_y: f64,
+    /// Сырой единичный шум микробугров (не взвешенный).
+    micro: f64,
+    pv_relief: f64,
+    base_c: f64,
+    base_e: f64,
+    e_km: f64,
+    cold: f64,
+    warm: f64,
+    shore_dist: f64,
+    /// Полоса E после макрорельефа — та же строка таблицы высот.
+    erosion_e: f64,
+    /// `t_c` (пояс P0–P6).
+    t_c: f64,
+    /// `R = PET/P`.
+    aridity: f64,
+    plateau: f64,
+    /// Вес морфозоны 6 (холодные горы).
+    cold_mountain_weight: f64,
+}
+
+impl Generator {
+    /// ВО1: общая точка `S0` для профиля. `None` — версия без водного
+    /// обновления или точка без климата/плиты.
+    fn w_probe(&self, x: f64, z: f64) -> Option<WProbe> {
+        if !self.params.version.is_water_update() {
+            return None;
+        }
+        let climate = self.climate_sample(x, z)?;
+        let point = self.macro_point(x, z);
+        let plate = plate_query(point, self.seed, &self.params)?;
+        let crust = crust_from_sample(point, &plate, self.seed, &self.params);
+        let c = continentalness(climate.surface.e_km, climate.surface.iota_l, &self.params);
+        let is_ocean = c < self.params.climate.ocean_c_threshold;
+        let class = self.class_before_height(&climate, is_ocean, x, z);
+        let depth = self.relief_basin_depth(point, &plate).ok()?;
+        let crust_c = continentalness(crust.e_km, crust.iota_l, &self.params);
+        let shore_dist = self.shore_distance_blocks(x, z, crust_c);
+        let shore_fade = self.shore_fade_from(shore_dist);
+        let relief_sample =
+            relief::sample_near_shore(&plate, &crust, depth, shore_fade, self.seed, &self.params);
+        let morpho = self.morpho_weights(x, z)?;
+        // `local_river = 0`: в `S0` воды нет по определению.
+        let base = crate::vanilla::sample(&climate, &class, x, z, self.seed, &self.params, 0.0);
+        let (base, pv_relief) = crate::relief_fields::apply_with_pv(
+            base,
+            &climate,
+            &relief_sample,
+            &morpho,
+            Vec2::new(x, z),
+            self.seed,
+            &self.params,
+        );
+        let hp = &self.params.height;
+        // Тот же шум и та же длина волны, что в `surface_fields`; в `S0` он
+        // не гасится рекой (`gate = 1`), а вычитается отдельным слагаемым.
+        let micro = if hp.micro_amp_blocks.iter().any(|amp| *amp > 0.0) {
+            crate::noise::fbm2_unit(
+                crate::seed::subseed(self.seed, crate::seed::SALT_HEIGHT_MICRO),
+                x / hp.micro_lambda_blocks,
+                z / hp.micro_lambda_blocks,
+                1.0,
+                2,
+                0.5,
+            )
+        } else {
+            0.0
+        };
+        let shore_dist = if base.c <= self.params.climate.ocean_c_threshold {
+            0.0
+        } else {
+            shore_dist
+        };
+        let cold = morpho.values[6];
+        let warm = morpho.values[7];
+        let macro_h = crate::height::sample_micro(
+            base.c,
+            base.e,
+            pv_relief,
+            climate.surface.e_km,
+            cold,
+            warm,
+            0.0,
+            0.0,
+            shore_dist,
+            &self.params,
+        );
+        Some(WProbe {
+            macro_y: macro_h.surface_y,
+            micro,
+            pv_relief,
+            base_c: base.c,
+            base_e: base.e,
+            e_km: climate.surface.e_km,
+            cold,
+            warm,
+            shore_dist,
+            erosion_e: base.e,
+            t_c: climate.temperature.t_c,
+            aridity: climate.precip.ratio,
+            plateau: crust.plateau,
+            cold_mountain_weight: morpho.values[6],
+        })
+    }
+}
 
 impl Generator {
     /// Создаётся один раз на мир. Пока дёшево; после T54 здесь появится поиск
@@ -1240,17 +1364,56 @@ impl Generator {
                 }
                 if let Some(hit) = channels_here.nearest.as_mut() {
                     let reach = hit.reach;
-                    let reach_levels = if water_update {
-                        self.w_reach_levels(&levels, &net, reach)?
-                    } else {
-                        self.r2_reach_levels(&levels, &net, reach)?
-                    };
                     let first = net.channels().reach_first_segment(reach);
-                    hit.level_blocks = reach_levels
-                        .get(hit.segment.saturating_sub(first))
-                        .copied()
-                        .flatten()
-                        .map(|(up, down)| up + (down - up) * hit.along);
+                    let index = hit.segment.saturating_sub(first);
+                    let along = hit.along;
+                    let mirror = |up: f64, down: f64| up + (down - up) * along;
+                    if water_update {
+                        let profile = self.w_reach_profile(&levels, &net, reach)?;
+                        hit.level_blocks = profile
+                            .levels
+                            .get(index)
+                            .copied()
+                            .flatten()
+                            .map(|(up, down)| mirror(up, down));
+                        // п. 7 (6.3): классы сегмента — классы звена.
+                        if let Some(class) = profile.classes.get(index) {
+                            hit.valley_class = class.valley;
+                            hit.flow_class = class.flow;
+                            hit.gp = class.gp;
+                        }
+                    } else {
+                        hit.level_blocks = self
+                            .r2_reach_levels(&levels, &net, reach)?
+                            .get(index)
+                            .copied()
+                            .flatten()
+                            .map(|(up, down)| mirror(up, down));
+                    }
+                }
+                if water_update {
+                    // 6.5: до трёх звеньев в радиусе с уровнями и классами —
+                    // основа вырезки нескольких долин. Копия ближайшего допустима.
+                    let mut extras = Vec::with_capacity(3);
+                    for mut hit in net.channels().query_all(point, 3) {
+                        let first = net.channels().reach_first_segment(hit.reach);
+                        let index = hit.segment.saturating_sub(first);
+                        let along = hit.along;
+                        let profile = self.w_reach_profile(&levels, &net, hit.reach)?;
+                        hit.level_blocks = profile
+                            .levels
+                            .get(index)
+                            .copied()
+                            .flatten()
+                            .map(|(up, down)| up + (down - up) * along);
+                        if let Some(class) = profile.classes.get(index) {
+                            hit.valley_class = class.valley;
+                            hit.flow_class = class.flow;
+                            hit.gp = class.gp;
+                        }
+                        extras.push(hit);
+                    }
+                    channels_here.extra.absorb(extras);
                 }
             }
             channels.merge(channels_here);
@@ -1425,32 +1588,32 @@ impl Generator {
             .get_or_build(plate.id, || self.build_w_plate_levels(net))
     }
 
-    /// Уровни `W` одного звена: считается один раз на звено.
-    fn w_reach_levels(
+    /// Профиль одного звена: считается один раз, уровни и классы заодно.
+    fn w_reach_profile(
         &self,
         levels: &PlateLevels,
         net: &crate::drainage::RiverNet,
         reach: usize,
-    ) -> Result<ReachLevels, RiverNetError> {
+    ) -> Result<ReachProfiles, RiverNetError> {
         if let Some(found) = levels
-            .reaches
+            .w_profiles
             .lock()
-            .expect("уровни русел W не отравлены")
+            .expect("профиль русел W не отравлен")
             .get(&reach)
         {
             return Ok(Arc::clone(found));
         }
         let built = Arc::new(self.build_w_reach_levels(levels, net, reach)?);
         levels
-            .reaches
+            .w_profiles
             .lock()
-            .expect("уровни русел W не отравлены")
+            .expect("профиль русел W не отравлен")
             .insert(reach, Arc::clone(&built));
         Ok(built)
     }
 
     /// Озёра `W` пока по правилу R2 (6.4): их поверхность — ещё не `S0`.
-    /// Русла считаются лениво в [`Self::w_reach_levels`].
+    /// Русла считаются лениво в профиле звена (`w_reach_profile`).
     fn build_w_plate_levels(
         &self,
         net: &crate::drainage::RiverNet,
@@ -1458,30 +1621,24 @@ impl Generator {
         self.build_r2_plate_levels(net)
     }
 
-    /// `S0_macro` в блочной точке: сухая поверхность без микробугров.
-    /// `None` — версия без водного обновления или точка без климата/плиты.
-    fn s0_macro_at(&self, x: f64, z: f64) -> Option<f64> {
-        if !self.params.version.is_water_update() {
-            return None;
-        }
-        self.s0_at(x, z).map(|sample| sample.macro_y)
-    }
-
-    /// ВО1-1 (6.3, пп. 1–3, 5, 7): профиль уровня реки `W` по звену.
+    /// ВО1-1 (6.3, пп. 1–6, 7, 8): профиль уровня реки `W` по звену.
     ///
     /// Пробы оси идут с шагом `water.profile_step_blocks` (при перерасходе
     /// бюджета шаг удваивается): цель `T = floor(B) − 1` от низшего из трёх
     /// `S0` сечения, не ниже моря. Вниз по течению уровень только убывает
     /// (бегущий минимум), поэтому ступень внутри звена — не больше блока на
-    /// блок русла; перепады, которые рельеф даёт быстрее, разбирает п. 6
-    /// (водопады, ВО1-2). Подпор и притоки (п. 4) и межплитовые звенья (п. 8)
-    /// считаются после того, как сеть научится читать уровень приёмника.
+    /// блок русла; водопады (п. 6) только размечаются (`FallTop`), перепад
+    /// раскладывается на ступени как в R2. Приёмник (п. 4): подпор вверх по
+    /// течению, висячий приток вне холодных гор выравнивается уклоном
+    /// `grade_slope`. Вход звена (п. 3) — низший из родителей, включая
+    /// передачи от соседних плит (п. 8). Классы долины (5.2) и потока (5.3)
+    /// пишутся в профиль (п. 7).
     fn build_w_reach_levels(
         &self,
         levels: &PlateLevels,
         net: &crate::drainage::RiverNet,
         reach: usize,
-    ) -> Result<Vec<Option<(f64, f64)>>, RiverNetError> {
+    ) -> Result<WReachProfile, RiverNetError> {
         let l = self.params.block.l_blocks;
         let shift = self.spawn_shift;
         let to_blocks = |p: Vec2| ((p.x - shift.x) * l, (p.z - shift.z) * l);
@@ -1490,12 +1647,28 @@ impl Generator {
         let sea = crate::height::SEA_LEVEL;
         let source = channels.reach_segments(reach);
         if source.is_empty() {
-            return Ok(Vec::new());
+            return Ok(WReachProfile {
+                levels: Vec::new(),
+                classes: Vec::new(),
+            });
         }
-        // п. 1–2: берег `B` и цель `T` в пробах оси. Между пробами цели нет:
-        // уровень там держится прежним, поэтому ступень не больше блока на блок.
-        let mut banks: Vec<Option<f64>> = vec![None; source.len()];
-        let mut targets: Vec<Option<f64>> = vec![None; source.len()];
+        let n = source.len();
+        // Длина оси по вершинам в блоках: окно уклона и сглаживание класса.
+        let mut cum_blocks: Vec<f64> = Vec::with_capacity(n);
+        let mut acc = 0.0_f64;
+        for segment in source {
+            acc += segment.b.point.sub(segment.a.point).len() * l;
+            cum_blocks.push(acc);
+        }
+        // п. 3/8 (6.3): уровень входа — от притока (п. 4) или от верхней плиты.
+        let entry = self.w_entry_level(levels, net, reach)?;
+        // п. 1–2: берег `B`, проба долины `Gp` и входы классов в пробах оси.
+        // Между пробами уровень держится прежним, поэтому ступень не больше
+        // блока на блок.
+        let mut banks: Vec<Option<f64>> = vec![None; n];
+        let mut targets: Vec<Option<f64>> = vec![None; n];
+        let mut gp: Vec<Option<f64>> = vec![None; n];
+        let mut inputs: Vec<Option<crate::water_profile::ValleyClassInput>> = vec![None; n];
         let mut last_sample: Option<Vec2> = None;
         let started = std::time::Instant::now();
         for (index, segment) in source.iter().enumerate() {
@@ -1516,21 +1689,49 @@ impl Generator {
             let normal = direction.normalized().perp();
             let edge_l = 0.5 * b.core_l + water.bank_probe_blocks / l;
             let mut bank: Option<f64> = None;
+            let mut center: Option<WProbe> = None;
             for offset_l in [0.0, edge_l, -edge_l] {
                 let (px, pz) = to_blocks(b.point.add(normal.scale(offset_l)));
-                if let Some(s) = self.s0_macro_at(px, pz) {
-                    bank = Some(bank.map_or(s, |old: f64| old.min(s)));
+                if let Some(probe) = self.w_probe(px, pz) {
+                    bank = Some(bank.map_or(probe.macro_y, |old: f64| old.min(probe.macro_y)));
+                    if offset_l == 0.0 {
+                        center = Some(probe);
+                    }
                 }
             }
+            // п. 1: две пробы для ширины долины `Gp`, `R_v = h + 2 + R_wall`.
+            let rv_l = 0.5 * b.core_l + (2.0 + water.wall_reach_blocks) / l;
+            let mut gp_max: Option<f64> = None;
+            for offset_l in [rv_l, -rv_l] {
+                let (px, pz) = to_blocks(b.point.add(normal.scale(offset_l)));
+                if let Some(probe) = self.w_probe(px, pz) {
+                    gp_max = Some(gp_max.map_or(probe.macro_y, |old: f64| old.max(probe.macro_y)));
+                }
+            }
+            gp[index] = gp_max;
             if let Some(bank) = bank {
                 banks[index] = Some(bank);
                 // п. 2: цель — блок под низшим берегом, не ниже моря.
-                targets[index] = Some((bank - 1.0).floor().max(sea));
+                let target = bank.floor() - 1.0;
+                targets[index] = Some(target.max(sea));
+            }
+            if let Some(center) = center {
+                // Входы класса долины: глубина и уклон заполняются после
+                // профиля (ниже), макро-величины известны уже здесь.
+                inputs[index] = Some(crate::water_profile::ValleyClassInput {
+                    cold_mountain_weight: center.cold_mountain_weight,
+                    polar_belt: center.t_c < 3.0,
+                    erosion_e0_e1: center.erosion_e < self.params.height.e_knots[2],
+                    depth_blocks: 0.0,
+                    aridity: center.aridity,
+                    plateau: center.plateau,
+                    slope: 0.0,
+                });
             }
         }
-        // п. 3 и 5: бегущий минимум вниз по течению.
+        // п. 3 и 5: бегущий минимум вниз по течению от уровня входа.
         let mut level: Vec<f64> = vec![sea; source.len()];
-        let mut current: Option<f64> = None;
+        let mut current: Option<f64> = entry;
         for index in 0..source.len() {
             let start = current.or(targets[index]).unwrap_or(sea);
             let here = match targets[index] {
@@ -1542,7 +1743,8 @@ impl Generator {
         }
         // п. 4: приёмник и подпор. Слияние и озеро требуют уровня соседа,
         // поэтому это отдельный проход уже по готовому профилю.
-        if let Some(receiver) = self.w_receiver_level(levels, net, reach)? {
+        let end_level = *level.last().expect("звено непусто");
+        if let Some(receiver) = self.w_receiver_level(levels, net, reach, Some(end_level))? {
             let mouth_level = *level.last().expect("звено непусто");
             if mouth_level + 1.0 < receiver {
                 // Подпор: вода у устья ниже приёмника — поднимаем вверх по
@@ -1568,9 +1770,73 @@ impl Generator {
                 }
             }
         }
+        // п. 7 / 5.3: уклон окна 32 блока русла (±16 блоков от пробы).
+        let half_window = 16.0_f64;
+        let mut slope: Vec<f64> = vec![0.0; n];
+        for i in 0..n {
+            let center = cum_blocks[i];
+            let lo = cum_blocks.partition_point(|&x| x < center - half_window);
+            let hi = cum_blocks
+                .partition_point(|&x| x <= center + half_window)
+                .saturating_sub(1);
+            let a = lo.min(i);
+            let b = hi.max(i);
+            if b > a {
+                let span = cum_blocks[b] - cum_blocks[a];
+                if span > 1e-6 {
+                    slope[i] = ((level[a] - level[b]) / span).max(0.0);
+                }
+            }
+        }
+        // п. 7 / 5.2: класс долины; пробы без `Gp` наследуют ближайший класс.
+        let mut raw: Vec<crate::water_profile::ValleyClass> =
+            vec![crate::water_profile::ValleyClass::Plain; n];
+        for i in 0..n {
+            if let Some(input) = inputs[i] {
+                let mut valley_input = input;
+                valley_input.depth_blocks = gp[i].map(|g| (g - level[i]).max(0.0)).unwrap_or(0.0);
+                valley_input.slope = slope[i];
+                raw[i] = crate::water_profile::valley_class(valley_input, water);
+            }
+        }
+        let mut carry = None;
+        for i in 0..n {
+            if inputs[i].is_some() {
+                carry = Some(raw[i]);
+            } else if let Some(value) = carry {
+                raw[i] = value;
+            }
+        }
+        let mut carry = None;
+        for i in (0..n).rev() {
+            if inputs[i].is_some() {
+                carry = Some(raw[i]);
+            } else if let Some(value) = carry {
+                raw[i] = value;
+            }
+        }
+        let valley =
+            crate::water_profile::smooth_valley_classes(&cum_blocks, &raw, water.class_window_blocks);
+        // п. 7 / 6.3: класс потока сверху вниз; каскад глушит водопад.
+        let mut classes = Vec::with_capacity(n);
+        let mut upstream = crate::water_profile::FlowClass::Calm;
+        for i in 0..n {
+            let drop_blocks = if i == 0 {
+                0.0
+            } else {
+                (level[i - 1] - level[i]).max(0.0)
+            };
+            let flow = crate::water_profile::flow_class(slope[i], drop_blocks, upstream, water);
+            classes.push(crate::water_profile::SegmentClass {
+                valley: valley[i],
+                flow,
+                gp: gp[i].unwrap_or(0.0),
+            });
+            upstream = flow;
+        }
         // Зеркало сегмента: `(уровень в начале, уровень в конце)`; между ними
         // интерполяция по `along`, поэтому ступень ≤ 1 блок на блок русла.
-        let mut segments = vec![None; source.len()];
+        let mut segments = vec![None; n];
         for index in 0..level.len() {
             let up = level[index];
             let down = level.get(index + 1).copied().unwrap_or(level[index]);
@@ -1578,18 +1844,141 @@ impl Generator {
                 segments[index] = Some((up, down));
             }
         }
-        Ok(segments)
+        Ok(WReachProfile {
+            levels: segments,
+            classes,
+        })
+    }
+
+    /// `T` звена по его первой вершине: низший из трёх `S0` (ось и два
+    /// берега), блок под ней, не ниже моря. Та же формула, что в начале
+    /// профиля, но одна проба.
+    fn w_first_target(
+        &self,
+        net: &crate::drainage::RiverNet,
+        reach: usize,
+    ) -> Option<f64> {
+        let l = self.params.block.l_blocks;
+        let shift = self.spawn_shift;
+        let sea = crate::height::SEA_LEVEL;
+        let water = &self.params.water;
+        let channels = net.channels();
+        let segment = channels.reach_segments(reach).first().copied()?;
+        let b = segment.b;
+        let direction = b.point.sub(segment.a.point);
+        if direction.len() <= 1e-12 {
+            return None;
+        }
+        let normal = direction.normalized().perp();
+        let edge_l = 0.5 * b.core_l + water.bank_probe_blocks / l;
+        let mut bank: Option<f64> = None;
+        for offset_l in [0.0, edge_l, -edge_l] {
+            let here = b.point.add(normal.scale(offset_l));
+            let px = (here.x - shift.x) * l;
+            let pz = (here.z - shift.z) * l;
+            if let Some(probe) = self.w_probe(px, pz) {
+                bank = Some(bank.map_or(probe.macro_y, |old: f64| old.min(probe.macro_y)));
+            }
+        }
+        let bank = bank?;
+        Some((bank.floor() - 1.0).max(sea))
+    }
+
+    /// п. 3/8 (6.3): уровень входа в звено — низший из родителей
+    /// (`mouth_node == source_node`), включая передачи от соседних плит.
+    /// `None` — голова реки. Подпор (п. 4) сюда не входит: он смотрит вниз
+    /// по течению и на верхнюю плиту не переходит.
+    fn w_entry_level(
+        &self,
+        levels: &PlateLevels,
+        net: &crate::drainage::RiverNet,
+        reach: usize,
+    ) -> Result<Option<f64>, RiverNetError> {
+        self.w_entry_level_inner(levels, net, reach, None)
+    }
+
+    /// `in_progress`: (номер звена в этой сети, его уровень на конце) —
+    /// звено, которое строится прямо сейчас и чей конец уже известен.
+    /// Без этой пометки подпор (п. 4) и вход звена (п. 8) собирали бы друг друга
+    /// заново: `A → receiver(B) → entry(B) → parents incl. A → build(A)` — цикл.
+    fn w_entry_level_inner(
+        &self,
+        levels: &PlateLevels,
+        net: &crate::drainage::RiverNet,
+        reach: usize,
+        in_progress: Option<(usize, f64)>,
+    ) -> Result<Option<f64>, RiverNetError> {
+        let channels = net.channels();
+        let Some(this) = channels.reaches().get(reach) else {
+            return Ok(None);
+        };
+        let source = this.source_node;
+        let Some(&node) = net.nodes().get(source) else {
+            return Ok(None);
+        };
+        let node_point = node.point;
+        let mut best: Option<f64> = None;
+        // Внутриплитовые родители: звенья той же сети, чей рот — наш исток.
+        for (index, candidate) in channels.reaches().iter().enumerate() {
+            if index == reach || candidate.mouth_node != source {
+                continue;
+            }
+            // Звено, которое строитель строит прямо сейчас (в `w_receiver_level`):
+            // его конец уже известен по `level`, собирать его заново нельзя — цикл.
+            if let Some((active, end)) = in_progress {
+                if index == active {
+                    best = Some(best.map_or(end, |old: f64| old.min(end)));
+                    continue;
+                }
+            }
+            let profile = self.w_reach_profile(levels, net, index)?;
+            let parent_end = profile.levels.last().copied().flatten().map(|(_, down)| down);
+            if let Some(level) = parent_end {
+                best = Some(best.map_or(level, |old: f64| old.min(level)));
+            }
+        }
+        // Межплитовые: сети соседних плит, у которых звено заканчивается
+        // передачей (`Handoff`) в этот узел.
+        for plate in plates_near(node_point, 2.0, self.seed, &self.params) {
+            if plate.id == net.plate_id() {
+                continue;
+            }
+            let Ok(other_net) = self.drainage_network(&plate) else {
+                continue;
+            };
+            let other_levels = self.w_plate_levels(&plate, &other_net)?;
+            for (index, candidate) in other_net.channels().reaches().iter().enumerate() {
+                if candidate.end != crate::channel::ReachEnd::Handoff {
+                    continue;
+                }
+                let Some(&mouth) = other_net.nodes().get(candidate.mouth_node) else {
+                    continue;
+                };
+                if mouth.point.sub(node_point).len() > 1e-9 {
+                    continue;
+                }
+                let profile = self.w_reach_profile(&other_levels, &other_net, index)?;
+                let parent_end = profile.levels.last().copied().flatten().map(|(_, down)| down);
+                if let Some(level) = parent_end {
+                    best = Some(best.map_or(level, |old: f64| old.min(level)));
+                }
+            }
+        }
+        Ok(best)
     }
 
     /// п. 4 (6.3): уровень приёмника звена, блоки. Море — 63, озеро — его
     /// зеркало R2 (6.4), слияние — уровень звена, которое начинается от того
     /// же узла (оно ниже по течению, поэтому рекурсия конечна). У прочих
     /// концов приёмника нет.
+    /// `this_end`: уровень строительного звена на конце (pre-подпор) — нужен
+    /// ветви `Confluence`, чтобы не собирать его родителя заново.
     fn w_receiver_level(
         &self,
         levels: &PlateLevels,
         net: &crate::drainage::RiverNet,
         reach: usize,
+        this_end: Option<f64>,
     ) -> Result<Option<f64>, RiverNetError> {
         let channels = net.channels();
         let Some(this) = channels.reaches().get(reach) else {
@@ -1620,8 +2009,17 @@ impl Generator {
                 if next == reach {
                     return Ok(None);
                 }
-                let below = self.w_reach_levels(levels, net, next)?;
-                Ok(below.first().copied().flatten().map(|(start, _)| start))
+                // Уровень начала звена ниже по течению — формула входа (п. 3):
+                // минимум цели по первой вершине и концам его родителей.
+                // Звено `reach` уже строится, его конец — `this_end`.
+                let target = self.w_first_target(net, next)?;
+                let in_progress = this_end.map(|end| (reach, end));
+                let entry = self.w_entry_level_inner(levels, net, next, in_progress)?;
+                let mut best: Option<f64> = None;
+                for value in [target, entry].into_iter().flatten() {
+                    best = Some(best.map_or(value, |old: f64| old.min(value)));
+                }
+                Ok(best)
             }
             _ => Ok(None),
         }
@@ -2798,86 +3196,25 @@ impl Generator {
     ///
     /// `None` — версия без водного обновления или точка без климата/плиты.
     pub fn s0_at(&self, x: f64, z: f64) -> Option<S0Sample> {
-        if !self.params.version.is_water_update() {
-            return None;
-        }
-        let climate = self.climate_sample(x, z)?;
-        let point = self.macro_point(x, z);
-        let plate = plate_query(point, self.seed, &self.params)?;
-        let crust = crust_from_sample(point, &plate, self.seed, &self.params);
-        let c = continentalness(climate.surface.e_km, climate.surface.iota_l, &self.params);
-        let is_ocean = c < self.params.climate.ocean_c_threshold;
-        let class = self.class_before_height(&climate, is_ocean, x, z);
-        let depth = self.relief_basin_depth(point, &plate).ok()?;
-        let crust_c = continentalness(crust.e_km, crust.iota_l, &self.params);
-        let shore_dist = self.shore_distance_blocks(x, z, crust_c);
-        let shore_fade = self.shore_fade_from(shore_dist);
-        let relief_sample =
-            relief::sample_near_shore(&plate, &crust, depth, shore_fade, self.seed, &self.params);
-        let morpho = self.morpho_weights(x, z)?;
-        // `local_river = 0`: в `S0` воды нет по определению.
-        let base = crate::vanilla::sample(&climate, &class, x, z, self.seed, &self.params, 0.0);
-        let (base, pv_relief) = crate::relief_fields::apply_with_pv(
-            base,
-            &climate,
-            &relief_sample,
-            &morpho,
-            Vec2::new(x, z),
-            self.seed,
-            &self.params,
-        );
-        let hp = &self.params.height;
-        // Тот же шум и та же длина волны, что в `surface_fields`; в `S0` он
-        // не гасится рекой (`gate = 1`), а вычитается отдельным слагаемым.
-        let micro = if hp.micro_amp_blocks.iter().any(|amp| *amp > 0.0) {
-            crate::noise::fbm2_unit(
-                crate::seed::subseed(self.seed, crate::seed::SALT_HEIGHT_MICRO),
-                x / hp.micro_lambda_blocks,
-                z / hp.micro_lambda_blocks,
-                1.0,
-                2,
-                0.5,
-            )
-        } else {
-            0.0
-        };
-        let shore_dist = if base.c <= self.params.climate.ocean_c_threshold {
-            0.0
-        } else {
-            shore_dist
-        };
-        let cold = morpho.values[6];
-        let warm = morpho.values[7];
-        let macro_h = crate::height::sample_micro(
-            base.c,
-            base.e,
-            pv_relief,
-            climate.surface.e_km,
-            cold,
-            warm,
-            0.0,
-            0.0,
-            shore_dist,
-            &self.params,
-        );
+        let probe = self.w_probe(x, z)?;
         // Разность двух вызовов, а не повтор формулы: вклад микробугров уже
         // взвешен берегом (`coast`), как в игре, и `S0` совпадает с полной
         // поверхностью побитово.
         let full_h = crate::height::sample_micro(
-            base.c,
-            base.e,
-            pv_relief,
-            climate.surface.e_km,
-            cold,
-            warm,
-            micro,
+            probe.base_c,
+            probe.base_e,
+            probe.pv_relief,
+            probe.e_km,
+            probe.cold,
+            probe.warm,
+            probe.micro,
             1.0,
-            shore_dist,
+            probe.shore_dist,
             &self.params,
         );
         Some(S0Sample {
-            macro_y: macro_h.surface_y,
-            micro_dy: full_h.surface_y - macro_h.surface_y,
+            macro_y: probe.macro_y,
+            micro_dy: full_h.surface_y - probe.macro_y,
         })
     }
 

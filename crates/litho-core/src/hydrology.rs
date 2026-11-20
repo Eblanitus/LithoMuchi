@@ -717,6 +717,10 @@ mod tests {
             mouth_distance_l: 1.0,
             level_blocks: None,
             along: 0.0,
+            side: 1.0,
+            valley_class: crate::water_profile::ValleyClass::Plain,
+            flow_class: crate::water_profile::FlowClass::Calm,
+            gp: 0.0,
         };
         let q = ChannelQuery {
             core: 1.0,
@@ -819,6 +823,10 @@ mod tests {
             mouth_distance_l: 0.0,
             level_blocks: None,
             along: 0.0,
+            side: 1.0,
+            valley_class: crate::water_profile::ValleyClass::Plain,
+            flow_class: crate::water_profile::FlowClass::Calm,
+            gp: 0.0,
         };
         let q = ChannelQuery {
             core: 1.0,

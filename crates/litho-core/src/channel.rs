@@ -15,6 +15,7 @@ use crate::noise::noise2;
 use crate::params::Params;
 use crate::runoff::{FlowTerminal, Runoff};
 use crate::seed::{SALT_CHANNEL_DELTA, SALT_CHANNEL_MEANDER, subseed};
+use crate::water_profile::{FlowClass, ValleyClass};
 
 type Cell = (i64, i64);
 
@@ -156,6 +157,71 @@ pub struct ChannelHit {
     pub level_blocks: Option<f64>,
     /// Доля вдоль сегмента `0…1` (от `a` к `b`): по ней интерполируется `level_blocks`.
     pub along: f64,
+    /// ВО1-2 (6.5): знак стороны русла: `+1.0` — слева по течению
+    /// (точка по левую сторону от нормали `(dz, −dx)`, `cross < 0`),
+    /// `-1.0` — справа. Пара `distance_l * side` — знаковое расстояние
+    /// `d` от оси в `L` (§6.5 плана: «+ слева по течению»).
+    pub side: f64,
+    /// ВО1-1 (6.3, п. 7): класс долины (5.2), сглаженный по звену. У R2 —
+    /// `Plain` (классы есть только у `v1-dev-w`).
+    pub valley_class: ValleyClass,
+    /// ВО1-1 (6.3, п. 7 / §6.8): класс потока в точке. У R2 — `Calm`.
+    pub flow_class: FlowClass,
+    /// ВО1-2 (6.5): `max(S0_macro)` на пробах `±R_v` от оси (§6.3, п. 1) —
+    /// для склона долины `s_eff`. `0.0` — не считалась, склон = `s_wall`.
+    pub gp: f64,
+}
+
+/// Внутренний результат проверки одного отрезка: хит плюс величины, которых
+/// нет в `ChannelHit` (максимумы для агрегатного запроса).
+struct SegmentHit {
+    hit: ChannelHit,
+    bank_strength: f64,
+    gallery: f64,
+}
+
+/// ВО1-2 (6.5): до трёх звеньев в радиусе колонки. Ближайшее звено уже в
+/// `nearest`; здесь — остальные (копия ближайшего тоже допустима: вырезу
+/// проще перебрать всех, чем разбирать случаи). По одному отрезку на звено,
+/// по возрастанию расстояния. `Copy`, как и сам запрос.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ExtraHits {
+    hits: [Option<ChannelHit>; 3],
+}
+
+impl Default for ExtraHits {
+    fn default() -> Self {
+        Self {
+            hits: [None, None, None],
+        }
+    }
+}
+
+impl ExtraHits {
+    /// Влить хиты (любой плиты), оставив три ближайших звена. Одно звено —
+    /// один отрезок: посередине между двумя долинами есть чем закрыть шов.
+    pub fn absorb(&mut self, hits: Vec<ChannelHit>) {
+        let mut merged: Vec<ChannelHit> = self.hits.into_iter().flatten().collect();
+        merged.extend(hits);
+        merged.sort_by(|a, b| {
+            a.distance_l
+                .total_cmp(&b.distance_l)
+                .then((a.plate_id, a.reach, a.segment).cmp(&(b.plate_id, b.reach, b.segment)))
+        });
+        // Один хит на звено: перекрытие двух долин не должно давать дубль.
+        let mut seen = BTreeSet::new();
+        merged.retain(|hit| seen.insert((hit.plate_id, hit.reach)));
+        merged.truncate(3);
+        let mut out = [None, None, None];
+        for (index, hit) in merged.into_iter().enumerate() {
+            out[index] = Some(hit);
+        }
+        self.hits = out;
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = &ChannelHit> {
+        self.hits.iter().flatten()
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -169,6 +235,9 @@ pub struct ChannelQuery {
     /// T116: максимум силы коридора большой реки, без климатического веса.
     pub gallery: f64,
     pub nearest: Option<ChannelHit>,
+    /// ВО1-2 (6.5): до трёх звеньев в радиусе (ближайшее включительно) —
+    /// вырез 6.5 поднимает долину каждого, а не только ближнего.
+    pub extra: ExtraHits,
     /// Диагностика T113: сколько сетей обошёл общий запрос.
     pub networks_considered: usize,
 }
@@ -183,6 +252,7 @@ impl ChannelQuery {
         self.delta = self.delta.max(other.delta);
         self.gallery = self.gallery.max(other.gallery);
         self.networks_considered += other.networks_considered;
+        self.extra.absorb(other.extra.iter().copied().collect());
         if let Some(hit) = other.nearest {
             if self.nearest.is_none_or(|old| {
                 hit.distance_l.total_cmp(&old.distance_l).then_with(|| {
@@ -199,6 +269,18 @@ impl ChannelQuery {
     }
 }
 
+/// ВО1-2 (6.5): ширина коридора W вокруг оси в L — полуширина ядра,
+/// береговая полоса (2 блока), самая широкая пойма и дальность склона
+/// `R_wall`. Ноль у версий без водного обновления.
+pub fn w_corridor_l(params: &Params, core_l: f64) -> f64 {
+    if !params.version.is_water_update() {
+        return 0.0;
+    }
+    let w = &params.water;
+    let fp = w.floodplain_w.iter().copied().fold(0.0_f64, f64::max);
+    (0.5 + fp) * core_l + 2.0 / params.block.l_blocks + w.wall_reach_blocks / params.block.l_blocks
+}
+
 /// Верхняя граница радиуса общего запроса по параметрам, ещё до построения
 /// сетей: долина + меандр + переход к кольцевому узлу устья. Последний член —
 /// инфраструктурный запас решётки, не новый параметр мира.
@@ -208,7 +290,10 @@ pub fn max_query_radius_l(params: &Params) -> f64 {
     let reach_factor = (c.valley_plain.max(c.valley_mountain)
         + 2.0 * c.meander_plain.max(c.meander_mountain))
     .max(params.hydrology.gallery_width_factor);
-    core_l * reach_factor
+    let valley = core_l * reach_factor;
+    // ВО1-2 (6.5): у W общий запрос должен видеть всю долину.
+    let water = w_corridor_l(params, core_l);
+    valley.max(water)
         + params.drainage.step_l * SQRT_2
         + c.delta_length_max_l
         + params.hydrology.channel_fade_l
@@ -226,9 +311,24 @@ pub struct ChannelNetwork {
     bank_min_l: f64,
     gallery_q_min_mm_l2: f64,
     gallery_width_factor: f64,
+    /// ВО1-2 (6.5): (0.5 + max_fp) · core_l — полуширина коридора с учётом
+    /// поймы; 0 у версий без водного обновления.
+    w_corridor_k: f64,
+    /// ВО1-2 (6.5): `R_wall` и 2 блока береговой полосы в L.
+    w_wall_reach_l: f64,
+    w_shore_l: f64,
 }
 
 impl ChannelNetwork {
+    /// ВО1-2 (6.5): ширина коридора W вокруг оси в L (ядро + береговая
+    /// полоса + пойма + дальность склона). Ноль — версия без W.
+    fn w_corridor_l(&self, core_l: f64) -> f64 {
+        if self.w_corridor_k <= 0.0 {
+            return 0.0;
+        }
+        self.w_corridor_k * core_l + self.w_shore_l + self.w_wall_reach_l
+    }
+
     pub fn build(
         plate_id: u64,
         seed: u64,
@@ -374,6 +474,22 @@ impl ChannelNetwork {
             });
         }
         let (reaches, segments) = append_deltas(reaches, segments, seed, plate_id, params);
+        // ВО1-2 (6.5): ширина коридора W для корзин и отсечки влияния.
+        let w_corridor_k = if params.version.is_water_update() {
+            0.5 + params.water.floodplain_w.iter().copied().fold(0.0_f64, f64::max)
+        } else {
+            0.0
+        };
+        let w_wall_reach_l = if params.version.is_water_update() {
+            params.water.wall_reach_blocks / params.block.l_blocks
+        } else {
+            0.0
+        };
+        let w_shore_l = if params.version.is_water_update() {
+            2.0 / params.block.l_blocks
+        } else {
+            0.0
+        };
         let mut baskets = HashMap::<Cell, Vec<usize>>::new();
         let mut max_valley_l = 0.0_f64;
         let field_fade_l = params.hydrology.channel_fade_l;
@@ -383,10 +499,15 @@ impl ChannelNetwork {
                     .max(p.core_l + (params.hydrology.bank_fraction * p.core_l).max(field_fade_l))
             };
             let gallery_radius = |p: ChannelPoint| p.core_l * params.hydrology.gallery_width_factor;
+            // ВО1-2 (6.5): W держит долину до поймы и склона, а не только до
+            // pre-fill `valley_l`: корзины обязаны накрывать весь коридор.
+            let w_corridor = |p: ChannelPoint| crate::channel::w_corridor_l(params, p.core_l);
             let radius = end_influence(segment.a)
                 .max(end_influence(segment.b))
                 .max(gallery_radius(segment.a))
-                .max(gallery_radius(segment.b));
+                .max(gallery_radius(segment.b))
+                .max(w_corridor(segment.a))
+                .max(w_corridor(segment.b));
             max_valley_l = max_valley_l.max(radius);
             let min_x = segment.a.point.x.min(segment.b.point.x) - radius;
             let max_x = segment.a.point.x.max(segment.b.point.x) + radius;
@@ -413,6 +534,9 @@ impl ChannelNetwork {
             bank_min_l: params.hydrology.bank_min_blocks / params.block.l_blocks,
             gallery_q_min_mm_l2: params.hydrology.gallery_q_min_mm_l2,
             gallery_width_factor: params.hydrology.gallery_width_factor,
+            w_corridor_k,
+            w_wall_reach_l,
+            w_shore_l,
         };
         net.check()?;
         Ok(net)
@@ -497,51 +621,113 @@ impl ChannelNetwork {
             ..ChannelQuery::default()
         };
         for k in unique {
-            let segment = self.segments[k];
-            let ab = segment.b.point.sub(segment.a.point);
-            let len2 = ab.dot(ab);
-            let t = if len2 > 0.0 {
-                clamp(point.sub(segment.a.point).dot(ab) / len2, 0.0, 1.0)
-            } else {
-                0.0
-            };
-            let at = segment.a.lerp(segment.b, t);
-            let distance_l = point.sub(at.point).len();
-            let fade = (self.bank_fraction * at.core_l).max(self.field_fade_l);
-            let gallery_l = at.core_l * self.gallery_width_factor;
-            let influence_l = at.valley_l.max(at.core_l + fade).max(gallery_l);
-            if distance_l > influence_l {
+            let Some(segment_hit) = self.hit_segment(k, point) else {
                 continue;
-            }
-            let core_strength = 1.0 - smoothstep(at.core_l, at.core_l + fade, distance_l);
-            let valley_strength = 1.0 - smoothstep(0.0, influence_l, distance_l);
-            let bank_l = (self.bank_fraction * at.core_l).max(self.bank_min_l);
-            let bank_strength = 1.0 - smoothstep(at.core_l, at.core_l + bank_l, distance_l);
-            out.core = out.core.max(core_strength);
-            out.bank = out.bank.max(bank_strength);
-            out.valley = out.valley.max(valley_strength);
-            let large = smoothstep(
-                0.5 * self.gallery_q_min_mm_l2,
-                self.gallery_q_min_mm_l2,
-                at.discharge_mm_l2,
-            );
-            out.gallery = out
-                .gallery
-                .max(large * (1.0 - smoothstep(0.0, gallery_l, distance_l)));
-            let delta_strength = if self.reaches[segment.reach].kind == ReachKind::Delta {
-                valley_strength
-            } else {
-                0.0
             };
-            out.delta = out.delta.max(delta_strength);
-            let reach = &self.reaches[segment.reach];
-            let last = reach.first_segment + reach.segment_count;
-            let mouth_distance_l = (1.0 - t) * len2.sqrt()
-                + self.segments[k + 1..last]
-                    .iter()
-                    .map(|s| s.a.point.sub(s.b.point).len())
-                    .sum::<f64>();
-            let hit = ChannelHit {
+            let hit = segment_hit.hit;
+            out.core = out.core.max(hit.core_strength);
+            out.bank = out.bank.max(segment_hit.bank_strength);
+            out.valley = out.valley.max(hit.valley_strength);
+            out.gallery = out.gallery.max(segment_hit.gallery);
+            out.delta = out.delta.max(hit.delta_strength);
+            if out.nearest.is_none_or(|old| hit.distance_l < old.distance_l) {
+                out.nearest = Some(hit);
+            }
+        }
+        out
+    }
+
+    /// ВО1-2 (6.5): до `limit` звеньев в радиусе колонки, по одному отрезку
+    /// на звено (ближайший), по возрастанию расстояния. Основа выреза
+    /// нескольких долин: посередине между двумя руслами шва не будет.
+    pub fn query_all(&self, point: Vec2, limit: usize) -> Vec<ChannelHit> {
+        let key = (
+            (point.x / BASKET_L).floor() as i64,
+            (point.z / BASKET_L).floor() as i64,
+        );
+        let mut out: Vec<ChannelHit> = Vec::with_capacity(limit);
+        let Some(candidates) = self.baskets.get(&key) else {
+            return out;
+        };
+        let unique: BTreeSet<_> = candidates.iter().copied().collect();
+        for k in unique {
+            let Some(segment_hit) = self.hit_segment(k, point) else {
+                continue;
+            };
+            let hit = segment_hit.hit;
+            if let Some(slot) = out.iter_mut().find(|old| old.reach == hit.reach) {
+                if hit.distance_l < slot.distance_l {
+                    *slot = hit;
+                }
+            } else {
+                out.push(hit);
+            }
+        }
+        out.sort_by(|a, b| {
+            a.distance_l.total_cmp(&b.distance_l).then((a.plate_id, a.reach, a.segment).cmp(&(
+                b.plate_id,
+                b.reach,
+                b.segment,
+            )))
+        });
+        out.truncate(limit);
+        out
+    }
+
+    /// Один отрезок против точки; `None` — вне влияния. Общая внутренняя
+    /// часть `query` и `query_all`.
+    fn hit_segment(&self, k: usize, point: Vec2) -> Option<SegmentHit> {
+        let segment = self.segments[k];
+        let ab = segment.b.point.sub(segment.a.point);
+        let len2 = ab.dot(ab);
+        let t = if len2 > 0.0 {
+            clamp(point.sub(segment.a.point).dot(ab) / len2, 0.0, 1.0)
+        } else {
+            0.0
+        };
+        let at = segment.a.lerp(segment.b, t);
+        let distance_l = point.sub(at.point).len();
+        let fade = (self.bank_fraction * at.core_l).max(self.field_fade_l);
+        let gallery_l = at.core_l * self.gallery_width_factor;
+        // ВО1-2 (6.5): у W влияние шире — пойма и склон долины.
+        let influence_l = at
+            .valley_l
+            .max(at.core_l + fade)
+            .max(gallery_l)
+            .max(self.w_corridor_l(at.core_l));
+        if distance_l > influence_l {
+            return None;
+        }
+        let core_strength = 1.0 - smoothstep(at.core_l, at.core_l + fade, distance_l);
+        let valley_strength = 1.0 - smoothstep(0.0, influence_l, distance_l);
+        let bank_l = (self.bank_fraction * at.core_l).max(self.bank_min_l);
+        let bank_strength = 1.0 - smoothstep(at.core_l, at.core_l + bank_l, distance_l);
+        let delta_strength = if self.reaches[segment.reach].kind == ReachKind::Delta {
+            valley_strength
+        } else {
+            0.0
+        };
+        let large = smoothstep(
+            0.5 * self.gallery_q_min_mm_l2,
+            self.gallery_q_min_mm_l2,
+            at.discharge_mm_l2,
+        );
+        let gallery = large * (1.0 - smoothstep(0.0, gallery_l, distance_l));
+        let reach = &self.reaches[segment.reach];
+        let last = reach.first_segment + reach.segment_count;
+        let mouth_distance_l = (1.0 - t) * len2.sqrt()
+            + self.segments[k + 1..last]
+                .iter()
+                .map(|s| s.a.point.sub(s.b.point).len())
+                .sum::<f64>();
+        // Знак стороны: `d = distance_l * side`, «+ слева по течению» (§6.5).
+        // Левая нормаль `ab` — `(ab.z, −ab.x)`; знак её проекции точки на ось.
+        let cross = ab.x * (point.z - segment.a.point.z) - ab.z * (point.x - segment.a.point.x);
+        let side = if cross < 0.0 { 1.0 } else { -1.0 };
+        Some(SegmentHit {
+            bank_strength,
+            gallery,
+            hit: ChannelHit {
                 plate_id: self.plate_id,
                 segment: k,
                 reach: segment.reach,
@@ -558,12 +744,12 @@ impl ChannelNetwork {
                 mirror_y: at.mirror_y,
                 level_blocks: None,
                 along: t,
-            };
-            if out.nearest.is_none_or(|old| distance_l < old.distance_l) {
-                out.nearest = Some(hit);
-            }
-        }
-        out
+                side,
+                valley_class: ValleyClass::default(),
+                flow_class: FlowClass::default(),
+                gp: 0.0,
+            },
+        })
     }
 
     fn check(&self) -> Result<(), RiverNetError> {
@@ -1061,6 +1247,8 @@ mod tests {
                         .nearest
                         .is_none_or(|old: super::ChannelHit| d < old.distance_l)
                     {
+                        let cross =
+                            ab.x * (point.z - segment.a.point.z) - ab.z * (point.x - segment.a.point.x);
                         brute.nearest = Some(super::ChannelHit {
                             plate_id: 7,
                             segment: s,
@@ -1077,6 +1265,10 @@ mod tests {
                             mirror_y: at.mirror_y,
                             level_blocks: None,
                             along: t,
+                            side: if cross < 0.0 { 1.0 } else { -1.0 },
+                            valley_class: super::ValleyClass::Plain,
+                            flow_class: super::FlowClass::Calm,
+                            gp: 0.0,
                             mouth_distance_l: (1.0 - t) * ab.dot(ab).sqrt()
                                 + net
                                     .reach_segments(segment.reach)
