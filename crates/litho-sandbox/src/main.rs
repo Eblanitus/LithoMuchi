@@ -694,6 +694,7 @@ fn cmd_water_points(args: &[String]) -> Result<(), String> {
         WaterBody::Thermokarst,
         WaterBody::SagPond,
         WaterBody::Crater,
+        WaterBody::Oxbow,
     ]
     .into_iter()
     .find(|b| Some(b.name()) == wanted.as_deref());
@@ -712,7 +713,7 @@ fn cmd_water_points(args: &[String]) -> Result<(), String> {
                         | "glacial"
                 )
         {
-            return Err("--type для W: lake, ordinary, inland_sea, swamp, rift, strike_slip, highland, glacial, tarn, glacial_pond, thermokarst, sag_pond, crater".into());
+            return Err("--type для W: lake, ordinary, inland_sea, swamp, rift, strike_slip, highland, glacial, tarn, glacial_pond, thermokarst, sag_pond, crater, oxbow".into());
         }
     }
     let points = if let Some(body) = point_type {

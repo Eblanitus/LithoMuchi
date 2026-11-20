@@ -1,5 +1,6 @@
 //! W §6.6. Geometry is sampled in blocks; a site's cached result depends only
 //! on the generator and the site, never on the requesting chunk or column.
+pub(super) mod oxbows;
 use super::*;
 use crate::math::rotate_unit;
 use crate::seed::{CellRng, cell_hash, subseed};
@@ -13,6 +14,7 @@ pub(super) enum Family {
     Sag,
     Hotspot,
     ArcPeak,
+    Oxbow,
 }
 const FAMILIES: [Family; 6] = [
     Family::Cirque,
@@ -27,6 +29,7 @@ impl Family {
         use Family::*;
         // cell side, range of *major* radii, max depth (blocks)
         match (self, p.mode) {
+            (Oxbow, _) => unreachable!("reach sites have no cell grid"),
             (Hotspot | ArcPeak, mode) => {
                 let side = if self == Hotspot {
                     p.crust.hotspot_cell_l * p.block.l_blocks
@@ -69,6 +72,7 @@ impl Family {
             Self::Glacial => WaterBody::GlacialPond,
             Self::Thermokarst => WaterBody::Thermokarst,
             Self::Sag => WaterBody::SagPond,
+            Self::Oxbow => WaterBody::Oxbow,
             Self::Hotspot | Self::ArcPeak => WaterBody::Crater,
         }
     }
@@ -82,6 +86,7 @@ struct Site {
     depth: f64,
     family: Family,
     roll: f64,
+    river: Option<(Vec2, u64, usize)>,
 }
 impl Site {
     fn new(seed: u64, params: &Params, family: Family, i: i64, j: i64) -> Self {
@@ -100,6 +105,7 @@ impl Site {
             Family::Glacial => rng.next_range(1., 2.),
             Family::Thermokarst => rng.next_range(1.5, 2.5),
             Family::Sag => 3.,
+            Family::Oxbow => unreachable!(),
         };
         let minor = major / ratio;
         let pad =
@@ -119,6 +125,7 @@ impl Site {
             minor,
             depth,
             family,
+            river: None,
             roll,
         }
     }
@@ -132,6 +139,9 @@ impl Site {
         }
     }
     fn rho(&self, p: Vec2) -> f64 {
+        if self.family == Family::Oxbow {
+            return self.arc_rho(p);
+        }
         let d = p.sub(self.center);
         let uv = Vec2::new(
             d.dot(self.axis) / self.major,
@@ -311,6 +321,7 @@ impl Generator {
             Thermokarst => 0.6,
             Sag => 0.4,
             Hotspot | ArcPeak => 0.5,
+            Oxbow => 1.,
         };
         if site.roll >= max_prob {
             return Ok(None);
@@ -322,6 +333,23 @@ impl Generator {
                 return Ok(None);
             };
             site.center = peak;
+        }
+        if let Some((pivot, id, reach)) = site.river {
+            let g = self.cached_hydrology_queries(pivot.x, pivot.z, true)?;
+            if !g
+                .channels
+                .nearest
+                .iter()
+                .chain(g.channels.extra.iter())
+                .any(|h| {
+                    h.plate_id == id
+                        && h.reach == reach
+                        && h.valley_class == crate::water_profile::ValleyClass::Plain
+                        && h.level_blocks.is_some()
+                })
+            {
+                return Ok(None);
+            }
         }
         let c = site.center;
         let Some(weights) = self.morpho_weights(c.x, c.z) else {
@@ -398,7 +426,7 @@ impl Generator {
                 return Ok(None);
             }
             site.axis = plate.n_ab.perp().normalized();
-        } else if !site.family.crater() {
+        } else if !site.family.crater() && site.family != Oxbow {
             if site.family == Cirque
                 && weights.values[6] < 0.4
                 && !(center.class.zone.belt <= 2 && probe.erosion_e < self.params.height.e_knots[2])
@@ -425,7 +453,7 @@ impl Generator {
                 Cirque => !(0.15..=0.8).contains(&slope),
                 Glacial => slope > 0.1,
                 Thermokarst => slope > 0.05,
-                Sag | Hotspot | ArcPeak => false,
+                Sag | Hotspot | ArcPeak | Oxbow => false,
             } {
                 return Ok(None);
             }
@@ -434,19 +462,27 @@ impl Generator {
         let max_cut = if site.family.crater() { 32. } else { 8. };
         let mut low = f64::INFINITY;
         for pad in [0., 2., 4.] {
+            let mut visit = |p: Vec2| -> Result<bool, RiverNetError> {
+                let (height, overlaps, s0) = self.pond_terrain(p)?;
+                low = low.min(height);
+                Ok(!overlaps
+                    && low.floor() - 1. > 64.
+                    && terrain - low.floor() + 1. <= max_cut
+                    && (pad != 4. || s0 >= 65.))
+            };
+            if site.family == Oxbow {
+                if !site.arc_rings(pad, visit)? {
+                    return Ok(None);
+                }
+                continue;
+            }
             let n = (std::f64::consts::PI * (site.major + pad) * 1.2).ceil() as usize;
             for i in 0..n {
                 let dir = rotate_unit(
                     Vec2::new(1., 0.),
                     std::f64::consts::TAU * (i as f64 / n as f64 - 0.5),
                 );
-                let p = site.ring_point(dir, pad);
-                let (height, wet, s0) = self.pond_terrain(p)?;
-                low = low.min(height);
-                if wet || low.floor() - 1. <= 64. || terrain - low.floor() + 1. > max_cut {
-                    return Ok(None);
-                }
-                if pad == 4. && s0 < 65. {
+                if !visit(site.ring_point(dir, pad))? {
                     return Ok(None);
                 }
             }
@@ -493,6 +529,18 @@ impl Generator {
             || radius < 0.
             || limit == 0
         {
+            return Ok(out);
+        }
+        if body == WaterBody::Oxbow {
+            self.oxbows_near(center, radius, 0., false, |pond| {
+                let p = pond.site.center;
+                let (x, z) = (p.x.round(), p.z.round());
+                let c = self.water_column(x, z);
+                if c.body == body && c.has_water() {
+                    out.push((x as i64, z as i64, c));
+                }
+                out.len() < limit
+            })?;
             return Ok(out);
         }
         for family in FAMILIES.into_iter().filter(|f| f.body() == body) {
@@ -561,6 +609,16 @@ impl Generator {
                     }
                 }
             }
+            self.oxbows_near(
+                lo.add(Vec2::new(8., 8.)),
+                8. * crate::math::SQRT_2,
+                halo,
+                true,
+                |p| {
+                    out.push(p);
+                    true
+                },
+            )?;
             Ok(Arc::new(out))
         })?;
         let mut best: Option<Hit> = None;
@@ -568,7 +626,9 @@ impl Generator {
         for pond in ponds.iter() {
             let d = p.sub(pond.site.center);
             let rho = pond.site.rho(p);
-            let edge = if rho > 1. {
+            let edge = if pond.site.family == Family::Oxbow {
+                (rho - 1.).max(0.) * pond.site.minor
+            } else if rho > 1. {
                 d.len() * (1. - 1. / rho)
             } else {
                 0.

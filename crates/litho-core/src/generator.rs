@@ -354,6 +354,7 @@ pub struct Generator {
     morpho: Arc<crate::cache::ShardedCache<(i64, i64), MorphoWeights>>,
     drainage: Arc<RiverNetCache>,
     pond_sites: Arc<ponds::SiteCache>,
+    oxbows: Arc<PlateCache<ponds::oxbows::Index>>,
     pond_tiles: Arc<ponds::TileCache>,
     /// R2 (§4): уровни воды плиты от сухой поверхности. Отдельный кэш, потому
     /// что для их счёта нужна `S`, а `S` не зависит от уровней.
@@ -756,6 +757,7 @@ impl Generator {
             rivers: Arc::new(RiverCache::new()),
             hydrology: Arc::new(crate::cache::ShardedCache::new(shards, 4096)),
             morpho: Arc::new(crate::cache::ShardedCache::new(shards, 4096)),
+            oxbows: Arc::new(PlateCache::new(shards, crate::drainage::NET_CACHE_CAPACITY)),
             pond_sites: Arc::new(ShardedCache::new(shards, 8192)),
             pond_tiles: Arc::new(ShardedCache::new(shards, 4096)),
             drainage: Arc::new(RiverNetCache::new(
