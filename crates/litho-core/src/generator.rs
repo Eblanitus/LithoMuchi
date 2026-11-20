@@ -361,6 +361,8 @@ pub struct Generator {
     /// Климат в узлах глобальной решётки стока. Чистая функция точки: приток
     /// от соседа читает те же узлы, что и его собственная сеть.
     runoff_climate: Arc<RunoffClimateCache>,
+    // Jittered nodes repeat in the ghost ring of adjacent plates.
+    w_route: Arc<ShardedCache<(u64, u64), DrainageInput>>,
     /// Д-061: по тайлу — плиты, чьи сети могут иметь узел в радиусе запроса.
     net_owners: Arc<NetOwners>,
     /// T79: владельцы узлов решётки стока блоками, из них собирается список.
@@ -479,6 +481,27 @@ struct WReachProfile {
 const LAKE_RING_STEP_BLOCKS: f64 = 2.0;
 /// Потолок числа точек кольца: чаще шага всё равно не нужно.
 const LAKE_RING_MAX_SAMPLES: usize = 384;
+fn ring_probes(ring: &[Vec2], blocks_per_l: f64) -> Vec<Vec2> {
+    let edges = ring.iter().zip(ring.iter().cycle().skip(1));
+    let length: f64 = edges.clone().map(|(a, b)| b.sub(*a).len()).sum();
+    let count = ((length * blocks_per_l / LAKE_RING_STEP_BLOCKS).ceil() as usize)
+        .min(LAKE_RING_MAX_SAMPLES);
+    let mut out = Vec::with_capacity(count);
+    let mut start = 0.0;
+    for (a, b) in edges {
+        let edge = b.sub(*a);
+        let end = start + edge.len();
+        while out.len() < count {
+            let at = length * out.len() as f64 / count as f64;
+            if at >= end {
+                break;
+            }
+            out.push(a.add(edge.scale((at - start) / (end - start))));
+        }
+        start = end;
+    }
+    out
+}
 /// §4, п. 2 и Д-090: запасной шаг вершин русла — 8 блоков.
 const RIVER_LEVEL_STRIDE_BLOCKS: f64 = 8.0;
 /// Д-090: сеть плиты с уровнями не дольше 200 мс; на уровни — не больше 120.
@@ -514,6 +537,7 @@ struct WProbe {
     plateau: f64,
     /// Вес морфозоны 6 (холодные горы).
     cold_mountain_weight: f64,
+    zone: usize,
 }
 
 impl Generator {
@@ -533,6 +557,17 @@ impl Generator {
         let point = self.macro_point(x, z);
         let plate = plate_query(point, self.seed, &self.params)?;
         let crust = crust_from_sample(point, &plate, self.seed, &self.params);
+        self.w_probe_known(Vec2::new(x, z), &plate, &crust, classify_flow)
+    }
+
+    fn w_probe_known(
+        &self,
+        blocks: Vec2,
+        plate: &PlateSample,
+        crust: &CrustSample,
+        classify_flow: bool,
+    ) -> Option<WProbe> {
+        let (x, z) = (blocks.x, blocks.z);
         let crust_c = continentalness(crust.e_km, crust.iota_l, &self.params);
         let (climate, base) = if classify_flow {
             let climate = self.climate_sample(x, z)?;
@@ -572,7 +607,7 @@ impl Generator {
         let shore_dist = self.shore_distance_blocks(x, z, crust_c);
         let shore_fade = self.shore_fade_from(shore_dist);
         let relief_sample =
-            relief::sample_near_shore(&plate, &crust, 0.0, shore_fade, self.seed, &self.params);
+            relief::sample_near_shore(plate, crust, 0.0, shore_fade, self.seed, &self.params);
         let morpho = self.morpho_weights(x, z)?;
         let (base, pv_relief) = crate::relief_fields::apply_with_pv(
             base,
@@ -632,6 +667,7 @@ impl Generator {
             aridity: climate.precip.ratio,
             plateau: crust.plateau,
             cold_mountain_weight: morpho.values[6],
+            zone: morpho.dominant(),
         })
     }
 }
@@ -690,6 +726,7 @@ impl Generator {
                 shards,
                 crate::drainage::NET_CACHE_CAPACITY,
             )),
+            w_route: Arc::new(ShardedCache::new(shards, 32768)),
             runoff_climate: Arc::new(ShardedCache::new(shards, RUNOFF_CLIMATE_CACHE_CAPACITY)),
             net_owners: Arc::new(crate::cache::ShardedCache::new(
                 shards,
@@ -1095,6 +1132,42 @@ impl Generator {
                 self.seed,
                 &self.params,
                 &|point, sample| {
+                    if self.params.version.is_water_update() {
+                        return self.w_route.get_or_insert(
+                            (point.x.to_bits(), point.z.to_bits()),
+                            || {
+                                let invalid = DrainageInput {
+                                    route_km: f64::NAN,
+                                    outlet: DrainageOutlet::None,
+                                    zone: 0,
+                                };
+                                let Some(sample) = sample else {
+                                    return invalid;
+                                };
+                                let crust =
+                                    crust_from_sample(point, sample, self.seed, &self.params);
+                                let blocks = point
+                                    .sub(self.spawn_shift)
+                                    .scale(self.params.block.l_blocks);
+                                let Some(probe) = self.w_probe_known(blocks, sample, &crust, false)
+                                else {
+                                    return invalid;
+                                };
+                                let tie = self.params.water.route_tau_blocks_per_km
+                                    * crust.e_km.clamp(0.0, 0.8);
+                                DrainageInput {
+                                    route_km: (probe.macro_y + tie - crate::height::SEA_LEVEL)
+                                        / self.params.height.water_km_to_blocks,
+                                    outlet: if crust.e_km < 0.0 {
+                                        DrainageOutlet::Sea
+                                    } else {
+                                        DrainageOutlet::None
+                                    },
+                                    zone: probe.zone,
+                                }
+                            },
+                        );
+                    }
                     // Тот же ответ, что у `surface_at(point)`, без второго
                     // запроса плиты.
                     let surface = sample.map_or_else(SurfaceSample::default, |sample| {
@@ -1102,9 +1175,7 @@ impl Generator {
                     });
                     let outlet = if surface.e_km < 0.0 {
                         DrainageOutlet::Sea
-                    } else if !self.params.version.is_water_update()
-                        && surface.sigma_l.abs() < self.params.drainage.step_l
-                    {
+                    } else if surface.sigma_l.abs() < self.params.drainage.step_l {
                         let k = surface.boundary_weights;
                         let min = self.params.drainage.outlet_min_weight;
                         if k[4] > min {
@@ -1119,6 +1190,7 @@ impl Generator {
                     };
                     DrainageInput {
                         route_km: surface.e_km,
+                        zone: 0,
                         outlet,
                     }
                 },
@@ -1790,12 +1862,18 @@ impl Generator {
             // запросу либо соседний поток. Без отметки цикл вернулся бы в
             // помеченное звено второй раз.
             let mine = std::thread::current().id();
-            let marked = levels
-                .w_in_progress
-                .lock()
-                .expect("путь сборки W не отравлен")
-                .insert(r, mine)
-                .is_none();
+            let marked = {
+                let mut marks = levels
+                    .w_in_progress
+                    .lock()
+                    .expect("путь сборки W не отравлен");
+                if let std::collections::hash_map::Entry::Vacant(slot) = marks.entry(r) {
+                    slot.insert(mine);
+                    true
+                } else {
+                    false
+                }
+            };
             if !marked {
                 // Гонка: между проверкой и вставкой отметку взял чужой поток.
                 continue;
@@ -1916,16 +1994,51 @@ impl Generator {
         Ok(built)
     }
 
-    /// Озёра `W` пока по правилу R2 (6.4): их поверхность — ещё не `S0`.
-    /// Русла считаются лениво в профиле звена (`w_reach_profile`); карта
-    /// родителей нужна обходу предков без пересканирования списка.
-    fn build_w_plate_levels(
-        &self,
-        net: &crate::drainage::RiverNet,
-    ) -> Result<PlateLevels, RiverNetError> {
-        let mut levels = self.build_r2_plate_levels(net)?;
-        levels.w_parents = w_parents_of(net);
+    /// §6.4: sample the whole closed shoreline at equal arc-length intervals.
+    /// Capping the count must not truncate the far side of a long lake.
+    fn build_w_plate_levels(&self, net: &RiverNet) -> Result<PlateLevels, RiverNetError> {
+        let mut levels = PlateLevels {
+            w_parents: w_parents_of(net),
+            ..PlateLevels::default()
+        };
+        for lake in net.lakes().lakes() {
+            let level = if let (true, Some(spill), Some(ring)) =
+                (lake.kind.has_water(), lake.level_km, lake.rings.first())
+            {
+                let l = self.params.block.l_blocks;
+                let mut lowest =
+                    crate::height::SEA_LEVEL + spill * self.params.height.water_km_to_blocks;
+                for p in ring_probes(ring, l) {
+                    let b = p.sub(self.spawn_shift).scale(l);
+                    let probe = self.w_probe_impl(b.x, b.z, false).ok_or(
+                        RiverNetError::BrokenInvariant {
+                            node: lake.depression,
+                            reason: "нет S0 на берегу озера",
+                        },
+                    )?;
+                    lowest = lowest.min(probe.macro_y.floor() - 1.0);
+                }
+                Some(lowest.floor().max(crate::height::SEA_LEVEL))
+            } else {
+                None
+            };
+            levels.lakes.push(level);
+        }
         Ok(levels)
+    }
+
+    /// Диагностика бюджета §6.2: собрать в том же кэше все уровни плиты,
+    /// включая ленивые профили звеньев, а не только топологию стока.
+    pub fn prepare_w_levels(&self, plate: &Plate) -> Result<(), RiverNetError> {
+        if !self.params.version.is_water_update() {
+            return Err(RiverNetError::UnsupportedVersion(self.params.version));
+        }
+        let net = self.drainage_network(plate)?;
+        let levels = self.w_plate_levels(plate, &net)?;
+        for i in 0..net.channels().reaches().len() {
+            self.w_reach_profile(&levels, &net, i)?;
+        }
+        Ok(())
     }
 
     /// ВО1-1 (6.3, пп. 1–6, 7, 8): профиль уровня реки `W` по звену.
@@ -4441,7 +4554,8 @@ mod t141_tests {
         assert_eq!(w.field(Field::Pv, x, 0.0, z), -1.0);
         let dev = Generator::new(42, Mode::Gameplay, GenVersion::V1Dev).unwrap();
         assert_eq!(dev.field(Field::Calm, x, 0.0, z), 1.0);
-        assert!(dev.field(Field::Pv, x, 0.0, z) < -0.8);
+        let (dx, dz) = nearest_river_core(&dev, (-1536.535252886, -2374.660469732));
+        assert!(dev.field(Field::Pv, dx, 0.0, dz) < -0.8);
     }
 
     #[test]

@@ -754,11 +754,13 @@ fn cmd_s0_node_cost(args: &[String]) -> Result<(), String> {
         None => vec![0.25, 0.5],
     };
     let started = Instant::now();
+    let with_levels = args.iter().any(|arg| arg == "--with-levels");
     let survey = s0_node_cost::survey(
         &generator,
         (opts.center_x, opts.center_z),
         plates_wanted,
         &spacings,
+        with_levels,
     )?;
     let seconds = started.elapsed().as_secs_f64();
     let analytic_us = 1000.0 * survey.analytic_ms / survey.nodes as f64;
@@ -791,6 +793,7 @@ fn cmd_s0_node_cost(args: &[String]) -> Result<(), String> {
         fields.push(format!("\"seconds\":{seconds:.2}"));
         fields.push(format!("\"plates\":{}", survey.plates));
         fields.push(format!("\"nodes\":{}", survey.nodes));
+        fields.push(format!("\"with_levels\":{with_levels}"));
         fields.push(format!("\"net_ms_p50\":{:.1}", survey.net_pct(50.0)));
         fields.push(format!("\"net_ms_p95\":{:.1}", survey.net_p95()));
         fields.push(format!("\"net_ms_max\":{:.1}", survey.net_max()));

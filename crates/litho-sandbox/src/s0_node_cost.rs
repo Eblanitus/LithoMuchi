@@ -127,6 +127,7 @@ pub fn survey(
     center: (f64, f64),
     plates_wanted: usize,
     spacings_l: &[f64],
+    with_levels: bool,
 ) -> Result<Survey, String> {
     let params = generator.params();
     let l = params.block.l_blocks;
@@ -140,9 +141,16 @@ pub fn survey(
             break;
         }
         let start = Instant::now();
-        let Ok(net) = generator.drainage_network(&plate) else {
-            continue;
+        let net = match generator.drainage_network(&plate) {
+            Ok(net) => net,
+            Err(litho_core::drainage::RiverNetError::NoOwnedNode { .. }) => continue,
+            Err(error) => return Err(error.to_string()),
         };
+        if with_levels {
+            generator
+                .prepare_w_levels(&plate)
+                .map_err(|e| e.to_string())?;
+        }
         survey.net_ms.push(start.elapsed().as_secs_f64() * 1000.0);
         survey.plates += 1;
         for node in net.nodes() {

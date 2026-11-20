@@ -539,8 +539,8 @@ pub fn with_water_w(
         1.0
     };
     // Итоговая поверхность: S0 с гаснущими у воды микробуграми, не выше неё.
-    let gate = if d_floor_min.is_finite() {
-        smoothstep(gate_lo, gate_hi, d_floor_min)
+    let gate = if calm_d.is_finite() {
+        smoothstep(gate_lo, gate_hi, calm_d)
     } else {
         1.0
     };
@@ -565,29 +565,31 @@ pub fn with_water_w(
         ..s0_macro
     };
     height.offset = (surface - SURFACE_BASE) / OFFSET_SCALE;
-    // Озёра — правило R2 (6.4, ВО1–ВО2): плоское зеркало min(S) по контуру −1.
+    // §6.4: uncut macro surface decides islands and local lake depth.
     if let Some(hit) = water.lakes.water_hit.filter(|hit| hit.inside) {
-        if let Some(mirror) = hit.level_blocks.filter(|level| *level >= h.min_y) {
-            let lake_cut = clamp01(hit.water_strength);
-            if lake_cut > 0.0 && surface < mirror {
-                let depth = clamp(
-                    hit.max_depth_km * h.water_km_to_blocks,
-                    1.0,
-                    h.lake_depth_max_blocks,
-                );
-                let bed = (mirror - depth).max(h.min_y);
-                let carve = lerp(surface, bed, lake_cut).min(surface);
-                if carve < mirror - 0.5 {
-                    surface = carve;
-                    water_y = mirror;
-                    cut = lake_cut;
-                    height.surface_y = surface;
-                    height.water_y = water_y;
-                    height.bed_y = surface;
-                    height.water_strength = cut;
-                    height.offset = (surface - SURFACE_BASE) / OFFSET_SCALE;
-                }
-            }
+        if let Some(mirror) = hit.level_blocks.filter(|level| land_y < *level) {
+            let scientific = params.mode == crate::Mode::Scientific;
+            let (k, max_depth) = if hit.rift {
+                (1.5, if scientific { 40. } else { 24. })
+            } else if hit.kind == crate::lake::LakeKind::InlandSea {
+                (0.5, if scientific { 24. } else { 16. })
+            } else {
+                (0.5, if scientific { 12. } else { 8. })
+            };
+            let dz = mirror - land_y;
+            let bed = if dz <= 1.0 {
+                mirror - 1.0
+            } else {
+                (land_y - k * dz).max(mirror - 1.0 - max_depth)
+            };
+            // A crossing river can already have cut a deeper channel.
+            let bed = if cut > 0.0 { bed.min(surface) } else { bed };
+            height.surface_y = bed.max(h.min_y);
+            height.bed_y = height.surface_y;
+            height.water_y = mirror;
+            height.water_strength = hit.water_strength;
+            height.offset = (height.surface_y - SURFACE_BASE) / OFFSET_SCALE;
+            return height;
         }
     }
     if cut > 0.0 {
@@ -950,6 +952,18 @@ mod tests {
         assert_eq!(basin.water_y, 90.0);
         assert!(basin.surface_y <= 89.0);
         assert!(basin.surface_y <= 88.0);
+    }
+
+    #[test]
+    fn w_lake_uses_local_s0_for_shallows_islands_and_depth_cap() {
+        let p = Params::defaults(GenVersion::V1DevW, Mode::Gameplay);
+        let mut water = HydrologySample::default();
+        water.lakes.water_hit = Some(lake_level(1.0, 0.5, Some(90.0)));
+        let at = |y| with_water_w(base_at(y), 4.0, &water, &p);
+        assert_eq!(at(91.0).water_strength, 0.0);
+        assert_eq!(at(89.8).bed_y, 89.0);
+        assert_eq!(at(88.0).bed_y, 87.0);
+        assert_eq!(at(60.0).bed_y, 81.0);
     }
 
     #[test]
