@@ -55,6 +55,13 @@ pub struct Stats {
     pub covered_water_pct: f64,
     /// Озёра по доминирующей морфозоне: штук и % площади суши зоны.
     pub zone_lakes: [u64; MORPHO_ZONES],
+    /// Суши (колонок сетки) по доминирующей морфозоне — для плотности озёр по зоне.
+    pub zone_land: [u64; MORPHO_ZONES],
+    /// Площадь воды озёр по доминирующей морфозоне, блоков².
+    pub zone_lake_area: [f64; MORPHO_ZONES],
+    /// Затопленная суша: доля колонок суши (`S0 ≥ 64`), чья сухая поверхность
+    /// ниже уровня моря или любого ближайшего водоёма (потенциально подтопляемая), %.
+    pub flooded_land_pct: f64,
 }
 
 impl Stats {
@@ -143,6 +150,9 @@ impl Window {
                 let cell = self.at(i, j);
                 if is_land(cell.dry as f64) {
                     out.land += 1;
+                    if (cell.zone as usize) < MORPHO_ZONES {
+                        out.zone_land[cell.zone as usize] += 1;
+                    }
                 }
                 if cell.river {
                     out.river_columns += 1;
@@ -211,6 +221,7 @@ impl Window {
                 }
                 if let Some(zone) = zone {
                     out.zone_lakes[zone] += 1;
+                    out.zone_lake_area[zone] += area;
                 }
             }
         }
@@ -218,6 +229,9 @@ impl Window {
         // Стены: суша в двух блоках от воды, поверхность выше зеркала на 4+.
         let mut shore_land = 0u64;
         let mut wall_land = 0u64;
+        // Затопленная суша: колонки суши, чья сухая поверхность ниже уровня
+        // любой соседней воды.
+        let mut flooded_land = 0u64;
         for j in 0..self.height {
             for i in 0..self.width {
                 let cell = self.at(i, j);
@@ -226,6 +240,7 @@ impl Window {
                 }
                 let mut near_water = false;
                 let mut wall = false;
+                let mut flooded = false;
                 for (ni, nj) in [
                     (i.wrapping_sub(1), j),
                     (i + 1, j),
@@ -243,11 +258,17 @@ impl Window {
                     if cell.dry as f64 - n.level as f64 >= 4.0 {
                         wall = true;
                     }
+                    if cell.dry as f64 < n.level as f64 {
+                        flooded = true;
+                    }
                 }
                 if near_water {
                     shore_land += 1;
                     if wall {
                         wall_land += 1;
+                    }
+                    if flooded {
+                        flooded_land += 1;
                     }
                 }
             }
@@ -272,6 +293,11 @@ impl Window {
         };
         out.walls_pct = if shore_land > 0 {
             100.0 * wall_land as f64 / shore_land as f64
+        } else {
+            0.0
+        };
+        out.flooded_land_pct = if shore_land > 0 {
+            100.0 * flooded_land as f64 / shore_land as f64
         } else {
             0.0
         };
