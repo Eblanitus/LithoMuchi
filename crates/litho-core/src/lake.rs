@@ -60,7 +60,10 @@ pub struct LakeSurface {
     pub basin_area_l2: f64,
     pub water_area_l2: f64,
     pub owned_water_area_l2: f64,
+    /// Порог котловины `S0` на решётке стока, км над уровнем моря (ВО3-2 §6.4).
     pub level_km: Option<f64>,
+    /// Уровень от `S0` в блоках над уровнем моря: `level_km * water_km_to_blocks`.
+    pub level_s0_blocks: Option<f64>,
     pub max_depth_km: f64,
     pub shore_l: f64,
     pub frozen: bool,
@@ -88,6 +91,9 @@ pub struct LakeHit {
     /// R2 (PLAN-WATER-FABRIC §4, п. 1): уровень озера в блоках — `min(S)` по
     /// контуру минус 1, блоки. `None` — уровня R2 нет (вода R1 или не R2).
     pub level_blocks: Option<f64>,
+    /// ВО3-2 (PLAN-WATER-UPDATE §6.4): уровень озера от `S0` (порог котловины
+    /// на решётке стока), блоки над уровнем моря. `None` — уровня нет.
+    pub level_s0_blocks: Option<f64>,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -395,6 +401,7 @@ impl LakeNetwork {
             } else {
                 nodes[depression.bottom_node].point
             };
+            let level_blocks = level.map(|level| level * params.height.water_km_to_blocks);
             lakes.push(LakeSurface {
                 depression: d,
                 kind,
@@ -404,6 +411,7 @@ impl LakeNetwork {
                 water_area_l2,
                 owned_water_area_l2,
                 level_km: level.map(|level| level.max(0.0)),
+                level_s0_blocks: level_blocks,
                 max_depth_km: depth_km,
                 shore_l,
                 frozen: frozen && kind.has_water(),
@@ -573,6 +581,7 @@ impl LakeNetwork {
                 water_strength,
                 shore_strength,
                 level_blocks: None,
+                level_s0_blocks: lake.level_s0_blocks,
             };
             out.nearest = prefer_distance(out.nearest, Some(hit));
             out.shore_hit = prefer_shore(out.shore_hit, Some(hit));

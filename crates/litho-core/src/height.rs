@@ -547,28 +547,58 @@ pub fn with_water_w(
         ..s0_macro
     };
     height.offset = (surface - SURFACE_BASE) / OFFSET_SCALE;
-    // Озёра — правило R2 (6.4, ВО1–ВО2): плоское зеркало min(S) по контуру −1.
+    // Озёра: ВО1–ВО2 — правило R2 (плоское зеркало min(S) по контуру −1);
+    // ВО3-2 (§6.4) — уровень от S0 (порог kotлины), дно = S0 − k_deep·(L − S0).
+    let water_update = params.version.is_water_update();
     if let Some(hit) = water.lakes.water_hit.filter(|hit| hit.inside) {
         if let Some(mirror) = hit.level_blocks.filter(|level| *level >= h.min_y) {
-            let lake_cut = clamp01(hit.water_strength);
-            if lake_cut > 0.0 && surface < mirror {
-                let depth = clamp(
-                    hit.max_depth_km * h.water_km_to_blocks,
-                    1.0,
-                    h.lake_depth_max_blocks,
-                );
-                let bed = (mirror - depth).max(h.min_y);
-                let carve = lerp(surface, bed, lake_cut).min(surface);
-                if carve < mirror - 0.5 {
-                    surface = carve;
-                    water_y = mirror;
-                    bed_y = bed;
-                    cut = lake_cut;
-                    height.surface_y = surface;
-                    height.water_y = water_y;
-                    height.bed_y = bed_y;
-                    height.water_strength = cut;
-                    height.offset = (surface - SURFACE_BASE) / OFFSET_SCALE;
+            if water_update {
+                // ВО3-2: уровень от S0. Вода внутри контура, где S0 ниже уровня.
+                let k_deep = match hit.kind {
+                    crate::hydrology::SurfaceKind::Lake => 0.5,
+                    crate::hydrology::SurfaceKind::InlandSea => 0.5,
+                    crate::hydrology::SurfaceKind::Swamp => 0.0,
+                    _ => 0.5,
+                };
+                let d_max = if scientific { 12.0 } else { 8.0 };
+                let s0_full = land_y + micro_dy;
+                if s0_full < mirror {
+                    let depth = (k_deep * (mirror - s0_full)).clamp(0.0, d_max);
+                    let bed = (mirror - 1.0 - d_max).max(s0_full - depth).max(h.min_y);
+                    let carve = lerp(surface, bed, 1.0).min(surface);
+                    if carve < mirror - 0.5 {
+                        surface = carve;
+                        water_y = mirror;
+                        bed_y = bed;
+                        cut = 1.0;
+                        height.surface_y = surface;
+                        height.water_y = water_y;
+                        height.bed_y = bed_y;
+                        height.water_strength = cut;
+                        height.offset = (surface - SURFACE_BASE) / OFFSET_SCALE;
+                    }
+                }
+            } else {
+                let lake_cut = clamp01(hit.water_strength);
+                if lake_cut > 0.0 && surface < mirror {
+                    let depth = clamp(
+                        hit.max_depth_km * h.water_km_to_blocks,
+                        1.0,
+                        h.lake_depth_max_blocks,
+                    );
+                    let bed = (mirror - depth).max(h.min_y);
+                    let carve = lerp(surface, bed, lake_cut).min(surface);
+                    if carve < mirror - 0.5 {
+                        surface = carve;
+                        water_y = mirror;
+                        bed_y = bed;
+                        cut = lake_cut;
+                        height.surface_y = surface;
+                        height.water_y = water_y;
+                        height.bed_y = bed_y;
+                        height.water_strength = cut;
+                        height.offset = (surface - SURFACE_BASE) / OFFSET_SCALE;
+                    }
                 }
             }
         }

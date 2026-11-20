@@ -467,12 +467,26 @@ impl PlateRouting {
         }
         let cells: Vec<Cell> = nodes.iter().map(|node| node.cell).collect();
         let neighbor_lists = cell_neighbors(&cells);
+        // ВО3-1 (§6.2): в v1-dev-w глубина котловины — по зонам
+        // (water.depression_min_depth_blocks) и предел площади озёр —
+        // water.lake_area_max_fraction (0.06 плиты), иначе общие пороги drainage.
+        let min_depth_km = if params.version.is_water_update() {
+            let blocks = params.water.depression_min_depth_blocks[0];
+            blocks / params.height.water_km_to_blocks
+        } else {
+            p.depression_min_depth_km
+        };
+        let lake_area_max_fraction = if params.version.is_water_update() {
+            params.water.lake_area_max_fraction
+        } else {
+            p.lake_area_max_fraction
+        };
         let depressions = route_nodes(
             &mut nodes,
             &neighbor_lists,
             p.fill_epsilon_km,
-            p.depression_min_depth_km,
-            p.lake_area_max_fraction,
+            min_depth_km,
+            lake_area_max_fraction,
         );
         log_phase(timings, "заливка связанная", t);
         let routing = Self {

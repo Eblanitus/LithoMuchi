@@ -1094,8 +1094,23 @@ impl Generator {
                     } else {
                         DrainageOutlet::None
                     };
+                    let l = self.params.block.l_blocks;
+                    let route_km = if self.params.version.is_water_update() {
+                        // ВО3-1 (§6.2): маршрут по S0 — S0_macro(узел) +
+                        // τ·clamp(e_km, 0, 0.8) в блоках, затем в км стока.
+                        let (bx, bz) = (point.x * l, point.z * l);
+                        let s0_macro = self
+                            .s0_at(bx, bz)
+                            .map(|s| s.macro_y)
+                            .unwrap_or_else(|| surface.e_km * self.params.height.water_km_to_blocks + crate::height::SEA_LEVEL as f64);
+                        let tau = self.params.water.route_tau_blocks_per_km;
+                        let route_y = s0_macro + tau * surface.e_km.clamp(0.0, 0.8);
+                        (route_y - crate::height::SEA_LEVEL as f64) / self.params.height.water_km_to_blocks
+                    } else {
+                        surface.e_km
+                    };
                     DrainageInput {
-                        route_km: surface.e_km,
+                        route_km,
                         outlet,
                     }
                 },
@@ -1476,7 +1491,15 @@ impl Generator {
                     self.r2_plate_levels(&plate, &net)?
                 };
                 if let Some(hit) = lakes_here.water_hit.as_mut() {
-                    hit.level_blocks = levels.lakes.get(hit.lake).copied().flatten();
+                    if water_update {
+                        // ВО3-2 (§6.4): уровень озера от S0 — порог котловины на
+                        // решётке стока, а не правило R2 (min(S) по контуру −1).
+                        hit.level_blocks = hit
+                            .level_s0_blocks
+                            .map(|l| l + crate::height::SEA_LEVEL as f64);
+                    } else {
+                        hit.level_blocks = levels.lakes.get(hit.lake).copied().flatten();
+                    }
                 }
                 if let Some(hit) = channels_here.nearest.as_mut() {
                     let reach = hit.reach;
