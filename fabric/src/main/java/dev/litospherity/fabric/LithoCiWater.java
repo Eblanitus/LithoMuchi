@@ -34,6 +34,7 @@ final class LithoCiWater {
 
     static void run(MinecraftServer server, String mode) {
         LithoWaterFeature.STEPS.set(0);
+        LithoWaterFeature.COVERED.set(0);
         List<String> report = new ArrayList<>();
         try {
             ServerLevel level = server.overworld();
@@ -220,6 +221,17 @@ final class LithoCiWater {
             double dryPct = wet + dry == 0 ? 0.0 : 100.0 * dry / (double) (wet + dry);
             report.add(String.format("протечки: %d (порог 0)", leaks));
             report.add(String.format("сухое русло: %d из %d, %.2f %% (порог 1 %%)", dry, wet + dry, dryPct));
+            long[] vo2 = measureVo2(level, gen, points);
+            long corridor = vo2[0], fit = vo2[1];
+            double fitPct = corridor == 0 ? 100.0 : 100.0 * fit / (double) corridor;
+            long waterColumns = Math.max(1, LithoWaterFeature.COLUMNS.get());
+            double coveredPct = 100.0 * LithoWaterFeature.COVERED.get() / (double) waterColumns;
+            long shoreColumns = vo2[2];
+            double wallPct = shoreColumns == 0 ? 0.0 : 100.0 * vo2[3] / (double) shoreColumns;
+            report.add(String.format("calm_fit: %d из %d, %.2f %% (порог 95 %%)", fit, corridor, fitPct));
+            report.add(String.format("накрытая вода: %d из %d колонок, %.2f %% (порог 0,5 %%)",
+                    LithoWaterFeature.COVERED.get(), waterColumns, coveredPct));
+            report.add(String.format("стены у воды: %d из %d колонок, %.2f %% (порог 2 %%)", vo2[3], shoreColumns, wallPct));
             report.add(String.format("рост текущей воды за %d тиков: %d, %.2f %% источников (порог 5 %%); всего %d, из них чужой (родники, склоны) %d",
                     TICKS, growth, growthPct, growthAll, foreign));
             report.add(String.format("заделки герметизации: %d на %d чанков, %.2f на чанк (порог 2)",
@@ -231,12 +243,78 @@ final class LithoCiWater {
             if (dryPct > 1.0) ok = false;
             if (growthPct > 5.0) ok = false;
             if (sealsPerChunk > 2.0) ok = false;
+            if (fitPct < 95.0) ok = false;
+            if (coveredPct > 0.5) ok = false;
+            if (wallPct > 2.0) ok = false;
         } catch (Throwable t) {
             ok = false;
             report.add("FAIL: " + t);
             LithoMod.LOG.error("Litospherity CI water measure", t);
         }
         finish(server, report, ok);
+    }
+
+    /**
+     * ВО2-4 (§8.3): `calm_fit`, накрытая вода и стены по настоящим блокам.
+     * Коридор — колонки с водой выше моря и сухие колонки с материалом берега;
+     * стены — суша в 2 блоках от воды, где верхний блок выше зеркала на ≥ 4
+     * (каньоны/водопады не считаем: у них в `info` не спокойный поток).
+     *
+     * @return {corridor, fit, shore, walls}
+     */
+    private static long[] measureVo2(ServerLevel level, LithoNative.Generator gen, List<int[]> points) {
+        long corridor = 0;
+        long fit = 0;
+        long shore = 0;
+        long walls = 0;
+        int minWorldY = level.getMinY();
+        int maxWorldY = level.getMaxY();
+        for (int[] p : points) {
+            for (int x = (p[0] & ~15) - RADIUS * 16; x < (p[0] & ~15) + (RADIUS + 1) * 16; x++) {
+                for (int z = (p[1] & ~15) - RADIUS * 16; z < (p[1] & ~15) + (RADIUS + 1) * 16; z++) {
+                    LithoNative.WaterColumns core = gen.water(new double[] {x}, new double[] {z});
+                    int lv = core.level()[0];
+                    int shoreCode = LithoNative.WaterColumns.shoreMat(core.info()[0]);
+                    if (lv != LithoNative.WaterColumns.NONE && lv > LithoWaterFeature.SEA_LEVEL) {
+                        corridor++;
+                        int expected = core.bed()[0];
+                        int top = topSolid(level, x, z, lv - 1, expected - 4, minWorldY, maxWorldY);
+                        if (top != Integer.MIN_VALUE && Math.abs(top - expected) <= 2) fit++;
+                        continue;
+                    }
+                    if (shoreCode == 0) continue;
+                    corridor++;
+                    int expected = core.bed()[0];
+                    int top = topSolid(level, x, z, expected + 2, expected - 2, minWorldY, maxWorldY);
+                    if (top != Integer.MIN_VALUE && Math.abs(top - expected) <= 2) fit++;
+                    // Стены: берег выше воды на ≥ 4. Подмыв (`Underwash`) — это
+                    // стенка излучины, класс долины отдельно не экспортируется.
+                    if (shoreCode == 9) continue;
+                    int waterLevel = Integer.MIN_VALUE;
+                    for (int[] d : new int[][] {{1, 0}, {-1, 0}, {0, 1}, {0, -1}, {2, 0}, {-2, 0}, {0, 2}, {0, -2}}) {
+                        LithoNative.WaterColumns near = gen.water(new double[] {x + d[0]}, new double[] {z + d[1]});
+                        int nl = near.level()[0];
+                        if (nl == LithoNative.WaterColumns.NONE) continue;
+                        if (LithoNative.WaterColumns.flow(near.info()[0]) != 0) continue;
+                        if (nl > LithoWaterFeature.SEA_LEVEL) waterLevel = Math.max(waterLevel, nl);
+                    }
+                    if (waterLevel == Integer.MIN_VALUE) continue;
+                    shore++;
+                    if (top != Integer.MIN_VALUE && top - waterLevel >= 4) walls++;
+                }
+            }
+        }
+        return new long[] {corridor, fit, shore, walls};
+    }
+
+    /** Верхний твёрдый блок (не воздух, не вода) от `fromY` вниз до `toY`. */
+    private static int topSolid(ServerLevel level, int x, int z, int fromY, int toY, int minWorldY, int maxWorldY) {
+        for (int y = Math.min(fromY, maxWorldY - 1); y >= Math.max(toY, minWorldY); y--) {
+            BlockState st = level.getBlockState(new BlockPos(x, y, z));
+            if (st.isAir() || st.is(Blocks.WATER)) continue;
+            return y;
+        }
+        return Integer.MIN_VALUE;
     }
 
     /** Текущая вода выше моря до тиков: ключи {@link BlockPos#asLong()}. */

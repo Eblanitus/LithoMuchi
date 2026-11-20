@@ -28,8 +28,9 @@ import net.minecraft.world.level.material.Fluids;
  *   <li>верхний блок под водой меняется на землю, как у подводного дна.</li>
  * </ul>
  *
- * <p>Работает только в мире с пресетом Litospherity ({@code v1-dev-r2}); в остальных мирах
- * возвращает {@code false}, и вода выше моря не появляется.
+ * <p>ВО2 (PLAN-WATER-UPDATE §8.2): работает в мире с пресетом Litospherity
+ * ({@code v1-dev-w}); в остальных мирах возвращает {@code false}. Материалы,
+ * поток и вид воды берутся из битов {@code info} ({@code litho_water_batch2}).
  */
 public final class LithoWaterFeature implements Feature {
     /** Уровень моря: выше него — предмет R2. */
@@ -39,8 +40,8 @@ public final class LithoWaterFeature implements Feature {
     /** Проба чанка: {@code PROBE × PROBE} колонок через {@code PROBE_STEP} блоков. */
     private static final int PROBE = 6;
     private static final int PROBE_STEP = 3;
-    /** Сколько блоков над зеркалом русла можно вынуть (бугры 3D-шума). */
-    private static final int UP_CLEAR = 8;
+    /** Сколько блоков над зеркалом можно убрать (§8.1 `clear_above_blocks`). */
+    private static final int CLEAR_ABOVE = 6;
 
     /** Заделок герметизации (метрика В5: ≤ 2 на чанк с водой выше моря). */
     public static final AtomicLong SEALS = new AtomicLong();
@@ -48,6 +49,10 @@ public final class LithoWaterFeature implements Feature {
     public static final AtomicLong CHUNKS = new AtomicLong();
     /** Колонок, где вода выше моря поставлена. */
     public static final AtomicLong COLUMNS = new AtomicLong();
+    /** ВО2-4: колонок воды, над которой твёрдое идёт выше лимита. */
+    public static final AtomicLong COVERED = new AtomicLong();
+    /** ВО2-4: колонок у воды со стеной выше 2 блоков (§10.1). */
+    public static final AtomicLong WALLS = new AtomicLong();
     private static final byte KIND_RIVER = 1;
     public static volatile boolean LIVE_STEPS = Boolean.getBoolean("litospherity.water.liveSteps");
     public static final AtomicLong STEPS = new AtomicLong();
@@ -64,7 +69,7 @@ public final class LithoWaterFeature implements Feature {
     @Override
     public boolean place(WorldGenLevel level, ChunkGenerator chunkGenerator, RandomSource random, BlockPos origin) {
         LithoFields.Binding binding = LithoFields.world();
-        if (binding == null || binding.version() != LithoFields.VERSION_R2) return false;
+        if (binding == null || binding.version() != LithoFields.VERSION_W) return false;
         int x0 = origin.getX() & ~15;
         int z0 = origin.getZ() & ~15;
         // Один вызов ядра на чанк: 18×18 колонок, начиная с блока левее/выше чанка.
@@ -132,26 +137,19 @@ public final class LithoWaterFeature implements Feature {
                     if (level.getBlockState(pos).isAir()) continue;
                     level.setBlock(pos, Blocks.AIR.defaultBlockState(), 2);
                 }
-                // Русло у моря: над зеркалом тоже вынимаем. 3D-шум игры ставит над
-                // водой бугры и крышки, которых у ядра нет, и река уходит под
-                // землю. Не выше UP_CLEAR блоков: дальше это уже склон. Только у
-                // моря: там вода не выше 62 и протечь вверх не может; у русел R2
-                // вскрытие берега давало протечки (CI water scientific 9 → 27).
-                //
-                // Рядом с колонкой R2 (уровень выше моря) не вынимаем: её затычку
-                // сбоку мог уже поставить соседний чанк, и вскрытие её снимает, вода
-                // R2 стекает в русло у моря. Порядок чанков разный от запуска к
-                // запуску, поэтому рост текущей воды в CI скакал 5,2 → 7,9 → 11,9 %.
-                boolean nearR2 = false;
-                for (int[] step : new int[][] {{1, 0}, {-1, 0}, {0, 1}, {0, -1}}) {
-                    int nl = water.level()[(j + step[1]) * SIDE + (i + step[0])];
-                    if (nl != LithoNative.WaterColumns.NONE && nl > SEA_LEVEL) nearR2 = true;
-                }
-                for (int y = from + 1; surface == SEA_LEVEL && !nearR2 && y <= Math.min(from + UP_CLEAR, maxY); y++) {
+                // ВО2-1: над водой твёрдое снимаем на CLEAR_ABOVE блоков. Если
+                // твёрдое продолжается дальше — колонка идёт в метрику
+                // «накрытая вода» (§8.3), а не режется бесконечно.
+                for (int y = from + 1; y <= Math.min(from + CLEAR_ABOVE, maxY); y++) {
                     BlockPos pos = new BlockPos(x, y, z);
                     BlockState above = level.getBlockState(pos);
-                    if (above.isAir() || above.is(Blocks.WATER)) break;
+                    if (above.isAir() || above.is(Blocks.WATER)) continue;
                     level.setBlock(pos, Blocks.AIR.defaultBlockState(), 2);
+                }
+                BlockPos coverPos = new BlockPos(x, Math.min(from + CLEAR_ABOVE + 1, maxY), z);
+                if (!level.getBlockState(coverPos).isAir()
+                        && !level.getBlockState(coverPos).is(Blocks.WATER)) {
+                    COVERED.incrementAndGet();
                 }
                 int lowest = from;
                 for (int y = from; y >= to; y--) {
@@ -163,11 +161,12 @@ public final class LithoWaterFeature implements Feature {
                 if (lowest < from) {
                     placed++;
                     COLUMNS.incrementAndGet();
-                    // Дно под водой: трава и подобное становятся землёй.
-                    if (lowest - 1 >= minY) {
+                    // Дно под водой: материал из ядра (§7.5), а не земля.
+                    BlockState bedMat = material(LithoNative.WaterColumns.bedMat(water.info()[k]));
+                    if (lowest - 1 >= minY && bedMat != null) {
                         BlockPos bed = new BlockPos(x, lowest - 1, z);
                         if (isSurface(level.getBlockState(bed))) {
-                            level.setBlock(bed, Blocks.DIRT.defaultBlockState(), 2);
+                            level.setBlock(bed, bedMat, 2);
                         }
                     }
                     // Затычка: под водой остался воздух (пещера под руслом).
@@ -236,10 +235,79 @@ public final class LithoWaterFeature implements Feature {
                 }
             }
         }
+        // ВО2-2 (§8.2 п. 2): пляж. Суша в 3 блоках от воды получает материал
+        // берега, если её верхний блок не выше уровня воды на 2 блока.
+        for (int j = 1; j <= 16; j++) {
+            for (int i = 1; i <= 16; i++) {
+                int k = j * SIDE + i;
+                if (water.level()[k] != LithoNative.WaterColumns.NONE) continue;
+                int shoreCode = LithoNative.WaterColumns.shoreMat(water.info()[k]);
+                BlockState shore = material(shoreCode);
+                if (shore == null) continue;
+                int top = Math.max(water.bed()[k], minY);
+                if (top > maxY) continue;
+                int waterLevel = Integer.MIN_VALUE;
+                for (int[] step : new int[][] {{1, 0}, {-1, 0}, {0, 1}, {0, -1}}) {
+                    int nl = water.level()[(j + step[1]) * SIDE + (i + step[0])];
+                    if (nl != LithoNative.WaterColumns.NONE && nl > SEA_LEVEL) {
+                        waterLevel = Math.max(waterLevel, nl);
+                    }
+                }
+                if (waterLevel == Integer.MIN_VALUE || top > waterLevel + 2) continue;
+                BlockPos pos = new BlockPos((int) xs[k], top, (int) zs[k]);
+                if (isSurface(level.getBlockState(pos))) {
+                    level.setBlock(pos, shore, 2);
+                }
+            }
+        }
+        // ВО2-2 (§8.2 п. 3): водопад. `FallTop` и сосед ниже на ≥ 2 блока —
+        // падающая вода от верхнего зеркала до нижнего, без тиков.
+        for (int j = 1; j <= 16; j++) {
+            for (int i = 1; i <= 16; i++) {
+                int k = j * SIDE + i;
+                int info = water.info()[k];
+                if (LithoNative.WaterColumns.body(info) != 1) continue;
+                if (LithoNative.WaterColumns.flow(info) != 4) continue;
+                int upper = water.level()[k];
+                if (upper == LithoNative.WaterColumns.NONE || upper <= SEA_LEVEL) continue;
+                for (int[] step : new int[][] {{1, 0}, {-1, 0}, {0, 1}, {0, -1}}) {
+                    int nk = (j + step[1]) * SIDE + (i + step[0]);
+                    int lower = water.level()[nk];
+                    if (lower == LithoNative.WaterColumns.NONE || upper - lower < 2) continue;
+                    for (int y = Math.min(upper - 1, maxY); y >= Math.max(lower, minY); y--) {
+                        BlockPos pos = new BlockPos((int) xs[nk], y, (int) zs[nk]);
+                        BlockState there = level.getBlockState(pos);
+                        if (there.is(Blocks.WATER)) continue;
+                        level.setBlock(pos, fallingWater(), 2);
+                    }
+                }
+            }
+        }
         if (placed > 0) CHUNKS.incrementAndGet();
         SEALS.addAndGet(seals);
         STEPS.addAndGet(steps);
         return placed > 0;
+    }
+
+    /** ВО2-2 (§7.5): блоки материалов по коду из битов info. */
+    private static BlockState material(int code) {
+        return switch (code) {
+            case 1 -> Blocks.SAND.defaultBlockState();
+            case 2 -> Blocks.GRAVEL.defaultBlockState();
+            case 3 -> Blocks.CLAY.defaultBlockState();
+            case 4 -> Blocks.COBBLESTONE.defaultBlockState();
+            case 5 -> Blocks.MUD.defaultBlockState();
+            case 6 -> Blocks.MOSS_BLOCK.defaultBlockState();
+            case 7 -> Blocks.TUFF.defaultBlockState();
+            case 8 -> Blocks.CALCITE.defaultBlockState();
+            case 9 -> Blocks.COARSE_DIRT.defaultBlockState();
+            default -> null;
+        };
+    }
+
+    /** ВО2-2 (§8.2 п. 3): падающая вода между двумя уровнями русла. */
+    private static BlockState fallingWater() {
+        return Fluids.FLOWING_WATER.getFlowing(7, true).createLegacyBlock();
     }
 
     private static boolean isSurface(BlockState state) {

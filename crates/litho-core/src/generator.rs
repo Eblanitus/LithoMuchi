@@ -33,6 +33,7 @@ use crate::seed::from_world_seed;
 use crate::spawn::{self, SpawnQuality};
 use crate::vanilla::{VanillaSample, continentalness};
 use crate::version::GenVersion;
+use crate::water_profile::{BedMaterial, FlowClass, WaterBody};
 
 /// Полей в узле грубой решётки: φ, SST и две компоненты ветра (Д-021).
 /// Осадки и влагосодержание больше НЕ кэшируются: это результат луча влаги
@@ -212,8 +213,17 @@ pub struct WaterColumn {
     pub level: i32,
     pub bed: i32,
     /// Поверхность колонки после выреза (дно под водой, §4 инварианта).
+    /// У суши рядом с водой в W сюда кладётся высота берега для пляжа.
     pub surface: i32,
     pub kind: crate::hydrology::SurfaceKind,
+    /// ВО2-2 (§6.8): вид водоёма для Java. В R2 — по `kind`, но без материалов.
+    pub body: WaterBody,
+    /// ВО2-2: класс течения. У озёр/болот и в R2 — `Calm`.
+    pub flow: FlowClass,
+    /// ВО2-2 (§7.5): материал верхнего твёрдого блока под водой.
+    pub bed_mat: BedMaterial,
+    /// ВО2-2: материал верхнего блока суши в 3 блоках от воды (пляж).
+    pub shore_mat: BedMaterial,
 }
 
 impl WaterColumn {
@@ -243,6 +253,28 @@ impl WaterColumn {
             crate::hydrology::SurfaceKind::DeferredWater => 6,
         }
     }
+
+    /// ВО2-2 (§6.8): один `u32` на колонку. Биты 0–3 `flow`, 4–7 `bed_mat`,
+    /// 8–11 `shore_mat`, 12–17 `body`. Старшие биты зарезервированы.
+    pub const fn info_code(self) -> u32 {
+        self.flow.code()
+            | (self.bed_mat.code() << 4)
+            | (self.shore_mat.code() << 8)
+            | (self.body.code() << 12)
+    }
+
+    /// ВО2-2: поток и материалы для W. R2 оставляет нули — старый FFI не
+    /// должен менять ни один блок замороженной версии.
+    pub fn with_details(mut self, flow: FlowClass, bed: BedMaterial, shore: BedMaterial) -> Self {
+        if self.level == Self::NONE {
+            return self;
+        }
+        self.body = WaterBody::from(self.kind);
+        self.flow = flow;
+        self.bed_mat = bed;
+        self.shore_mat = shore;
+        self
+    }
 }
 
 impl Default for WaterColumn {
@@ -252,6 +284,10 @@ impl Default for WaterColumn {
             bed: Self::NONE,
             surface: Self::NONE,
             kind: crate::hydrology::SurfaceKind::Land,
+            body: WaterBody::Land,
+            flow: FlowClass::Calm,
+            bed_mat: BedMaterial::None,
+            shore_mat: BedMaterial::None,
         }
     }
 }
@@ -3527,6 +3563,104 @@ impl Generator {
         self.s0_at(x, z)
     }
 
+    /// ВО2-2: класс течения колонки. Озёра, болота и приморские русла —
+    /// спокойные; класс реки берётся из ближайшего звена с уровнем.
+    fn water_flow(&self, full: &FullSample) -> FlowClass {
+        if full.world.hydrology.kind != crate::hydrology::SurfaceKind::River {
+            return FlowClass::Calm;
+        }
+        let l = self.params.block.l_blocks;
+        full.world
+            .hydrology
+            .channels
+            .nearest
+            .filter(|hit| hit.level_blocks.is_some())
+            .filter(|hit| hit.distance_l * l <= hit.core_l * l * 0.5 + 2.0)
+            .map(|hit| hit.flow_class)
+            .unwrap_or(FlowClass::Calm)
+    }
+
+    /// ВО2-2: материал дна и берега по §7.5. Пятна глины берутся из отношения
+    /// осадков, мха/туфа коснутся ВО4–ВО9; детерминированно для обоих режимов.
+    fn water_materials(&self, full: &FullSample, flow: FlowClass) -> (BedMaterial, BedMaterial) {
+        use crate::hydrology::SurfaceKind;
+        let dry = full.climate.precip.ratio < 0.6;
+        let cold = full.climate.temperature.t_bio < 0.0;
+        let (bed, shore) = match full.world.hydrology.kind {
+            SurfaceKind::Swamp => (BedMaterial::Mud, BedMaterial::Mud),
+            SurfaceKind::DryBasin | SurfaceKind::DeferredWater => {
+                (BedMaterial::Salt, BedMaterial::Salt)
+            }
+            SurfaceKind::InlandSea => {
+                if dry {
+                    (BedMaterial::Salt, BedMaterial::Salt)
+                } else if cold {
+                    (BedMaterial::Gravel, BedMaterial::Gravel)
+                } else {
+                    (BedMaterial::Sand, BedMaterial::Sand)
+                }
+            }
+            SurfaceKind::Lake => {
+                if cold {
+                    (BedMaterial::Gravel, BedMaterial::Gravel)
+                } else if dry {
+                    (BedMaterial::Salt, BedMaterial::Sand)
+                } else {
+                    (BedMaterial::Sand, BedMaterial::Sand)
+                }
+            }
+            SurfaceKind::River => {
+                let bed = match flow {
+                    FlowClass::Calm if full.climate.precip.ratio > 1.0 => BedMaterial::Clay,
+                    FlowClass::Calm => BedMaterial::Sand,
+                    FlowClass::Riffle => BedMaterial::Gravel,
+                    FlowClass::Rapid
+                    | FlowClass::Cascade
+                    | FlowClass::FallTop
+                    | FlowClass::Plunge => BedMaterial::Cobble,
+                };
+                let shore = if flow == FlowClass::Calm && dry {
+                    BedMaterial::Underwash
+                } else {
+                    bed
+                };
+                (bed, shore)
+            }
+            SurfaceKind::Land => (BedMaterial::None, BedMaterial::None),
+        };
+        let _ = cold;
+        (bed, shore)
+    }
+
+    /// ВО2-2: пляж в `water.beach_blocks` от края воды. Суша получает только
+    /// `shore_mat`; уровень остаётся `NONE`, валильная вода не появляется.
+    fn water_shore_material(&self, full: &FullSample) -> BedMaterial {
+        let l = self.params.block.l_blocks;
+        let beach = self.params.water.beach_blocks;
+        let river_edge = full
+            .world
+            .hydrology
+            .channels
+            .nearest
+            .filter(|hit| hit.level_blocks.is_some())
+            .map(|hit| hit.distance_l * l - hit.core_l * l * 0.5)
+            .unwrap_or(f64::INFINITY);
+        let lake_edge = full
+            .world
+            .hydrology
+            .lakes
+            .water_hit
+            .or(full.world.hydrology.lakes.shore_hit)
+            .filter(|hit| hit.kind.has_water() && !hit.inside)
+            .map(|hit| hit.distance_l * l)
+            .unwrap_or(f64::INFINITY);
+        if river_edge.min(lake_edge) > beach {
+            return BedMaterial::None;
+        }
+        let flow = self.water_flow(full);
+        self.water_materials(full, flow).1
+    }
+
     /// R2 (Ф6-В1): вода колонки для заливки в игре. Уровень и дно берутся из
     /// того же `cached_full`, что и поля, поэтому вода и рельеф согласованы.
     /// Вода ниже уровня моря сюда не входит: её ставит сама игра.
@@ -3535,16 +3669,28 @@ impl Generator {
             return WaterColumn::default();
         };
         let height = &full.world.height;
+        let water_update = self.params.version.is_water_update();
         // Поверхность нужна и без воды: по ней проверяется инвариант «берег
         // не ниже зеркала» (§4, п. 2) и считается «сухое русло» в CI.
         let surface = height.surface_y.round() as i32;
         let kind = full.world.hydrology.kind;
         if height.water_strength <= 0.0 {
-            return WaterColumn {
+            let mut column = WaterColumn {
                 surface,
                 kind,
                 ..WaterColumn::default()
             };
+            if water_update {
+                let shore = self.water_shore_material(full.as_ref());
+                if shore != BedMaterial::None {
+                    column.body = WaterBody::from(kind);
+                    column.shore_mat = shore;
+                    // Java ставит пляж по этому блоку; для суши `bed` — не дно,
+                    // а ожидаемая поверхность (ВО2-4, метрика `calm_fit`).
+                    column.bed = surface;
+                }
+            }
+            return column;
         }
         let level = height.water_y.round();
         // Русло у моря (запасной вырез R2): воду до y = 62 ставит игра, но
@@ -3557,28 +3703,49 @@ impl Generator {
             && kind == crate::hydrology::SurfaceKind::River
             && full.world.hydrology.channels.core > 0.0
         {
-            return WaterColumn {
+            let column = WaterColumn {
                 level: crate::height::SEA_LEVEL as i32,
                 bed: height.bed_y.round() as i32,
                 surface,
                 kind,
+                ..WaterColumn::default()
             };
+            if !water_update {
+                return column;
+            }
+            return column.with_details(FlowClass::Calm, BedMaterial::Sand, BedMaterial::Sand);
         }
         // NaN и «не выше моря» — одно и то же: колонка остаётся сушей (clippy:
         // neg_cmp_op_on_partial_ord не даёт писать `!(level > SEA_LEVEL)`).
         if !level.is_finite() || level <= crate::height::SEA_LEVEL {
-            return WaterColumn {
+            let mut column = WaterColumn {
                 surface,
                 kind,
                 ..WaterColumn::default()
             };
+            if water_update {
+                let shore = self.water_shore_material(full.as_ref());
+                if shore != BedMaterial::None {
+                    column.body = WaterBody::from(kind);
+                    column.shore_mat = shore;
+                    column.bed = surface;
+                }
+            }
+            return column;
         }
-        WaterColumn {
+        let column = WaterColumn {
             level: level as i32,
             bed: height.bed_y.round() as i32,
             surface,
             kind,
+            ..WaterColumn::default()
+        };
+        if !water_update {
+            return column;
         }
+        let flow = self.water_flow(full.as_ref());
+        let (bed_mat, shore_mat) = self.water_materials(full.as_ref(), flow);
+        column.with_details(flow, bed_mat, shore_mat)
     }
 
     /// Граница с Horizon: внутри ядра всё `f64`, наружу отдаётся `f32`.

@@ -44,6 +44,18 @@ def main(pack, jar, out):
     settings = get("worldgen/noise_settings/overworld.json")
     dim = get("dimension_type/overworld.json")
     preset = get("worldgen/world_preset/normal.json")
+    # ВО2-1 (PLAN-WATER-UPDATE §8.1): 3D-шум ванили умножается на маску calm.
+    # Для v1-dev и R2 маска ровно 1.0, поэтому мир не меняется; для W гасит
+    # стены и навесы над водой. Узел Mojang берётся из server.jar.
+    base = get("worldgen/density_function/overworld/base_3d_noise.json")
+    write(out, "data/minecraft/worldgen/density_function/overworld/base_3d_noise.json", {
+        "type": "minecraft:mul",
+        "left": {
+            "type": "minecraft:cache_2d",
+            "input": {"type": "litospherity:field", "field": "calm"},
+        },
+        "right": base,
+    })
     for mode in ("gameplay", "scientific"):
         s = json.loads(json.dumps(settings))
         # Д-097: лава аквифера по ячейке, как хук Horizon на minecraft:aquifer_lava.

@@ -64,8 +64,6 @@ jobs:
           find fabric/src/generated/resources -type f
       - uses: actions/setup-java@v4
         with: { distribution: temurin, java-version: "25" }
-      - uses: actions/setup-java@v4
-        with: { distribution: temurin, java-version: "25" }
       - uses: gradle/actions/setup-gradle@v4
         with: { gradle-version: current }
       - name: Свежие версии Fabric для 26.3
@@ -188,7 +186,7 @@ jobs:
             *) at=-140392,32089 ;;
           esac
           cargo run -q -p litho-sandbox --release -- water-points \
-            --seed 42 --mode ${{ matrix.mode }} --version v1-dev-r2 --radius-l 32 --at "$at" \
+            --seed 42 --mode ${{ matrix.mode }} --version v1-dev-w --radius-l 32 --at "$at" \
             | tee fabric/run/water-points.txt | python3 tools/ci_annotations.py report
       - uses: actions/setup-java@v4
         with: { distribution: temurin, java-version: "25" }

@@ -32,12 +32,14 @@ public final class LithoFields {
     /** Порядок как Field::ALL в litho-core. */
     public static final List<String> FIELDS = List.of(
             "continents", "erosion", "ridges", "temperature", "vegetation",
-            "lava", "offset", "pv", "factor", "jaggedness");
+            "lava", "offset", "pv", "factor", "jaggedness", "calm");
 
     /** Версия генератора: 2 = v1-dev (как паки Horizon). */
     public static final int VERSION_V1_DEV = 2;
     /** Ф6-В1: вода выше уровня моря; пресеты Litospherity на Fabric. */
     public static final int VERSION_R2 = 3;
+    /** ВО2: водное обновление (`v1-dev-w`), пресеты Литосферити. */
+    public static final int VERSION_W = 4;
 
     /** Сид, режим (0 научный, 1 геймплейный) и версия генератора ядра. */
     public record Binding(long seed, int mode, int version) {}
@@ -66,9 +68,19 @@ public final class LithoFields {
         return GENERATORS.computeIfAbsent(b, k -> {
             LithoMod.LOG.info("Litospherity: генератор сид {} режим {} версия {}",
                     k.seed(), k.mode() == 0 ? "scientific" : "gameplay",
-                    k.version() == VERSION_R2 ? "v1-dev-r2" : "v1-dev");
+                    versionName(k.version()));
             return LithoNative.get().newGenerator(k.seed(), k.mode(), k.version());
         });
+    }
+
+    /** Имя версии для логов: R2 остаётся доступной для диагностики Ф4. */
+    public static String versionName(int version) {
+        return switch (version) {
+            case VERSION_V1_DEV -> "v1-dev";
+            case VERSION_R2 -> "v1-dev-r2";
+            case VERSION_W -> "v1-dev-w";
+            default -> "v" + version;
+        };
     }
 
     /** Сид и режим из контекста компиляции (анонимный класс RandomState хранит ссылку на него). */

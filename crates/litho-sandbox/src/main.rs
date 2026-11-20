@@ -667,7 +667,7 @@ fn cmd_water_points(args: &[String]) -> Result<(), String> {
     let generator = generator(&opts)?;
     if !opts.version.is_water_relief_r2() {
         return Err(format!(
-            "water-points считает только v1-dev-r2 (сейчас {}): в v1-dev воды выше моря нет",
+            "water-points считает только v1-dev-r2 и v1-dev-w (сейчас {}): в v1-dev воды выше моря нет",
             opts.version.as_str()
         ));
     }

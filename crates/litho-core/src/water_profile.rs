@@ -132,6 +132,84 @@ pub fn slope_class(slope: f64, water: &WaterUpdateParams) -> SlopeClass {
     }
 }
 
+/// ВО2-2 (§6.8): вид водоёма для Java. Коды совпадают с `SurfaceKind`, чтобы
+/// старый `out_kind` и новое поле `body` не расходились.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum WaterBody {
+    #[default]
+    Land,
+    River,
+    Lake,
+    InlandSea,
+    Swamp,
+    DryBasin,
+    DeferredWater,
+}
+
+impl WaterBody {
+    /// Биты 12–17 в `info_code()` (§6.8).
+    pub const fn code(self) -> u32 {
+        match self {
+            Self::Land => 0,
+            Self::River => 1,
+            Self::Lake => 2,
+            Self::InlandSea => 3,
+            Self::Swamp => 4,
+            Self::DryBasin => 5,
+            Self::DeferredWater => 6,
+        }
+    }
+}
+
+impl From<crate::hydrology::SurfaceKind> for WaterBody {
+    fn from(kind: crate::hydrology::SurfaceKind) -> Self {
+        match kind {
+            crate::hydrology::SurfaceKind::Land => Self::Land,
+            crate::hydrology::SurfaceKind::River => Self::River,
+            crate::hydrology::SurfaceKind::Lake => Self::Lake,
+            crate::hydrology::SurfaceKind::InlandSea => Self::InlandSea,
+            crate::hydrology::SurfaceKind::Swamp => Self::Swamp,
+            crate::hydrology::SurfaceKind::DryBasin => Self::DryBasin,
+            crate::hydrology::SurfaceKind::DeferredWater => Self::DeferredWater,
+        }
+    }
+}
+
+/// ВО2-2 (§7.5): материал дна/берега, который ставит Java по коду из `info`.
+/// Ноль — «материнский блок не трогать» (R2 и суша вне пляжа).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum BedMaterial {
+    #[default]
+    None,
+    Sand,
+    Gravel,
+    Clay,
+    Cobble,
+    Mud,
+    Moss,
+    Tuff,
+    Salt,
+    Underwash,
+}
+
+impl BedMaterial {
+    /// Биты 4–7 (дно) и 8–11 (берег) в `info_code()` (§6.8).
+    pub const fn code(self) -> u32 {
+        match self {
+            Self::None => 0,
+            Self::Sand => 1,
+            Self::Gravel => 2,
+            Self::Clay => 3,
+            Self::Cobble => 4,
+            Self::Mud => 5,
+            Self::Moss => 6,
+            Self::Tuff => 7,
+            Self::Salt => 8,
+            Self::Underwash => 9,
+        }
+    }
+}
+
 /// Класс потока (§6.3, п. 7 / §6.8): классы уклона плюс водопад. В ВО1
 /// водопад только размечается (`FallTop`), перепад раскладывается ступенями
 /// по блоку, как в R2; котёд (`Plunge`) ставит вырез/Java (ВО5).
