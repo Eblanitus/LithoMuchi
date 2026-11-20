@@ -1,6 +1,6 @@
 {
-  "name": "water-update-vo3-plate-stages",
-  "note": "Время сети отдельно от уровней на тех же двух плитах в обоих режимах; ошибки сохранённого маршрута относительно S0. Порог 200 мс неизменен.",
+  "name": "water-update-vo3-plate-windows",
+  "note": "Повтор фаз сети и уровней с общим окном кандидатов ядра и стыка. Сравнивать с water-update-vo3-plate-stages; те же плиты и команды.",
   "mode": "gameplay",
   "version": "v1-dev-w",
   "seeds": [
