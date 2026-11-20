@@ -27,7 +27,7 @@
 работает и что делать дальше по порядку — в [docs/PLAN.md](docs/PLAN.md).
 
 - **v0 заморожена** (Д-026): scientific `5cdbe1d36ef8d16a`, gameplay `b48e8037c4e85977`.
-- **v1-dev** — рабочая линия: scientific `35f888f82f3ba603`, gameplay `9cbf72e5fb90b9b7`.
+- **v1-dev** — рабочая линия: scientific `0079371c3c2f7f35`, gameplay `13ca6fd2452c807c`.
   Числа: [docs/PARAMS-V1-DEV.md](docs/PARAMS-V1-DEV.md).
 - Мод собирается в `.hnmod` (`tools/package_mod.py`), CI проверяет его на закреплённых
   исходниках Horizon (пин `66f3981`).
