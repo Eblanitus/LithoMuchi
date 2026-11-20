@@ -1550,7 +1550,10 @@ impl Generator {
                 }
             }
             let net = self.drainage_network(&plate)?;
-            let mut channels_here = net.channels().query(point);
+            let water_update = self.params.version.is_water_update();
+            let mut channels_here = net
+                .channels()
+                .query_with_extra(point, water_update && with_levels);
             // Д-127: путь полей (`with_levels = false`) всегда видит R1-озёра,
             // даже в `v1-dev-r2`. Слой воды (`true`) сохраняет свой предел.
             // Иначе высокое озеро меняет C/E/W против `v1-dev`.
@@ -1560,11 +1563,16 @@ impl Generator {
             } else {
                 net.lakes().query(point)
             };
-            if with_levels && self.params.version.is_water_relief_r2() {
+            if with_levels
+                && self.params.version.is_water_relief_r2()
+                && (!water_update
+                    || channels_here.nearest.is_some()
+                    || lakes_here.water_hit.is_some()
+                    || lakes_here.shore_hit.is_some())
+            {
                 // ВО1-1 (6.3): у `v1-dev-w` уровень реки — профиль от `S0`, у
                 // R2 — прежний «низший берег минус 1». Озёра в ВО1–ВО2 у обеих
                 // версий по правилу R2 (6.4).
-                let water_update = self.params.version.is_water_update();
                 let levels = if water_update {
                     self.w_plate_levels(&plate, &net)?
                 } else {
@@ -1578,58 +1586,37 @@ impl Generator {
                         hit.level_blocks = levels.lakes.get(hit.lake).copied().flatten();
                     }
                 }
-                if let Some(hit) = channels_here.nearest.as_mut() {
-                    let reach = hit.reach;
-                    let first = net.channels().reach_first_segment(reach);
-                    let index = hit.segment.saturating_sub(first);
-                    let along = hit.along;
-                    let mirror = |up: f64, down: f64| up + (down - up) * along;
-                    if water_update {
-                        let profile = self.w_reach_profile(&levels, &net, reach)?;
-                        hit.level_blocks = profile
-                            .levels
-                            .get(index)
-                            .copied()
-                            .flatten()
-                            .map(|(up, down)| mirror(up, down));
-                        // п. 7 (6.3): классы сегмента — классы звена.
-                        if let Some(class) = profile.classes.get(index) {
-                            hit.valley_class = class.valley;
-                            hit.flow_class = class.flow;
-                            hit.gp = class.gp;
-                        }
-                    } else {
-                        hit.level_blocks = self
-                            .r2_reach_levels(&levels, &net, reach)?
-                            .get(index)
-                            .copied()
-                            .flatten()
-                            .map(|(up, down)| mirror(up, down));
-                    }
-                }
                 if water_update {
-                    // 6.5: до трёх звеньев в радиусе с уровнями и классами —
-                    // основа вырезки нескольких долин. Копия ближайшего допустима.
-                    let mut extras = Vec::with_capacity(3);
-                    for mut hit in net.channels().query_all(point, 3) {
+                    for hit in channels_here
+                        .nearest
+                        .iter_mut()
+                        .chain(channels_here.extra.iter_mut())
+                    {
                         let first = net.channels().reach_first_segment(hit.reach);
-                        let index = hit.segment.saturating_sub(first);
-                        let along = hit.along;
+                        let index = hit.segment - first;
                         let profile = self.w_reach_profile(&levels, &net, hit.reach)?;
                         hit.level_blocks = profile
                             .levels
                             .get(index)
                             .copied()
                             .flatten()
-                            .map(|(up, down)| up + (down - up) * along);
+                            .map(|(up, down)| (up + (down - up) * hit.along).floor());
                         if let Some(class) = profile.classes.get(index) {
                             hit.valley_class = class.valley;
                             hit.flow_class = class.flow;
                             hit.gp = class.gp;
                         }
-                        extras.push(hit);
                     }
-                    channels_here.extra.absorb(extras);
+                } else if let Some(hit) = channels_here.nearest.as_mut() {
+                    let index = hit
+                        .segment
+                        .saturating_sub(net.channels().reach_first_segment(hit.reach));
+                    hit.level_blocks = self
+                        .r2_reach_levels(&levels, &net, hit.reach)?
+                        .get(index)
+                        .copied()
+                        .flatten()
+                        .map(|(up, down)| up + (down - up) * hit.along);
                 }
             }
             channels.merge(channels_here);
@@ -2072,10 +2059,11 @@ impl Generator {
                 classes: Vec::new(),
             });
         }
-        let n = source.len();
+        let n = source.len() + 1;
         // Длина оси по вершинам в блоках: окно уклона и сглаживание класса.
         let mut cum_blocks: Vec<f64> = Vec::with_capacity(n);
         let mut acc = 0.0_f64;
+        cum_blocks.push(0.0);
         for segment in source {
             acc += segment.b.point.sub(segment.a.point).len() * l;
             cum_blocks.push(acc);
@@ -2089,25 +2077,26 @@ impl Generator {
         let mut targets: Vec<Option<f64>> = vec![None; n];
         let mut gp: Vec<Option<f64>> = vec![None; n];
         let mut inputs: Vec<Option<crate::water_profile::ValleyClassInput>> = vec![None; n];
-        let mut last_sample: Option<Vec2> = None;
+        let mut last_sample = f64::NEG_INFINITY;
         // Budget is a deterministic work estimate, never a wall clock: a cache
         // miss or a busy C2ME thread must not change the shape of a river.
         // VO0-5 measured ~1 ms per exact probe. Bound the estimate by the
         // actual number of vertices: at most five probes per sampled section.
         let sections = (acc / water.profile_step_blocks).ceil().min(n as f64);
         let doubled = sections * 5.0 > water.profile_budget_ms as f64;
-        let step_l = water.profile_step_blocks * if doubled { 2.0 } else { 1.0 } / l;
-        for (index, segment) in source.iter().enumerate() {
-            let b = segment.b;
+        let step = water.profile_step_blocks * if doubled { 2.0 } else { 1.0 };
+        for (index, &distance) in cum_blocks.iter().enumerate() {
+            let segment = &source[index.saturating_sub(1)];
+            let b = if index == 0 { segment.a } else { segment.b };
             let direction = b.point.sub(segment.a.point);
             if direction.len() <= 1e-12 {
                 continue;
             }
-            let due = last_sample.is_none_or(|last| b.point.sub(last).len() >= step_l);
+            let due = distance - last_sample >= step || index == n - 1;
             if !due {
                 continue;
             }
-            last_sample = Some(b.point);
+            last_sample = distance;
             // п. 1: ось, нормаль и полуширина воды; берег — низший из трёх `S0`.
             let normal = direction.normalized().perp();
             let edge_l = 0.5 * b.core_l + water.bank_probe_blocks / l;
@@ -2153,9 +2142,9 @@ impl Generator {
             }
         }
         // п. 3 и 5: бегущий минимум вниз по течению от уровня входа.
-        let mut level: Vec<f64> = vec![sea; source.len()];
+        let mut level: Vec<f64> = vec![sea; n];
         let mut current: Option<f64> = entry;
-        for index in 0..source.len() {
+        for index in 0..n {
             let start = current.or(targets[index]).unwrap_or(sea);
             let here = match targets[index] {
                 Some(target) => start.min(target),
@@ -2179,24 +2168,26 @@ impl Generator {
             if mouth_level + 1.0 < receiver {
                 // Подпор: вода у устья ниже приёмника — поднимаем вверх по
                 // течению, пока берег не окажется ниже зеркала приёмника.
-                let mut index = level.len();
-                while index > 0 {
-                    index -= 1;
-                    level[index] = level[index].max(receiver);
-                    if banks[index].is_some_and(|bank| bank < receiver + 1.0) {
+                // Do not raise the first obstructing bank (or introduce an
+                // uphill edge just upstream of it). A low incoming reach can
+                // be backed up only as far as all the local banks permit.
+                let supported = banks
+                    .iter()
+                    .flatten()
+                    .fold(receiver, |r, bank| r.min(bank.floor() - 1.0));
+                for y in level.iter_mut().rev() {
+                    if *y >= supported {
                         break;
                     }
+                    *y = supported;
                 }
             } else if mouth_level > receiver + 1.0 && !self.w_cold_mountains(net, reach) {
                 // п. 4: приток висит выше приёмника — выравниваем низовье
                 // уклоном `grade_slope` от устья вверх. В холодных горах
                 // ступень остаётся: это висячая долина (водопады, п. 6).
-                let mut distance = 0.0_f64;
-                for index in (0..level.len()).rev() {
-                    let segment = &source[index];
-                    distance += segment.b.point.sub(segment.a.point).len() * l;
-                    let cap = receiver + (distance * water.grade_slope).floor();
-                    level[index] = level[index].min(cap);
+                for (y, distance) in level.iter_mut().zip(&cum_blocks) {
+                    let cap = receiver + ((acc - distance) * water.grade_slope).floor();
+                    *y = y.min(cap);
                 }
             }
         }
@@ -2251,14 +2242,10 @@ impl Generator {
             water.class_window_blocks,
         );
         // п. 7 / 6.3: класс потока сверху вниз; каскад глушит водопад.
-        let mut classes = Vec::with_capacity(n);
+        let mut classes = Vec::with_capacity(n - 1);
         let mut upstream = crate::water_profile::FlowClass::Calm;
-        for i in 0..n {
-            let drop_blocks = if i == 0 {
-                0.0
-            } else {
-                (level[i - 1] - level[i]).max(0.0)
-            };
+        for i in 0..n - 1 {
+            let drop_blocks = (level[i] - level[i + 1]).max(0.0);
             let flow = crate::water_profile::flow_class(slope[i], drop_blocks, upstream, water);
             classes.push(crate::water_profile::SegmentClass {
                 valley: valley[i],
@@ -2269,13 +2256,7 @@ impl Generator {
         }
         // Зеркало сегмента: `(уровень в начале, уровень в конце)`; между ними
         // интерполяция по `along`, поэтому ступень ≤ 1 блок на блок русла.
-        let mut segments = vec![None; n];
-        for index in 0..level.len() {
-            let up = level[index];
-            let down = level.get(index + 1).copied().unwrap_or(level[index]);
-            // Level 63 is a valid W reach: carve its bed for the vanilla sea.
-            segments[index] = Some((up, down));
-        }
+        let segments = level.windows(2).map(|v| Some((v[0], v[1]))).collect();
         Ok(WReachProfile {
             levels: segments,
             classes,
@@ -2292,8 +2273,8 @@ impl Generator {
         let water = &self.params.water;
         let channels = net.channels();
         let segment = channels.reach_segments(reach).first().copied()?;
-        let b = segment.b;
-        let direction = b.point.sub(segment.a.point);
+        let b = segment.a;
+        let direction = segment.b.point.sub(segment.a.point);
         if direction.len() <= 1e-12 {
             return None;
         }

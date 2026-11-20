@@ -193,22 +193,43 @@ impl ExtraHits {
     /// Влить хиты (любой плиты), оставив три ближайших звена. Одно звено —
     /// один отрезок: посередине между двумя долинами есть чем закрыть шов.
     pub fn absorb(&mut self, hits: Vec<ChannelHit>) {
-        let mut merged: Vec<ChannelHit> = self.hits.into_iter().flatten().collect();
-        merged.extend(hits);
-        merged.sort_by(|a, b| {
+        for hit in hits {
+            self.insert(hit);
+        }
+    }
+
+    /// Small ordered set: one closest segment per reach, then top three
+    /// reaches. Rejected hits allocate nothing on this per-column path.
+    fn insert(&mut self, hit: ChannelHit) {
+        let before = |a: &ChannelHit, b: &ChannelHit| {
             a.distance_l
                 .total_cmp(&b.distance_l)
                 .then((a.plate_id, a.reach, a.segment).cmp(&(b.plate_id, b.reach, b.segment)))
-        });
-        // Один хит на звено: перекрытие двух долин не должно давать дубль.
-        let mut seen = BTreeSet::new();
-        merged.retain(|hit| seen.insert((hit.plate_id, hit.reach)));
-        merged.truncate(3);
-        let mut out = [None, None, None];
-        for (index, hit) in merged.into_iter().enumerate() {
-            out[index] = Some(hit);
+                .is_lt()
+        };
+        if let Some(i) = self
+            .hits
+            .iter()
+            .position(|s| s.is_some_and(|s| (s.plate_id, s.reach) == (hit.plate_id, hit.reach)))
+        {
+            if !before(&hit, self.hits[i].as_ref().unwrap()) {
+                return;
+            }
+            self.hits[i..].rotate_left(1);
+            self.hits[2] = None;
         }
-        self.hits = out;
+        if let Some(i) = self
+            .hits
+            .iter()
+            .position(|s| s.as_ref().is_none_or(|s| before(&hit, s)))
+        {
+            self.hits[i..].rotate_right(1);
+            self.hits[i] = Some(hit);
+        }
+    }
+
+    pub(crate) fn iter_mut(&mut self) -> impl Iterator<Item = &mut ChannelHit> {
+        self.hits.iter_mut().flatten()
     }
 
     pub fn iter(&self) -> impl Iterator<Item = &ChannelHit> {
@@ -244,7 +265,9 @@ impl ChannelQuery {
         self.delta = self.delta.max(other.delta);
         self.gallery = self.gallery.max(other.gallery);
         self.networks_considered += other.networks_considered;
-        self.extra.absorb(other.extra.iter().copied().collect());
+        for &hit in other.extra.iter() {
+            self.extra.insert(hit);
+        }
         if let Some(hit) = other.nearest {
             if self.nearest.is_none_or(|old| {
                 hit.distance_l.total_cmp(&old.distance_l).then_with(|| {
@@ -602,6 +625,10 @@ impl ChannelNetwork {
     /// заранее разложены по AABB с запасом на долину. Общий поиск T113 живёт
     /// в `Generator::drainage_channel_query` и объединяет такие запросы.
     pub fn query(&self, point: Vec2) -> ChannelQuery {
+        self.query_with_extra(point, false)
+    }
+
+    pub(crate) fn query_with_extra(&self, point: Vec2, extra: bool) -> ChannelQuery {
         let key = (
             (point.x / BASKET_L).floor() as i64,
             (point.z / BASKET_L).floor() as i64,
@@ -612,16 +639,19 @@ impl ChannelNetwork {
                 ..ChannelQuery::default()
             };
         };
-        let unique: BTreeSet<_> = candidates.iter().copied().collect();
+        // Build inserts each segment once into each basket in segment order.
         let mut out = ChannelQuery {
             networks_considered: 1,
             ..ChannelQuery::default()
         };
-        for k in unique {
+        for &k in candidates {
             let Some(segment_hit) = self.hit_segment(k, point) else {
                 continue;
             };
             let hit = segment_hit.hit;
+            if extra {
+                out.extra.insert(hit);
+            }
             out.core = out.core.max(hit.core_strength);
             out.bank = out.bank.max(segment_hit.bank_strength);
             out.valley = out.valley.max(hit.valley_strength);
@@ -1425,6 +1455,12 @@ mod tests {
                 .point
                 .add(segment.b.point.sub(segment.a.point).scale(0.5));
             assert!(net.query(mid).delta > 0.0);
+            let together = net.query_with_extra(mid, true);
+            assert_eq!(together.nearest, net.query(mid).nearest);
+            assert_eq!(
+                together.extra.iter().copied().collect::<Vec<_>>(),
+                net.query_all(mid, 3)
+            );
         }
     }
 
