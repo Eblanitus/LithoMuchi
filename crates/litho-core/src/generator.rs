@@ -3453,9 +3453,24 @@ impl Generator {
                     full.climate.surface.e_km
                 }
             }
-            Field::Pv => full.world.pv,
+            // ВО2-1 (§6.7): в коридоре calm ванильный jaggedness должен быть
+            // нулём. Старые версии не знают про маску и отдают PV как раньше.
+            Field::Pv => {
+                if self.params.version.is_water_update() && full.world.height.calm < 1.0 {
+                    -1.0
+                } else {
+                    full.world.pv
+                }
+            }
             Field::Factor => full.world.height.factor,
             Field::Jaggedness => full.world.height.jaggedness,
+            Field::Calm => {
+                if self.params.version.is_water_update() {
+                    full.world.height.calm
+                } else {
+                    1.0
+                }
+            }
         };
         if value.is_finite() {
             value
@@ -4075,6 +4090,7 @@ mod t160_tests {
                 Field::Offset => full.world.height.offset,
                 Field::Factor => full.world.height.factor,
                 Field::Jaggedness => full.world.height.jaggedness,
+                Field::Calm => full.world.height.calm,
                 Field::Lava => full.lava,
             };
             for f in fields {
@@ -4124,9 +4140,10 @@ mod t144_tests {
                 h.jaggedness.to_bits()
             );
         }
-        assert_eq!(Field::ALL.len(), 10);
+        assert_eq!(Field::ALL.len(), 11);
         assert_eq!(Field::parse("factor"), Some(Field::Factor));
         assert_eq!(Field::parse("jaggedness"), Some(Field::Jaggedness));
+        assert_eq!(Field::parse("calm"), Some(Field::Calm));
     }
 }
 
@@ -4177,7 +4194,18 @@ mod t141_tests {
             s.world.pv.to_bits()
         );
         assert_eq!(Field::parse("pv"), Some(Field::Pv));
-        assert_eq!(Field::ALL.len(), 10);
+        assert_eq!(Field::ALL.len(), 11);
+    }
+
+    #[test]
+    fn w_calm_zeroes_pv_in_the_river_corridor() {
+        let w = Generator::new(42, Mode::Gameplay, GenVersion::V1DevW).unwrap();
+        let (x, z) = nearest_river_core(&w, (-1536.535252886, -2374.660469732));
+        assert_eq!(w.field(Field::Calm, x, 0.0, z), 0.0);
+        assert_eq!(w.field(Field::Pv, x, 0.0, z), -1.0);
+        let dev = Generator::new(42, Mode::Gameplay, GenVersion::V1Dev).unwrap();
+        assert_eq!(dev.field(Field::Calm, x, 0.0, z), 1.0);
+        assert!(dev.field(Field::Pv, x, 0.0, z) < -0.8);
     }
 
     #[test]

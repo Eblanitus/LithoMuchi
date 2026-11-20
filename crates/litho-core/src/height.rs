@@ -42,6 +42,9 @@ pub struct HeightSample {
     pub bed_y: f64,
     /// T145: сила выреза русла/озера, 0…1.
     pub water_strength: f64,
+    /// ВО2-1 (§6.7): маска 3D-шума ванили. 1.0 — шум не трогаем (все версии,
+    /// кроме `v1-dev-w`), 0.0 — вода/пойма/озеро и их окрестность.
+    pub calm: f64,
 }
 
 impl Default for HeightSample {
@@ -54,6 +57,7 @@ impl Default for HeightSample {
             water_y: SEA_LEVEL,
             bed_y: SEA_LEVEL,
             water_strength: 0.0,
+            calm: 1.0,
         }
     }
 }
@@ -163,6 +167,7 @@ pub fn sample_micro(
         water_y: SEA_LEVEL,
         bed_y: y,
         water_strength: 0.0,
+        calm: 1.0,
     }
 }
 
@@ -511,6 +516,29 @@ pub fn with_water_w(
             best = Some((candidate, level, bed, strength));
         }
     }
+    // ВО2-1 (§6.7): маска 3D-шума. Вода, берег, пойма и озеро плюс подушка
+    // гасят шум полностью; снаружи — smoothstep по расстоянию до дна долины
+    // (для озера — до контура за вычетом подушки). Числа из `params.water`.
+    let lake_edge = water
+        .lakes
+        .water_hit
+        .or(water.lakes.shore_hit)
+        .filter(|hit| hit.kind.has_water())
+        .map(|hit| {
+            if hit.inside {
+                0.0
+            } else {
+                hit.distance_l * l - w.lake_calm_pad_blocks
+            }
+        });
+    let calm_d = d_floor_min.min(lake_edge.unwrap_or(f64::INFINITY));
+    let calm = if calm_d <= 0.0 || water.water > 0.0 {
+        0.0
+    } else if calm_d.is_finite() {
+        smoothstep(w.calm_blocks[0], w.calm_blocks[1], calm_d)
+    } else {
+        1.0
+    };
     // Итоговая поверхность: S0 с гаснущими у воды микробуграми, не выше неё.
     let gate = if d_floor_min.is_finite() {
         smoothstep(gate_lo, gate_hi, d_floor_min)
@@ -538,6 +566,7 @@ pub fn with_water_w(
         water_y,
         bed_y,
         water_strength: cut,
+        calm: clamp01(calm),
         ..s0_macro
     };
     height.offset = (surface - SURFACE_BASE) / OFFSET_SCALE;
@@ -728,6 +757,34 @@ mod tests {
         assert_eq!(cut.water_y, SEA_LEVEL);
         // Микробугры у воды гаснут: gate=0 (d_floor < 0).
         assert_eq!(cut.offset, (71.0 - SURFACE_BASE) / OFFSET_SCALE);
+    }
+
+    #[test]
+    fn w_calm_is_zero_in_valley_and_ramps_outside() {
+        let p = params_w(Mode::Gameplay);
+        let dry = with_water_w(s0(90.0), 0.0, &HydrologySample::default(), &p);
+        assert_eq!(dry.calm, 1.0, "вне воды 3D-шум ванили не трогаем");
+        let mut hydro = HydrologySample::default();
+        // w=8, fp=24: d=7 → d' = 7 − (4+2) = 1 → d_floor < 0 (пойма).
+        hydro.channels.nearest = Some(w_hit(
+            8.0,
+            7.0,
+            70.0,
+            crate::water_profile::ValleyClass::Plain,
+            0.0,
+        ));
+        let valley = with_water_w(s0(90.0), 0.0, &hydro, &p);
+        assert_eq!(valley.calm, 0.0, "пойма и берег гасят шум полностью");
+        // d=4+2+24+16 → d_floor=16 → конец smoothstep(4,16).
+        hydro.channels.nearest = Some(w_hit(
+            8.0,
+            4.0 + 2.0 + 24.0 + 16.0,
+            70.0,
+            crate::water_profile::ValleyClass::Plain,
+            0.0,
+        ));
+        let outer = with_water_w(s0(90.0), 0.0, &hydro, &p);
+        assert_eq!(outer.calm, 1.0, "за 16 блоками от дна долины шум полный");
     }
 
     #[test]
