@@ -38,6 +38,8 @@ public final class LithoFields {
     public static final int VERSION_V1_DEV = 2;
     /** Ф6-В1: вода выше уровня моря; пресеты Litospherity на Fabric. */
     public static final int VERSION_R2 = 3;
+    /** Ф6-В3/В4: водное обновление, версии пресетов на Fabric (ВО2-3). */
+    public static final int VERSION_W = 4;
 
     /** Сид, режим (0 научный, 1 геймплейный) и версия генератора ядра. */
     public record Binding(long seed, int mode, int version) {}

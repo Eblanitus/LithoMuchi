@@ -204,6 +204,34 @@ pub struct WorldSample {
     pub height: crate::height::HeightSample,
 }
 
+/// Тело водоёма в колонке (§6.8): что именно стоит в точке — река, озеро,
+/// болото и т. п. Расширяет `SurfaceKind` классами озёр и точечными типами,
+/// которые добавляются на этапах ВО3–ВО8.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Body {
+    #[default]
+    None,
+    River,
+    Lake,
+    InlandSea,
+    Swamp,
+    DryBasin,
+}
+
+impl Body {
+    /// Бит 12–17 в `info_code()` (§6.8).
+    pub const fn code(self) -> u32 {
+        match self {
+            Self::None => 0,
+            Self::River => 1,
+            Self::Lake => 2,
+            Self::InlandSea => 3,
+            Self::Swamp => 4,
+            Self::DryBasin => 5,
+        }
+    }
+}
+
 /// R2 (Ф6-В1, PLAN-WATER-FABRIC §5): вода колонки для заливки в игре.
 /// `level` — верхний блок воды + 1 (вода стоит на `level − 1`), `bed` — дно
 /// под зеркалом. `level = i32::MIN` значит «воды выше моря нет».
@@ -214,6 +242,15 @@ pub struct WaterColumn {
     /// Поверхность колонки после выреза (дно под водой, §4 инварианта).
     pub surface: i32,
     pub kind: crate::hydrology::SurfaceKind,
+    /// ВО2-2 (§6.8): тело водоёма.
+    pub body: Body,
+    /// ВО2-2 (§6.8): класс потока (спокойно, перекат, порог, каскад,
+    /// водопад, котёл).
+    pub flow: crate::water_profile::FlowClass,
+    /// ВО2-2 (§7.5): код материала дна (ставит Java).
+    pub bed_mat: u8,
+    /// ВО2-2 (§7.5): код материала берега (ставит Java).
+    pub shore_mat: u8,
 }
 
 impl WaterColumn {
@@ -243,6 +280,15 @@ impl WaterColumn {
             crate::hydrology::SurfaceKind::DeferredWater => 6,
         }
     }
+
+    /// ВО2-2 (§6.8): упакованный код для FFI ABI 3 — биты 0–3 `flow`,
+    /// 4–7 `bed_mat`, 8–11 `shore_mat`, 12–17 `body`.
+    pub const fn info_code(self) -> u32 {
+        (self.flow.code() & 0xF)
+            | ((self.bed_mat as u32 & 0xF) << 4)
+            | ((self.shore_mat as u32 & 0xF) << 8)
+            | ((self.body.code() as u32 & 0x3F) << 12)
+    }
 }
 
 impl Default for WaterColumn {
@@ -252,7 +298,25 @@ impl Default for WaterColumn {
             bed: Self::NONE,
             surface: Self::NONE,
             kind: crate::hydrology::SurfaceKind::Land,
+            body: Body::None,
+            flow: crate::water_profile::FlowClass::Calm,
+            bed_mat: 0,
+            shore_mat: 0,
         }
+    }
+}
+
+/// ВО2-2 (§6.8): `SurfaceKind` → `Body`; пока отражает существующие виды,
+/// точечные типы озёр добавляются на ВО4.
+fn body_from_kind(kind: crate::hydrology::SurfaceKind) -> Body {
+    match kind {
+        crate::hydrology::SurfaceKind::Land => Body::None,
+        crate::hydrology::SurfaceKind::River => Body::River,
+        crate::hydrology::SurfaceKind::Lake => Body::Lake,
+        crate::hydrology::SurfaceKind::InlandSea => Body::InlandSea,
+        crate::hydrology::SurfaceKind::Swamp => Body::Swamp,
+        crate::hydrology::SurfaceKind::DryBasin => Body::DryBasin,
+        crate::hydrology::SurfaceKind::DeferredWater => Body::None,
     }
 }
 
@@ -3533,10 +3597,16 @@ impl Generator {
         // не ниже зеркала» (§4, п. 2) и считается «сухое русло» в CI.
         let surface = height.surface_y.round() as i32;
         let kind = full.world.hydrology.kind;
+        let body = body_from_kind(kind);
+        // ВО2-2: класс потока и материалы заполняются профилем W/Java на
+        // этапах ВО3–ВО5; здесь — значения по умолчанию.
+        let flow = crate::water_profile::FlowClass::Calm;
         if height.water_strength <= 0.0 {
             return WaterColumn {
                 surface,
                 kind,
+                body,
+                flow,
                 ..WaterColumn::default()
             };
         }
@@ -3556,6 +3626,10 @@ impl Generator {
                 bed: height.bed_y.round() as i32,
                 surface,
                 kind,
+                body,
+                flow,
+                bed_mat: 0,
+                shore_mat: 0,
             };
         }
         // NaN и «не выше моря» — одно и то же: колонка остаётся сушей (clippy:
@@ -3564,6 +3638,8 @@ impl Generator {
             return WaterColumn {
                 surface,
                 kind,
+                body,
+                flow,
                 ..WaterColumn::default()
             };
         }
@@ -3572,6 +3648,10 @@ impl Generator {
             bed: height.bed_y.round() as i32,
             surface,
             kind,
+            body,
+            flow,
+            bed_mat: 0,
+            shore_mat: 0,
         }
     }
 

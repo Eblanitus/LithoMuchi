@@ -19,12 +19,12 @@ import java.util.Locale;
  * Библиотека лежит в jar: natives/&lt;os&gt;-&lt;arch&gt;/&lt;имя&gt;, при запуске копируется во временный файл.
  */
 public final class LithoNative {
-    public static final int EXPECTED_ABI = 2;
+    public static final int EXPECTED_ABI = 3;
     private static volatile LithoNative instance;
 
     private final int fieldCount;
     private final MethodHandle abiVersion, fieldCountH, coreVersion, genNew, genFree, fieldsBatch, lavaAquifer;
-    private final MethodHandle waterBatch;
+    private final MethodHandle waterBatch, waterBatch2;
 
     public static LithoNative get() {
         LithoNative local = instance;
@@ -82,6 +82,10 @@ public final class LithoNative {
         waterBatch = linker.downcallHandle(lib.findOrThrow("litho_water_batch"),
                 FunctionDescriptor.of(ValueLayout.JAVA_INT, ValueLayout.ADDRESS, ValueLayout.ADDRESS, ValueLayout.ADDRESS,
                         ValueLayout.JAVA_LONG, ValueLayout.ADDRESS, ValueLayout.ADDRESS, ValueLayout.ADDRESS));
+        // Ф6-В3/В4 (§6.8): ABI 3 — вода с упакованным кодом info.
+        waterBatch2 = linker.downcallHandle(lib.findOrThrow("litho_water_batch2"),
+                FunctionDescriptor.of(ValueLayout.JAVA_INT, ValueLayout.ADDRESS, ValueLayout.ADDRESS, ValueLayout.ADDRESS,
+                        ValueLayout.JAVA_LONG, ValueLayout.ADDRESS, ValueLayout.ADDRESS, ValueLayout.ADDRESS, ValueLayout.ADDRESS));
         int abi = abiVersion();
         if (abi != EXPECTED_ABI) throw new IllegalStateException("ABI ядра " + abi + ", ожидался " + EXPECTED_ABI);
         try {
@@ -181,6 +185,35 @@ public final class LithoNative {
             }
         }
 
+        /**
+         * Ф6-В3/В4 (§6.8): вода колонок ABI 3. Кроме уровня, дна и кода вида
+         * возвращает упакованный {@code info} (биты 0–3 flow, 4–7 bed_mat,
+         * 8–11 shore_mat, 12–17 body).
+         */
+        public WaterInfo water2(double[] xs, double[] zs) {
+            int n = xs.length;
+            try (Arena arena = Arena.ofConfined()) {
+                MemorySegment inX = arena.allocateFrom(ValueLayout.JAVA_DOUBLE, xs);
+                MemorySegment inZ = arena.allocateFrom(ValueLayout.JAVA_DOUBLE, zs);
+                MemorySegment level = arena.allocate(ValueLayout.JAVA_INT, n);
+                MemorySegment bed = arena.allocate(ValueLayout.JAVA_INT, n);
+                MemorySegment kind = arena.allocate(ValueLayout.JAVA_BYTE, n);
+                MemorySegment info = arena.allocate(ValueLayout.JAVA_INT, n);
+                int code = (int) waterBatch2.invokeExact(
+                        ptr, inX, inZ, (long) n, level, bed, kind, info);
+                if (code != 0) throw new IllegalStateException("litho_water_batch2 вернул " + code);
+                return new WaterInfo(
+                        level.toArray(ValueLayout.JAVA_INT),
+                        bed.toArray(ValueLayout.JAVA_INT),
+                        kind.toArray(ValueLayout.JAVA_BYTE),
+                        info.toArray(ValueLayout.JAVA_INT));
+            } catch (RuntimeException e) {
+                throw e;
+            } catch (Throwable t) {
+                throw new IllegalStateException(t);
+            }
+        }
+
         /** Лава в ячейке аквифера; 0 при ошибке ядра. */
         public double lavaAquifer(int cx, int cy, int cz) {
             try {
@@ -199,6 +232,12 @@ public final class LithoNative {
 
     /** Ф6-В2: ответ {@code litho_water_batch} по колонкам пакета. */
     public record WaterColumns(int[] level, int[] bed, byte[] kind) {
+        /** Воды выше моря нет. */
+        public static final int NONE = Integer.MIN_VALUE;
+    }
+
+    /** Ф6-В3/В4: ответ {@code litho_water_batch2} — плюс упакованный код {@code info}. */
+    public record WaterInfo(int[] level, int[] bed, byte[] kind, int[] info) {
         /** Воды выше моря нет. */
         public static final int NONE = Integer.MIN_VALUE;
     }

@@ -64,7 +64,10 @@ public final class LithoWaterFeature implements Feature {
     @Override
     public boolean place(WorldGenLevel level, ChunkGenerator chunkGenerator, RandomSource random, BlockPos origin) {
         LithoFields.Binding binding = LithoFields.world();
-        if (binding == null || binding.version() != LithoFields.VERSION_R2) return false;
+        if (binding == null
+                || (binding.version() != LithoFields.VERSION_R2
+                        && binding.version() != LithoFields.VERSION_W))
+            return false;
         int x0 = origin.getX() & ~15;
         int z0 = origin.getZ() & ~15;
         // Один вызов ядра на чанк: 18×18 колонок, начиная с блока левее/выше чанка.
