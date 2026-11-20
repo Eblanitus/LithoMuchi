@@ -1,0 +1,41 @@
+{
+  "name": "water-update-vo3-plate-stages",
+  "note": "Время сети отдельно от уровней на тех же двух плитах в обоих режимах; ошибки сохранённого маршрута относительно S0. Порог 200 мс неизменен.",
+  "mode": "gameplay",
+  "version": "v1-dev-w",
+  "seeds": [
+    42
+  ],
+  "at": [],
+  "step": 0,
+  "commands": [
+    [
+      "s0-node-cost",
+      "--version",
+      "v1-dev-w",
+      "--seed",
+      "42",
+      "--mode",
+      "gameplay",
+      "--plates",
+      "2",
+      "--analytic-only",
+      "--with-levels",
+      "--json"
+    ],
+    [
+      "s0-node-cost",
+      "--version",
+      "v1-dev-w",
+      "--seed",
+      "42",
+      "--mode",
+      "scientific",
+      "--plates",
+      "2",
+      "--analytic-only",
+      "--with-levels",
+      "--json"
+    ]
+  ]
+}
