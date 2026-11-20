@@ -267,6 +267,8 @@ final class LithoCiWater {
     private static long[] measureVo2(ServerLevel level, LithoNative.Generator gen, List<String> report) {
         final int side = 20;
         long corridor = 0, fit = 0, shore = 0, walls = 0, wet = 0, covered = 0;
+        var highLand = new java.util.TreeMap<String, Integer>();
+        var roofBlocks = new java.util.TreeMap<String, Integer>();
         long[] misses = new long[4]; // dry low/high, wet low/high
         double[] xs = new double[side * side], zs = new double[xs.length];
         for (var chunk : loadedChunks(level)) {
@@ -302,11 +304,19 @@ final class LithoCiWater {
                     if (expected != Integer.MIN_VALUE) {
                         corridor++;
                         if (Math.abs(top - expected) <= 2) fit++;
-                        else misses[(dry ? 0 : 2) + (top > expected ? 1 : 0)]++;
+                        else {
+                            misses[(dry ? 0 : 2) + (top > expected ? 1 : 0)]++;
+                            if (dry && top > expected) highLand.merge(level.getBlockState(
+                                    new BlockPos((int) xs[k], top, (int) zs[k])).getBlock().toString(), 1, Integer::sum);
+                        }
                     }
                     if (!dry) {
                         wet++;
-                        if (top >= lv) covered++;
+                        if (top >= lv) {
+                            covered++;
+                            roofBlocks.merge(level.getBlockState(new BlockPos((int) xs[k], top, (int) zs[k]))
+                                    .getBlock().toString(), 1, Integer::sum);
+                        }
                     } else if (nearby != Integer.MIN_VALUE && !exempt) {
                         shore++;
                         if (top - nearby >= 4) walls++;
@@ -315,6 +325,8 @@ final class LithoCiWater {
             }
         }
         report.add(String.format("calm_fit промахи: суша ниже/выше %d/%d, вода ниже/выше %d/%d", misses[0], misses[1], misses[2], misses[3]));
+        report.add("верх сухих колонок выше прогноза: " + highLand);
+        report.add("верх накрытых колонок: " + roofBlocks);
         return new long[] {corridor, fit, shore, walls, wet, covered};
     }
 

@@ -110,7 +110,9 @@ public final class LithoWaterFeature implements Feature {
                 for (int y = from + 1; y <= Math.min(from + CLEAR_ABOVE, maxY); y++) {
                     BlockPos pos = new BlockPos(x, y, z);
                     BlockState above = level.getBlockState(pos);
-                    if (above.isAir() || above.is(Blocks.WATER) || above.is(Blocks.BEDROCK)) continue;
+                    // The receiver recreates permitted incoming steps/falls below.
+                    // Do not preserve unrelated aquifer sources above this mirror.
+                    if (above.isAir() || above.is(Blocks.BEDROCK)) continue;
                     level.setBlock(pos, Blocks.AIR.defaultBlockState(), 2);
                 }
                 int lowest = from + 1;
@@ -143,50 +145,16 @@ public final class LithoWaterFeature implements Feature {
                 int k = j * SIDE + i;
                 int surface = water.level()[k];
                 if (surface == LithoNative.WaterColumns.NONE || surface <= SEA_LEVEL || lowestSource[k] == Integer.MAX_VALUE) continue;
-                // Ступень сверху: соседняя колонка русла выше, и шаг ниже кладёт в
-                // эту колонку текущую воду на высоте `surface` (над её зеркалом).
-                // Этот слой тоже надо закрыть сбоку от колонок без воды R2, иначе
-                // вода ступени растекается за русло (устье в море, CI water
-                // gameplay: рост текущей 5,2 % при пороге 5 %).
-                boolean stepped = false;
-                if (water.kind()[k] == KIND_RIVER) {
-                    for (int[] step : SIDES) {
-                        int uk = (j + step[1]) * SIDE + (i + step[0]);
-                        int upper = water.level()[uk];
-                        if (water.kind()[uk] == KIND_RIVER && upper != LithoNative.WaterColumns.NONE && upper > surface) stepped = true;
-                    }
-                }
-                for (int[] step : SIDES) {
-                    int nk = (j + step[1]) * SIDE + (i + step[0]);
-                    int neighbour = water.level()[nk];
-                    if (stepped && surface <= maxY && (neighbour == LithoNative.WaterColumns.NONE || neighbour <= SEA_LEVEL)) {
-                        BlockPos lip = new BlockPos((int) xs[nk], surface, (int) zs[nk]);
-                        if (level.getBlockState(lip).isAir()) {
-                            level.setBlock(lip, Blocks.DIRT.defaultBlockState(), 2);
-                            seals++;
-                        }
-                    }
-                    boolean riverStep = water.kind()[k] == KIND_RIVER && water.kind()[nk] == KIND_RIVER && neighbour != LithoNative.WaterColumns.NONE && neighbour > SEA_LEVEL && neighbour < surface;
-                    int top = Math.min(surface - 1, maxY);
-                    int bottom = lowestSource[k];
-                    for (int y = top; y >= bottom; y--) {
-                        if (neighbour != LithoNative.WaterColumns.NONE && neighbour > y) continue;
-                        // Ступень (§3 п. 3): один слой воздуха над нижним зеркалом, не весь
-                        // столб до высокой колонки. Иначе вода уходит дальше 1 блока от ядра
-                        // (метрика «протечки», CI water: 4 при пороге 0).
-                        if (riverStep && y != neighbour) continue;
+                // Only dry neighbours receive solid seals. In particular a
+                // level-63 river or a lower lake is not a hole to fill with dirt.
+                int top = Math.min(surface - 1, maxY);
+                if (incomingTop(water, k) >= surface) top = Math.min(surface, maxY);
+                for (int[] d : SIDES) {
+                    int nk = k + d[1] * SIDE + d[0];
+                    if (water.level()[nk] != LithoNative.WaterColumns.NONE) continue;
+                    for (int y = top; y >= lowestSource[k]; y--) {
                         BlockPos pos = new BlockPos((int) xs[nk], y, (int) zs[nk]);
-                        if (!level.getBlockState(pos).isAir()) continue;
-                        if (riverStep) {
-                            BlockState flowing = Fluids.FLOWING_WATER.getFlowing(7, false).createLegacyBlock();
-                            level.setBlock(pos, flowing, 2);
-                            // Живой режим: тик жидкости, чтобы ступень начала растекаться.
-                            // В 26.3 у ProtoChunk нет markPosForPostprocessing (CI 44489540790).
-                            if (LIVE_STEPS) {
-                                level.scheduleTick(pos, Fluids.FLOWING_WATER, 1);
-                            }
-                            steps++;
-                        } else {
+                        if (level.getBlockState(pos).isAir()) {
                             level.setBlock(pos, Blocks.DIRT.defaultBlockState(), 2);
                             seals++;
                         }
@@ -213,25 +181,27 @@ public final class LithoWaterFeature implements Feature {
                 }
             }
         }
-        // ВО2-2 (§8.2 п. 3): водопад. `FallTop` и сосед ниже на ≥ 2 блока —
-        // падающая вода от верхнего зеркала до нижнего, без тиков.
+        // Write the lip in the RECEIVING chunk. The one-block prediction halo
+        // is available even when the upper chunk has not run its feature yet.
+        // This pass is after clearing: chunk order cannot erase an intended
+        // fall or leave a stale extra source above the mirror.
         for (int j = 1; j <= 16; j++) {
             for (int i = 1; i <= 16; i++) {
                 int k = j * SIDE + i;
-                int info = water.info()[k];
-                if (LithoNative.WaterColumns.body(info) != 1) continue;
-                if (LithoNative.WaterColumns.flow(info) != 4) continue;
-                int upper = water.level()[k];
-                if (upper == LithoNative.WaterColumns.NONE || upper <= SEA_LEVEL) continue;
-                for (int[] step : SIDES) {
-                    int nk = (j + step[1]) * SIDE + (i + step[0]);
-                    int lower = water.level()[nk];
-                    if (lower == LithoNative.WaterColumns.NONE || upper - lower < 2) continue;
-                    for (int y = Math.min(upper - 1, maxY); y >= Math.max(lower, minY); y--) {
-                        BlockPos pos = new BlockPos((int) xs[nk], y, (int) zs[nk]);
-                        BlockState there = level.getBlockState(pos);
-                        if (there.is(Blocks.BEDROCK)) continue;
-                        level.setBlock(pos, fallingWater(), 2);
+                if (lowestSource[k] == Integer.MAX_VALUE) continue;
+                int lower = water.level()[k];
+                int top = incomingTop(water, k);
+                if (top < lower) continue;
+                boolean fall = top > lower;
+                BlockState flow = fall ? fallingWater() : Fluids.FLOWING_WATER.getFlowing(7, false).createLegacyBlock();
+                for (int y = Math.max(lower, minY); y <= Math.min(top, maxY); y++) {
+                    BlockPos pos = new BlockPos((int) xs[k], y, (int) zs[k]);
+                    BlockState old = level.getBlockState(pos);
+                    if (old.is(Blocks.BEDROCK) || (!fall && !old.isAir())) continue;
+                    level.setBlock(pos, flow, 2);
+                    if (!fall) {
+                        if (LIVE_STEPS) level.scheduleTick(pos, Fluids.FLOWING_WATER, 1);
+                        steps++;
                     }
                 }
             }
@@ -240,6 +210,24 @@ public final class LithoWaterFeature implements Feature {
         SEALS.addAndGet(seals);
         STEPS.addAndGet(steps);
         return placed > 0;
+    }
+
+    /** Highest incoming fluid block, or NONE. One-block steps must have a
+     * predicted upper source at this face; only a marked fall spans a tall drop. */
+    private static int incomingTop(LithoNative.WaterColumns water, int k) {
+        int lower = water.level()[k];
+        int top = LithoNative.WaterColumns.NONE;
+        for (int[] d : SIDES) {
+            int nk = k + d[1] * SIDE + d[0];
+            int upper = water.level()[nk];
+            if (water.kind()[nk] != KIND_RIVER || upper <= lower) continue;
+            if (upper - lower >= 2 && LithoNative.WaterColumns.flow(water.info()[nk]) == 4) {
+                top = Math.max(top, upper - 1);
+            } else if (water.kind()[k] == KIND_RIVER && upper == lower + 1) {
+                top = Math.max(top, lower);
+            }
+        }
+        return top;
     }
 
     /** ВО2-2 (§7.5): блоки материалов по коду из битов info. */
