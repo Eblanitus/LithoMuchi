@@ -2273,9 +2273,8 @@ impl Generator {
         for index in 0..level.len() {
             let up = level[index];
             let down = level.get(index + 1).copied().unwrap_or(level[index]);
-            if up > sea || down > sea {
-                segments[index] = Some((up, down));
-            }
+            // Level 63 is a valid W reach: carve its bed for the vanilla sea.
+            segments[index] = Some((up, down));
         }
         Ok(WReachProfile {
             levels: segments,
@@ -2407,39 +2406,38 @@ impl Generator {
         let Some(&node) = net.nodes().get(source) else {
             return Ok(None);
         };
-        let node_point = node.point;
         let mut best: Option<f64> = None;
-        // Внутриплитовые родители: звенья той же сети, чей рот — наш исток.
-        for (index, candidate) in channels.reaches().iter().enumerate() {
-            if index == reach || candidate.mouth_node != source {
-                continue;
-            }
+        for &index in &levels.w_parents[reach] {
             if let Some(level) = self.w_parent_end(levels, net, index, in_progress)? {
-                best = Some(best.map_or(level, |old: f64| old.min(level)));
+                best = Some(best.map_or(level, |old| old.min(level)));
             }
         }
-        // Межплитовые: сети соседних плит, у которых звено заканчивается
-        // передачей (`Handoff`) в этот узел.
-        for plate in plates_near(node_point, 2.0, self.seed, &self.params) {
-            if plate.id == net.plate_id() {
+        // A parent on another plate must have actually handed discharge to
+        // this cell. Interior sources and local confluences need no neighbor
+        // networks (or lake rings on those neighbors).
+        if net.runoff().nodes()[source].inflow_mm_l2 <= 0.0 {
+            return Ok(best);
+        }
+        let own = self.drainage_topo(net.routing().plate())?;
+        let wanted = |cell| cell == node.cell;
+        for plate in own.neighbors_touching(&wanted) {
+            let topo = self.drainage_topo(&plate)?;
+            if !topo.may_hand_to(&own, &wanted) {
                 continue;
             }
-            let Ok(other_net) = self.drainage_network(&plate) else {
+            let other_net = self.drainage_network(&plate)?;
+            let Some(mouth) = other_net.routing().node_index(node.cell) else {
                 continue;
             };
-            let other_levels = self.w_plate_levels(&plate, &other_net)?;
             for (index, candidate) in other_net.channels().reaches().iter().enumerate() {
-                if candidate.end != crate::channel::ReachEnd::Handoff {
+                if candidate.end != crate::channel::ReachEnd::Handoff
+                    || candidate.mouth_node != mouth
+                {
                     continue;
                 }
-                let Some(&mouth) = other_net.nodes().get(candidate.mouth_node) else {
-                    continue;
-                };
-                if mouth.point.sub(node_point).len() > 1e-9 {
-                    continue;
-                }
+                let other_levels = self.w_plate_levels(&plate, &other_net)?;
                 if let Some(level) = self.w_parent_end(&other_levels, &other_net, index, None)? {
-                    best = Some(best.map_or(level, |old: f64| old.min(level)));
+                    best = Some(best.map_or(level, |old| old.min(level)));
                 }
             }
         }
@@ -3871,7 +3869,11 @@ impl Generator {
         // Поверхность нужна и без воды: по ней проверяется инвариант «берег
         // не ниже зеркала» (§4, п. 2) и считается «сухое русло» в CI.
         let surface = height.surface_y.round() as i32;
-        let kind = full.world.hydrology.kind;
+        let kind = if water_update {
+            height.wet_kind
+        } else {
+            full.world.hydrology.kind
+        };
         if height.water_strength <= 0.0 {
             return self.dry_water_column(&full, surface);
         }
@@ -3884,7 +3886,7 @@ impl Generator {
         if level.is_finite()
             && level <= crate::height::SEA_LEVEL
             && kind == crate::hydrology::SurfaceKind::River
-            && full.world.hydrology.channels.core > 0.0
+            && (water_update || full.world.hydrology.channels.core > 0.0)
         {
             let column = WaterColumn {
                 level: crate::height::SEA_LEVEL as i32,

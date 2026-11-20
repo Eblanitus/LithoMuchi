@@ -42,6 +42,8 @@ pub struct HeightSample {
     pub bed_y: f64,
     /// T145: сила выреза русла/озера, 0…1.
     pub water_strength: f64,
+    /// W: which cut supplied the water, not the biome of the surrounding shore.
+    pub wet_kind: crate::hydrology::SurfaceKind,
     /// ВО2-1 (§6.7): маска 3D-шума ванили. 1.0 — шум не трогаем (все версии,
     /// кроме `v1-dev-w`), 0.0 — вода/пойма/озеро и их окрестность.
     pub calm: f64,
@@ -57,6 +59,7 @@ impl Default for HeightSample {
             water_y: SEA_LEVEL,
             bed_y: SEA_LEVEL,
             water_strength: 0.0,
+            wet_kind: crate::hydrology::SurfaceKind::Land,
             calm: 1.0,
         }
     }
@@ -167,6 +170,7 @@ pub fn sample_micro(
         water_y: SEA_LEVEL,
         bed_y: y,
         water_strength: 0.0,
+        wet_kind: crate::hydrology::SurfaceKind::Land,
         calm: 1.0,
     }
 }
@@ -561,6 +565,11 @@ pub fn with_water_w(
         water_y,
         bed_y: surface,
         water_strength: cut,
+        wet_kind: if cut > 0.0 {
+            crate::hydrology::SurfaceKind::River
+        } else {
+            crate::hydrology::SurfaceKind::Land
+        },
         calm: clamp01(calm),
         ..s0_macro
     };
@@ -588,6 +597,13 @@ pub fn with_water_w(
             height.bed_y = height.surface_y;
             height.water_y = mirror;
             height.water_strength = hit.water_strength;
+            height.wet_kind = match hit.kind {
+                crate::lake::LakeKind::InlandSea | crate::lake::LakeKind::SeaConnected => {
+                    crate::hydrology::SurfaceKind::InlandSea
+                }
+                crate::lake::LakeKind::Swamp => crate::hydrology::SurfaceKind::Swamp,
+                _ => crate::hydrology::SurfaceKind::Lake,
+            };
             height.offset = (height.surface_y - SURFACE_BASE) / OFFSET_SCALE;
             return height;
         }
@@ -1003,6 +1019,32 @@ mod tests {
         assert_eq!(at(hit, 1.0, false), 90.0);
         hit.rift = true;
         assert_eq!(at(hit, 1.0, true), 90.0);
+    }
+
+    #[test]
+    fn w_river_crossing_a_dry_lake_island_keeps_river_identity() {
+        use crate::hydrology::SurfaceKind;
+        let p = Params::defaults(GenVersion::V1DevW, Mode::Gameplay);
+        let mut water = HydrologySample {
+            kind: SurfaceKind::Lake,
+            ..Default::default()
+        };
+        water.channels.nearest = Some(w_hit(
+            8.0,
+            0.0,
+            SEA_LEVEL,
+            crate::water_profile::ValleyClass::Plain,
+            0.0,
+        ));
+        water.lakes.water_hit = Some(lake_level(1.0, 0.5, Some(85.0)));
+        let island = with_water_w(base_at(86.0), 0.0, &water, &p);
+        assert_eq!(island.wet_kind, SurfaceKind::River);
+        assert_eq!(island.water_y, SEA_LEVEL);
+        assert!(island.bed_y < SEA_LEVEL);
+        assert_eq!(
+            with_water_w(base_at(80.0), 0.0, &water, &p).wet_kind,
+            SurfaceKind::Lake
+        );
     }
 
     #[test]
