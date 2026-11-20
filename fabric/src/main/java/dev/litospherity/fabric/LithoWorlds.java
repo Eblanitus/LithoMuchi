@@ -29,8 +29,7 @@ final class LithoWorlds {
                     .orElse(false);
             int version = ours ? LithoFields.VERSION_W : LithoFields.VERSION_V1_DEV;
             int mode = level.getHeight() >= 512 ? 0 : 1;
-            LithoFields.VERSIONS.put(level.getChunkSource().randomState(), version);
-            LithoFields.MODES.put(level.getChunkSource().randomState(), mode);
+            LithoFields.bind(level.getChunkSource().randomState(), mode, version);
             if (level.dimension().equals(net.minecraft.world.level.Level.OVERWORLD)) {
                 LithoFields.setWorld(new LithoFields.Binding(level.getSeed(), mode, version));
             }

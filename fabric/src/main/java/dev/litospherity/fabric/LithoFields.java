@@ -4,7 +4,6 @@ import com.mojang.serialization.Codec;
 import com.mojang.serialization.DataResult;
 import com.mojang.serialization.MapCodec;
 import java.lang.reflect.Field;
-import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.WeakHashMap;
@@ -44,11 +43,35 @@ public final class LithoFields {
     /** Сид, режим (0 научный, 1 геймплейный) и версия генератора ядра. */
     public record Binding(long seed, int mode, int version) {}
 
-    /** Режим мира по RandomState (0 научный, 1 геймплейный); заполняет миксин. */
-    public static final Map<RandomState, Integer> MODES = Collections.synchronizedMap(new WeakHashMap<>());
+    // A sampler can compile before ServerLevelEvents.LOAD identifies the
+    // preset. Keep a slot per RandomState instead of capturing the then-current
+    // native generator forever. Sampling takes one volatile read, no map lock.
+    private static final class Slot {
+        private volatile LithoNative.Generator gen;
+        private Binding binding;
 
-    /** Ф6-В1: версия генератора по RandomState; заполняет {@link LithoWorlds}. */
-    public static final Map<RandomState, Integer> VERSIONS = Collections.synchronizedMap(new WeakHashMap<>());
+        Slot(Binding initial) { update(initial); }
+
+        void update(Binding next) {
+            if (!next.equals(binding)) {
+                gen = generator(next);
+                binding = next;
+            }
+        }
+    }
+
+    private static final Map<RandomState, Slot> SLOTS = new WeakHashMap<>();
+
+    private static synchronized Slot slot(RandomState state) {
+        return SLOTS.computeIfAbsent(state, s -> new Slot(new Binding(s.seed(), 1, VERSION_V1_DEV)));
+    }
+
+    public static synchronized void bind(RandomState state, int mode, int version) {
+        Binding next = new Binding(state.seed(), mode, version);
+        Slot slot = SLOTS.get(state);
+        if (slot == null) SLOTS.put(state, new Slot(next));
+        else slot.update(next);
+    }
 
     /** Привязка Overworld для фич (Ф6-В3/В4): у сервера один такой мир. */
     private static volatile Binding world;
@@ -84,24 +107,22 @@ public final class LithoFields {
     }
 
     /** Сид и режим из контекста компиляции (анонимный класс RandomState хранит ссылку на него). */
-    static Binding binding(DensityFunction.CompileContext ctx) {
+    private static Slot slot(DensityFunction.CompileContext ctx) {
         try {
             Field outer = ctx.getClass().getDeclaredField("this$0");
             outer.setAccessible(true);
             RandomState state = (RandomState) outer.get(ctx);
-            return binding(state);
+            return slot(state);
         } catch (ReflectiveOperationException | ClassCastException e) {
             long seed = ctx.createRandom(Identifier.fromNamespaceAndPath(LithoMod.MOD_ID, "seed")).nextLong();
             LithoMod.LOG.warn("Litospherity: сид мира недоступен ({}), беру производный {}", e, seed);
-            return new Binding(seed, 1, VERSION_V1_DEV);
+            return new Slot(new Binding(seed, 1, VERSION_V1_DEV));
         }
     }
 
     /** Привязка по RandomState: режим из миксина, версия — из {@link LithoWorlds}. */
-    public static Binding binding(RandomState state) {
-        int mode = MODES.getOrDefault(state, 1);
-        int version = VERSIONS.getOrDefault(state, VERSION_V1_DEV);
-        return new Binding(state.seed(), mode, version);
+    public static synchronized Binding binding(RandomState state) {
+        return slot(state).binding;
     }
 
     private abstract static class Sampler implements DensitySampler {
@@ -121,12 +142,12 @@ public final class LithoFields {
 
         @Override
         public DensitySampler compileSampler(CompileContext ctx) {
-            LithoNative.Generator gen = generator(binding(ctx));
+            Slot source = slot(ctx);
             int index = FIELDS.indexOf(name);
             return new Sampler() {
                 @Override
                 public float sampleValue(SamplerContext c, int x, int y, int z) {
-                    return (float) gen.field(index, x, z);
+                    return (float) source.gen.field(index, x, z);
                 }
             };
         }
@@ -146,11 +167,11 @@ public final class LithoFields {
 
         @Override
         public DensitySampler compileSampler(CompileContext ctx) {
-            LithoNative.Generator gen = generator(binding(ctx));
+            Slot source = slot(ctx);
             return new Sampler() {
                 @Override
                 public float sampleValue(SamplerContext c, int x, int y, int z) {
-                    return (float) gen.lavaAquifer(x, y, z);
+                    return (float) source.gen.lavaAquifer(x, y, z);
                 }
             };
         }

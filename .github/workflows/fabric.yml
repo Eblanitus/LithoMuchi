@@ -9,7 +9,8 @@ on:
   workflow_dispatch:
 concurrency:
   group: fabric-${{ github.ref }}
-  cancel-in-progress: true
+  # Сохранить уже запущенный серверный замер и его jar при следующем push.
+  cancel-in-progress: false
 jobs:
   natives:
     strategy:

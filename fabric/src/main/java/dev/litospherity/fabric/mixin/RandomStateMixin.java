@@ -20,6 +20,6 @@ public abstract class RandomStateMixin {
             at = @At("RETURN"))
     private static void litospherity$mode(HolderGetter<NormalNoise> noises, long seed, NoiseGeneratorSettings settings,
                                           CallbackInfoReturnable<RandomState> cir) {
-        LithoFields.MODES.put(cir.getReturnValue(), settings.noiseSettings().height() >= 512 ? 0 : 1);
+        LithoFields.bind(cir.getReturnValue(), settings.noiseSettings().height() >= 512 ? 0 : 1, LithoFields.VERSION_V1_DEV);
     }
 }
