@@ -70,6 +70,10 @@ pub enum RiverNetError {
     InvalidInput { cell: Cell },
     InvalidClimate { cell: Cell },
     BrokenInvariant { node: usize, reason: &'static str },
+    /// Цикл стока: звено является своим предком вверх по течению. Уровень
+    /// входа на такой ветви неопределён; вызовы сборки по такому звену
+    /// завершаются этой ошибкой, а не переполнением стека.
+    Cycle { node: usize },
 }
 
 impl std::fmt::Display for RiverNetError {
@@ -90,6 +94,9 @@ impl std::fmt::Display for RiverNetError {
             }
             Self::BrokenInvariant { node, reason } => {
                 write!(f, "нарушен инвариант стока в узле {node}: {reason}")
+            }
+            Self::Cycle { node } => {
+                write!(f, "цикл стока через узел {node}: звено — свой предок")
             }
         }
     }

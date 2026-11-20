@@ -389,6 +389,36 @@ struct PlateLevels {
     /// стека: коррекция приёмника (п. 4) смотрит вниз по течению и заново
     /// запрашивает звенья, которые ещё стоят на стеке вызова.
     w_ends: Mutex<HashMap<usize, f64>>,
+    /// Родители каждого звена (`mouth_node == source_node`): по индексу
+    /// звена. Строится один раз при сборке плиты, дальше только читается;
+    /// без карты обход предков (`w_build_ancestors`) пересканировал бы
+    /// весь список звеньев на каждый шаг.
+    w_parents: Vec<Vec<usize>>,
+    /// Звенья, которые сейчас стоят на стеке сборки (6.3, п. 3/8): цикл в
+    /// сети стока встречается на круговых дорогах реки и без отметки
+    /// завершился бы взаимной рекурсией `build → entry → parent → build`.
+    w_in_progress: Mutex<HashMap<usize, std::thread::ThreadId>>,
+}
+
+/// Все родители звеньев сети (`mouth_node == source_node`), по индексу
+/// звена. O(N) по словарю «узел-рот → звенья».
+fn w_parents_of(net: &crate::drainage::RiverNet) -> Vec<Vec<usize>> {
+    let channels = net.channels();
+    let reaches = channels.reaches();
+    let mut by_mouth: HashMap<usize, Vec<usize>> = HashMap::with_capacity(reaches.len());
+    for (index, candidate) in reaches.iter().enumerate() {
+        by_mouth.entry(candidate.mouth_node).or_default().push(index);
+    }
+    reaches
+        .iter()
+        .enumerate()
+        .map(|(index, reach)| {
+            by_mouth
+                .get(&reach.source_node)
+                .map(|list| list.iter().copied().filter(|&i| i != index).collect())
+                .unwrap_or_default()
+        })
+        .collect()
 }
 
 /// ВО1-1: профиль одного звена — уровни и классы (6.3, п. 7).
@@ -1599,13 +1629,163 @@ impl Generator {
             .get_or_build(plate.id, || self.build_w_plate_levels(net))
     }
 
+    /// п. 3/8 (6.3, «порядок звеньев — сверху вниз по течению»): итеративный
+    /// постфиксный обход предков звена. Вход звена собирается из концов
+    /// родителей, а в длинной реке родителей — целая цепочка: рекурсивный
+    /// обход переполнял бы стек на больших сетях (звенья стоят друг в друге
+    /// полными сборками профилей). Здесь обход явный: предки собираются в
+    /// расширенном порядке обхода и строятся в обратном, от истоков вниз по
+    /// течению; после этого сборка каждого звена — без рекурсии вглубь.
+    /// Порядок построения звеньев больше не влияет на значения (уровни
+    /// концов `w_ends` — пред-подпорные и не переписываются).
+    fn w_build_ancestors(
+        &self,
+        levels: &PlateLevels,
+        net: &crate::drainage::RiverNet,
+        reach: usize,
+    ) {
+        // Постфиксный (топологический) обход вверх по течению: сначала
+        // истоки, потом их дети. Обратный расширенный порядок не является
+        // топологическим при слияниях рек (ромбовидная ветвь) и может
+        // потерять звено, не дождавшись его предка — поэтому обход явный,
+        // со спуск/возврат-маркерами.
+        let reaches = net.channels().reaches();
+        let mut seen = vec![false; reaches.len()];
+        let mut post = Vec::new();
+        let mut stack = vec![(reach, false)];
+        while let Some((r, done)) = stack.pop() {
+            if done {
+                post.push(r);
+                continue;
+            }
+            if seen[r] {
+                continue;
+            }
+            seen[r] = true;
+            stack.push((r, true));
+            for &parent in &levels.w_parents[r] {
+                if !seen[parent] {
+                    stack.push((parent, false));
+                }
+            }
+        }
+        // Предки чаще уже построены; строим в топологическом порядке — от
+        // истоков вниз по течению. Звено строим напрямую (не через
+        // `w_reach_profile`): предки уже построены на этом же проходе,
+        // сборка не требует рекурсии.
+        for &r in &post {
+            let built = levels
+                .w_profiles
+                .lock()
+                .expect("профиль русел W не отравлен")
+                .contains_key(&r);
+            if built {
+                continue;
+            }
+            // Звено, которое уже стоит на стеке сборки (цикл), здесь не
+            // строим: его соберёт контур по запросу и либо доведёт до конца,
+            // либо вернёт Cycle. Без отметки цикл вернулся бы в помеченное
+            // звено второй раз.
+            let mine = std::thread::current().id();
+            let marked = {
+                let mut marks = levels.w_in_progress.lock().expect("путь сборки W не отравлен");
+                match marks.get(&r) {
+                    Some(&owner) if owner == mine => false, // цикл: звено на нашем стеке
+                    Some(_) => false,                        // чужой собирает — возьмёт свою
+                    None => {
+                        marks.insert(r, mine);
+                        true
+                    }
+                }
+            };
+            if !marked {
+                continue;
+            }
+            // Ошибка звена не рвет обход: пустое звено — нормальное значение,
+            // а наверх ошибку поднимет сборка по запросу.
+            let build_result = self.build_w_reach_levels(levels, net, r);
+            levels
+                .w_in_progress
+                .lock()
+                .expect("путь сборки W не отравлен")
+                .remove(&r);
+            if let Ok(built) = build_result {
+                levels
+                    .w_profiles
+                    .lock()
+                    .expect("профиль русел W не отравлен")
+                    .insert(r, Arc::new(built));
+            }
+        }
+    }
+
     /// Профиль одного звена: считается один раз, уровни и классы заодно.
+    /// Звено, которое уже стоит на стеке сборки (цикл в сети стока), получает
+    /// `RiverNetError::Cycle` вместо бесконечной взаимной рекурсии — такую
+    /// ветвь `w_parent_end` считает головой реки (уровень берётся из
+    /// оставшихся притоков или из приёмника).
     fn w_reach_profile(
         &self,
         levels: &PlateLevels,
         net: &crate::drainage::RiverNet,
         reach: usize,
     ) -> Result<ReachProfiles, RiverNetError> {
+        // Отметка с владельцем. `Cycle` — только при повторном входе того же
+        // потока (настоящий цикл в сети стока). Чужой поток, который уже
+        // собирает это звено, собирает независимо (как до отметчика):
+        // значение то же (сборка чистая), чужая отметка не трогается.
+        let mine = std::thread::current().id();
+        let mark = {
+            let mut marks = levels.w_in_progress.lock().expect("путь сборки W не отравлен");
+            match marks.get(&reach) {
+                Some(&owner) if owner == mine => None,       // цикл того же потока
+                Some(_) => Some(false),                       // чужой собирает параллельно
+                None => {
+                    marks.insert(reach, mine);
+                    Some(true)                                // наша отметка
+                }
+            }
+        };
+        match mark {
+            None => {
+                let node = net
+                    .channels()
+                    .reaches()
+                    .get(reach)
+                    .map(|r| r.source_node)
+                    .unwrap_or(reach);
+                Err(RiverNetError::Cycle { node })
+            }
+            Some(false) => self.w_reach_profile_inner(levels, net, reach),
+            Some(true) => {
+                let out = self.w_reach_profile_inner(levels, net, reach);
+                levels
+                    .w_in_progress
+                    .lock()
+                    .expect("путь сборки W не отравлен")
+                    .remove(&reach);
+                out
+            }
+        }
+    }
+
+    fn w_reach_profile_inner(
+        &self,
+        levels: &PlateLevels,
+        net: &crate::drainage::RiverNet,
+        reach: usize,
+    ) -> Result<ReachProfiles, RiverNetError> {
+        if let Some(found) = levels
+            .w_profiles
+            .lock()
+            .expect("профиль русел W не отравлен")
+            .get(&reach)
+        {
+            return Ok(Arc::clone(found));
+        }
+        // Сначала предки (без рекурсии) — иначе длинная цепочка звеньев
+        // переполнила бы стек полными сборками друг в друге.
+        self.w_build_ancestors(levels, net, reach);
         if let Some(found) = levels
             .w_profiles
             .lock()
@@ -1624,12 +1804,15 @@ impl Generator {
     }
 
     /// Озёра `W` пока по правилу R2 (6.4): их поверхность — ещё не `S0`.
-    /// Русла считаются лениво в профиле звена (`w_reach_profile`).
+    /// Русла считаются лениво в профиле звена (`w_reach_profile`); карта
+    /// родителей нужна обходу предков без пересканирования списка.
     fn build_w_plate_levels(
         &self,
         net: &crate::drainage::RiverNet,
     ) -> Result<PlateLevels, RiverNetError> {
-        self.build_r2_plate_levels(net)
+        let mut levels = self.build_r2_plate_levels(net)?;
+        levels.w_parents = w_parents_of(net);
+        Ok(levels)
     }
 
     /// ВО1-1 (6.3, пп. 1–6, 7, 8): профиль уровня реки `W` по звену.
@@ -1930,7 +2113,13 @@ impl Generator {
         {
             return Ok(Some(*end));
         }
-        let _ = self.w_reach_profile(levels, net, reach)?;
+        match self.w_reach_profile(levels, net, reach) {
+            Ok(_) => {}
+            // Цикл вверх по течению: ветвь не задаёт уровень входа — считаем
+            // её головой реки (уровень даёт вторая ветвь или приёмник).
+            Err(RiverNetError::Cycle { .. }) => return Ok(None),
+            Err(other) => return Err(other),
+        }
         // После сборки ячейка заполнена; звено с пустым источником — None.
         if let Some(end) = levels
             .w_ends
