@@ -11,7 +11,8 @@
 //! задаются флагами `--window 8000 --step 8` (геймплей) и
 //! `--window 24000 --step 16` (научный).
 
-use std::collections::VecDeque;
+use litho_core::water_profile::WaterBody;
+use std::collections::{BTreeMap, VecDeque};
 
 use litho_core::Generator;
 use litho_core::SurfaceKind;
@@ -37,6 +38,7 @@ pub struct Stats {
     pub gorge_p99: f64,
     /// Отдельные водоёмы (связная группа ≥ `min_lake_blocks²` площади).
     pub lakes: u64,
+    pub lake_types: BTreeMap<&'static str, u64>,
     /// Озёр на 100 L² суши (10.1).
     pub lakes_per_100l2: f64,
     /// Площадь воды озёр от площади суши, %.
@@ -66,6 +68,7 @@ impl Stats {
 struct Cell {
     /// Вода озера/внутреннего моря/болота выше моря.
     lake: bool,
+    body: WaterBody,
     river: bool,
     /// Вода выше моря (любая).
     water: bool,
@@ -221,17 +224,18 @@ impl Window {
                 // Attribute one body to the sampled cell closest to its centroid
                 // (the centroid itself can be dry in a crescent-shaped lake).
                 let center = (sum_i / count as f64, sum_j / count as f64);
-                let mut nearest = (f64::INFINITY, NO_ZONE);
+                let mut nearest = (f64::INFINITY, NO_ZONE, WaterBody::Land);
                 for (i, j) in body {
                     let cell = self.at(i, j);
                     let d2 = (i as f64 - center.0).powi(2) + (j as f64 - center.1).powi(2);
                     if d2 < nearest.0 {
-                        nearest = (d2, cell.zone);
+                        nearest = (d2, cell.zone, cell.body);
                     }
                     if let Some(area) = zone_water.get_mut(cell.zone as usize) {
                         *area += 1;
                     }
                 }
+                *out.lake_types.entry(nearest.2.name()).or_default() += 1;
                 if let Some(lakes) = out.zone_lakes.get_mut(nearest.1 as usize) {
                     *lakes += 1;
                 }
@@ -385,6 +389,11 @@ fn sample_cell(generator: &Generator, x: i64, z: i64) -> Cell {
     }
     Cell {
         wall,
+        body: if generator.params().version.is_water_update() {
+            column.body
+        } else {
+            WaterBody::from(kind)
+        },
         lake: water
             && matches!(
                 kind,
@@ -489,6 +498,7 @@ mod tests {
         for cell in &mut cells[..3] {
             cell.water = true;
             cell.lake = true;
+            cell.body = WaterBody::GlacialLake;
             cell.level = 80;
         }
         cells[0].zone = 0;
@@ -502,6 +512,7 @@ mod tests {
         };
         let stats = w.stats(false);
         assert_eq!(stats.lakes, 1);
+        assert_eq!(stats.lake_types["glacial"], 1);
         assert_eq!(stats.zone_lakes[..2], [0, 1]);
         assert_eq!(stats.zone_land[..2], [1, 3]);
         assert_eq!(stats.zone_area_pct[0], 100.0);

@@ -349,10 +349,19 @@ fn cluster(x: f64, z: f64) -> (i64, i64) {
 /// Поиск идёт кольцами от 8 L до `radius_l`: сеть стока строится по плитам,
 /// и платить за 128 L сразу незачем, если вода нашлась в 8 L.
 pub fn points(generator: &Generator, center: (f64, f64), radius_l: f64) -> Vec<WaterPoint> {
+    points_filtered(generator, center, radius_l, None)
+}
+
+pub fn points_filtered(
+    generator: &Generator,
+    center: (f64, f64),
+    radius_l: f64,
+    wanted: Option<&str>,
+) -> Vec<WaterPoint> {
     let limit = radius_l.max(8.0);
     let mut radius = 8.0_f64;
     loop {
-        let found = points_at(generator, center, radius);
+        let found = points_at(generator, center, radius, wanted);
         if !found.is_empty() || radius >= limit {
             return found;
         }
@@ -361,7 +370,12 @@ pub fn points(generator: &Generator, center: (f64, f64), radius_l: f64) -> Vec<W
 }
 
 /// Один проход по плитам в радиусе `radius_l`, без колец.
-fn points_at(generator: &Generator, center: (f64, f64), radius_l: f64) -> Vec<WaterPoint> {
+fn points_at(
+    generator: &Generator,
+    center: (f64, f64),
+    radius_l: f64,
+    wanted: Option<&str>,
+) -> Vec<WaterPoint> {
     let point = generator.macro_point(center.0, center.1);
     let shift = generator.spawn_shift();
     let params = generator.params();
@@ -377,18 +391,49 @@ fn points_at(generator: &Generator, center: (f64, f64), radius_l: f64) -> Vec<Wa
             if !lake.kind.has_water() || lake.level_km.is_none() {
                 continue;
             }
-            let x = (lake.center.x - shift.x) * l;
-            let z = (lake.center.z - shift.z) * l;
-            let column = generator.water_column(x, z);
-            if column.has_water() && column.level >= HIGH_LAKE_LEVEL {
+            // A centroid can be on an island. Also try the lowest route node
+            // and only publish columns which really contain lake water.
+            let bottom = net.nodes()[net.depressions()[lake.depression].bottom_node].point;
+            for point in [lake.center, bottom] {
+                let pos = point.sub(shift).scale(l);
+                let (x, z) = (pos.x.round(), pos.z.round());
+                let column = generator.water_column(x, z);
+                let w = generator.params().version.is_water_update();
+                let kind = if w {
+                    column.body.name()
+                } else {
+                    lake.kind.as_str()
+                };
+                if !column.has_water()
+                    || (w
+                        && !matches!(
+                            column.kind,
+                            litho_core::SurfaceKind::Lake
+                                | litho_core::SurfaceKind::InlandSea
+                                | litho_core::SurfaceKind::Swamp
+                        ))
+                {
+                    continue;
+                }
+                if wanted.map_or(column.level < HIGH_LAKE_LEVEL, |q| q != "lake" && q != kind) {
+                    continue;
+                }
                 lakes.entry(cluster(x, z)).or_insert(WaterPoint {
                     x: x as i64,
                     z: z as i64,
                     level: column.level,
-                    kind: lake.kind.as_str(),
-                    note: "high_lake",
+                    kind,
+                    note: if column.level >= HIGH_LAKE_LEVEL {
+                        "high_lake"
+                    } else {
+                        "lake"
+                    },
                 });
+                break;
             }
+        }
+        if wanted.is_some() {
+            continue;
         }
         let channels = net.channels();
         for segment in channels.segments() {

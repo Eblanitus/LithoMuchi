@@ -682,7 +682,30 @@ fn cmd_water_points(args: &[String]) -> Result<(), String> {
             .map_err(|e| format!("--radius-l: {e}"))?,
         None => 32.0,
     };
-    let points = water::points(&generator, (opts.center_x, opts.center_z), radius_l);
+    let wanted = value(args, "--type");
+    if let Some(kind) = wanted.as_deref() {
+        if !opts.version.is_water_update()
+            || !matches!(
+                kind,
+                "lake"
+                    | "ordinary"
+                    | "inland_sea"
+                    | "swamp"
+                    | "rift"
+                    | "strike_slip"
+                    | "highland"
+                    | "glacial"
+            )
+        {
+            return Err("--type для W: lake, ordinary, inland_sea, swamp, rift, strike_slip, highland, glacial".into());
+        }
+    }
+    let points = water::points_filtered(
+        &generator,
+        (opts.center_x, opts.center_z),
+        radius_l,
+        wanted.as_deref(),
+    );
     println!(
         "water-points: {} мест (сид {}, режим {}, радиус {radius_l} L)",
         points.len(),
@@ -944,6 +967,13 @@ fn cmd_water_stats(args: &[String]) -> Result<(), String> {
         fields.push(format!("\"gorge_p99\":{:.2}", stats.gorge_p99));
         fields.push(format!("\"lakes\":{}", stats.lakes));
         fields.push(format!("\"lakes_per_100l2\":{:.3}", stats.lakes_per_100l2));
+        let types = stats
+            .lake_types
+            .iter()
+            .map(|(k, n)| format!("\"{k}\":{n}"))
+            .collect::<Vec<_>>()
+            .join(",");
+        fields.push(format!("\"lake_types\":{{{types}}}"));
         fields.push(format!("\"lake_area_pct\":{:.3}", stats.lake_area_pct));
         fields.push(format!("\"lake_fit_pct\":{:.2}", stats.lake_fit_pct));
         fields.push(format!("\"lakes_ge_80\":{}", stats.lakes_ge_80));

@@ -61,6 +61,7 @@ pub struct DrainageInput {
     pub route_km: f64,
     /// Dominant morphoclimate zone for W depression policy.
     pub zone: usize,
+    pub lake_signals: crate::water_profile::LakeSignals,
     pub outlet: DrainageOutlet,
 }
 
@@ -169,6 +170,7 @@ pub struct TopoNode {
     pub route_km: f64,
     /// Dominant morphoclimate zone for W depression policy.
     pub zone: usize,
+    pub lake_signals: crate::water_profile::LakeSignals,
     pub outlet: DrainageOutlet,
     /// Уровень, с которого вода узла уходит через собственные выходы плиты
     /// (море, рифт, трансформ), не заходя в соседние плиты. `INFINITY` —
@@ -255,6 +257,7 @@ impl PlateTopo {
                 owner: owner.map(|o| o.id),
                 route_km: input.route_km,
                 zone: input.zone,
+                lake_signals: input.lake_signals,
                 outlet: input.outlet,
                 escape_km: f64::INFINITY,
             });
@@ -327,7 +330,7 @@ impl PlateTopo {
         &self.neighbors
     }
 
-    fn node_at(&self, cell: Cell) -> Option<&TopoNode> {
+    pub(crate) fn node_at(&self, cell: Cell) -> Option<&TopoNode> {
         self.nodes
             .binary_search_by_key(&cell, |node| node.cell)
             .ok()

@@ -444,6 +444,7 @@ mod r2_limit_tests {
         let params = Params::defaults(GenVersion::V1DevR2, Mode::Gameplay);
         let (channels, mut lakes, climate) = empty();
         let mut hit = LakeHit {
+            body: crate::water_profile::WaterBody::Lake,
             plate_id: 0,
             lake: 0,
             depression: 0,
@@ -632,6 +633,7 @@ mod tests {
 
     fn lake(kind: LakeKind, level: f64) -> LakeHit {
         LakeHit {
+            body: crate::water_profile::WaterBody::Lake,
             plate_id: 1,
             lake: 0,
             depression: 0,

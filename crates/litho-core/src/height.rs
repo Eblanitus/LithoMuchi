@@ -578,13 +578,16 @@ pub fn with_water_w(
     if let Some(hit) = water.lakes.water_hit.filter(|hit| hit.inside) {
         if let Some(mirror) = hit.level_blocks.filter(|level| land_y < *level) {
             let scientific = params.mode == crate::Mode::Scientific;
-            let (k, max_depth) = if hit.rift {
-                (1.5, if scientific { 40. } else { 24. })
-            } else if hit.kind == crate::lake::LakeKind::InlandSea {
-                (0.5, if scientific { 24. } else { 16. })
-            } else {
-                (0.5, if scientific { 12. } else { 8. })
-            };
+            let (k, max_depth) =
+                if hit.rift || hit.body == crate::water_profile::WaterBody::RiftLake {
+                    (1.5, if scientific { 40. } else { 24. })
+                } else if hit.body == crate::water_profile::WaterBody::GlacialLake {
+                    (1.0, if scientific { 20. } else { 12. })
+                } else if hit.kind == crate::lake::LakeKind::InlandSea {
+                    (0.5, if scientific { 24. } else { 16. })
+                } else {
+                    (0.5, if scientific { 12. } else { 8. })
+                };
             let dz = mirror - land_y;
             let bed = if dz <= 1.0 {
                 mirror - 1.0
@@ -626,11 +629,12 @@ pub(crate) fn lake_beach_w(
     if !wet_zone || height.water_strength > 0.0 {
         return height;
     }
-    if let Some(hit) = water
-        .lakes
-        .shore_hit
-        .filter(|h| !h.inside && !h.rift && h.kind == crate::lake::LakeKind::Lake)
-    {
+    if let Some(hit) = water.lakes.shore_hit.filter(|h| {
+        !h.inside
+            && !h.rift
+            && h.kind == crate::lake::LakeKind::Lake
+            && h.body == crate::water_profile::WaterBody::Lake
+    }) {
         let distance = hit.distance_l * params.block.l_blocks;
         if let Some(level) = hit
             .level_blocks
@@ -1236,6 +1240,7 @@ mod tests {
 
     fn lake_hit(level_km: f64, max_depth_km: f64) -> crate::lake::LakeHit {
         crate::lake::LakeHit {
+            body: crate::water_profile::WaterBody::Lake,
             plate_id: 1,
             lake: 0,
             depression: 0,

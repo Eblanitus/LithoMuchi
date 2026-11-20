@@ -414,6 +414,7 @@ type ReachProfiles = Arc<WReachProfile>;
 struct PlateLevels {
     /// По индексу `LakeNetwork::lakes()`: зеркало озера, блоки.
     lakes: Vec<Option<f64>>,
+    w_lake_bodies: Vec<WaterBody>,
     /// Уровни русел по номеру звена: по сегментам звена, зеркало в начале и в
     /// конце. Уровень между ними интерполируется: так ступень остаётся не
     /// больше блока на блок русла. Считаются лениво, по одному звену: у плиты
@@ -538,6 +539,7 @@ struct WProbe {
     /// Вес морфозоны 6 (холодные горы).
     cold_mountain_weight: f64,
     zone: usize,
+    lake_signals: crate::water_profile::LakeSignals,
 }
 
 impl Generator {
@@ -668,6 +670,12 @@ impl Generator {
             plateau: crust.plateau,
             cold_mountain_weight: morpho.values[6],
             zone: morpho.dominant(),
+            lake_signals: crate::water_profile::LakeSignals::new(
+                crust.rift_weight,
+                crust.boundary_weights[6],
+                crust.plateau,
+                morpho.values[0] + morpho.values[1] + morpho.values[6],
+            ),
         })
     }
 }
@@ -1140,6 +1148,7 @@ impl Generator {
                                     route_km: f64::NAN,
                                     outlet: DrainageOutlet::None,
                                     zone: 0,
+                                    lake_signals: Default::default(),
                                 };
                                 let Some(sample) = sample else {
                                     return invalid;
@@ -1164,6 +1173,7 @@ impl Generator {
                                         DrainageOutlet::None
                                     },
                                     zone: probe.zone,
+                                    lake_signals: probe.lake_signals,
                                 }
                             },
                         );
@@ -1191,6 +1201,7 @@ impl Generator {
                     DrainageInput {
                         route_km: surface.e_km,
                         zone: 0,
+                        lake_signals: Default::default(),
                         outlet,
                     }
                 },
@@ -1582,7 +1593,12 @@ impl Generator {
                     hit.level_blocks = levels.lakes.get(hit.lake).copied().flatten();
                 }
                 if water_update {
-                    if let Some(hit) = lakes_here.shore_hit.as_mut() {
+                    for hit in lakes_here
+                        .water_hit
+                        .iter_mut()
+                        .chain(lakes_here.shore_hit.iter_mut())
+                    {
+                        hit.body = levels.w_lake_bodies[hit.lake];
                         hit.level_blocks = levels.lakes.get(hit.lake).copied().flatten();
                     }
                 }
@@ -1988,6 +2004,23 @@ impl Generator {
             w_parents: w_parents_of(net),
             ..PlateLevels::default()
         };
+        let mut votes = vec![crate::water_profile::LakeVotes::default(); net.depressions().len()];
+        if net
+            .lakes()
+            .lakes()
+            .iter()
+            .any(|lake| lake.kind == crate::lake::LakeKind::Lake)
+        {
+            let topo = self.drainage_topo(net.routing().plate())?;
+            for node in net.nodes().iter().filter(|n| n.in_plate) {
+                if let Some(d) = node.depression {
+                    let source = topo
+                        .node_at(node.cell)
+                        .ok_or(RiverNetError::InvalidInput { cell: node.cell })?;
+                    votes[d].add(source.lake_signals);
+                }
+            }
+        }
         for lake in net.lakes().lakes() {
             let level = if let (true, Some(spill), Some(ring)) =
                 (lake.kind.has_water(), lake.level_km, lake.rings.first())
@@ -2009,6 +2042,17 @@ impl Generator {
             } else {
                 None
             };
+            use crate::lake::LakeKind;
+            let body = match lake.kind {
+                LakeKind::Lake => votes[lake.depression].body(
+                    level.unwrap_or(crate::height::SEA_LEVEL),
+                    self.params.mode == Mode::Scientific,
+                ),
+                LakeKind::InlandSea | LakeKind::SeaConnected => WaterBody::InlandSea,
+                LakeKind::Swamp => WaterBody::Swamp,
+                _ => WaterBody::DryBasin,
+            };
+            levels.w_lake_bodies.push(body);
             levels.lakes.push(level);
         }
         Ok(levels)
@@ -3719,7 +3763,7 @@ impl Generator {
     /// ВО2-2: класс течения колонки. Озёра, болота и приморские русла —
     /// спокойные; класс реки берётся из ближайшего звена с уровнем.
     fn water_flow(&self, full: &FullSample) -> FlowClass {
-        if full.world.hydrology.kind != crate::hydrology::SurfaceKind::River {
+        if full.world.height.wet_kind != crate::hydrology::SurfaceKind::River {
             return FlowClass::Calm;
         }
         let l = self.params.block.l_blocks;
@@ -3812,8 +3856,17 @@ impl Generator {
             .flatten()
             .filter(|(d, y, _, _)| *d <= beach && *y >= crate::height::SEA_LEVEL)
             .min_by(|a, b| a.0.total_cmp(&b.0))?;
+        let rocky_lake = kind == SurfaceKind::Lake
+            && water
+                .lakes
+                .shore_hit
+                .is_some_and(|lake| lake.body != WaterBody::Lake);
         Some((
-            self.water_materials(full, kind, flow).1,
+            if rocky_lake {
+                BedMaterial::Gravel
+            } else {
+                self.water_materials(full, kind, flow).1
+            },
             level.round() as u16,
         ))
     }
@@ -3899,6 +3952,15 @@ impl Generator {
         let flow = self.water_flow(full.as_ref());
         let (bed_mat, shore_mat) = self.water_materials(full.as_ref(), kind, flow);
         let mut column = column.with_details(flow, bed_mat, shore_mat);
+        if kind == crate::hydrology::SurfaceKind::Lake {
+            if let Some(lake) = full.world.hydrology.lakes.water_hit {
+                column.body = lake.body;
+                if lake.body != WaterBody::Lake {
+                    column.shore_mat = BedMaterial::Gravel;
+                    column.bed_mat = BedMaterial::Gravel;
+                }
+            }
+        }
         use crate::water_profile::ValleyClass;
         column.wall_exempt = flow == FlowClass::FallTop
             || full.world.hydrology.channels.nearest.is_some_and(|hit| {

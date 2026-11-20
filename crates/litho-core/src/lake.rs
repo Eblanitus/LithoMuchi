@@ -72,6 +72,8 @@ pub struct LakeSurface {
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct LakeHit {
+    /// Subtype set from the whole basin by the W levels pass.
+    pub body: crate::water_profile::WaterBody,
     pub plate_id: u64,
     pub lake: usize,
     pub depression: usize,
@@ -560,6 +562,7 @@ impl LakeNetwork {
                 }
             }
             let hit = LakeHit {
+                body: crate::water_profile::WaterBody::Lake,
                 plate_id: self.plate_id,
                 lake: k,
                 depression: lake.depression,

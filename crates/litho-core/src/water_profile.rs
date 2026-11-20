@@ -144,9 +144,28 @@ pub enum WaterBody {
     Swamp,
     DryBasin,
     DeferredWater,
+    RiftLake,
+    StrikeSlipLake,
+    HighlandLake,
+    GlacialLake,
 }
 
 impl WaterBody {
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Land => "land",
+            Self::River => "river",
+            Self::Lake => "ordinary",
+            Self::InlandSea => "inland_sea",
+            Self::Swamp => "swamp",
+            Self::DryBasin => "dry_basin",
+            Self::DeferredWater => "deferred_water",
+            Self::RiftLake => "rift",
+            Self::StrikeSlipLake => "strike_slip",
+            Self::HighlandLake => "highland",
+            Self::GlacialLake => "glacial",
+        }
+    }
     /// Биты 12–17 в `info_code()` (§6.8).
     pub const fn code(self) -> u32 {
         match self {
@@ -157,6 +176,53 @@ impl WaterBody {
             Self::Swamp => 4,
             Self::DryBasin => 5,
             Self::DeferredWater => 6,
+            Self::RiftLake => 7,
+            Self::StrikeSlipLake => 8,
+            Self::HighlandLake => 9,
+            Self::GlacialLake => 10,
+        }
+    }
+}
+
+/// §5.4: keep independent votes (one node can be both rift and cold).
+/// Four bits cached beside route height avoid resampling crust and climate.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct LakeSignals(u8);
+impl LakeSignals {
+    pub(crate) fn new(rift: f64, transform: f64, plateau: f64, cold: f64) -> Self {
+        Self(
+            [rift, transform, plateau, cold]
+                .into_iter()
+                .enumerate()
+                .fold(0, |bits, (i, w)| bits | (u8::from(w >= 0.5) << i)),
+        )
+    }
+}
+
+#[derive(Clone, Copy, Default)]
+pub(crate) struct LakeVotes {
+    count: usize,
+    votes: [usize; 4],
+}
+impl LakeVotes {
+    pub(crate) fn add(&mut self, flags: LakeSignals) {
+        self.count += 1;
+        for (i, v) in self.votes.iter_mut().enumerate() {
+            *v += usize::from((flags.0 >> i) & 1);
+        }
+    }
+    pub(crate) fn body(self, level: f64, scientific: bool) -> WaterBody {
+        let majority = |i: usize| self.count != 0 && self.votes[i] >= self.count.div_ceil(2);
+        if majority(0) {
+            WaterBody::RiftLake
+        } else if majority(1) {
+            WaterBody::StrikeSlipLake
+        } else if majority(2) || level >= if scientific { 110. } else { 90. } {
+            WaterBody::HighlandLake
+        } else if majority(3) {
+            WaterBody::GlacialLake
+        } else {
+            WaterBody::Lake
         }
     }
 }
@@ -313,6 +379,19 @@ mod tests {
     use super::*;
     use crate::mode::Mode;
     use crate::params::Params;
+
+    #[test]
+    fn basin_class_uses_half_inclusive_votes_in_priority_order() {
+        let mut votes = LakeVotes::default();
+        votes.add(LakeSignals::new(0., 0., 0., 1.));
+        assert_eq!(votes.body(89., false), WaterBody::GlacialLake);
+        assert_eq!(votes.body(90., false), WaterBody::HighlandLake);
+        assert_eq!(votes.body(109., true), WaterBody::GlacialLake);
+        votes.add(LakeSignals::new(0.5, 1., 1., 1.));
+        assert_eq!(votes.body(120., true), WaterBody::RiftLake);
+        votes.add(LakeSignals::new(0., 1., 0., 0.));
+        assert_eq!(votes.body(120., true), WaterBody::StrikeSlipLake);
+    }
 
     fn water() -> WaterUpdateParams {
         Params::defaults(crate::version::GenVersion::V1DevW, Mode::Gameplay).water
