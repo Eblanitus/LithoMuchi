@@ -893,8 +893,8 @@ fn cmd_water_stats(args: &[String]) -> Result<(), String> {
             .enumerate()
             .map(|(index, name)| {
                 format!(
-                    "{{\"name\":\"{name}\",\"lakes\":{}}}",
-                    stats.zone_lakes[index]
+                    "{{\"name\":\"{name}\",\"lakes\":{},\"land\":{},\"lakes_per_100l2\":{:.3},\"lake_area_pct\":{:.3}}}",
+                    stats.zone_lakes[index], stats.zone_land[index], stats.zone_density[index], stats.zone_area_pct[index]
                 )
             })
             .collect();
@@ -917,6 +917,10 @@ fn cmd_water_stats(args: &[String]) -> Result<(), String> {
         fields.push(format!("\"lake_fit_pct\":{:.2}", stats.lake_fit_pct));
         fields.push(format!("\"lakes_ge_80\":{}", stats.lakes_ge_80));
         fields.push(format!("\"walls_pct\":{:.2}", stats.walls_pct));
+        fields.push(format!(
+            "\"flooded_land_pct\":{:.3}",
+            stats.flooded_land_pct
+        ));
         fields.push(format!("\"zones\":[{}]", zones.join(",")));
         println!("{{{}}}", fields.join(","));
         return Ok(());
@@ -942,10 +946,14 @@ fn cmd_water_stats(args: &[String]) -> Result<(), String> {
         "  на 100 L² суши: {:.2} озера; стены у воды: {:.2} % колонок берега",
         stats.lakes_per_100l2, stats.walls_pct
     );
+    println!("  затоплено суши: {:.3} %", stats.flooded_land_pct);
     let mut parts = Vec::new();
     for (index, name) in stats.zone_names().iter().enumerate() {
-        if stats.zone_lakes[index] > 0 {
-            parts.push(format!("{name} {}", stats.zone_lakes[index]));
+        if stats.zone_land[index] > 0 {
+            parts.push(format!(
+                "{name}: {} ({:.2}/100 L², {:.2}% площади)",
+                stats.zone_lakes[index], stats.zone_density[index], stats.zone_area_pct[index]
+            ));
         }
     }
     if !parts.is_empty() {

@@ -49,6 +49,10 @@ pub struct Stats {
     pub walls_pct: f64,
     /// Озёра по доминирующей морфозоне: штук и % площади суши зоны.
     pub zone_lakes: [u64; MORPHO_ZONES],
+    pub zone_density: [f64; MORPHO_ZONES],
+    pub zone_area_pct: [f64; MORPHO_ZONES],
+    pub zone_land: [u64; MORPHO_ZONES],
+    pub flooded_land_pct: f64,
 }
 
 impl Stats {
@@ -83,6 +87,7 @@ pub struct Window {
     height: usize,
     step: i64,
     cells: Vec<Cell>,
+    l_blocks: f64,
 }
 
 impl Window {
@@ -111,6 +116,7 @@ impl Window {
             height,
             step,
             cells,
+            l_blocks: generator.params().block.l_blocks,
         })
     }
 
@@ -124,6 +130,8 @@ impl Window {
         let step_area = (self.step * self.step) as f64;
         let mut lake_area = 0.0f64;
         let mut lake_fit_area = 0.0f64;
+        let mut zone_water = [0_u64; MORPHO_ZONES];
+        let mut flooded = 0;
         let mut gorge: Vec<f64> = Vec::new();
         // Минимальная площадь водоёма: 64 / 256 блоков² (§10.1).
         let min_area = if mode_scientific { 256.0 } else { 64.0 };
@@ -133,6 +141,12 @@ impl Window {
                 let cell = self.at(i, j);
                 if is_land(cell.dry as f64) {
                     out.land += 1;
+                    if cell.water {
+                        flooded += 1;
+                    }
+                    if let Some(land) = out.zone_land.get_mut(cell.zone as usize) {
+                        *land += 1;
+                    }
                 }
                 if cell.river {
                     out.river_columns += 1;
@@ -158,7 +172,8 @@ impl Window {
                 let mut count = 0u64;
                 let mut fit_cells = 0u64;
                 let mut level_max = i32::MIN;
-                let mut zone: Option<usize> = None;
+                let mut body = Vec::new();
+                let (mut sum_i, mut sum_j) = (0.0, 0.0);
                 visited[index] = true;
                 queue.push_back((i, j));
                 while let Some((ci, cj)) = queue.pop_front() {
@@ -168,9 +183,9 @@ impl Window {
                         fit_cells += 1;
                     }
                     level_max = level_max.max(cell.level);
-                    if zone.is_none() && (cell.zone as usize) < MORPHO_ZONES {
-                        zone = Some(cell.zone as usize);
-                    }
+                    body.push((ci, cj));
+                    sum_i += ci as f64;
+                    sum_j += cj as f64;
                     let neighbors = [
                         (ci.wrapping_sub(1), cj),
                         (ci + 1, cj),
@@ -199,8 +214,22 @@ impl Window {
                 if level_max >= 80 {
                     out.lakes_ge_80 += 1;
                 }
-                if let Some(zone) = zone {
-                    out.zone_lakes[zone] += 1;
+                // Attribute one body to the sampled cell closest to its centroid
+                // (the centroid itself can be dry in a crescent-shaped lake).
+                let center = (sum_i / count as f64, sum_j / count as f64);
+                let mut nearest = (f64::INFINITY, NO_ZONE);
+                for (i, j) in body {
+                    let cell = self.at(i, j);
+                    let d2 = (i as f64 - center.0).powi(2) + (j as f64 - center.1).powi(2);
+                    if d2 < nearest.0 {
+                        nearest = (d2, cell.zone);
+                    }
+                    if let Some(area) = zone_water.get_mut(cell.zone as usize) {
+                        *area += 1;
+                    }
+                }
+                if let Some(lakes) = out.zone_lakes.get_mut(nearest.1 as usize) {
+                    *lakes += 1;
                 }
             }
         }
@@ -244,7 +273,18 @@ impl Window {
         }
 
         let land_area = out.land as f64 * step_area;
-        let land_l2 = land_area / (128.0 * 128.0);
+        let l2 = self.l_blocks.powi(2);
+        let land_l2 = land_area / l2;
+        if out.land > 0 {
+            out.flooded_land_pct = 100.0 * flooded as f64 / out.land as f64;
+        }
+        for (z, &area) in zone_water.iter().enumerate() {
+            let land = out.zone_land[z] as f64;
+            if land > 0.0 {
+                out.zone_density[z] = 100.0 * out.zone_lakes[z] as f64 * l2 / (land * step_area);
+                out.zone_area_pct[z] = 100.0 * area as f64 / land;
+            }
+        }
         out.lakes_per_100l2 = if land_l2 > 0.0 {
             100.0 * out.lakes as f64 / land_l2
         } else {
@@ -287,11 +327,12 @@ fn sample_cell(generator: &Generator, x: i64, z: i64) -> Cell {
     let (fx, fz) = (x as f64, z as f64);
     let WaterColumn { level, kind, .. } = generator.water_column(fx, fz);
     let water = level != WaterColumn::NONE && level > SEA;
-    let dry = generator
-        .dry_surface_at(fx, fz)
-        .ok()
-        .flatten()
-        .unwrap_or(SEA as f64);
+    let dry = if generator.params().version.is_water_update() {
+        generator.s0_at(fx, fz).map(|s| s.macro_y)
+    } else {
+        generator.dry_surface_at(fx, fz).ok().flatten()
+    }
+    .unwrap_or(SEA as f64);
     let zone = generator
         .morpho_weights(fx, fz)
         .map(|weights| {
@@ -315,5 +356,45 @@ fn sample_cell(generator: &Generator, x: i64, z: i64) -> Cell {
         level,
         dry: dry as f32,
         zone,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn crossing_body_counts_once_but_area_is_split_by_zone() {
+        let mut cells = vec![
+            Cell {
+                dry: 70.0,
+                zone: 1,
+                ..Cell::default()
+            };
+            4
+        ];
+        for cell in &mut cells[..3] {
+            cell.water = true;
+            cell.lake = true;
+            cell.level = 80;
+        }
+        cells[0].zone = 0;
+        let w = Window {
+            width: 4,
+            height: 1,
+            step: 8,
+            l_blocks: 256.0,
+            cells,
+        };
+        let stats = w.stats(false);
+        assert_eq!(stats.lakes, 1);
+        assert_eq!(stats.zone_lakes[..2], [0, 1]);
+        assert_eq!(stats.zone_land[..2], [1, 3]);
+        assert_eq!(stats.zone_area_pct[0], 100.0);
+        assert_eq!(stats.zone_area_pct[1], 200.0 / 3.0);
+        assert_eq!(stats.lakes_per_100l2, 25600.0);
+        assert_eq!(stats.flooded_land_pct, 75.0);
+        assert_eq!(stats.lake_fit_pct, 100.0);
+        assert_eq!(w.stats(true).lakes, 0); // 192 < 256 blocks²
     }
 }

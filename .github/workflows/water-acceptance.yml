@@ -9,6 +9,15 @@ name: water-acceptance
 on:
   workflow_dispatch:
     inputs:
+      version:
+        description: "Версия генератора"
+        type: choice
+        options: [v1-dev-r2, v1-dev-w]
+        default: v1-dev-r2
+      all_seeds:
+        description: "Дополнительно проверить 16 сидов Д-084"
+        type: boolean
+        default: true
       seeds:
         description: "Сиды полного окна (через запятую)"
         default: "42,7"
@@ -18,6 +27,11 @@ on:
       step:
         description: "Шаг сетки колонок, блоков"
         default: "4"
+env:
+  VERSION: ${{ inputs.version }}
+  WINDOW: ${{ inputs.window }}
+  STEP: ${{ inputs.step }}
+  SEEDS: ${{ inputs.seeds }}
 jobs:
   full:
     runs-on: ubuntu-latest
@@ -32,14 +46,19 @@ jobs:
       - name: "Окно ${{ inputs.window }}×${{ inputs.window }} шагом ${{ inputs.step }}"
         run: |
           set -o pipefail
-          for seed in $(echo "${{ inputs.seeds }}" | tr ',' ' '); do
+          IFS=',' read -ra seeds <<< "$SEEDS"
+          for seed in "${seeds[@]}"; do
             echo "== сид $seed, режим ${{ matrix.mode }}"
+            cargo run -q -p litho-sandbox --release -- water-stats \
+              --seed "$seed" --mode ${{ matrix.mode }} --version "$VERSION" \
+              --window "$WINDOW" --step "$STEP" --json | python3 tools/ci_annotations.py report
             cargo run -q -p litho-sandbox --release -- water-leaks \
-              --seed "$seed" --mode ${{ matrix.mode }} --version v1-dev-r2 \
-              --size "${{ inputs.window }}" --step "${{ inputs.step }}" \
+              --seed "$seed" --mode ${{ matrix.mode }} --version "$VERSION" \
+              --size "$WINDOW" --step "$STEP" \
               | python3 tools/ci_annotations.py report
           done
   seeds-16:
+    if: inputs.all_seeds
     # Д-084: 16 приёмочных сидов. Окно меньше полного: проверяется, что
     # инвариант держится не на одном удачном сиде.
     runs-on: ubuntu-latest
@@ -57,7 +76,7 @@ jobs:
           for seed in -123456789 -42 -1 0 1 2 7 42 123 777 1234 2024 12345 54321 99999 987654321; do
             echo "== сид $seed, режим ${{ matrix.mode }}"
             cargo run -q -p litho-sandbox --release -- water-leaks \
-              --seed "$seed" --mode ${{ matrix.mode }} --version v1-dev-r2 \
+              --seed "$seed" --mode ${{ matrix.mode }} --version "$VERSION" \
               --size 1024 --step 8 \
               | python3 tools/ci_annotations.py report
           done
