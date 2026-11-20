@@ -1682,23 +1682,19 @@ impl Generator {
             if built {
                 continue;
             }
-            // Звено, которое уже стоит на стеке сборки (цикл), здесь не
-            // строим: его соберёт контур по запросу и либо доведёт до конца,
-            // либо вернёт Cycle. Без отметки цикл вернулся бы в помеченное
-            // звено второй раз.
+            // Звено, которое уже стоит на стеке сборки (цикл или собирается
+            // соседним потоком), здесь не строим: его соберёт контур по
+            // запросу либо соседний поток. Без отметки цикл вернулся бы в
+            // помеченное звено второй раз.
             let mine = std::thread::current().id();
-            let marked = {
-                let mut marks = levels.w_in_progress.lock().expect("путь сборки W не отравлен");
-                match marks.get(&r) {
-                    Some(&owner) if owner == mine => false, // цикл: звено на нашем стеке
-                    Some(_) => false,                        // чужой собирает — возьмёт свою
-                    None => {
-                        marks.insert(r, mine);
-                        true
-                    }
-                }
-            };
+            let marked = levels
+                .w_in_progress
+                .lock()
+                .expect("путь сборки W не отравлен")
+                .insert(r, mine)
+                .is_none();
             if !marked {
+                // Гонка: между проверкой и вставкой отметку взял чужой поток.
                 continue;
             }
             // Ошибка звена не рвет обход: пустое звено — нормальное значение,
@@ -1735,38 +1731,46 @@ impl Generator {
         // собирает это звено, собирает независимо (как до отметчика):
         // значение то же (сборка чистая), чужая отметка не трогается.
         let mine = std::thread::current().id();
-        let mark = {
-            let mut marks = levels.w_in_progress.lock().expect("путь сборки W не отравлен");
-            match marks.get(&reach) {
-                Some(&owner) if owner == mine => None,       // цикл того же потока
-                Some(_) => Some(false),                       // чужой собирает параллельно
-                None => {
-                    marks.insert(reach, mine);
-                    Some(true)                                // наша отметка
-                }
-            }
+        let holder = {
+            let marks = levels.w_in_progress.lock().expect("путь сборки W не отравлен");
+            marks.get(&reach).copied()
         };
-        match mark {
-            None => {
+        if let Some(owner) = holder {
+            if owner == mine {
+                // Цикл: звено уже стоит на нашем стеке.
                 let node = net
                     .channels()
                     .reaches()
                     .get(reach)
                     .map(|r| r.source_node)
                     .unwrap_or(reach);
-                Err(RiverNetError::Cycle { node })
+                return Err(RiverNetError::Cycle { node });
             }
-            Some(false) => self.w_reach_profile_inner(levels, net, reach),
-            Some(true) => {
-                let out = self.w_reach_profile_inner(levels, net, reach);
-                levels
-                    .w_in_progress
-                    .lock()
-                    .expect("путь сборки W не отравлен")
-                    .remove(&reach);
-                out
-            }
+            // Чужой поток: собираем без своей метки, чужую не трогаем.
+            return self.w_reach_profile_inner(levels, net, reach);
         }
+        // Гонка с соседним потоком: между проверкой и вставкой отметку мог
+        // занять другой поток — тогда собираем параллельно, не трогая её.
+        let won = {
+            let mut marks = levels.w_in_progress.lock().expect("путь сборки W не отравлен");
+            match marks.entry(reach) {
+                std::collections::hash_map::Entry::Vacant(slot) => {
+                    slot.insert(mine);
+                    true
+                }
+                std::collections::hash_map::Entry::Occupied(_) => false,
+            }
+        };
+        if !won {
+            return self.w_reach_profile_inner(levels, net, reach);
+        }
+        let out = self.w_reach_profile_inner(levels, net, reach);
+        levels
+            .w_in_progress
+            .lock()
+            .expect("путь сборки W не отравлен")
+            .remove(&reach);
+        out
     }
 
     fn w_reach_profile_inner(
