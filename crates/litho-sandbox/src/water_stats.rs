@@ -73,6 +73,8 @@ struct Cell {
     /// Сухая поверхность колонки (`S`), блоки.
     dry: f32,
     zone: u8,
+    // W: exact 2-block bank test, independent of the window sampling stride.
+    wall: Option<bool>,
 }
 
 const NO_ZONE: u8 = u8::MAX;
@@ -88,6 +90,7 @@ pub struct Window {
     step: i64,
     cells: Vec<Cell>,
     l_blocks: f64,
+    w: bool,
 }
 
 impl Window {
@@ -117,6 +120,7 @@ impl Window {
             step,
             cells,
             l_blocks: generator.params().block.l_blocks,
+            w: generator.params().version.is_water_update(),
         })
     }
 
@@ -243,6 +247,13 @@ impl Window {
                 if cell.water || !is_land(cell.dry as f64) {
                     continue;
                 }
+                if self.w {
+                    if let Some(wall) = cell.wall {
+                        shore_land += 1;
+                        wall_land += u64::from(wall);
+                    }
+                    continue;
+                }
                 let mut near_water = false;
                 let mut wall = false;
                 for (ni, nj) in [
@@ -325,7 +336,8 @@ fn percentile(sorted: &[f64], q: f64) -> f64 {
 
 fn sample_cell(generator: &Generator, x: i64, z: i64) -> Cell {
     let (fx, fz) = (x as f64, z as f64);
-    let WaterColumn { level, kind, .. } = generator.water_column(fx, fz);
+    let column = generator.water_column(fx, fz);
+    let WaterColumn { level, kind, .. } = column;
     let water = level != WaterColumn::NONE && level > SEA;
     let dry = if generator.params().version.is_water_update() {
         generator.s0_at(fx, fz).map(|s| s.macro_y)
@@ -345,7 +357,34 @@ fn sample_cell(generator: &Generator, x: i64, z: i64) -> Cell {
             best as u8
         })
         .unwrap_or(NO_ZONE);
+    let mut wall = None;
+    if generator.params().version.is_water_update()
+        && level == WaterColumn::NONE
+        && column.bed != WaterColumn::NONE
+        && is_land(dry)
+    {
+        // Dry columns in the calm corridor carry their cut surface in `bed`.
+        let mut nearby = None;
+        let mut exempt = false;
+        for dz in -2..=2 {
+            for dx in -2..=2 {
+                let d2 = dx * dx + dz * dz;
+                if !(1..=4).contains(&d2) {
+                    continue;
+                }
+                let n = generator.water_column(fx + f64::from(dx), fz + f64::from(dz));
+                if n.level >= SEA {
+                    nearby = Some(n.level.max(nearby.unwrap_or(SEA)));
+                    exempt |= n.wall_exempt;
+                }
+            }
+        }
+        if !exempt {
+            wall = nearby.map(|mirror| column.surface - mirror >= 4);
+        }
+    }
     Cell {
+        wall,
         lake: water
             && matches!(
                 kind,
@@ -357,6 +396,80 @@ fn sample_cell(generator: &Generator, x: i64, z: i64) -> Cell {
         dry: dry as f32,
         zone,
     }
+}
+
+/// §10.1: equal-distance samples of the meandered centerline. Grid columns
+/// weight a broad channel more heavily than a narrow one; they are reported
+/// separately for comparison with the historical VO0 reports.
+#[derive(Default)]
+pub struct AxisStats {
+    pub points: u64,
+    pub above_sea: u64,
+    pub wet: u64,
+    pub gorge: [f64; 3],
+}
+
+pub fn river_axis(
+    generator: &Generator,
+    center: (f64, f64),
+    window: i64,
+) -> Result<AxisStats, String> {
+    let params = generator.params();
+    let l = params.block.l_blocks;
+    let half = window as f64 / 2.0;
+    let step = if params.mode == litho_core::Mode::Gameplay {
+        8.0
+    } else {
+        16.0
+    };
+    let shift = generator.spawn_shift();
+    let center_l = generator.macro_point(center.0, center.1);
+    let radius = half * 2.0_f64.sqrt() / l + litho_core::channel::max_query_radius_l(params);
+    let mut stats = AxisStats::default();
+    let mut depths = Vec::new();
+    for plate in litho_core::plates::plates_near(center_l, radius, generator.seed(), params) {
+        let net = match generator.drainage_network(&plate) {
+            Ok(net) => net,
+            Err(litho_core::drainage::RiverNetError::NoOwnedNode { .. }) => continue,
+            Err(e) => return Err(e.to_string()),
+        };
+        let channels = net.channels();
+        for reach in 0..channels.reaches().len() {
+            let mut along = 0.0;
+            let mut next = step / 2.0;
+            for segment in channels.reach_segments(reach) {
+                let a = segment.a.point.sub(shift).scale(l);
+                let delta = segment.b.point.sub(segment.a.point).scale(l);
+                let length = delta.len();
+                // Carry the sample phase across segment boundaries; a finely
+                // subdivided bend must not earn more samples than a straight.
+                while next < along + length {
+                    let point = a.add(delta.scale((next - along) / length));
+                    next += step;
+                    if (point.x - center.0).abs() > half || (point.z - center.1).abs() > half {
+                        continue;
+                    }
+                    let s0 = generator.s0_node(point.x, point.z).ok_or("нет S0 на оси")?;
+                    if !is_land(s0.macro_y) {
+                        continue;
+                    }
+                    let column = generator.water_column(point.x, point.z);
+                    stats.points += 1;
+                    if column.has_water() {
+                        stats.above_sea += 1;
+                    }
+                    if column.has_water() || column.has_sea_river() {
+                        stats.wet += 1;
+                        depths.push(s0.macro_y - f64::from(column.level));
+                    }
+                }
+                along += length;
+            }
+        }
+    }
+    depths.sort_by(f64::total_cmp);
+    stats.gorge = [0.50, 0.90, 0.99].map(|q| percentile(&depths, q));
+    Ok(stats)
 }
 
 #[cfg(test)]
@@ -384,6 +497,7 @@ mod tests {
             height: 1,
             step: 8,
             l_blocks: 256.0,
+            w: true,
             cells,
         };
         let stats = w.stats(false);

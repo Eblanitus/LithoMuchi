@@ -187,7 +187,7 @@ jobs:
             *) at=-140392,32089 ;;
           esac
           cargo run -q -p litho-sandbox --release -- water-points \
-            --seed 42 --mode ${{ matrix.mode }} --version v1-dev-w --radius-l 32 --at "$at" \
+            --seed 42 --mode ${{ matrix.mode }} --version v1-dev-w --radius-l 32 --center "$at" \
             | tee fabric/run/water-points.txt | python3 tools/ci_annotations.py report
       - uses: actions/setup-java@v4
         with: { distribution: temurin, java-version: "25" }

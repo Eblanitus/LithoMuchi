@@ -894,6 +894,15 @@ fn cmd_water_stats(args: &[String]) -> Result<(), String> {
     let started = Instant::now();
     let grid = water_stats::Window::new(&generator, (opts.center_x, opts.center_z), window, step)?;
     let stats = grid.stats(opts.mode == Mode::Scientific);
+    let axis = if opts.version.is_water_update() {
+        Some(water_stats::river_axis(
+            &generator,
+            (opts.center_x, opts.center_z),
+            window,
+        )?)
+    } else {
+        None
+    };
     let seconds = started.elapsed().as_secs_f64();
     let json = args.iter().any(|arg| arg == "--json");
     let above_sea = if stats.river_columns == 0 {
@@ -921,6 +930,10 @@ fn cmd_water_stats(args: &[String]) -> Result<(), String> {
         fields.push(format!("\"step\":{step}"));
         fields.push(format!("\"seconds\":{seconds:.2}"));
         fields.push(format!("\"land\":{}", stats.land));
+        if let Some(a) = &axis {
+            fields.push(format!("\"axis_points\":{},\"axis_above_sea\":{},\"axis_wet\":{},\"axis_gorge\":[{:.2},{:.2},{:.2}]",
+                a.points, a.above_sea, a.wet, a.gorge[0], a.gorge[1], a.gorge[2]));
+        }
         fields.push(format!("\"river_columns\":{}", stats.river_columns));
         fields.push(format!("\"river_above_sea_pct\":{above_sea:.2}"));
         fields.push(format!("\"gorge_p50\":{:.2}", stats.gorge_p50));
@@ -962,6 +975,12 @@ fn cmd_water_stats(args: &[String]) -> Result<(), String> {
         stats.lakes_per_100l2, stats.walls_pct
     );
     println!("  затоплено суши: {:.3} %", stats.flooded_land_pct);
+    if let Some(a) = &axis {
+        println!(
+            "  ось на суше: {} проб, выше моря {}, мокрых {}, врез p50/p90/p99 {:.2}/{:.2}/{:.2}",
+            a.points, a.above_sea, a.wet, a.gorge[0], a.gorge[1], a.gorge[2]
+        );
+    }
     let mut parts = Vec::new();
     for (index, name) in stats.zone_names().iter().enumerate() {
         if stats.zone_land[index] > 0 {
