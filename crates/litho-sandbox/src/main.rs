@@ -682,30 +682,63 @@ fn cmd_water_points(args: &[String]) -> Result<(), String> {
             .map_err(|e| format!("--radius-l: {e}"))?,
         None => 32.0,
     };
+    if !radius_l.is_finite() || radius_l <= 0. {
+        return Err("--radius-l должен быть положительным конечным числом".into());
+    }
     let wanted = value(args, "--type");
+    use litho_core::water_profile::WaterBody;
+    let point_type = [
+        WaterBody::Tarn,
+        WaterBody::GlacialPond,
+        WaterBody::Thermokarst,
+        WaterBody::SagPond,
+    ]
+    .into_iter()
+    .find(|b| Some(b.name()) == wanted.as_deref());
     if let Some(kind) = wanted.as_deref() {
         if !opts.version.is_water_update()
-            || !matches!(
-                kind,
-                "lake"
-                    | "ordinary"
-                    | "inland_sea"
-                    | "swamp"
-                    | "rift"
-                    | "strike_slip"
-                    | "highland"
-                    | "glacial"
-            )
+            || point_type.is_none()
+                && !matches!(
+                    kind,
+                    "lake"
+                        | "ordinary"
+                        | "inland_sea"
+                        | "swamp"
+                        | "rift"
+                        | "strike_slip"
+                        | "highland"
+                        | "glacial"
+                )
         {
-            return Err("--type для W: lake, ordinary, inland_sea, swamp, rift, strike_slip, highland, glacial".into());
+            return Err("--type для W: lake, ordinary, inland_sea, swamp, rift, strike_slip, highland, glacial, tarn, glacial_pond, thermokarst, sag_pond".into());
         }
     }
-    let points = water::points_filtered(
-        &generator,
-        (opts.center_x, opts.center_z),
-        radius_l,
-        wanted.as_deref(),
-    );
+    let points = if let Some(body) = point_type {
+        generator
+            .point_lake_examples(
+                body,
+                litho_core::Vec2::new(opts.center_x, opts.center_z),
+                radius_l * generator.params().block.l_blocks,
+                10,
+            )
+            .map_err(|e| format!("сеть точечных озёр: {e:?}"))?
+            .into_iter()
+            .map(|(x, z, column)| water::WaterPoint {
+                x,
+                z,
+                level: column.level,
+                kind: body.name(),
+                note: "point_lake",
+            })
+            .collect()
+    } else {
+        water::points_filtered(
+            &generator,
+            (opts.center_x, opts.center_z),
+            radius_l,
+            wanted.as_deref(),
+        )
+    };
     println!(
         "water-points: {} мест (сид {}, режим {}, радиус {radius_l} L)",
         points.len(),

@@ -148,9 +148,21 @@ pub enum WaterBody {
     StrikeSlipLake,
     HighlandLake,
     GlacialLake,
+    Tarn,
+    GlacialPond,
+    Thermokarst,
+    SagPond,
 }
 
 impl WaterBody {
+    pub(crate) fn point_material(self) -> BedMaterial {
+        if self == Self::Thermokarst {
+            BedMaterial::Mud
+        } else {
+            BedMaterial::Gravel
+        }
+    }
+
     pub const fn name(self) -> &'static str {
         match self {
             Self::Land => "land",
@@ -164,6 +176,10 @@ impl WaterBody {
             Self::StrikeSlipLake => "strike_slip",
             Self::HighlandLake => "highland",
             Self::GlacialLake => "glacial",
+            Self::Tarn => "tarn",
+            Self::GlacialPond => "glacial_pond",
+            Self::Thermokarst => "thermokarst",
+            Self::SagPond => "sag_pond",
         }
     }
     /// Биты 12–17 в `info_code()` (§6.8).
@@ -180,6 +196,10 @@ impl WaterBody {
             Self::StrikeSlipLake => 8,
             Self::HighlandLake => 9,
             Self::GlacialLake => 10,
+            Self::Tarn => 11,
+            Self::GlacialPond => 12,
+            Self::Thermokarst => 13,
+            Self::SagPond => 14,
         }
     }
 }

@@ -43,6 +43,8 @@ pub struct HeightSample {
     /// T145: сила выреза русла/озера, 0…1.
     pub water_strength: f64,
     /// W: which cut supplied the water, not the biome of the surrounding shore.
+    pub point_body: Option<crate::water_profile::WaterBody>,
+    pub point_shore: Option<(crate::water_profile::BedMaterial, u16)>,
     pub wet_kind: crate::hydrology::SurfaceKind,
     /// ВО2-1 (§6.7): маска 3D-шума ванили. 1.0 — шум не трогаем (все версии,
     /// кроме `v1-dev-w`), 0.0 — вода/пойма/озеро и их окрестность.
@@ -59,6 +61,8 @@ impl Default for HeightSample {
             water_y: SEA_LEVEL,
             bed_y: SEA_LEVEL,
             water_strength: 0.0,
+            point_body: None,
+            point_shore: None,
             wet_kind: crate::hydrology::SurfaceKind::Land,
             calm: 1.0,
         }
@@ -170,6 +174,8 @@ pub fn sample_micro(
         water_y: SEA_LEVEL,
         bed_y: y,
         water_strength: 0.0,
+        point_body: None,
+        point_shore: None,
         wet_kind: crate::hydrology::SurfaceKind::Land,
         calm: 1.0,
     }

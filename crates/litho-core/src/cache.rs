@@ -74,6 +74,12 @@ where
         let value = compute();
         let stamp = self.clock.fetch_add(1, Ordering::Relaxed);
         let mut shard = self.shards[index].lock().expect("кэш не отравлен");
+        // A concurrent miss may already have published the canonical slot.
+        // Never replace it: OnceLock users must converge on the same builder.
+        if let Some((found, time)) = shard.get_mut(&key) {
+            *time = stamp;
+            return found.clone();
+        }
         let per_shard = (self.capacity / self.shards.len()).max(1);
         if shard.len() >= per_shard {
             if let Some(oldest) = shard

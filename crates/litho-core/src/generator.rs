@@ -5,6 +5,15 @@
 //! путь через грубую решётку с кэшем тайлов (`sample`), плюс пять полей для
 //! игры (`field`). Песочница и будущий мод вызывают один и тот же `Generator`.
 
+mod ponds;
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum SurfaceStage {
+    Dry,
+    Network,
+    Complete,
+}
+
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -344,6 +353,8 @@ pub struct Generator {
     /// узлы привязаны к мировым блокам, эталон считает ту же решётку.
     morpho: Arc<crate::cache::ShardedCache<(i64, i64), MorphoWeights>>,
     drainage: Arc<RiverNetCache>,
+    pond_sites: Arc<ponds::SiteCache>,
+    pond_tiles: Arc<ponds::TileCache>,
     /// R2 (§4): уровни воды плиты от сухой поверхности. Отдельный кэш, потому
     /// что для их счёта нужна `S`, а `S` не зависит от уровней.
     r2_levels: Arc<PlateCache<PlateLevels>>,
@@ -722,6 +733,8 @@ impl Generator {
             rivers: Arc::new(RiverCache::new()),
             hydrology: Arc::new(crate::cache::ShardedCache::new(shards, 4096)),
             morpho: Arc::new(crate::cache::ShardedCache::new(shards, 4096)),
+            pond_sites: Arc::new(ShardedCache::new(shards, 8192)),
+            pond_tiles: Arc::new(ShardedCache::new(shards, 4096)),
             drainage: Arc::new(RiverNetCache::new(
                 shards,
                 crate::drainage::NET_CACHE_CAPACITY,
@@ -1054,7 +1067,7 @@ impl Generator {
             z,
             local.max(traced),
             None,
-            true,
+            SurfaceStage::Complete,
         )?;
         Ok(Some(WorldSample {
             climate: fields.climate,
@@ -2648,7 +2661,7 @@ impl Generator {
         z: f64,
         local_river: f64,
         known: Option<(&PlateSample, &CrustSample)>,
-        apply_water: bool,
+        stage: SurfaceStage,
     ) -> Result<SurfaceFields, RiverNetError> {
         if !self.params.version.is_water_relief_dev() {
             let vanilla =
@@ -2665,6 +2678,7 @@ impl Generator {
                 height: crate::height::HeightSample::default(),
             });
         }
+        let apply_water = stage != SurfaceStage::Dry;
         let geometry = self.cached_hydrology_queries(x, z, apply_water)?;
         let water = hydrology::resolve(geometry.channels, geometry.lakes, climate, &self.params);
         // §4, п. 5 (Д-127): `v1-dev-r2` меняет только слой воды. Поля и рельеф
@@ -2675,7 +2689,7 @@ impl Generator {
         // `v1-dev` — и вода стоит на земле, которой мир не строил.
         // Геометрия для полей и для слоя воды разная: `geometry` (с уровнями)
         // остаётся версионной, а поля R2 берут R1-геометрию из кэша `false`.
-        let terrain_water = if self.params.version.is_water_relief_r2() {
+        let mut terrain_water = if self.params.version.is_water_relief_r2() {
             let fields_geometry = self.cached_hydrology_queries(x, z, false)?;
             hydrology::resolve_with_limit(
                 fields_geometry.channels,
@@ -2687,7 +2701,20 @@ impl Generator {
         } else {
             water
         };
-        // Поля всегда строятся по R1-гидрологии, поэтому здесь обычные
+        let pond = if stage == SurfaceStage::Complete
+            && self.params.version.is_water_update()
+            && self.params.water.point_lakes
+        {
+            self.pond_hit(x, z)?
+        } else {
+            None
+        };
+        if pond.is_some_and(|p| p.rho <= 1.) {
+            terrain_water.kind = hydrology::SurfaceKind::Lake;
+            terrain_water.river = 1.;
+            terrain_water.water = 1.;
+        }
+        // В R2 поля строятся по R1-гидрологии, поэтому здесь обычные
         // `apply_fields`/`classify_surface`: настоящие болота дают swamp_e,
         // а высокое озеро уже стало `DeferredWater` и водного биома не даёт.
         // T122: потенциал A и морфоклиматические зоны переводятся в C/E/W до
@@ -2816,6 +2843,7 @@ impl Generator {
         } else {
             dry
         };
+        let height = pond.map_or(height, |p| p.apply(height, &self.params));
         // К5 (Д-111): биом суши берётся по климату с вычетом температуры по
         // готовой высоте колонки. Рельеф и вода выше посчитаны по прежнему
         // климату и от этого шага не зависят.
@@ -2866,7 +2894,11 @@ impl Generator {
             class,
             vanilla,
             river,
-            hydrology: water,
+            hydrology: if height.point_body.is_some() {
+                terrain_water
+            } else {
+                water
+            },
             is_ocean: class.is_ocean,
             pv,
             height,
@@ -3281,7 +3313,7 @@ impl Generator {
 
     /// Быстрый путь с явной ошибкой сети для песочницы и регрессий.
     pub fn try_sample(&self, x: f64, z: f64) -> Result<Option<FullSample>, RiverNetError> {
-        self.try_sample_with(x, z, true)
+        self.try_sample_with(x, z, SurfaceStage::Complete)
     }
 
     /// R2 (§4): сухая поверхность `S` колонки в блоках — высота до выреза
@@ -3290,7 +3322,7 @@ impl Generator {
     /// флагом `apply_water = false`.
     pub fn dry_surface_at(&self, x: f64, z: f64) -> Result<Option<f64>, RiverNetError> {
         Ok(self
-            .try_sample_with(x, z, false)?
+            .try_sample_with(x, z, SurfaceStage::Dry)?
             .map(|full| full.world.height.surface_y))
     }
 
@@ -3299,7 +3331,7 @@ impl Generator {
         &self,
         x: f64,
         z: f64,
-        apply_water: bool,
+        stage: SurfaceStage,
     ) -> Result<Option<FullSample>, RiverNetError> {
         let Some(plates) = self.plate_sample(x, z) else {
             return Ok(None);
@@ -3404,7 +3436,7 @@ impl Generator {
             z,
             local,
             Some((&plates, &crust)),
-            apply_water,
+            stage,
         )?;
         let world = WorldSample {
             climate: fields.climate,
@@ -3434,6 +3466,9 @@ impl Generator {
     /// берётся только из `Params::defaults`.
     pub fn with_ray_lattice(mut self, step_l: f64) -> Self {
         self.params.boundaries.ray_lattice_l = step_l;
+        let shards = self.params.lattice.cache_shards.max(1);
+        self.pond_sites = Arc::new(ShardedCache::new(shards, 8192));
+        self.pond_tiles = Arc::new(ShardedCache::new(shards, 4096));
         self.rays = Arc::new(crate::cache::ShardedCache::new(
             self.params.lattice.cache_shards.max(1),
             RAY_CACHE_CAPACITY,
@@ -3877,7 +3912,12 @@ impl Generator {
             ..WaterColumn::default()
         };
         if self.params.version.is_water_update() {
-            if let Some((material, level)) = self.water_shore(full) {
+            if let Some((material, level)) = full
+                .world
+                .height
+                .point_shore
+                .or_else(|| self.water_shore(full))
+            {
                 column.shore_mat = material;
                 column.shore_level = level;
             }
@@ -3959,6 +3999,11 @@ impl Generator {
                     column.bed_mat = BedMaterial::Gravel;
                 }
             }
+        }
+        if let Some(body) = height.point_body {
+            column.body = body;
+            column.bed_mat = body.point_material();
+            column.shore_mat = column.bed_mat;
         }
         use crate::water_profile::ValleyClass;
         column.wall_exempt = flow == FlowClass::FallTop
