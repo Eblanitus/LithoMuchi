@@ -1,0 +1,61 @@
+# Проба «water-update-vo3-handoff»
+
+ВО3: повтор тех же двух плит и окон после отбора межплитовых родителей, профиля на уровне моря и раздельного определения воды и биома.
+
+Режим gameplay, версия v1-dev-w, обход ±0 блоков (шаг 0), точек 0, сидов 1.
+
+## sandbox s0-node-cost 42 gameplay --version v1-dev-w --plates 2 --analytic-only --with-levels --json
+
+```
+{"seed":42,"mode":"gameplay","version":"v1-dev-w","seconds":6.17,"plates":2,"nodes":6275,"with_levels":true,"net_ms_p50":1266.1,"net_ms_p95":1474.7,"net_ms_max":1497.8,"exact_us_per_node":532.11,"analytic_us_per_node":47.27,"analytic_error_p95":0.000,"analytic_error_p999":0.000,"net_budget_ms":200.0,"lattices":[],"decision":"только аналитический путь, без сравнения решёток"}
+litho-core: сеть рек №1, плита 216878075925460450: 1499 узлов за 1181 мс
+litho-core: сеть рек №2, плита 12257214645282878660: 4341 узлов за 63 мс
+litho-core: сеть рек №3, плита 356150445216138105: 5162 узлов за 686 мс
+```
+
+## sandbox s0-node-cost 42 scientific --version v1-dev-w --plates 2 --analytic-only --with-levels --json
+
+```
+{"seed":42,"mode":"scientific","version":"v1-dev-w","seconds":10.47,"plates":2,"nodes":6275,"with_levels":true,"net_ms_p50":2861.3,"net_ms_p95":3461.4,"net_ms_max":3528.1,"exact_us_per_node":627.50,"analytic_us_per_node":128.53,"analytic_error_p95":0.000,"analytic_error_p999":0.000,"net_budget_ms":200.0,"lattices":[],"decision":"только аналитический путь, без сравнения решёток"}
+litho-core: сеть рек №1, плита 216878075925460450: 1499 узлов за 1683 мс
+litho-core: сеть рек №2, плита 356150445216138105: 5162 узлов за 2706 мс
+```
+
+## sandbox water-stats --seed 42 --mode gameplay --version v1-dev-w --window 2048 --step 8 --json
+
+```
+{"seed":42,"mode":"gameplay","version":"v1-dev-w","window":2048,"step":8,"seconds":41.73,"land":57081,"axis_points":134,"axis_above_sea":131,"axis_wet":134,"axis_gorge":[1.85,2.62,3.25],"river_columns":2199,"river_above_sea_pct":5.87,"gorge_p50":1.72,"gorge_p90":2.49,"gorge_p99":3.09,"lakes":0,"lakes_per_100l2":0.000,"lake_area_pct":0.000,"lake_fit_pct":0.00,"lakes_ge_80":0,"walls_pct":0.00,"flooded_land_pct":0.226,"zones":[{"name":"polar","lakes":0,"land":0,"lakes_per_100l2":0.000,"lake_area_pct":0.000},{"name":"boreal","lakes":0,"land":404,"lakes_per_100l2":0.000,"lake_area_pct":0.000},{"name":"temperate_humid","lakes":0,"land":8282,"lakes_per_100l2":0.000,"lake_area_pct":0.000},{"name":"semiarid","lakes":0,"land":47717,"lakes_per_100l2":0.000,"lake_area_pct":0.000},{"name":"arid","lakes":0,"land":678,"lakes_per_100l2":0.000,"lake_area_pct":0.000},{"name":"tropical_humid","lakes":0,"land":0,"lakes_per_100l2":0.000,"lake_area_pct":0.000},{"name":"mountain_cold","lakes":0,"land":0,"lakes_per_100l2":0.000,"lake_area_pct":0.000},{"name":"mountain_warm","lakes":0,"land":0,"lakes_per_100l2":0.000,"lake_area_pct":0.000}]}
+litho-core: сеть рек №1, плита 356150445216138105: 5162 узлов за 1722 мс
+litho-core: сеть рек №2, плита 3829022694335313590: 2655 узлов за 30 мс
+litho-core: сеть рек №3, плита 216878075925460450: 1499 узлов за 24 мс
+litho-core: сеть рек №4, плита 12257214645282878660: 4341 узлов за 58 мс
+litho-core: сеть рек №5, плита 1534972872467770187: 5251 узлов за 141 мс
+litho-core: сеть рек №6, плита 1552031522129305247: 4782 узлов за 244 мс
+litho-core: сеть рек №7, плита 2527502807603398137: 3086 узлов за 242 мс
+litho-core: сеть рек №8, плита 2640110249401201744: 3954 узлов за 12 мс
+litho-core: сеть рек №9, плита 6310839946956026079: 3016 узлов за 91 мс
+litho-core: сеть рек №10, плита 6564756037768855268: 4250 узлов за 39 мс
+litho-core: сеть рек №11, плита 6586610204817309727: 5124 узлов за 541 мс
+litho-core: сеть рек №12, плита 7921362888439761013: 4569 узлов за 21 мс
+litho-core: сеть рек №16, плита 8984927181445009350: 2048 узлов за 33 мс
+```
+
+## sandbox water-stats --seed 42 --mode scientific --version v1-dev-w --window 4096 --step 16 --json
+
+```
+{"seed":42,"mode":"scientific","version":"v1-dev-w","window":4096,"step":16,"seconds":45.07,"land":66049,"axis_points":33,"axis_above_sea":0,"axis_wet":33,"axis_gorge":[4.77,5.39,5.45],"river_columns":293,"river_above_sea_pct":0.00,"gorge_p50":0.00,"gorge_p90":0.00,"gorge_p99":0.00,"lakes":0,"lakes_per_100l2":0.000,"lake_area_pct":0.000,"lake_fit_pct":0.00,"lakes_ge_80":0,"walls_pct":0.00,"flooded_land_pct":0.000,"zones":[{"name":"polar","lakes":0,"land":0,"lakes_per_100l2":0.000,"lake_area_pct":0.000},{"name":"boreal","lakes":0,"land":0,"lakes_per_100l2":0.000,"lake_area_pct":0.000},{"name":"temperate_humid","lakes":0,"land":1768,"lakes_per_100l2":0.000,"lake_area_pct":0.000},{"name":"semiarid","lakes":0,"land":64281,"lakes_per_100l2":0.000,"lake_area_pct":0.000},{"name":"arid","lakes":0,"land":0,"lakes_per_100l2":0.000,"lake_area_pct":0.000},{"name":"tropical_humid","lakes":0,"land":0,"lakes_per_100l2":0.000,"lake_area_pct":0.000},{"name":"mountain_cold","lakes":0,"land":0,"lakes_per_100l2":0.000,"lake_area_pct":0.000},{"name":"mountain_warm","lakes":0,"land":0,"lakes_per_100l2":0.000,"lake_area_pct":0.000}]}
+litho-core: сеть рек №1, плита 356150445216138105: 5162 узлов за 3407 мс
+litho-core: сеть рек №2, плита 3829022694335313590: 2655 узлов за 123 мс
+litho-core: сеть рек №3, плита 12257214645282878660: 4341 узлов за 899 мс
+litho-core: сеть рек №4, плита 216878075925460450: 1499 узлов за 202 мс
+litho-core: сеть рек №5, плита 1552031522129305247: 4782 узлов за 523 мс
+litho-core: сеть рек №6, плита 2640110249401201744: 3954 узлов за 14 мс
+litho-core: сеть рек №7, плита 6310839946956026079: 3016 узлов за 93 мс
+litho-core: сеть рек №8, плита 6564756037768855268: 4250 узлов за 40 мс
+litho-core: сеть рек №9, плита 7921362888439761013: 4569 узлов за 22 мс
+litho-core: сеть рек №10, плита 8464724724605848963: 3003 узлов за 429 мс
+litho-core: сеть рек №11, плита 8678987112410800288: 3643 узлов за 84 мс
+litho-core: сеть рек №12, плита 8686466293757039852: 3672 узлов за 26 мс
+litho-core: сеть рек №16, плита 16093795793715388409: 3584 узлов за 5 мс
+```
+

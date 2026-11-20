@@ -1,0 +1,65 @@
+{
+  "name": "water-update-vo3-handoff",
+  "note": "ВО3: повтор тех же двух плит и окон после отбора межплитовых родителей, профиля на уровне моря и раздельного определения воды и биома.",
+  "mode": "gameplay",
+  "version": "v1-dev-w",
+  "seeds": [
+    42
+  ],
+  "at": [],
+  "step": 0,
+  "commands": [
+    [
+      "s0-node-cost",
+      "42",
+      "gameplay",
+      "--version",
+      "v1-dev-w",
+      "--plates",
+      "2",
+      "--analytic-only",
+      "--with-levels",
+      "--json"
+    ],
+    [
+      "s0-node-cost",
+      "42",
+      "scientific",
+      "--version",
+      "v1-dev-w",
+      "--plates",
+      "2",
+      "--analytic-only",
+      "--with-levels",
+      "--json"
+    ],
+    [
+      "water-stats",
+      "--seed",
+      "42",
+      "--mode",
+      "gameplay",
+      "--version",
+      "v1-dev-w",
+      "--window",
+      "2048",
+      "--step",
+      "8",
+      "--json"
+    ],
+    [
+      "water-stats",
+      "--seed",
+      "42",
+      "--mode",
+      "scientific",
+      "--version",
+      "v1-dev-w",
+      "--window",
+      "4096",
+      "--step",
+      "16",
+      "--json"
+    ]
+  ]
+}
