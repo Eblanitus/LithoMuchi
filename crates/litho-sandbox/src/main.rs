@@ -677,20 +677,26 @@ fn cmd_water_points(args: &[String]) -> Result<(), String> {
             .map_err(|e| format!("--radius-l: {e}"))?,
         None => 32.0,
     };
+    // ВО4-4: фильтр по типу водоёма (lake, inland_sea, swamp, river).
+    let type_filter = value(args, "--type").map(|t| t.to_lowercase());
     let points = water::points(&generator, (opts.center_x, opts.center_z), radius_l);
+    let filtered: Vec<_> = points
+        .into_iter()
+        .filter(|p| type_filter.as_ref().map_or(true, |t| p.kind == t.as_str()))
+        .collect();
     println!(
         "water-points: {} мест (сид {}, режим {}, радиус {radius_l} L)",
-        points.len(),
+        filtered.len(),
         opts.seed,
         opts.mode.as_str()
     );
-    for point in &points {
+    for point in &filtered {
         println!(
             "  x={} z={} level={} вид={} ({})",
             point.x, point.z, point.level, point.kind, point.note
         );
     }
-    if points.is_empty() {
+    if filtered.is_empty() {
         return Err("мест с водой выше моря не нашлось: увеличьте --radius-l".into());
     }
     Ok(())
@@ -919,6 +925,21 @@ fn cmd_water_stats(args: &[String]) -> Result<(), String> {
         fields.push(format!("\"walls_pct\":{:.2}", stats.walls_pct));
         fields.push(format!("\"calm_fit_pct\":{:.2}", stats.calm_fit_pct));
         fields.push(format!("\"covered_water_pct\":{:.2}", stats.covered_water_pct));
+        let kind_names = [
+            \"lake\", \"inland_sea\", \"swamp\", \"dry_basin\", \"closed_surplus\",
+            \"sea_connected\", \"rift\", \"highland\",
+        ];
+        let kind_json: Vec<String> = kind_names
+            .iter()
+            .enumerate()
+            .map(|(index, name)| {
+                format!(
+                    \"\"{name}_lakes\":{}\",
+                    stats.lakes_by_kind[index]
+                )
+            })
+            .collect();
+        fields.push(format!("\"lakes_by_kind\":{{{}}}", kind_json.join(",")));
         fields.push(format!("\"zones\":[{}]", zones.join(",")));
         println!("{{{}}}", fields.join(","));
         return Ok(());
@@ -959,6 +980,20 @@ fn cmd_water_stats(args: &[String]) -> Result<(), String> {
     }
     if !parts.is_empty() {
         println!("  по зонам: {}", parts.join(", "));
+    }
+    // ВО4-4: озёра по видам.
+    let kind_names = [
+        "lake", "inland_sea", "swamp", "dry_basin", "closed_surplus",
+        "sea_connected", "rift", "highland",
+    ];
+    let mut kind_parts = Vec::new();
+    for (index, name) in kind_names.iter().enumerate() {
+        if stats.lakes_by_kind[index] > 0 {
+            kind_parts.push(format!("{name} {}", stats.lakes_by_kind[index]));
+        }
+    }
+    if !kind_parts.is_empty() {
+        println!("  по типам: {}", kind_parts.join(", "));
     }
     // --gates: жёсткая проверка гейтов 8.3, exit code ≠ 0 при провале.
     if args.iter().any(|arg| arg == "--gates") {
@@ -2414,7 +2449,8 @@ fn usage() -> &'static str {
        shores       доля берегов с сушей выше моря на 10+ в 4 блоках от воды (К4)\n\
        water-leaks  R2: инвариант «вода не уходит за берега» (v1-dev-r2),\n\
                     --size 2048 --step 4, три центра\n\
-       water-points R2: до 20 мест с водой выше моря для CI и автора (v1-dev-r2),\n\
+       water-points R2: до 20 мест с водой выше моря для CI и автора (v1-dev-r2),
+                    --type lake|inland_sea|swamp|river — фильтр по типу (ВО4-4),\n\
        water-stats  ВО0-3: реки (вода выше моря, врез), озёра по водоёмам, стены (v1-dev-r2),\n\
        s0-node-cost ВО0-5: цена S0 в узлах стока и точность решётки S0 (v1-dev-w),\n\
                     --radius-l 32\n\

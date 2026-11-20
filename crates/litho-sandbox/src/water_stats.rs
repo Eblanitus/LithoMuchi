@@ -17,6 +17,7 @@ use litho_core::Generator;
 use litho_core::SurfaceKind;
 use litho_core::generator::WaterColumn;
 use litho_core::height::SEA_LEVEL;
+use litho_core::lake::LakeKind;
 use litho_core::morphoclimate::ZONE_NAMES;
 use litho_core::params::MORPHO_ZONES;
 
@@ -62,6 +63,10 @@ pub struct Stats {
     /// Затопленная суша: доля колонок суши (`S0 ≥ 64`), чья сухая поверхность
     /// ниже уровня моря или любого ближайшего водоёма (потенциально подтопляемая), %.
     pub flooded_land_pct: f64,
+    /// ВО4-4: озёра по видам (LakeKind): штук. Индексы совпадают с порядком
+    /// вариантов `LakeKind` (0=Lake, 1=InlandSea, 2=Swamp, 3=DryBasin,
+    /// 4=ClosedSurplus, 5=SeaConnected, 6=Rift, 7=Highland).
+    pub lakes_by_kind: [u64; 8],
 }
 
 impl Stats {
@@ -86,6 +91,8 @@ struct Cell {
     /// Сухая поверхность колонки (`S`), блоки.
     dry: f32,
     zone: u8,
+    /// ВО4-4: вид озера, если колонка — озеро выше моря.
+    lake_kind: Option<LakeKind>,
 }
 
 const NO_ZONE: u8 = u8::MAX;
@@ -179,6 +186,7 @@ impl Window {
                 let mut fit_cells = 0u64;
                 let mut level_max = i32::MIN;
                 let mut zone: Option<usize> = None;
+                let mut lake_kind: Option<LakeKind> = None;
                 visited[index] = true;
                 queue.push_back((i, j));
                 while let Some((ci, cj)) = queue.pop_front() {
@@ -190,6 +198,9 @@ impl Window {
                     level_max = level_max.max(cell.level);
                     if zone.is_none() && (cell.zone as usize) < MORPHO_ZONES {
                         zone = Some(cell.zone as usize);
+                    }
+                    if lake_kind.is_none() {
+                        lake_kind = cell.lake_kind;
                     }
                     let neighbors = [
                         (ci.wrapping_sub(1), cj),
@@ -222,6 +233,9 @@ impl Window {
                 if let Some(zone) = zone {
                     out.zone_lakes[zone] += 1;
                     out.zone_lake_area[zone] += area;
+                }
+                if let Some(kind) = lake_kind {
+                    out.lakes_by_kind[kind.to_index()] += 1;
                 }
             }
         }
@@ -355,6 +369,7 @@ fn sample_cell(generator: &Generator, x: i64, z: i64) -> Cell {
         kind,
         surface,
         bed,
+        lake_kind,
         ..
     } = generator.water_column(fx, fz);
     let water = level != WaterColumn::NONE && level > SEA;
@@ -388,5 +403,6 @@ fn sample_cell(generator: &Generator, x: i64, z: i64) -> Cell {
         bed,
         dry: dry as f32,
         zone,
+        lake_kind,
     }
 }

@@ -17,6 +17,7 @@ use crate::runoff::Runoff;
 type Cell = (i64, i64);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum LakeKind {
     Lake,
     InlandSea,
@@ -27,6 +28,12 @@ pub enum LakeKind {
     ClosedSurplus,
     /// Дно ниже моря и связано с морским выходом: это не пресное озеро.
     SeaConnected,
+    /// ВО4-3 (§5.4): рифтовое озеро (выход в рифт k5) — длинное, глубокое,
+    /// крутые борта, k_deep=1.5, D_max=24/40.
+    Rift,
+    /// ВО4-3 (§5.4): высокогорное/платовое озеро (plateau ≥ 0.5 или уровень ≥ 90) —
+    /// широкое, мелкое, галечный берег, k_deep=0.5, D_max=8/12.
+    Highland,
 }
 
 impl LakeKind {
@@ -38,6 +45,8 @@ impl LakeKind {
             Self::DryBasin => "dry_basin",
             Self::ClosedSurplus => "closed_surplus",
             Self::SeaConnected => "sea_connected",
+            Self::Rift => "rift",
+            Self::Highland => "highland",
         }
     }
 
@@ -45,7 +54,23 @@ impl LakeKind {
         matches!(
             self,
             Self::Lake | Self::InlandSea | Self::Swamp | Self::SeaConnected
+                | Self::Rift
+                | Self::Highland
         )
+    }
+
+    /// Индекс варианта для массива `lakes_by_kind` в `water-stats`.
+    pub const fn to_index(self) -> usize {
+        match self {
+            Self::Lake => 0,
+            Self::InlandSea => 1,
+            Self::Swamp => 2,
+            Self::DryBasin => 3,
+            Self::ClosedSurplus => 4,
+            Self::SeaConnected => 5,
+            Self::Rift => 6,
+            Self::Highland => 7,
+        }
     }
 }
 

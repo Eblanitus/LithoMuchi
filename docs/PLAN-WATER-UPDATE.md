@@ -809,7 +809,12 @@ Job `water` в `fabric.yml` — для `v1-dev-w`, по окнам из `water-p
   `height::with_water_w` (вырез точечного озера: уровень от S0, дно = S0 − k_deep·(L − S0) по классу)
   и `generator::surface_fields` (запрос PointLakeEngine 3×3 ячеек для v1-dev-w).
 - **ВО4-3 [кодер]** Вид рифтовых, высоких озёр и внутренних морей (7.2).
+  **Сделано 2026-11-20:** `LakeKind` расширен вариантами `Rift` и `Highland` (`lake.rs`);
+  `HydrologySample.lake_kind` и `WaterColumn.lake_kind` для подсчёта по типам (`hydrology.rs`,
+  `generator.rs`).
 - **ВО4-4 [Haiku]** `water-stats` считает по типам; `water-points --type <тип>`.
+  **Сделано 2026-11-20:** `water_stats.rs` — `lakes_by_kind[8]` по вариантам `LakeKind`;
+  `main.rs` — вывод по типам в тексте и JSON, `--type` фильтр в `water-points`.
 
 Готово, если: каждый тип есть на ≥ 8 из 16 сидов, где есть его условие (кары — где есть холодные горы,
 и т. д.); точечные озёра ≤ 5 % времени чанка; плотность и площадь озёр в рамках ВО3.

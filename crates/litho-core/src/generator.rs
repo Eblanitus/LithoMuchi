@@ -247,6 +247,9 @@ pub struct WaterColumn {
     /// ВО2-2 (§6.8): класс потока (спокойно, перекат, порог, каскад,
     /// водопад, котёл).
     pub flow: crate::water_profile::FlowClass,
+    /// ВО4-4: вид озера для подсчёта по типам в water-stats.
+    /// `None` — не озеро или уровень не определён.
+    pub lake_kind: Option<crate::lake::LakeKind>,
     /// ВО2-2 (§7.5): код материала дна (ставит Java).
     pub bed_mat: u8,
     /// ВО2-2 (§7.5): код материала берега (ставит Java).
@@ -3628,6 +3631,7 @@ impl Generator {
         let surface = height.surface_y.round() as i32;
         let kind = full.world.hydrology.kind;
         let body = body_from_kind(kind);
+        let lake_kind = full.world.hydrology.lake_kind;
         // ВО2-2: класс потока и материалы заполняются профилем W/Java на
         // этапах ВО3–ВО5; здесь — значения по умолчанию.
         let flow = crate::water_profile::FlowClass::Calm;
@@ -3637,6 +3641,7 @@ impl Generator {
                 kind,
                 body,
                 flow,
+                lake_kind,
                 ..WaterColumn::default()
             };
         }
@@ -3658,6 +3663,7 @@ impl Generator {
                 kind,
                 body,
                 flow,
+                lake_kind: None,
                 bed_mat: 0,
                 shore_mat: 0,
             };
@@ -3670,6 +3676,7 @@ impl Generator {
                 kind,
                 body,
                 flow,
+                lake_kind: None,
                 ..WaterColumn::default()
             };
         }
@@ -3680,6 +3687,7 @@ impl Generator {
             kind,
             body,
             flow,
+            lake_kind,
             bed_mat: 0,
             shore_mat: 0,
         }

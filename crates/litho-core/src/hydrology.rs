@@ -48,6 +48,9 @@ pub struct HydrologySample {
     pub channels: ChannelQuery,
     pub lakes: LakeQuery,
     pub kind: SurfaceKind,
+    /// ВО4-4: вид озера (LakeKind) для подсчёта по типам в water-stats.
+    /// `None` — не озеро или уровень не определен.
+    pub lake_kind: Option<crate::lake::LakeKind>,
     /// Сила речного биома/среза W; океанское море и болото сюда не входят.
     pub river: f64,
     pub valley: f64,
@@ -180,6 +183,10 @@ pub fn resolve_with_limit(
     out.swamp = lakes.swamp;
     out.dry_basin = lakes.dry_basin;
     out.r2_deferred = lakes.deferred_water;
+    let lake_kind = inside.filter(|hit| {
+        hit.level_km.is_some_and(|level| level <= r1_max_km)
+            && hit.kind.has_water()
+    }).map(|hit| hit.kind);
     out.kind = if lakes.inland_sea > 0.0
         || inside.is_some_and(|hit| {
             matches!(hit.kind, LakeKind::InlandSea | LakeKind::SeaConnected)
@@ -206,6 +213,7 @@ pub fn resolve_with_limit(
     if r1 && out.kind == SurfaceKind::Land && lakes.deferred_water > 0.0 {
         out.kind = SurfaceKind::DeferredWater;
     }
+    out.lake_kind = lake_kind;
     // Пойма не перекрывает горный каньон: множитель (1-M) из §5.7.
     out.floodplain = out.valley * (1.0 - clamp01(climate.surface.mountain));
     // E6 только у геометрических болот и дельт (§5.4/5.7). Влажная пойма
