@@ -47,6 +47,12 @@ pub struct Stats {
     pub lakes_ge_80: u64,
     /// Доля колонок суши в 2 блоках от воды со стеной `surface − level ≥ 4`.
     pub walls_pct: f64,
+    /// Доля колонок коридора воды (ядро, берег, пойма по `info`) с
+    /// `|верхний твёрдый блок − поверхность ядра| ≤ 2` — гейт calm_fit 8.3.
+    pub calm_fit_pct: f64,
+    /// Доля колонок с водой, над которыми стоит твёрдый блок (накрытая вода)
+    /// — гейт 8.3, должен быть ≤ 0.5 %.
+    pub covered_water_pct: f64,
     /// Озёра по доминирующей морфозоне: штук и % площади суши зоны.
     pub zone_lakes: [u64; MORPHO_ZONES],
 }
@@ -66,6 +72,10 @@ struct Cell {
     /// Вода выше моря (любая).
     water: bool,
     level: i32,
+    /// Верхний твёрдый блок колонки (поверхность после выреза).
+    surface: i32,
+    /// Дно под зеркалом.
+    bed: i32,
     /// Сухая поверхность колонки (`S`), блоки.
     dry: f32,
     zone: u8,
@@ -265,6 +275,35 @@ impl Window {
         } else {
             0.0
         };
+        // Гейты 8.3 (ВО2-4): calm_fit и накрытая вода считаются по колонкам
+        // коридора воды (воды выше моря, любого вида).
+        let mut water_cols = 0u64;
+        let mut calm_fit = 0u64;
+        let mut covered_water = 0u64;
+        for cell in &self.cells {
+            if !cell.water {
+                continue;
+            }
+            water_cols += 1;
+            // calm_fit: поверхность близка к дну (вырез неглубокий, ≤ 2 блока).
+            if (cell.surface - cell.bed).abs() <= 2 {
+                calm_fit += 1;
+            }
+            // Накрытая вода: над зеркалом стоит твёрдый блок.
+            if cell.surface > cell.level - 1 {
+                covered_water += 1;
+            }
+        }
+        out.calm_fit_pct = if water_cols > 0 {
+            100.0 * calm_fit as f64 / water_cols as f64
+        } else {
+            100.0
+        };
+        out.covered_water_pct = if water_cols > 0 {
+            100.0 * covered_water as f64 / water_cols as f64
+        } else {
+            0.0
+        };
         let mut sorted = gorge;
         sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
         out.gorge_p50 = percentile(&sorted, 0.50);
@@ -285,7 +324,13 @@ fn percentile(sorted: &[f64], q: f64) -> f64 {
 
 fn sample_cell(generator: &Generator, x: i64, z: i64) -> Cell {
     let (fx, fz) = (x as f64, z as f64);
-    let WaterColumn { level, kind, .. } = generator.water_column(fx, fz);
+    let WaterColumn {
+        level,
+        kind,
+        surface,
+        bed,
+        ..
+    } = generator.water_column(fx, fz);
     let water = level != WaterColumn::NONE && level > SEA;
     let dry = generator
         .dry_surface_at(fx, fz)
@@ -313,6 +358,8 @@ fn sample_cell(generator: &Generator, x: i64, z: i64) -> Cell {
         river: kind == SurfaceKind::River,
         water,
         level,
+        surface,
+        bed,
         dry: dry as f32,
         zone,
     }

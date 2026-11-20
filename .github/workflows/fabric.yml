@@ -3,9 +3,9 @@
 name: fabric
 on:
   push:
-    paths: ["crates/litho-core/**", "crates/litho-ffi/**", "fabric/**", ".github/workflows/fabric.yml"]
+    paths: ["crates/litho-core/**", "crates/litho-ffi/**", "crates/litho-sandbox/**", "fabric/**", ".github/workflows/fabric.yml"]
   pull_request:
-    paths: ["crates/litho-core/**", "crates/litho-ffi/**", "fabric/**", ".github/workflows/fabric.yml"]
+    paths: ["crates/litho-core/**", "crates/litho-ffi/**", "crates/litho-sandbox/**", "fabric/**", ".github/workflows/fabric.yml"]
   workflow_dispatch:
 concurrency:
   group: fabric-${{ github.ref }}
@@ -207,3 +207,48 @@ jobs:
           # Отчёт сервера тоже уходит аннотацией: сырые логи CI недоступны.
           python3 ../tools/ci_annotations.py report < run/litospherity-ci.txt
           grep -q "RESULT: PASS" run/litospherity-ci.txt
+
+  water-w:
+    # PLAN-WATER-UPDATE §8.3 (ВО2-4): гейты воды v1-dev-w — calm_fit ≥ 95 %,
+    # накрытая вода ≤ 0.5 %, стены ≤ 2 %, и water-points для версии W.
+    needs: natives
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        mode: [gameplay, scientific]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: natives-*
+          merge-multiple: true
+          path: fabric/src/main/resources/natives
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Ресурсы и сервер 26.3
+        run: |
+          set -e
+          cargo run -q -p xtask -- pack --out out/packs
+          mv=$(grep '^minecraft_version=' fabric/gradle.properties | cut -d= -f2)
+          url=$(curl -fsS https://piston-meta.mojang.com/mc/game/version_manifest_v2.json | jq -r --arg v "$mv" '.versions[]|select(.id==$v).url')
+          curl -fsS -o out/server.jar "$(curl -fsS "$url" | jq -r '.downloads.server.url')"
+          python3 tools/fabric_resources.py out/packs/litospherity_v1-dev_gameplay out/server.jar fabric/src/generated/resources
+      - name: Гейты 8.3 ядра v1-dev-w (calm_fit, накрытая вода, стены)
+        run: |
+          set -e
+          for mode in gameplay scientific; do
+            cargo run -q -p litho-sandbox --release -- water-stats \
+              --seed 42 --mode "$mode" --version v1-dev-w --gates \
+              | python3 tools/ci_annotations.py report
+          done
+      - name: Точки воды для v1-dev-w (water-points умеет W)
+        run: |
+          set -e
+          mkdir -p fabric/run
+          case "${{ matrix.mode }}" in
+            gameplay) at=-35098,8022 ;;
+            *) at=-140392,32089 ;;
+          esac
+          cargo run -q -p litho-sandbox --release -- water-points \
+            --seed 42 --mode ${{ matrix.mode }} --version v1-dev-w --radius-l 32 --at "$at" \
+            | tee fabric/run/water-points-w.txt | python3 tools/ci_annotations.py report

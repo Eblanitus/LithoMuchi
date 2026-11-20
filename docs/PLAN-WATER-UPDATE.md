@@ -749,6 +749,7 @@ Job `water` в `fabric.yml` — для `v1-dev-w`, по окнам из `water-p
   тип мира «Обычный» остаётся на `v1-dev`.
   **Сделано 2026-11-20:** `LithoWorlds` связывает пресеты Litospherity с `VERSION_W`.
 - **ВО2-4 [Haiku]** CI 8.3 (`calm_fit`, накрытая вода, стены); `water-points` умеет W.
+  **Сделано 2026-11-20:** `water-leaks`/`water-points`/`water-stats` принимают `v1-dev-w` (`is_water_relief_r2`); в `water-stats` добавлены метрики `calm_fit_pct` и `covered_water_pct` (§8.3) и флаг `--gates` (жесткая проверка: calm_fit ≥ 95 %, накрытая вода ≤ 0.5 %, стены ≤ 2 %); в `fabric.yml` добавлен job `water-w` (gameplay + научный, версия v1-dev-w).
 
 Готово, если: гейты 8.3; время чанка ≤ +15 % к `v1-dev-r2`.
 

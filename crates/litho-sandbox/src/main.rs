@@ -505,7 +505,7 @@ fn cmd_water_leaks(args: &[String]) -> Result<(), String> {
     }
     if !opts.version.is_water_relief_r2() {
         return Err(format!(
-            "water-leaks считает только v1-dev-r2 (сейчас {}): в v1-dev воды выше моря нет",
+            "water-leaks считает только версии с водой выше моря (сейчас {}): v1-dev-w и v1-dev-r2, в v1-dev её нет",
             opts.version.as_str()
         ));
     }
@@ -667,7 +667,7 @@ fn cmd_water_points(args: &[String]) -> Result<(), String> {
     let generator = generator(&opts)?;
     if !opts.version.is_water_relief_r2() {
         return Err(format!(
-            "water-points считает только v1-dev-r2 (сейчас {}): в v1-dev воды выше моря нет",
+            "water-points считает только версии с водой выше моря (сейчас {}): v1-dev-w и v1-dev-r2, в v1-dev её нет",
             opts.version.as_str()
         ));
     }
@@ -917,6 +917,8 @@ fn cmd_water_stats(args: &[String]) -> Result<(), String> {
         fields.push(format!("\"lake_fit_pct\":{:.2}", stats.lake_fit_pct));
         fields.push(format!("\"lakes_ge_80\":{}", stats.lakes_ge_80));
         fields.push(format!("\"walls_pct\":{:.2}", stats.walls_pct));
+        fields.push(format!("\"calm_fit_pct\":{:.2}", stats.calm_fit_pct));
+        fields.push(format!("\"covered_water_pct\":{:.2}", stats.covered_water_pct));
         fields.push(format!("\"zones\":[{}]", zones.join(",")));
         println!("{{{}}}", fields.join(","));
         return Ok(());
@@ -942,6 +944,13 @@ fn cmd_water_stats(args: &[String]) -> Result<(), String> {
         "  на 100 L² суши: {:.2} озера; стены у воды: {:.2} % колонок берега",
         stats.lakes_per_100l2, stats.walls_pct
     );
+    // Гейты 8.3 (ВО2-4): calm_fit и накрытая вода по колонкам воды.
+    if stats.river_columns > 0 || stats.lakes > 0 {
+        println!(
+            "  гейты 8.3: calm_fit {:.2} % (≥ 95), накрытая вода {:.2} % (≤ 0.5), стены {:.2} % (≤ 2)",
+            stats.calm_fit_pct, stats.covered_water_pct, stats.walls_pct
+        );
+    }
     let mut parts = Vec::new();
     for (index, name) in stats.zone_names().iter().enumerate() {
         if stats.zone_lakes[index] > 0 {
@@ -950,6 +959,45 @@ fn cmd_water_stats(args: &[String]) -> Result<(), String> {
     }
     if !parts.is_empty() {
         println!("  по зонам: {}", parts.join(", "));
+    }
+    // --gates: жёсткая проверка гейтов 8.3, exit code ≠ 0 при провале.
+    if args.iter().any(|arg| arg == "--gates") {
+        let mut fail = Vec::new();
+        let above_sea = if stats.river_columns == 0 {
+            0.0
+        } else {
+            100.0 * stats.river_above_sea as f64 / stats.river_columns as f64
+        };
+        // Гейт ВО1–ВО2: сухого русла ≤ 1 % (из water-leaks считается отдельно;
+        // здесь — только метрики water-stats).
+        if stats.calm_fit_pct < 95.0 {
+            fail.push(format!(
+                "calm_fit {:.2} % меньше 95 % (гейт 8.3)",
+                stats.calm_fit_pct
+            ));
+        }
+        if stats.covered_water_pct > 0.5 {
+            fail.push(format!(
+                "накрытая вода {:.2} % больше 0.5 % (гейт 8.3)",
+                stats.covered_water_pct
+            ));
+        }
+        if stats.walls_pct > 2.0 {
+            fail.push(format!(
+                "стены у воды {:.2} % больше 2 % (гейт 8.3)",
+                stats.walls_pct
+            ));
+        }
+        if above_sea < 75.0 {
+            fail.push(format!(
+                "вода выше моря {:.2} % меньше 75 % (гейт ВО1–ВО2)",
+                above_sea
+            ));
+        }
+        if !fail.is_empty() {
+            return Err(format!("гейты 8.3 не пройдены: {}", fail.join("; ")));
+        }
+        println!("  гейты 8.3: пройдены");
     }
     Ok(())
 }
