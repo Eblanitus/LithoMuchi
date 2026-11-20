@@ -178,6 +178,7 @@ final class LithoCiWater {
                 report.add(line.toString());
             }
 
+            var dryBlocks = new java.util.TreeMap<String, Integer>();
             long leaks = 0;
             long wet = 0;
             long dry = 0;
@@ -193,6 +194,7 @@ final class LithoCiWater {
                             wet++;
                         } else {
                             dry++;
+                            dryBlocks.merge(state.getBlock().toString(), 1, Integer::sum);
                         }
                         // Протечка: вода выше поверхности самой колонки. Вода
                         // ядра глубже верха колонки — не протечка: ядро кладёт
@@ -223,6 +225,7 @@ final class LithoCiWater {
             double dryPct = wet + dry == 0 ? 0.0 : 100.0 * dry / (double) (wet + dry);
             report.add(String.format("протечки: %d (порог 0)", leaks));
             report.add(String.format("сухое русло: %d из %d, %.2f %% (порог 1 %%)", dry, wet + dry, dryPct));
+            report.add("вместо воды на зеркале: " + dryBlocks);
             long[] vo2 = measureVo2(level, gen);
             long corridor = vo2[0], fit = vo2[1];
             double fitPct = corridor == 0 ? 100.0 : 100.0 * fit / (double) corridor;

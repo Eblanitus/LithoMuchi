@@ -39,6 +39,7 @@ public final class LithoWaterFeature implements Feature {
     private static final int SIDE = 18;
     /** Сколько блоков над зеркалом можно убрать (§8.1 `clear_above_blocks`). */
     private static final int CLEAR_ABOVE = 6;
+    private static final int[][] SIDES = {{1, 0}, {-1, 0}, {0, 1}, {0, -1}};
 
     /** Заделок герметизации (метрика В5: ≤ 2 на чанк с водой выше моря). */
     public static final AtomicLong SEALS = new AtomicLong();
@@ -83,6 +84,10 @@ public final class LithoWaterFeature implements Feature {
         long seals = 0;
         long steps = 0;
         BlockState waterState = Blocks.WATER.defaultBlockState();
+        // Record the bottommost fluid actually placed. The kernel bed minus
+        // two is only a search limit for an open cave, not a wet face.
+        int[] lowestSource = new int[SIDE * SIDE];
+        java.util.Arrays.fill(lowestSource, Integer.MAX_VALUE);
         // Заливка и правка дна.
         for (int j = 1; j <= 16; j++) {
             for (int i = 1; i <= 16; i++) {
@@ -117,6 +122,7 @@ public final class LithoWaterFeature implements Feature {
                     lowest = y;
                 }
                 if (lowest > from) continue;
+                lowestSource[k] = lowest;
                 placed++;
                 COLUMNS.incrementAndGet();
                 if (lowest <= minY) continue;
@@ -136,7 +142,7 @@ public final class LithoWaterFeature implements Feature {
             for (int i = 1; i <= 16; i++) {
                 int k = j * SIDE + i;
                 int surface = water.level()[k];
-                if (surface == LithoNative.WaterColumns.NONE || surface <= SEA_LEVEL) continue;
+                if (surface == LithoNative.WaterColumns.NONE || surface <= SEA_LEVEL || lowestSource[k] == Integer.MAX_VALUE) continue;
                 // Ступень сверху: соседняя колонка русла выше, и шаг ниже кладёт в
                 // эту колонку текущую воду на высоте `surface` (над её зеркалом).
                 // Этот слой тоже надо закрыть сбоку от колонок без воды R2, иначе
@@ -144,13 +150,13 @@ public final class LithoWaterFeature implements Feature {
                 // gameplay: рост текущей 5,2 % при пороге 5 %).
                 boolean stepped = false;
                 if (water.kind()[k] == KIND_RIVER) {
-                    for (int[] step : new int[][] {{1, 0}, {-1, 0}, {0, 1}, {0, -1}}) {
+                    for (int[] step : SIDES) {
                         int uk = (j + step[1]) * SIDE + (i + step[0]);
                         int upper = water.level()[uk];
                         if (water.kind()[uk] == KIND_RIVER && upper != LithoNative.WaterColumns.NONE && upper > surface) stepped = true;
                     }
                 }
-                for (int[] step : new int[][] {{1, 0}, {-1, 0}, {0, 1}, {0, -1}}) {
+                for (int[] step : SIDES) {
                     int nk = (j + step[1]) * SIDE + (i + step[0]);
                     int neighbour = water.level()[nk];
                     if (stepped && surface <= maxY && (neighbour == LithoNative.WaterColumns.NONE || neighbour <= SEA_LEVEL)) {
@@ -162,7 +168,7 @@ public final class LithoWaterFeature implements Feature {
                     }
                     boolean riverStep = water.kind()[k] == KIND_RIVER && water.kind()[nk] == KIND_RIVER && neighbour != LithoNative.WaterColumns.NONE && neighbour > SEA_LEVEL && neighbour < surface;
                     int top = Math.min(surface - 1, maxY);
-                    int bottom = Math.max(water.bed()[k] - 2, minY);
+                    int bottom = lowestSource[k];
                     for (int y = top; y >= bottom; y--) {
                         if (neighbour != LithoNative.WaterColumns.NONE && neighbour > y) continue;
                         // Ступень (§3 п. 3): один слой воздуха над нижним зеркалом, не весь
@@ -217,7 +223,7 @@ public final class LithoWaterFeature implements Feature {
                 if (LithoNative.WaterColumns.flow(info) != 4) continue;
                 int upper = water.level()[k];
                 if (upper == LithoNative.WaterColumns.NONE || upper <= SEA_LEVEL) continue;
-                for (int[] step : new int[][] {{1, 0}, {-1, 0}, {0, 1}, {0, -1}}) {
+                for (int[] step : SIDES) {
                     int nk = (j + step[1]) * SIDE + (i + step[0]);
                     int lower = water.level()[nk];
                     if (lower == LithoNative.WaterColumns.NONE || upper - lower < 2) continue;
