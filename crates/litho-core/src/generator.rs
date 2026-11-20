@@ -407,7 +407,10 @@ fn w_parents_of(net: &crate::drainage::RiverNet) -> Vec<Vec<usize>> {
     let reaches = channels.reaches();
     let mut by_mouth: HashMap<usize, Vec<usize>> = HashMap::with_capacity(reaches.len());
     for (index, candidate) in reaches.iter().enumerate() {
-        by_mouth.entry(candidate.mouth_node).or_default().push(index);
+        by_mouth
+            .entry(candidate.mouth_node)
+            .or_default()
+            .push(index);
     }
     reaches
         .iter()
@@ -1732,7 +1735,10 @@ impl Generator {
         // значение то же (сборка чистая), чужая отметка не трогается.
         let mine = std::thread::current().id();
         let holder = {
-            let marks = levels.w_in_progress.lock().expect("путь сборки W не отравлен");
+            let marks = levels
+                .w_in_progress
+                .lock()
+                .expect("путь сборки W не отравлен");
             marks.get(&reach).copied()
         };
         if let Some(owner) = holder {
@@ -1752,7 +1758,10 @@ impl Generator {
         // Гонка с соседним потоком: между проверкой и вставкой отметку мог
         // занять другой поток — тогда собираем параллельно, не трогая её.
         let won = {
-            let mut marks = levels.w_in_progress.lock().expect("путь сборки W не отравлен");
+            let mut marks = levels
+                .w_in_progress
+                .lock()
+                .expect("путь сборки W не отравлен");
             match marks.entry(reach) {
                 std::collections::hash_map::Entry::Vacant(slot) => {
                     slot.insert(mine);

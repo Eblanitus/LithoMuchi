@@ -53,11 +53,7 @@ jobs:
         with:
           components: rustfmt, clippy
       - name: rustfmt
-        run: |
-          cargo fmt --all -- --check > /tmp/fmt.diff 2>&1 || {
-            python3 tools/ci_annotations.py report < /tmp/fmt.diff
-            exit 1
-          }
+        run: cargo fmt --all -- --check
       - name: clippy
         run: |
           set -o pipefail
