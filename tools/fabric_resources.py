@@ -51,7 +51,7 @@ def main(pack, jar, out):
     write(out, "data/minecraft/worldgen/density_function/overworld/base_3d_noise.json", {
         "type": "minecraft:mul",
         "left": {
-            "type": "minecraft:cache_2d",
+            "type": "minecraft:cache",
             "input": {"type": "litospherity:field", "field": "calm"},
         },
         "right": base,
