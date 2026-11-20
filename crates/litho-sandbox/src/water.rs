@@ -150,13 +150,18 @@ pub fn leaks_against(
                 // километровый уровень, и его готовая поверхность в тех же
                 // колонках стоянки на 20–30 блоков ниже (баг К3), так что
                 // сравнение с ней ловило бы вырез `v1-dev`, а не насыпь.
-                if let Ok(Some(base)) = reference.dry_surface_at(x as f64, z as f64) {
+                let base = if reference.params().version.is_water_update() {
+                    reference.s0_node(x as f64, z as f64).map(|s| s.surface_y())
+                } else {
+                    reference.dry_surface_at(x as f64, z as f64).ok().flatten()
+                };
+                if let Some(base) = base {
                     if column.surface != WaterColumn::NONE
                         && column.surface as f64 > base + RAISE_LIMIT_BLOCKS
                     {
                         out.raised += 1;
                         out.example(format!(
-                            "рельеф поднят: ({x}, {z}) {} против суши {base:.1} у v1-dev",
+                            "рельеф поднят: ({x}, {z}) {} против сухой поверхности {base:.1}",
                             column.surface
                         ));
                     }
@@ -255,11 +260,27 @@ fn check_column(generator: &Generator, column: &WaterColumn, x: i64, z: i64, out
     }
     for (dx, dz) in [(1_i64, 0_i64), (-1, 0), (0, 1), (0, -1)] {
         let neighbor = generator.water_column((x + dx) as f64, (z + dz) as f64);
-        if neighbor.has_water() {
+        let w = generator.params().version.is_water_update();
+        let marked = matches!(
+            column.flow,
+            litho_core::water_profile::FlowClass::FallTop
+                | litho_core::water_profile::FlowClass::Rapid
+                | litho_core::water_profile::FlowClass::Cascade
+        );
+        if neighbor.has_water() || (w && neighbor.has_sea_river()) {
             if neighbor.level < column.level - 1 {
                 // §4, п. 3: вода-вода с перепадом больше блока — водопад.
                 // Он в метрики, а не в нарушения: вода не уходит в сушу,
                 // а падает в соседнюю воду.
+                if w && !marked {
+                    out.spill += 1;
+                    out.coord(x, z);
+                    out.example(format!(
+                        "неразмеченная ступень: ({x}, {z}) {} → {}",
+                        column.level, neighbor.level
+                    ));
+                    continue;
+                }
                 out.waterfalls += 1;
                 out.example(format!(
                     "водопад: ({x}, {z}) {} против {} у соседа",
@@ -272,7 +293,12 @@ fn check_column(generator: &Generator, column: &WaterColumn, x: i64, z: i64, out
         {
             // Сосед ниже уровня моря — это море, а не суша: игра наливает
             // там воду до 63, и ступень считается от неё.
-            if belongs_to_a_fall(generator, x + dx, z + dz, column.level) {
+            let fall_edge = if w {
+                column.flow == litho_core::water_profile::FlowClass::FallTop
+            } else {
+                belongs_to_a_fall(generator, x + dx, z + dz, column.level)
+            };
+            if fall_edge {
                 // §4, п. 3: отвесная стена на кромке водопада — не протечка.
                 out.falls += 1;
                 continue;

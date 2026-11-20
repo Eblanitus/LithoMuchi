@@ -505,7 +505,7 @@ fn cmd_water_leaks(args: &[String]) -> Result<(), String> {
     }
     if !opts.version.is_water_relief_r2() {
         return Err(format!(
-            "water-leaks считает только v1-dev-r2 (сейчас {}): в v1-dev воды выше моря нет",
+            "water-leaks считает только v1-dev-r2 и v1-dev-w (сейчас {}): в v1-dev воды выше моря нет",
             opts.version.as_str()
         ));
     }
@@ -550,11 +550,16 @@ fn cmd_water_leaks(args: &[String]) -> Result<(), String> {
         None => 96,
     };
     // П. 5 §4 сравнивает рельеф с v1-dev: там вода выше моря не ставится вовсе.
-    let reference = Generator::new(opts.seed, opts.mode, GenVersion::V1Dev)
-        .map_err(|error| error.to_string())?;
+    let dev = if opts.version.is_water_update() {
+        None
+    } else {
+        Some(Generator::new(opts.seed, opts.mode, GenVersion::V1Dev).map_err(|e| e.to_string())?)
+    };
+    // W compares to its own pre-water shape, not a different version's valley.
+    let reference = dev.as_ref().unwrap_or(&generator);
     let mut total = water::Leaks::default();
     for (x, z) in centers {
-        let coarse = water::leaks_against(&generator, Some(&reference), (x, z), size, step);
+        let coarse = water::leaks_against(&generator, Some(reference), (x, z), size, step);
         // Плотное окно — только про воду (п. 6): сравнение с эталоном на
         // каждом блоке стоило бы десятки минут на приёмочном прогоне.
         let dense_leaks = if dense > 0 {
@@ -745,6 +750,7 @@ fn cmd_s0_node_cost(args: &[String]) -> Result<(), String> {
             }
             out
         }
+        None if args.iter().any(|arg| arg == "--analytic-only") => Vec::new(),
         None => vec![0.25, 0.5],
     };
     let started = Instant::now();
@@ -755,6 +761,9 @@ fn cmd_s0_node_cost(args: &[String]) -> Result<(), String> {
         &spacings,
     )?;
     let seconds = started.elapsed().as_secs_f64();
+    let analytic_us = 1000.0 * survey.analytic_ms / survey.nodes as f64;
+    let analytic_p95 = s0_node_cost::percentile(&survey.analytic_errors, 95.0);
+    let analytic_p999 = s0_node_cost::percentile(&survey.analytic_errors, 99.9);
     let decision = s0_node_cost::decision(&survey);
     if args.iter().any(|arg| arg == "--json") {
         let lattices: Vec<String> = survey
@@ -789,6 +798,9 @@ fn cmd_s0_node_cost(args: &[String]) -> Result<(), String> {
             "\"exact_us_per_node\":{:.2}",
             survey.exact_us_per_node()
         ));
+        fields.push(format!("\"analytic_us_per_node\":{analytic_us:.2}"));
+        fields.push(format!("\"analytic_error_p95\":{analytic_p95:.3}"));
+        fields.push(format!("\"analytic_error_p999\":{analytic_p999:.3}"));
         fields.push("\"net_budget_ms\":200.0".to_string());
         fields.push(format!("\"lattices\":[{}]", lattices.join(",")));
         fields.push(format!("\"decision\":\"{decision}\""));
@@ -814,6 +826,9 @@ fn cmd_s0_node_cost(args: &[String]) -> Result<(), String> {
         "  точный S0: {:.2} мкс на узел, всего {:.1} мс",
         survey.exact_us_per_node(),
         survey.exact_ms
+    );
+    println!(
+        "  аналитический S0: {analytic_us:.2} мкс/узел, ошибка p95 {analytic_p95:.3}, p99.9 {analytic_p999:.3} блока"
     );
     for lattice in &survey.lattices {
         println!(

@@ -15,11 +15,13 @@ on:
       # не нужен, замер собирает t151.yml. Иначе каждый запрос К9 (два подряд)
       # занимал бы половину параллельных заданий.
       - "tools/t151/request.json"
+      - "tools/probe/request.json"
   pull_request:
     paths-ignore:
       - "docs/**"
       - "*.md"
       - "tools/t151/request.json"
+      - "tools/probe/request.json"
   workflow_dispatch:
 
 # На ветках новый push отменяет устаревший прогон: 33 запуска за день по

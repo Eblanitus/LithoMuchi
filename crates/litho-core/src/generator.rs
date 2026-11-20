@@ -520,25 +520,60 @@ impl Generator {
     /// ВО1: общая точка `S0` для профиля. `None` — версия без водного
     /// обновления или точка без климата/плиты.
     fn w_probe(&self, x: f64, z: f64) -> Option<WProbe> {
+        self.w_probe_impl(x, z, true)
+    }
+
+    // Only a profile center needs the point climate (temperature and aridity
+    // for valley classification). Heights depend on C/E/PV and the interpolated
+    // 1 L morpho grid, not the biome T/H or the sign of W.
+    fn w_probe_impl(&self, x: f64, z: f64, classify_flow: bool) -> Option<WProbe> {
         if !self.params.version.is_water_update() {
             return None;
         }
-        let climate = self.climate_sample(x, z)?;
         let point = self.macro_point(x, z);
         let plate = plate_query(point, self.seed, &self.params)?;
         let crust = crust_from_sample(point, &plate, self.seed, &self.params);
-        let c = continentalness(climate.surface.e_km, climate.surface.iota_l, &self.params);
-        let is_ocean = c < self.params.climate.ocean_c_threshold;
-        let class = self.class_before_height(&climate, is_ocean, x, z);
-        let depth = self.relief_basin_depth(point, &plate).ok()?;
         let crust_c = continentalness(crust.e_km, crust.iota_l, &self.params);
+        let (climate, base) = if classify_flow {
+            let climate = self.climate_sample(x, z)?;
+            let ocean = crust_c < self.params.climate.ocean_c_threshold;
+            let class = self.class_before_height(&climate, ocean, x, z);
+            let base = crate::vanilla::sample(&climate, &class, x, z, self.seed, &self.params, 0.0);
+            (climate, base)
+        } else {
+            let surface = SurfaceSample {
+                e_km: crust.e_km,
+                iota_l: crust.iota_l,
+                mountain: crust.mountain,
+                plateau: crust.plateau,
+                boundary_weights: crust.boundary_weights,
+                sigma_l: plate.d_ab_l,
+            };
+            let base = VanillaSample {
+                c: crust_c,
+                e: crate::vanilla::erosion(
+                    x,
+                    z,
+                    crust.mountain,
+                    crust.plateau,
+                    self.seed,
+                    &self.params,
+                ),
+                ..VanillaSample::default()
+            };
+            (
+                ClimateSample {
+                    surface,
+                    ..ClimateSample::default()
+                },
+                base,
+            )
+        };
         let shore_dist = self.shore_distance_blocks(x, z, crust_c);
         let shore_fade = self.shore_fade_from(shore_dist);
         let relief_sample =
-            relief::sample_near_shore(&plate, &crust, depth, shore_fade, self.seed, &self.params);
+            relief::sample_near_shore(&plate, &crust, 0.0, shore_fade, self.seed, &self.params);
         let morpho = self.morpho_weights(x, z)?;
-        // `local_river = 0`: в `S0` воды нет по определению.
-        let base = crate::vanilla::sample(&climate, &class, x, z, self.seed, &self.params, 0.0);
         let (base, pv_relief) = crate::relief_fields::apply_with_pv(
             base,
             &climate,
@@ -788,6 +823,12 @@ impl Generator {
     /// Максимум глубины впадин по плите, чьи узлы могут попасть в носитель
     /// ядра. Фильтр полупространства Вороного отсекает заведомо далёкие сети.
     fn relief_basin_depth(&self, point: Vec2, nearest: &PlateSample) -> Result<f64, RiverNetError> {
+        // W routes over dry relief. Feeding the priority-flood result back
+        // into S0 would make a topo cache builder request its own network.
+        // The natural crust/noise basin contribution remains in `relief`.
+        if self.params.version.is_water_update() {
+            return Ok(0.0);
+        }
         let step = self.params.drainage.step_l;
         let radius = 2.0 * step;
         let warp_bound = self.params.plates.warp_amplitude_l.abs() * crate::math::SQRT_2;
@@ -1936,16 +1977,19 @@ impl Generator {
         let mut gp: Vec<Option<f64>> = vec![None; n];
         let mut inputs: Vec<Option<crate::water_profile::ValleyClassInput>> = vec![None; n];
         let mut last_sample: Option<Vec2> = None;
-        let started = std::time::Instant::now();
+        // Budget is a deterministic work estimate, never a wall clock: a cache
+        // miss or a busy C2ME thread must not change the shape of a river.
+        // VO0-5 measured ~1 ms per exact probe. Bound the estimate by the
+        // actual number of vertices: at most five probes per sampled section.
+        let sections = (acc / water.profile_step_blocks).ceil().min(n as f64);
+        let doubled = sections * 5.0 > water.profile_budget_ms as f64;
+        let step_l = water.profile_step_blocks * if doubled { 2.0 } else { 1.0 } / l;
         for (index, segment) in source.iter().enumerate() {
             let b = segment.b;
             let direction = b.point.sub(segment.a.point);
             if direction.len() <= 1e-12 {
                 continue;
             }
-            // п. 1: при перерасходе бюджета плиты шаг проб удваивается.
-            let doubled = started.elapsed().as_millis() > u128::from(water.profile_budget_ms);
-            let step_l = water.profile_step_blocks * if doubled { 2.0 } else { 1.0 } / l;
             let due = last_sample.is_none_or(|last| b.point.sub(last).len() >= step_l);
             if !due {
                 continue;
@@ -1958,7 +2002,7 @@ impl Generator {
             let mut center: Option<WProbe> = None;
             for offset_l in [0.0, edge_l, -edge_l] {
                 let (px, pz) = to_blocks(b.point.add(normal.scale(offset_l)));
-                if let Some(probe) = self.w_probe(px, pz) {
+                if let Some(probe) = self.w_probe_impl(px, pz, offset_l == 0.0) {
                     bank = Some(bank.map_or(probe.macro_y, |old: f64| old.min(probe.macro_y)));
                     if offset_l == 0.0 {
                         center = Some(probe);
@@ -1970,7 +2014,7 @@ impl Generator {
             let mut gp_max: Option<f64> = None;
             for offset_l in [rv_l, -rv_l] {
                 let (px, pz) = to_blocks(b.point.add(normal.scale(offset_l)));
-                if let Some(probe) = self.w_probe(px, pz) {
+                if let Some(probe) = self.w_probe_impl(px, pz, false) {
                     gp_max = Some(gp_max.map_or(probe.macro_y, |old: f64| old.max(probe.macro_y)));
                 }
             }
@@ -2148,7 +2192,7 @@ impl Generator {
             let here = b.point.add(normal.scale(offset_l));
             let px = (here.x - shift.x) * l;
             let pz = (here.z - shift.z) * l;
-            if let Some(probe) = self.w_probe(px, pz) {
+            if let Some(probe) = self.w_probe_impl(px, pz, false) {
                 bank = Some(bank.map_or(probe.macro_y, |old: f64| old.min(probe.macro_y)));
             }
         }
@@ -3548,7 +3592,10 @@ impl Generator {
     ///
     /// `None` — версия без водного обновления или точка без климата/плиты.
     pub fn s0_at(&self, x: f64, z: f64) -> Option<S0Sample> {
-        let probe = self.w_probe(x, z)?;
+        Some(self.s0_from_probe(self.w_probe(x, z)?))
+    }
+
+    fn s0_from_probe(&self, probe: WProbe) -> S0Sample {
         // Разность двух вызовов, а не повтор формулы: вклад микробугров уже
         // взвешен берегом (`coast`), как в игре, и `S0` совпадает с полной
         // поверхностью побитово.
@@ -3564,20 +3611,16 @@ impl Generator {
             probe.shore_dist,
             &self.params,
         );
-        Some(S0Sample {
+        S0Sample {
             macro_y: probe.macro_y,
             micro_dy: full_h.surface_y - probe.macro_y,
-        })
+        }
     }
 
-    /// ВО0-2: быстрый `S0` для узлов решётки стока (§6.2).
-    ///
-    /// Пока это тот же точный путь: выбор приближения (путь А на 0,25 L или
-    /// «Б-лайт» на 0,5 L) делает разведка ВО0-5 по цене сети плиты и
-    /// точности. Поэтому тест точности `s0_node` против `s0_at` сейчас
-    /// нулевой, а числа ВО0-5 меряют уже эту функцию.
+    /// §6.2: узловая высота по коре и рельефу в точке; климат берётся
+    /// только из интерполированных весов сетки 1 L. Не строит сеть стока.
     pub fn s0_node(&self, x: f64, z: f64) -> Option<S0Sample> {
-        self.s0_at(x, z)
+        Some(self.s0_from_probe(self.w_probe_impl(x, z, false)?))
     }
 
     /// ВО2-2: класс течения колонки. Озёра, болота и приморские русла —

@@ -13,11 +13,8 @@
 //!    блока у 95 % узлов и ≤ 6 у 99,9 %.
 //!
 //! Считается только `macro_y`: микробугры в уровень реки не входят (§6.3).
-//! Маршрут пока старый — `S0` в узлах никто не спрашивает, разведка меряет
-//! то, что появится в ВО3. Климат и морфозоны с решётки стока 1 L (тот самый
-//! «быстрый `S0`» из §6.2) здесь ещё не реализованы: сначала решается,
-//! проходит ли грубая решётка `S0` вообще, иначе незачем строить решётку
-//! климата.
+//! Маршрут пока старый. Дополнительно меряется аналитический `s0_node` до
+//! прогрева точным `s0_at`; `--analytic-only` пропускает исторические решётки.
 
 use std::collections::HashMap;
 use std::time::Instant;
@@ -86,6 +83,8 @@ pub struct Survey {
     pub net_ms: Vec<f64>,
     /// Полное время точного `S0` на всех узлах, мс.
     pub exact_ms: f64,
+    pub analytic_ms: f64,
+    pub analytic_errors: Vec<f64>,
     pub lattices: Vec<Lattice>,
 }
 
@@ -160,12 +159,24 @@ pub fn survey(
     if nodes.is_empty() {
         return Err("сеть плит не дала узлов в плитах".into());
     }
+    // Measure the analytical pass *before* the exact reference warms shore
+    // and morpho tiles. The drainage network has already been built above.
+    let start = Instant::now();
+    let analytic: Vec<_> = nodes
+        .iter()
+        .map(|&(x, z)| generator.s0_node(x, z))
+        .collect();
+    survey.analytic_ms = start.elapsed().as_secs_f64() * 1000.0;
     // Точный `S0`: только узлы, для которых он определён (климат и плита есть).
     let start = Instant::now();
     let mut exact: Vec<f64> = Vec::with_capacity(nodes.len());
     let mut kept: Vec<(f64, f64)> = Vec::with_capacity(nodes.len());
-    for (x, z) in nodes {
+    for ((x, z), fast) in nodes.into_iter().zip(analytic) {
         if let Some(sample) = generator.s0_at(x, z) {
+            let fast = fast.ok_or_else(|| format!("нет узловой высоты в ({x}, {z})"))?;
+            survey
+                .analytic_errors
+                .push((fast.macro_y - sample.macro_y).abs());
             kept.push((x, z));
             exact.push(sample.macro_y);
         }
@@ -273,6 +284,9 @@ pub fn path_name(spacing_l: f64) -> &'static str {
 
 /// Строка решения: проходит ли путь А, иначе «Б-лайт», иначе «не проходит».
 pub fn decision(survey: &Survey) -> String {
+    if survey.lattices.is_empty() {
+        return "только аналитический путь, без сравнения решёток".to_owned();
+    }
     match survey.choice() {
         Some(lattice) => format!(
             "{} ({} L): p95 {:.2} блока, p99.9 {:.2} — проходит допуск 6.2",
