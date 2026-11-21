@@ -26,6 +26,7 @@ use height::{HeightModel, HeightSource};
 use litho_core::channel::{ReachEnd, ReachKind};
 use litho_core::drainage::{DepressionKind, DrainageOutlet};
 use litho_core::lake::LakeKind;
+use litho_core::water_profile::WaterBody;
 use litho_core::{Field, GenVersion, Generator, Mode, Params};
 use render::{LAYERS, RenderOptions};
 
@@ -668,15 +669,16 @@ fn explain_column(generator: &Generator, x: f64, z: f64) -> Result<(), String> {
     Ok(())
 }
 
-fn cmd_water_points(args: &[String]) -> Result<(), String> {
-    let opts = options_from(args)?;
-    let generator = generator(&opts)?;
-    if !opts.version.is_water_relief_r2() {
-        return Err(format!(
-            "water-points считает только v1-dev-r2 и v1-dev-w (сейчас {}): в v1-dev воды выше моря нет",
-            opts.version.as_str()
-        ));
-    }
+const POINT_LAKE_BODIES: [WaterBody; 6] = [
+    WaterBody::Tarn,
+    WaterBody::GlacialPond,
+    WaterBody::Thermokarst,
+    WaterBody::SagPond,
+    WaterBody::Crater,
+    WaterBody::Oxbow,
+];
+
+fn point_search_radius(args: &[String]) -> Result<f64, String> {
     let radius_l = match value(args, "--radius-l") {
         Some(text) => text
             .parse::<f64>()
@@ -686,18 +688,66 @@ fn cmd_water_points(args: &[String]) -> Result<(), String> {
     if !radius_l.is_finite() || radius_l <= 0. {
         return Err("--radius-l должен быть положительным конечным числом".into());
     }
+    Ok(radius_l)
+}
+
+/// One bounded witness per family per seed. Reuse the generator so each type
+/// sees the same world without rebuilding shared plates from cold. A missing
+/// body is valid data (null), not a command failure or proof of unsuitable land.
+fn cmd_point_lake_survey(args: &[String]) -> Result<(), String> {
+    let opts = options_from(args)?;
+    if !opts.version.is_water_update() {
+        return Err("point-lake-survey требует v1-dev-w".into());
+    }
+    let radius_l = point_search_radius(args)?;
+    let g = generator(&opts)?;
+    let center = litho_core::Vec2::new(opts.center_x, opts.center_z);
+    if !center.x.is_finite() || !center.z.is_finite() {
+        return Err("центр должен быть конечной точкой".into());
+    }
+    let mut entries = Vec::new();
+    for body in POINT_LAKE_BODIES {
+        let examples = g
+            .point_lake_examples(body, center, radius_l * g.params().block.l_blocks, 1)
+            .map_err(|e| format!("{}: {e}", body.name()))?;
+        let witness = examples
+            .first()
+            .map(|(x, z, c)| {
+                format!(
+                    "{{\"x\":{x},\"z\":{z},\"level\":{},\"bed\":{}}}",
+                    c.level, c.bed
+                )
+            })
+            .unwrap_or_else(|| "null".into());
+        entries.push(format!("\"{}\":{witness}", body.name()));
+    }
+    println!(
+        "{{\"seed\":{},\"mode\":\"{}\",\"version\":\"{}\",\"center\":[{},{}],\"radius_l\":{},\"examples\":{{{}}}}}",
+        opts.seed,
+        opts.mode.as_str(),
+        opts.version.as_str(),
+        center.x,
+        center.z,
+        radius_l,
+        entries.join(",")
+    );
+    Ok(())
+}
+
+fn cmd_water_points(args: &[String]) -> Result<(), String> {
+    let opts = options_from(args)?;
+    let generator = generator(&opts)?;
+    if !opts.version.is_water_relief_r2() {
+        return Err(format!(
+            "water-points считает только v1-dev-r2 и v1-dev-w (сейчас {}): в v1-dev воды выше моря нет",
+            opts.version.as_str()
+        ));
+    }
+    let radius_l = point_search_radius(args)?;
     let wanted = value(args, "--type");
-    use litho_core::water_profile::WaterBody;
-    let point_type = [
-        WaterBody::Tarn,
-        WaterBody::GlacialPond,
-        WaterBody::Thermokarst,
-        WaterBody::SagPond,
-        WaterBody::Crater,
-        WaterBody::Oxbow,
-    ]
-    .into_iter()
-    .find(|b| Some(b.name()) == wanted.as_deref());
+    let point_type = POINT_LAKE_BODIES
+        .into_iter()
+        .find(|b| Some(b.name()) == wanted.as_deref());
     if let Some(kind) = wanted.as_deref() {
         if !opts.version.is_water_update()
             || point_type.is_none()
@@ -2500,6 +2550,7 @@ fn usage() -> &'static str {
                     --size 2048 --step 4, три центра\n\
        water-points R2: до 20 мест с водой выше моря для CI и автора (v1-dev-r2),\n\
        water-stats  ВО0-3: реки (вода выше моря, врез), озёра по водоёмам, стены (v1-dev-r2),\n\
+       point-lake-survey ВО4: один мокрый пример каждого точечного типа в диске (--radius-l R), JSON,\n\
        point-lake-cost ВО4: парное время чанков W без/с точечными озёрами (--chunks-side N),\n\
        s0-node-cost ВО0-5: цена S0 в узлах стока и точность решётки S0 (v1-dev-w),\n\
                     --radius-l 32\n\
@@ -2550,6 +2601,7 @@ fn main() -> Result<(), String> {
         "water-leaks" => cmd_water_leaks(&args[1..]),
         "water-points" => cmd_water_points(&args[1..]),
         "water-stats" => cmd_water_stats(&args[1..]),
+        "point-lake-survey" => cmd_point_lake_survey(&args[1..]),
         "point-lake-cost" => {
             let opts = options_from(&args[1..])?;
             if value(&args[1..], "--version").is_some() && !opts.version.is_water_update() {

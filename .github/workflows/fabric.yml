@@ -212,6 +212,15 @@ jobs:
           timeout 2400 gradle runServer --args=nogui -Dorg.gradle.jvmargs=-Xmx3G \
             -Plitospherity_ci=water-${{ matrix.mode }} || true
           cat run/litospherity-ci.txt
+          # A single annotation is truncated by GitHub before the final
+          # metrics. Keep the compact verdict separate from the spatial trace.
+          grep -E '^(протечки:|сухое русло:|calm_fit:|calm_fit без крон|накрытая вода:|стены у воды:|рост текущей воды|заделки герметизации:|водопад \(|FAIL:|RESULT:)' run/litospherity-ci.txt \
+            | python3 ../tools/ci_annotations.py report
           # Отчёт сервера тоже уходит аннотацией: сырые логи CI недоступны.
           python3 ../tools/ci_annotations.py report < run/litospherity-ci.txt
           grep -q "RESULT: PASS" run/litospherity-ci.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: water-report-${{ matrix.mode }}
+          path: fabric/run/litospherity-ci.txt
