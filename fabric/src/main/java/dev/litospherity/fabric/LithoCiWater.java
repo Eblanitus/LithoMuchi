@@ -74,18 +74,86 @@ final class LithoCiWater {
             long flowingBefore = countWater(level, false);
             FLOWING_BEFORE.clear();
             collectFlowing(level, FLOWING_BEFORE);
-            // Ждём 400 тиков, чтобы обновления жидкости прошли.
-            long[] tickStart = {0L}; long[] totalTickNanos = {0L}; long[] maxTickNanos = {0L}; int[] measuredTicks = {0}; boolean[] done = {false}; ServerTickEvents.START_SERVER_TICK.register(s -> { if (!done[0]) tickStart[0] = System.nanoTime(); });
-            int[] left = {TICKS};
+            var watches = WaterWatch.fromEnvironment(level, report);
+            long[] tickStart = {0L}, totalTickNanos = {0L}, maxTickNanos = {0L};
+            int[] measuredTicks = {0};
+            boolean[] done = {false};
+            ServerTickEvents.START_SERVER_TICK.register(s -> {
+                if (!done[0]) tickStart[0] = System.nanoTime();
+            });
             ServerTickEvents.END_SERVER_TICK.register(s -> {
-                if (done[0]) return; if (tickStart[0] != 0L) { long dt = System.nanoTime() - tickStart[0]; totalTickNanos[0] += dt; if (dt > maxTickNanos[0]) maxTickNanos[0] = dt; measuredTicks[0]++; }
-                if (left[0]-- > 0) return; done[0] = true; double avgTickMs = measuredTicks[0] == 0 ? 0.0 : (totalTickNanos[0] / (double) measuredTicks[0]) / 1_000_000.0; double maxTickMs = maxTickNanos[0] / 1_000_000.0;
+                if (done[0] || tickStart[0] == 0L) return;
+                long dt = System.nanoTime() - tickStart[0];
+                totalTickNanos[0] += dt;
+                maxTickNanos[0] = Math.max(maxTickNanos[0], dt);
+                int tick = ++measuredTicks[0];
+                for (WaterWatch watch : watches) watch.observe(level, tick, report);
+                if (tick < TICKS) return;
+                done[0] = true;
+                double avgTickMs = totalTickNanos[0] / (double) tick / 1_000_000.0;
+                double maxTickMs = maxTickNanos[0] / 1_000_000.0;
                 measure(server, level, gen, points, report, generationSeals, chunksWithWater, sourcesBefore, flowingBefore, ms / Math.max(1, generated.size()), avgTickMs, maxTickMs);
             });
         } catch (Throwable t) {
             report.add("FAIL: " + t);
             LithoMod.LOG.error("Litospherity CI water", t);
             finish(server, report, false);
+        }
+    }
+
+    /** CI only. Read the loaded, already scored chunks; never load a chunk or
+     * schedule a tick. For a leak, retain the LAST dry neighbourhood and the
+     * first wet one rather than inferring the source from tick 400. */
+    private static final class WaterWatch {
+        private final BlockPos pos;
+        private String previous;
+        private boolean found;
+
+        private WaterWatch(BlockPos pos) { this.pos = pos; }
+
+        static List<WaterWatch> fromEnvironment(ServerLevel level, List<String> report) {
+            var watches = new ArrayList<WaterWatch>();
+            String spec = System.getenv("LITHO_CI_WATER_WATCH");
+            if (spec == null || spec.isBlank()) return watches;
+            for (String point : spec.split(";")) {
+                String[] xyz = point.split(",");
+                if (xyz.length != 3) throw new IllegalArgumentException("water watch: " + point);
+                var pos = new BlockPos(Integer.parseInt(xyz[0]), Integer.parseInt(xyz[1]), Integer.parseInt(xyz[2]));
+                boolean loaded = true;
+                for (int dx : new int[]{-1, 1}) for (int dz : new int[]{-1, 1}) {
+                    int cx = (pos.getX() + dx) >> 4, cz = (pos.getZ() + dz) >> 4;
+                    loaded &= CHUNKS.contains(((long) cx << 32) ^ Integer.toUnsignedLong(cz));
+                }
+                if (!loaded) { report.add("watch вне окон: " + point); continue; }
+                var watch = new WaterWatch(pos);
+                watches.add(watch);
+                watch.observe(level, 0, report);
+            }
+            return watches;
+        }
+
+        void observe(ServerLevel level, int tick, List<String> report) {
+            if (found) return;
+            StringBuilder frame = new StringBuilder();
+            // Each square: rows N->S, columns W->E. S=source, 1..8=flow,
+            // .=air, #=solid/other. Include overhead flow and the bed below.
+            for (int dy : new int[]{0, 1, -1}) {
+                if (dy != 0) frame.append(' ');
+                for (int dz = -1; dz <= 1; dz++) {
+                    if (dz != -1) frame.append('/');
+                    for (int dx = -1; dx <= 1; dx++) {
+                        BlockState state = level.getBlockState(pos.offset(dx, dy, dz));
+                        frame.append(!containsWater(state) ? (state.isAir() ? '.' : '#') :
+                                state.getFluidState().isSource() ? 'S' : (char)('0' + state.getFluidState().getAmount()));
+                    }
+                }
+            }
+            found = containsWater(level.getBlockState(pos));
+            if (tick == 0 || found || tick == TICKS) {
+                report.add("watch " + pos.toShortString() + " tick=" + tick + " wet=" + found
+                        + (found && previous != null ? " предыдущий=" + previous : "") + " сейчас=" + frame);
+            }
+            previous = frame.toString();
         }
     }
 

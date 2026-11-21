@@ -205,6 +205,9 @@ jobs:
           # Synthetic parity/window scans run synchronously on the server thread;
           # bound them with the shell timeout rather than a 60s game tick.
           printf 'level-seed=42\nlevel-type=litospherity\\:%s\nonline-mode=false\nmax-tick-time=600000\n' "${{ matrix.mode }}" > run/server.properties
+          if [ "${{ matrix.mode }}" = gameplay ]; then
+            export LITHO_CI_WATER_WATCH='-44867,64,7037;-44866,64,7036'
+          fi
           timeout 2400 gradle runServer --args=nogui -Dorg.gradle.jvmargs=-Xmx3G \
             -Plitospherity_ci=water-${{ matrix.mode }} || true
           cat run/litospherity-ci.txt
