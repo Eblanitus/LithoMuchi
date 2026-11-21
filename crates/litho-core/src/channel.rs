@@ -171,6 +171,8 @@ pub struct ChannelHit {
     pub valley_class: ValleyClass,
     /// ВО1-1 (6.3, п. 7 / §6.8): класс потока в точке. У R2 — `Calm`.
     pub flow_class: FlowClass,
+    /// W-only cross section of a plunge pool, in blocks.
+    pub plunge_depth: f64,
     /// ВО1-2 (6.5): `max(S0_macro)` на пробах `±R_v` от оси (§6.3, п. 1) —
     /// для склона долины `s_eff`. `0.0` — не считалась, склон = `s_wall`.
     pub gp: f64,
@@ -806,6 +808,7 @@ impl ChannelNetwork {
                 bend: at.bend,
                 valley_class: ValleyClass::default(),
                 flow_class: FlowClass::default(),
+                plunge_depth: 0.,
                 gp: 0.0,
             },
         })
@@ -1336,6 +1339,7 @@ mod tests {
                             side: if cross < 0.0 { 1.0 } else { -1.0 },
                             valley_class: super::ValleyClass::Plain,
                             flow_class: super::FlowClass::Calm,
+                            plunge_depth: 0.,
                             gp: 0.0,
                             mouth_distance_l: (1.0 - t) * ab.dot(ab).sqrt()
                                 + net

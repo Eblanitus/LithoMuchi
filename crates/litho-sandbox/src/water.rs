@@ -369,6 +369,64 @@ pub fn points_filtered(
     }
 }
 
+/// Only advertise lips with two adjacent integer columns the Fabric feature
+/// can actually join. Propagate profile failures instead of reporting them as
+/// an empty search window.
+pub fn waterfall_points(
+    g: &Generator,
+    center: (f64, f64),
+    radius_l: f64,
+) -> Result<Vec<WaterPoint>, String> {
+    let q = g.macro_point(center.0, center.1);
+    let c = litho_core::Vec2::new(center.0, center.1);
+    let l = g.params().block.l_blocks;
+    let mut found = BTreeMap::new();
+    for plate in litho_core::plates::plates_near(q, radius_l, g.seed(), g.params()) {
+        let lips = match g.waterfall_lips(&plate, c, radius_l * l) {
+            Ok(v) => v,
+            Err(litho_core::drainage::RiverNetError::NoOwnedNode { .. }) => continue,
+            Err(e) => return Err(e.to_string()),
+        };
+        for lip in lips {
+            let (cx, cz) = (lip.x.round() as i64, lip.z.round() as i64);
+            'face: for z in cz - 2..=cz + 2 {
+                for x in cx - 2..=cx + 2 {
+                    if c.dist2(litho_core::Vec2::new(x as f64, z as f64)) > (radius_l * l).powi(2) {
+                        continue;
+                    }
+                    let top = g.water_column(x as f64, z as f64);
+                    if top.flow != litho_core::FlowClass::FallTop || !top.has_water() {
+                        continue;
+                    }
+                    for (dx, dz) in [(0, 1), (0, -1), (1, 0), (-1, 0)] {
+                        let low = g.water_column((x + dx) as f64, (z + dz) as f64);
+                        if low.flow == litho_core::FlowClass::Plunge
+                            && (low.has_water() || low.has_sea_river())
+                            && f64::from(top.level - low.level)
+                                >= g.params().water.fall_min_drop_blocks
+                        {
+                            found
+                                .entry(cluster(x as f64, z as f64))
+                                .or_insert(WaterPoint {
+                                    x,
+                                    z,
+                                    level: top.level,
+                                    kind: "river",
+                                    note: "waterfall",
+                                });
+                            break 'face;
+                        }
+                    }
+                }
+            }
+        }
+        if found.len() >= STEP_LIMIT {
+            break;
+        }
+    }
+    Ok(found.into_values().take(STEP_LIMIT).collect())
+}
+
 /// Один проход по плитам в радиусе `radius_l`, без колец.
 fn points_at(
     generator: &Generator,

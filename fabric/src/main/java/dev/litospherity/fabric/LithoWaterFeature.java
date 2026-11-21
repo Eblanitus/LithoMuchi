@@ -250,7 +250,12 @@ public final class LithoWaterFeature implements Feature {
             int nk = k + d[1] * SIDE + d[0];
             int upper = water.level()[nk];
             if (water.kind()[nk] != KIND_RIVER || upper <= lower) continue;
-            if (upper - lower >= 2 && LithoNative.WaterColumns.flow(water.info()[nk]) == 4) {
+            int downFlow = LithoNative.WaterColumns.flow(water.info()[k]);
+            // A lip can be adjacent to another, lower reach across the bend.
+            // Only its plunge pool (or the next tread of a tall cascade) is a
+            // predicted river receiver; do not pour down the unrelated face.
+            if (upper - lower >= 2 && LithoNative.WaterColumns.flow(water.info()[nk]) == 4
+                    && (downFlow == 5 || downFlow == 4 || water.kind()[k] != KIND_RIVER)) {
                 top = Math.max(top, upper - 1);
             } else if (water.kind()[k] == KIND_RIVER && upper == lower + 1) {
                 top = Math.max(top, lower);

@@ -721,6 +721,7 @@ mod tests {
             bend: 0.,
             valley_class: crate::water_profile::ValleyClass::Plain,
             flow_class: crate::water_profile::FlowClass::Calm,
+            plunge_depth: 0.,
             gp: 0.0,
         };
         let q = ChannelQuery {
@@ -830,6 +831,7 @@ mod tests {
             bend: 0.,
             valley_class: crate::water_profile::ValleyClass::Plain,
             flow_class: crate::water_profile::FlowClass::Calm,
+            plunge_depth: 0.,
             gp: 0.0,
         };
         let q = ChannelQuery {

@@ -710,13 +710,16 @@ fn cmd_water_points(args: &[String]) -> Result<(), String> {
                         | "rift"
                         | "strike_slip"
                         | "highland"
+                        | "waterfall"
                         | "glacial"
                 )
         {
-            return Err("--type для W: lake, ordinary, inland_sea, swamp, rift, strike_slip, highland, glacial, tarn, glacial_pond, thermokarst, sag_pond, crater, oxbow".into());
+            return Err("--type для W: lake, ordinary, inland_sea, swamp, rift, strike_slip, highland, glacial, tarn, glacial_pond, thermokarst, sag_pond, crater, oxbow, waterfall".into());
         }
     }
-    let points = if let Some(body) = point_type {
+    let points = if wanted.as_deref() == Some("waterfall") {
+        water::waterfall_points(&generator, (opts.center_x, opts.center_z), radius_l)?
+    } else if let Some(body) = point_type {
         generator
             .point_lake_examples(
                 body,

@@ -324,12 +324,38 @@ final class LithoCiWater {
             if (corridor == 0 || wet == 0 || fitPct < 95.0) ok = false;
             if (coveredPct > 0.5) ok = false;
             if (wallPct > 2.0) ok = false;
+            // Generate this separate regression fixture *after* scoring all
+            // original windows. Its water must not dilute a percentage there.
+            if (Boolean.parseBoolean(System.getenv("LITHO_CI_WATERFALL_42"))) {
+                ok &= checkWaterfall42(level, gen, report);
+            }
         } catch (Throwable t) {
             ok = false;
             report.add("FAIL: " + t);
             LithoMod.LOG.error("Litospherity CI water measure", t);
         }
         finish(server, report, ok);
+    }
+
+    /** Gameplay seed 42: the two adjacent integer columns in the Rust ABI test. */
+    private static boolean checkWaterfall42(ServerLevel level, LithoNative.Generator gen, List<String> report) {
+        int x = -44565, z = 6791;
+        level.getChunk(x >> 4, z >> 4, ChunkStatus.FULL, true);
+        var c = gen.water(new double[]{x, x}, new double[]{z, z + 1});
+        int up = c.level()[0], down = c.level()[1];
+        boolean face = up == 71 && down == 68 && LithoNative.WaterColumns.flow(c.info()[0]) == 4
+                && LithoNative.WaterColumns.flow(c.info()[1]) == 5;
+        int falling = 0;
+        if (face) {
+            for (int y = down; y < up; y++) {
+                var state = level.getBlockState(new BlockPos(x, y, z + 1));
+                if (containsWater(state) && state.getFluidState().getValue(net.minecraft.world.level.material.FlowingFluid.FALLING)) falling++;
+            }
+            face = falling == up - down && containsWater(level.getBlockState(new BlockPos(x, up - 1, z)))
+                    && containsWater(level.getBlockState(new BlockPos(x, down - 1, z + 1)));
+        }
+        report.add("водопад (" + x + "," + z + "): " + up + " → " + down + ", падающих блоков " + falling + ", " + (face ? "OK" : "FAIL"));
+        return face;
     }
 
     /** §8.3: inspect each generated column once, after generation and fluid ticks.

@@ -45,6 +45,8 @@ pub struct HeightSample {
     /// W: which cut supplied the water, not the biome of the surrounding shore.
     pub point_body: Option<crate::water_profile::WaterBody>,
     pub point_shore: Option<(crate::water_profile::BedMaterial, u16)>,
+    /// Flow of the reach that actually supplied the wet bed in W.
+    pub river_flow: crate::water_profile::FlowClass,
     pub wet_kind: crate::hydrology::SurfaceKind,
     /// ВО2-1 (§6.7): маска 3D-шума ванили. 1.0 — шум не трогаем (все версии,
     /// кроме `v1-dev-w`), 0.0 — вода/пойма/озеро и их окрестность.
@@ -64,6 +66,7 @@ impl Default for HeightSample {
             point_body: None,
             point_shore: None,
             wet_kind: crate::hydrology::SurfaceKind::Land,
+            river_flow: Default::default(),
             calm: 1.0,
         }
     }
@@ -177,6 +180,7 @@ pub fn sample_micro(
         point_body: None,
         point_shore: None,
         wet_kind: crate::hydrology::SurfaceKind::Land,
+        river_flow: Default::default(),
         calm: 1.0,
     }
 }
@@ -447,7 +451,7 @@ pub fn with_water_w(
     let scientific = matches!(params.mode, crate::mode::Mode::Scientific);
     let depth_min = 2.0_f64;
     let depth_max = if scientific { 8.0 } else { 5.0 };
-    let mut best: Option<(f64, f64, f64)> = None; // (v_y, water_y, strength)
+    let mut best = None; // (v_y, water_y, strength)
     let mut d_floor_min = f64::INFINITY;
     for hit in candidates {
         let Some(level) = hit.level_blocks else {
@@ -528,7 +532,13 @@ pub fn with_water_w(
             }
         };
         // Кандидат участвует в min() безусловно: сравнение с S0 — ниже.
-        let strength = if d_abs <= half {
+        let pool = hit.plunge_depth >= 0.5;
+        let candidate = if pool {
+            candidate.min(level - hit.plunge_depth.max(1.))
+        } else {
+            candidate
+        };
+        let strength = if pool || d_abs <= half {
             1.0
         } else if dp <= 0.0 {
             0.5
@@ -536,11 +546,11 @@ pub fn with_water_w(
             0.0
         };
         let take = match best {
-            Some((old, _, _)) => candidate < old,
+            Some((old, _, _, _)) => candidate < old,
             None => true,
         };
         if take {
-            best = Some((candidate, level, strength));
+            best = Some((candidate, level, strength, hit.flow_class));
         }
     }
     // ВО2-1 (§6.7): маска 3D-шума. Вода, берег, пойма и озеро плюс подушка
@@ -575,13 +585,15 @@ pub fn with_water_w(
     let mut surface = land_y + micro_dy * gate;
     let mut water_y = sea;
     let mut cut = 0.0_f64;
-    if let Some((v_y, mirror, strength)) = best {
+    let mut river_flow = Default::default();
+    if let Some((v_y, mirror, strength, flow)) = best {
         surface = surface.min(v_y);
         // A naturally deep channel is wet too: no fill or excavation is needed.
         // A bank, even one cut down to its target, is not a sea-level channel.
         if v_y < mirror && strength > 0.0 {
             cut = strength;
             water_y = mirror;
+            river_flow = flow;
         }
     }
     let mut height = HeightSample {
@@ -589,6 +601,7 @@ pub fn with_water_w(
         water_y,
         bed_y: surface,
         water_strength: cut,
+        river_flow,
         wet_kind: if cut > 0.0 {
             crate::hydrology::SurfaceKind::River
         } else {
@@ -1268,6 +1281,7 @@ mod tests {
             bend: 0.,
             valley_class: crate::water_profile::ValleyClass::Plain,
             flow_class: crate::water_profile::FlowClass::Calm,
+            plunge_depth: 0.,
             gp: 0.0,
         }
     }

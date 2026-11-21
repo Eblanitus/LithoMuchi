@@ -5,6 +5,7 @@
 //! путь через грубую решётку с кэшем тайлов (`sample`), плюс пять полей для
 //! игры (`field`). Песочница и будущий мод вызывают один и тот же `Generator`.
 
+mod falls;
 mod ponds;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -488,6 +489,8 @@ fn w_parents_of(net: &crate::drainage::RiverNet) -> Vec<Vec<usize>> {
 struct WReachProfile {
     /// Prefix offsets into subsegments; the final entry is the one-past-end sentinel.
     starts: Vec<usize>,
+    stations: Vec<f64>,
+    falls: falls::Falls,
     levels: Vec<Option<(f64, f64)>>,
     classes: Vec<crate::water_profile::SegmentClass>,
 }
@@ -1660,16 +1663,31 @@ impl Generator {
                                 reason: "сегмент вне профиля W",
                             },
                         )?;
-                        hit.level_blocks = profile
-                            .levels
-                            .get(index)
-                            .copied()
-                            .flatten()
-                            .map(|(up, down)| (up + (down - up) * along).floor());
-                        if let Some(class) = profile.classes.get(index) {
+                        if let Some((up, down)) = profile.levels[index] {
+                            let class = profile.classes[index];
+                            let y = (up + (down - up) * along).floor();
+                            let (level, flow, depth) = if profile.falls.is_empty() {
+                                (y, class.flow, 0.)
+                            } else {
+                                let start = profile.stations[index];
+                                let end = profile.stations[index + 1];
+                                let station = if along == 1. {
+                                    end
+                                } else {
+                                    start + (end - start) * along
+                                };
+                                profile.falls.sample(
+                                    station,
+                                    hit.distance_l * self.params.block.l_blocks,
+                                    y,
+                                    class.flow,
+                                )
+                            };
+                            hit.level_blocks = Some(level);
                             hit.valley_class = class.valley;
-                            hit.flow_class = class.flow;
+                            hit.flow_class = flow;
                             hit.gp = class.gp;
+                            hit.plunge_depth = depth;
                         }
                     }
                 } else if let Some(hit) = channels_here.nearest.as_mut() {
@@ -2127,8 +2145,7 @@ impl Generator {
     /// бюджета шаг удваивается): цель `T = floor(B) − 1` от низшего из трёх
     /// `S0` сечения, не ниже моря. Вниз по течению уровень только убывает
     /// (бегущий минимум), поэтому ступень внутри звена — не больше блока на
-    /// блок русла; водопады (п. 6) только размечаются (`FallTop`), перепад
-    /// раскладывается на ступени как в R2. Приёмник (п. 4): подпор вверх по
+    /// блок русла вне водопада; на кромке `Falls` применяется скачок. Приёмник (п. 4): подпор вверх по
     /// течению, висячий приток вне холодных гор выравнивается уклоном
     /// `grade_slope`. Вход звена (п. 3) — низший из родителей, включая
     /// передачи от соседних плит (п. 8). Классы долины (5.2) и потока (5.3)
@@ -2149,6 +2166,8 @@ impl Generator {
         if source.is_empty() {
             return Ok(WReachProfile {
                 starts: vec![0],
+                stations: vec![],
+                falls: Default::default(),
                 levels: Vec::new(),
                 classes: Vec::new(),
             });
@@ -2372,21 +2391,29 @@ impl Generator {
         );
         // п. 7 / 6.3: класс потока сверху вниз; каскад глушит водопад.
         let mut classes = Vec::with_capacity(n - 1);
-        let mut upstream = crate::water_profile::FlowClass::Calm;
+
         for i in 0..n - 1 {
-            let drop_blocks = (level[i] - level[i + 1]).max(0.0);
-            let flow = crate::water_profile::flow_class(slope[i], drop_blocks, upstream, water);
+            let flow = crate::water_profile::flow_class(slope[i], 0., FlowClass::Calm, water);
             classes.push(crate::water_profile::SegmentClass {
                 valley: valley[i],
                 flow,
                 gp: gp[i].unwrap_or(0.0),
             });
-            upstream = flow;
         }
         // Зеркало сегмента: `(уровень в начале, уровень в конце)`; между ними
         // интерполяция по `along`, поэтому ступень ≤ 1 блок на блок русла.
         let segments = level.windows(2).map(|v| Some((v[0], v[1]))).collect();
+        let falls = falls::Falls::build(
+            &cum_blocks,
+            &targets,
+            &level,
+            &classes,
+            |i| axis[i].1 * l,
+            water,
+        );
         Ok(WReachProfile {
+            stations: if falls.is_empty() { vec![] } else { cum_blocks },
+            falls,
             starts,
             levels: segments,
             classes,
@@ -3884,20 +3911,12 @@ impl Generator {
     }
 
     /// ВО2-2: класс течения колонки. Озёра, болота и приморские русла —
-    /// спокойные; класс реки берётся из ближайшего звена с уровнем.
+    /// спокойные вне русла. На пересечении выбираем поток того же выреза, что и дно.
     fn water_flow(&self, full: &FullSample) -> FlowClass {
         if full.world.height.wet_kind != crate::hydrology::SurfaceKind::River {
             return FlowClass::Calm;
         }
-        let l = self.params.block.l_blocks;
-        full.world
-            .hydrology
-            .channels
-            .nearest
-            .filter(|hit| hit.level_blocks.is_some())
-            .filter(|hit| hit.distance_l * l <= hit.core_l * l * 0.5 + 2.0)
-            .map(|hit| hit.flow_class)
-            .unwrap_or(FlowClass::Calm)
+        full.world.height.river_flow
     }
 
     /// ВО2-2: материал дна и берега по §7.5. Пятна глины берутся из отношения
@@ -4069,7 +4088,13 @@ impl Generator {
             if !water_update {
                 return column;
             }
-            return column.with_details(FlowClass::Calm, BedMaterial::Sand, BedMaterial::Sand);
+            let flow = self.water_flow(&full);
+            let bed = if matches!(flow, FlowClass::FallTop | FlowClass::Plunge) {
+                BedMaterial::Cobble
+            } else {
+                BedMaterial::Sand
+            };
+            return column.with_details(flow, bed, BedMaterial::Sand);
         }
         // NaN и «не выше моря» — одно и то же: колонка остаётся сушей (clippy:
         // neg_cmp_op_on_partial_ord не даёт писать `!(level > SEA_LEVEL)`).
@@ -4151,6 +4176,8 @@ mod tests {
     fn w_profile_lookup_respects_internal_knots_and_segment_seams() {
         let profile = super::WReachProfile {
             starts: vec![0, 4, 5],
+            stations: vec![],
+            falls: Default::default(),
             levels: vec![
                 Some((110., 109.)),
                 Some((109., 106.)),
