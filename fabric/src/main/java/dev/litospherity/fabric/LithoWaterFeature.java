@@ -43,8 +43,15 @@ public final class LithoWaterFeature implements Feature {
     private static final int CLEAR_ABOVE = 6;
     private static final int[][] SIDES = {{1, 0}, {-1, 0}, {0, 1}, {0, -1}};
 
-    /** Заделок герметизации (метрика В5: ≤ 2 на чанк с водой выше моря). */
+    /**
+     * Заделок герметизации берега (метрика В5: ≤ 1 на чанк с водой выше моря).
+     * Д-137: только заливка воздушной ячейки за берегом. Затычка пещеры под
+     * дном — другая операция (§8.2 п. 1) и считается отдельно, иначе метрика
+     * берега тонет в подземных полостях.
+     */
     public static final AtomicLong SEALS = new AtomicLong();
+    /** Затычек пещеры под дном водой (§8.2 п. 1, «пещера под дном — камень»). */
+    public static final AtomicLong AQUIFER_PLUGS = new AtomicLong();
     /** Чанков, где заливалась вода выше моря. */
     public static final AtomicLong CHUNKS = new AtomicLong();
     /** Колонок, где вода выше моря поставлена. */
@@ -136,7 +143,7 @@ public final class LithoWaterFeature implements Feature {
                 BlockState old = level.getBlockState(under);
                 if (old.isAir()) {
                     level.setBlock(under, Blocks.STONE.defaultBlockState(), 2);
-                    seals++;
+                    AQUIFER_PLUGS.incrementAndGet();
                 } else if (!old.is(Blocks.BEDROCK)) {
                     BlockState bedMat = material(LithoNative.WaterColumns.bedMat(water.info()[k]));
                     if (bedMat != null) level.setBlock(under, bedMat, 2);

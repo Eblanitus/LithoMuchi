@@ -150,19 +150,29 @@ pub fn leaks_against(
                 // километровый уровень, и его готовая поверхность в тех же
                 // колонках стоянки на 20–30 блоков ниже (баг К3), так что
                 // сравнение с ней ловило бы вырез `v1-dev`, а не насыпь.
+                // Д-138: у W «эталон» — его собственный рельеф без воды. Точный
+                // `s0_at` совпадает с полной сухой поверхностью побитово (ВО0-2), а
+                // быстрый `s0_node` считает климат без лучей влаги и даёт ошибку в
+                // единицы блоков: на таком сравнении любой нормальный вырез русла
+                // выглядел «насыпью». Порог 3 блока не меняется.
                 let base = if reference.params().version.is_water_update() {
-                    reference.s0_node(x as f64, z as f64).map(|s| s.surface_y())
+                    reference.s0_at(x as f64, z as f64).map(|s| s.surface_y())
                 } else {
                     reference.dry_surface_at(x as f64, z as f64).ok().flatten()
                 };
                 if let Some(base) = base {
-                    if column.surface != WaterColumn::NONE
-                        && column.surface as f64 > base + RAISE_LIMIT_BLOCKS
+                    // Д-138: «насыпь» — это поднятое ДНО под водой, а не поверхность
+                    // колонки. У разрезанной колонки `surface` — дно после выреза, и
+                    // оно законно ниже `S0`; у сухой колонки `surface` — просто рельеф,
+                    // и сравнивать его с `S0` того же генератора незачем.
+                    if column.has_water()
+                        && column.bed != WaterColumn::NONE
+                        && column.bed as f64 > base + RAISE_LIMIT_BLOCKS
                     {
                         out.raised += 1;
                         out.example(format!(
-                            "рельеф поднят: ({x}, {z}) {} против сухой поверхности {base:.1}",
-                            column.surface
+                            "рельеф поднят: ({x}, {z}) дно {} против сухой поверхности {base:.1}",
+                            column.bed
                         ));
                     }
                 }
@@ -195,13 +205,22 @@ fn river_axis(generator: &Generator, column: &WaterColumn, x: i64, z: i64, out: 
         return;
     }
     out.river_axis += 1;
-    if column.has_water() {
+    // Д-138: в W приморское русло отдаётся с `level = 63` (`has_sea_river`), чтобы
+    // Java прорезала его по настоящим блокам. Это мокрая ось, а не сухая: раньше
+    // её отсекал только `has_water() > 63`, и на W «сухими» выходило 80 % осей.
+    if column.has_water() || column.has_sea_river() {
         return;
     }
     // Ванильная вода стоит до y = 62: блок 62 воздух, если дно не выше 62.
-    let bed = generator
-        .sample(xf, zf)
-        .map_or(f64::INFINITY, |full| full.world.height.surface_y);
+    // В W дно — это `bed` (дно после выреза), а `surface` у сухой колонки в W
+    // совпадает с рельефом и до воды не относится.
+    let bed = if column.bed != WaterColumn::NONE {
+        column.bed as f64
+    } else {
+        generator
+            .sample(xf, zf)
+            .map_or(f64::INFINITY, |full| full.world.height.surface_y)
+    };
     if bed <= SEA_LEVEL - 1.0 {
         return;
     }
