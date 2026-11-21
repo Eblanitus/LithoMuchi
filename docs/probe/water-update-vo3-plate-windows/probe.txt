@@ -7,17 +7,17 @@
 ## sandbox s0-node-cost --version v1-dev-w --seed 42 --mode gameplay --plates 2 --analytic-only --with-levels --json
 
 ```
-{"seed":42,"mode":"gameplay","version":"v1-dev-w","seconds":8.81,"plates":2,"nodes":6275,"with_levels":true,"plate_stages":[{"plate":"216878075925460450","drainage_ms":1738.46,"levels_ms":306.68},{"plate":"356150445216138105","drainage_ms":960.14,"levels_ms":350.03}],"net_ms_p50":1677.7,"net_ms_p95":2008.4,"net_ms_max":2045.1,"exact_us_per_node":798.78,"analytic_us_per_node":66.96,"analytic_error_p95":0.000,"stored_route_error_p95":0.000,"stored_route_error_p999":0.000,"analytic_error_p999":0.000,"net_budget_ms":200.0,"lattices":[],"decision":"только аналитический путь, без сравнения решёток"}
-litho-core: сеть рек №1, плита 216878075925460450: 1499 узлов за 1738 мс
-litho-core: сеть рек №2, плита 12257214645282878660: 4341 узлов за 96 мс
-litho-core: сеть рек №3, плита 356150445216138105: 5162 узлов за 960 мс
+{"seed":42,"mode":"gameplay","version":"v1-dev-w","seconds":8.75,"plates":2,"nodes":6275,"with_levels":true,"plate_stages":[{"plate":"216878075925460450","drainage_ms":1768.27,"levels_ms":302.89},{"plate":"356150445216138105","drainage_ms":940.92,"levels_ms":346.81}],"net_ms_p50":1679.4,"net_ms_p95":2032.0,"net_ms_max":2071.2,"exact_us_per_node":790.08,"analytic_us_per_node":65.72,"analytic_error_p95":0.000,"stored_route_error_p95":0.000,"stored_route_error_p999":0.000,"analytic_error_p999":0.000,"net_budget_ms":200.0,"lattices":[],"decision":"только аналитический путь, без сравнения решёток"}
+litho-core: сеть рек №1, плита 216878075925460450: 1499 узлов за 1768 мс
+litho-core: сеть рек №2, плита 12257214645282878660: 4341 узлов за 95 мс
+litho-core: сеть рек №3, плита 356150445216138105: 5162 узлов за 941 мс
 ```
 
 ## sandbox s0-node-cost --version v1-dev-w --seed 42 --mode scientific --plates 2 --analytic-only --with-levels --json
 
 ```
-{"seed":42,"mode":"scientific","version":"v1-dev-w","seconds":13.50,"plates":2,"nodes":6275,"with_levels":true,"plate_stages":[{"plate":"216878075925460450","drainage_ms":2400.09,"levels_ms":340.65},{"plate":"356150445216138105","drainage_ms":3289.06,"levels_ms":569.82}],"net_ms_p50":3299.8,"net_ms_p95":3803.0,"net_ms_max":3858.9,"exact_us_per_node":916.64,"analytic_us_per_node":179.09,"analytic_error_p95":0.000,"stored_route_error_p95":0.000,"stored_route_error_p999":0.000,"analytic_error_p999":0.000,"net_budget_ms":200.0,"lattices":[],"decision":"только аналитический путь, без сравнения решёток"}
-litho-core: сеть рек №1, плита 216878075925460450: 1499 узлов за 2400 мс
-litho-core: сеть рек №2, плита 356150445216138105: 5162 узлов за 3289 мс
+{"seed":42,"mode":"scientific","version":"v1-dev-w","seconds":13.18,"plates":2,"nodes":6275,"with_levels":true,"plate_stages":[{"plate":"216878075925460450","drainage_ms":2310.18,"levels_ms":334.08},{"plate":"356150445216138105","drainage_ms":3201.93,"levels_ms":560.29}],"net_ms_p50":3203.2,"net_ms_p95":3706.3,"net_ms_max":3762.2,"exact_us_per_node":901.23,"analytic_us_per_node":173.74,"analytic_error_p95":0.000,"stored_route_error_p95":0.000,"stored_route_error_p999":0.000,"analytic_error_p999":0.000,"net_budget_ms":200.0,"lattices":[],"decision":"только аналитический путь, без сравнения решёток"}
+litho-core: сеть рек №1, плита 216878075925460450: 1499 узлов за 2310 мс
+litho-core: сеть рек №2, плита 356150445216138105: 5162 узлов за 3202 мс
 ```
 
