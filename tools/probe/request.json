@@ -1,41 +1,19 @@
 {
-  "name": "water-update-vo3-plate-windows",
-  "note": "Повтор фаз сети и уровней с общим окном кандидатов ядра и стыка. Сравнивать с water-update-vo3-plate-stages; те же плиты и команды.",
+  "name": "water-gate-w-vs-r2",
+  "note": "Сравнение water-leaks на действующей v1-dev-w и заменяемой v1-dev-r2: перед переводом гейта ci.yml на W нужно знать, сколько нарушений §4 даёт W в тех же окнах.",
   "mode": "gameplay",
   "version": "v1-dev-w",
-  "seeds": [
-    42
-  ],
+  "seeds": [],
   "at": [],
   "step": 0,
   "commands": [
-    [
-      "s0-node-cost",
-      "--version",
-      "v1-dev-w",
-      "--seed",
-      "42",
-      "--mode",
-      "gameplay",
-      "--plates",
-      "2",
-      "--analytic-only",
-      "--with-levels",
-      "--json"
-    ],
-    [
-      "s0-node-cost",
-      "--version",
-      "v1-dev-w",
-      "--seed",
-      "42",
-      "--mode",
-      "scientific",
-      "--plates",
-      "2",
-      "--analytic-only",
-      "--with-levels",
-      "--json"
-    ]
+    ["water-leaks", "--seed", "42", "--mode", "gameplay", "--version", "v1-dev-w", "--size", "1024", "--step", "8"],
+    ["water-leaks", "--seed", "7", "--mode", "gameplay", "--version", "v1-dev-w", "--size", "1024", "--step", "8"],
+    ["water-leaks", "--seed", "42", "--mode", "scientific", "--version", "v1-dev-w", "--size", "1024", "--step", "8"],
+    ["water-leaks", "--seed", "7", "--mode", "scientific", "--version", "v1-dev-w", "--size", "1024", "--step", "8"],
+    ["water-leaks", "--seed", "42", "--mode", "gameplay", "--version", "v1-dev-r2", "--size", "1024", "--step", "8"],
+    ["water-leaks", "--seed", "7", "--mode", "gameplay", "--version", "v1-dev-r2", "--size", "1024", "--step", "8"],
+    ["water-leaks", "--seed", "42", "--mode", "scientific", "--version", "v1-dev-r2", "--size", "1024", "--step", "8"],
+    ["water-leaks", "--seed", "7", "--mode", "scientific", "--version", "v1-dev-r2", "--size", "1024", "--step", "8"]
   ]
 }
