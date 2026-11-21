@@ -369,6 +369,51 @@ pub fn points_filtered(
     }
 }
 
+/// Require the actual upper and receiver levels of this profile event, not
+/// merely another cliff within the same five-block search stencil.
+pub fn wet_fall_face(
+    g: &Generator,
+    site: &litho_core::generator::FallSite,
+    center: litho_core::Vec2,
+    radius: f64,
+) -> Option<WaterPoint> {
+    let (cx, cz) = (site.center.x.round() as i64, site.center.z.round() as i64);
+    for z in cz - 2..=cz + 2 {
+        for x in cx - 2..=cx + 2 {
+            if center.dist2(litho_core::Vec2::new(x as f64, z as f64)) > radius * radius {
+                continue;
+            }
+            let top = g.water_column(x as f64, z as f64);
+            if top.flow != litho_core::FlowClass::FallTop
+                || !top.has_water()
+                || top.level != site.upper_level
+            {
+                continue;
+            }
+            for (dx, dz) in [(0, 1), (0, -1), (1, 0), (-1, 0)] {
+                let low = g.water_column((x + dx) as f64, (z + dz) as f64);
+                if low.flow == litho_core::FlowClass::Plunge
+                    && (low.has_water() || low.has_sea_river())
+                    && low.level == site.lower_level
+                {
+                    return Some(WaterPoint {
+                        x,
+                        z,
+                        level: top.level,
+                        kind: "river",
+                        note: if site.hanging {
+                            "hanging_fall"
+                        } else {
+                            "waterfall"
+                        },
+                    });
+                }
+            }
+        }
+    }
+    None
+}
+
 /// Only advertise lips with two adjacent integer columns the Fabric feature
 /// can actually join. Propagate profile failures instead of reporting them as
 /// an empty search window.
@@ -376,48 +421,31 @@ pub fn waterfall_points(
     g: &Generator,
     center: (f64, f64),
     radius_l: f64,
+    hanging_only: bool,
 ) -> Result<Vec<WaterPoint>, String> {
     let q = g.macro_point(center.0, center.1);
     let c = litho_core::Vec2::new(center.0, center.1);
     let l = g.params().block.l_blocks;
     let mut found = BTreeMap::new();
-    for plate in litho_core::plates::plates_near(q, radius_l, g.seed(), g.params()) {
-        let lips = match g.waterfall_lips(&plate, c, radius_l * l) {
+    for plate in litho_core::plates::plates_near(
+        q,
+        radius_l + litho_core::channel::max_query_radius_l(g.params()),
+        g.seed(),
+        g.params(),
+    ) {
+        let survey = match g.river_profile_survey(&plate, c, radius_l * l) {
             Ok(v) => v,
             Err(litho_core::drainage::RiverNetError::NoOwnedNode { .. }) => continue,
             Err(e) => return Err(e.to_string()),
         };
-        for lip in lips {
-            let (cx, cz) = (lip.x.round() as i64, lip.z.round() as i64);
-            'face: for z in cz - 2..=cz + 2 {
-                for x in cx - 2..=cx + 2 {
-                    if c.dist2(litho_core::Vec2::new(x as f64, z as f64)) > (radius_l * l).powi(2) {
-                        continue;
-                    }
-                    let top = g.water_column(x as f64, z as f64);
-                    if top.flow != litho_core::FlowClass::FallTop || !top.has_water() {
-                        continue;
-                    }
-                    for (dx, dz) in [(0, 1), (0, -1), (1, 0), (-1, 0)] {
-                        let low = g.water_column((x + dx) as f64, (z + dz) as f64);
-                        if low.flow == litho_core::FlowClass::Plunge
-                            && (low.has_water() || low.has_sea_river())
-                            && f64::from(top.level - low.level)
-                                >= g.params().water.fall_min_drop_blocks
-                        {
-                            found
-                                .entry(cluster(x as f64, z as f64))
-                                .or_insert(WaterPoint {
-                                    x,
-                                    z,
-                                    level: top.level,
-                                    kind: "river",
-                                    note: "waterfall",
-                                });
-                            break 'face;
-                        }
-                    }
-                }
+        for site in survey.lips {
+            if hanging_only && !site.hanging {
+                continue;
+            }
+            if let Some(point) = wet_fall_face(g, &site, c, radius_l * l) {
+                found
+                    .entry(cluster(point.x as f64, point.z as f64))
+                    .or_insert(point);
             }
         }
         if found.len() >= STEP_LIMIT {

@@ -69,6 +69,9 @@ fn parse_pair(text: &str) -> Result<(f64, f64), String> {
     let z = b
         .parse::<f64>()
         .map_err(|e| format!("координата '{b}': {e}"))?;
+    if !x.is_finite() || !z.is_finite() || parts.next().is_some() {
+        return Err("нужны две конечные координаты через запятую".into());
+    }
     Ok((x, z))
 }
 
@@ -734,6 +737,75 @@ fn cmd_point_lake_survey(args: &[String]) -> Result<(), String> {
     Ok(())
 }
 
+/// Count all profile events in the disk, not just reachable `water-points`
+/// examples (which are clustered and capped). Length denominators are blocks
+/// of axis, never segment counts, wet areas or number of samples.
+fn cmd_river_profile_stats(args: &[String]) -> Result<(), String> {
+    let opts = options_from(args)?;
+    if !opts.version.is_water_update() {
+        return Err("river-profile-stats требует v1-dev-w".into());
+    }
+    let radius = point_search_radius(args)?;
+    let g = generator(&opts)?;
+    let l = g.params().block.l_blocks;
+    let c = litho_core::Vec2::new(opts.center_x, opts.center_z);
+    let q = g.macro_point(c.x, c.z);
+    let mut len = [0.; 4];
+    let mut valley = [0usize; 5];
+    let mut heights = std::collections::BTreeMap::new();
+    let mut hanging = 0;
+    let mut witness = None;
+    for plate in litho_core::plates::plates_near(
+        q,
+        radius + litho_core::channel::max_query_radius_l(g.params()),
+        g.seed(),
+        g.params(),
+    ) {
+        let survey = match g.river_profile_survey(&plate, c, radius * l) {
+            Ok(v) => v,
+            Err(litho_core::drainage::RiverNetError::NoOwnedNode { .. }) => continue,
+            Err(e) => return Err(e.to_string()),
+        };
+        for (total, d) in len.iter_mut().zip(survey.slope_length) {
+            *total += d;
+        }
+        for lip in survey.lips {
+            if witness.is_none() {
+                witness = water::wet_fall_face(&g, &lip, c, radius * l);
+            }
+            valley[lip.valley.table_index()] += 1;
+            *heights.entry(lip.height).or_insert(0usize) += 1;
+            hanging += usize::from(lip.hanging);
+        }
+    }
+    let total: f64 = len.iter().sum();
+    let pct = len.map(|x| if total > 0. { 100. * x / total } else { 0. });
+    let witness = witness.map_or_else(|| "null".to_string(), |p| format!("[{},{}]", p.x, p.z));
+    let hist = heights
+        .into_iter()
+        .map(|(h, n)| format!("\"{h}\":{n}"))
+        .collect::<Vec<_>>()
+        .join(",");
+    println!(
+        "{{\"seed\":{},\"mode\":\"{}\",\"center\":[{},{}],\"radius_l\":{},\"length_blocks\":{total:.3},\"slope_length_pct\":{{\"calm\":{:.3},\"riffle\":{:.3},\"rapid\":{:.3},\"cascade\":{:.3}}},\"fall_height_counts\":{{{hist}}},\"fall_valley_counts\":{{\"plain\":{},\"upland\":{},\"mountain_v\":{},\"glacial_u\":{},\"canyon\":{}}},\"hanging_lips\":{hanging},\"wet_example\":{witness}}}",
+        opts.seed,
+        opts.mode.as_str(),
+        c.x,
+        c.z,
+        radius,
+        pct[0],
+        pct[1],
+        pct[2],
+        pct[3],
+        valley[0],
+        valley[1],
+        valley[2],
+        valley[3],
+        valley[4]
+    );
+    Ok(())
+}
+
 fn cmd_water_points(args: &[String]) -> Result<(), String> {
     let opts = options_from(args)?;
     let generator = generator(&opts)?;
@@ -761,14 +833,20 @@ fn cmd_water_points(args: &[String]) -> Result<(), String> {
                         | "strike_slip"
                         | "highland"
                         | "waterfall"
+                        | "hanging_fall"
                         | "glacial"
                 )
         {
-            return Err("--type для W: lake, ordinary, inland_sea, swamp, rift, strike_slip, highland, glacial, tarn, glacial_pond, thermokarst, sag_pond, crater, oxbow, waterfall".into());
+            return Err("--type для W: lake, ordinary, inland_sea, swamp, rift, strike_slip, highland, glacial, tarn, glacial_pond, thermokarst, sag_pond, crater, oxbow, waterfall, hanging_fall".into());
         }
     }
-    let points = if wanted.as_deref() == Some("waterfall") {
-        water::waterfall_points(&generator, (opts.center_x, opts.center_z), radius_l)?
+    let points = if matches!(wanted.as_deref(), Some("waterfall" | "hanging_fall")) {
+        water::waterfall_points(
+            &generator,
+            (opts.center_x, opts.center_z),
+            radius_l,
+            wanted.as_deref() == Some("hanging_fall"),
+        )?
     } else if let Some(body) = point_type {
         generator
             .point_lake_examples(
@@ -2550,6 +2628,7 @@ fn usage() -> &'static str {
                     --size 2048 --step 4, три центра\n\
        water-points R2: до 20 мест с водой выше моря для CI и автора (v1-dev-r2),\n\
        water-stats  ВО0-3: реки (вода выше моря, врез), озёра по водоёмам, стены (v1-dev-r2),\n\
+       river-profile-stats ВО5: длина по классам и водопады по высотам и долинам (диск --radius-l), JSON,\n\
        point-lake-survey ВО4: один мокрый пример каждого точечного типа в диске (--radius-l R), JSON,\n\
        point-lake-cost ВО4: парное время чанков W без/с точечными озёрами (--chunks-side N),\n\
        s0-node-cost ВО0-5: цена S0 в узлах стока и точность решётки S0 (v1-dev-w),\n\
@@ -2601,6 +2680,7 @@ fn main() -> Result<(), String> {
         "water-leaks" => cmd_water_leaks(&args[1..]),
         "water-points" => cmd_water_points(&args[1..]),
         "water-stats" => cmd_water_stats(&args[1..]),
+        "river-profile-stats" => cmd_river_profile_stats(&args[1..]),
         "point-lake-survey" => cmd_point_lake_survey(&args[1..]),
         "point-lake-cost" => {
             let opts = options_from(&args[1..])?;

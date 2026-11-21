@@ -6,6 +6,7 @@
 //! игры (`field`). Песочница и будущий мод вызывают один и тот же `Generator`.
 
 mod falls;
+pub use falls::{FallSite, ProfileSurvey};
 mod ponds;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -2327,6 +2328,7 @@ impl Generator {
             .expect("уровни концов W не отравлены")
             .entry(reach)
             .or_insert(end_level);
+        let mut hanging_mouth = false;
         if let Some(receiver) = self.w_receiver_level(levels, net, reach, Some(end_level))? {
             let mouth_level = *level.last().expect("звено непусто");
             if mouth_level + 1.0 < receiver {
@@ -2345,13 +2347,25 @@ impl Generator {
                     }
                     *y = supported;
                 }
-            } else if mouth_level > receiver + 1.0 && !self.w_cold_mountains(net, reach) {
-                // п. 4: приток висит выше приёмника — выравниваем низовье
-                // уклоном `grade_slope` от устья вверх. В холодных горах
-                // ступень остаётся: это висячая долина (водопады, п. 6).
-                for (y, distance) in level.iter_mut().zip(&cum_blocks) {
-                    let cap = receiver + ((acc - distance) * water.grade_slope).floor();
-                    *y = y.min(cap);
+            } else if mouth_level > receiver + 1.0 {
+                if self.w_cold_mountains(net, reach) {
+                    // No long grading ramp in a hanging valley. Preserve the
+                    // pre-correction end published above for upstream routing.
+                    // Only the terminal section joins the actual receiver.
+                    if mouth_level.floor() - receiver.floor() >= water.fall_min_drop_blocks
+                        && matches!(
+                            channels.reaches()[reach].end,
+                            crate::channel::ReachEnd::Lake | crate::channel::ReachEnd::Confluence
+                        )
+                    {
+                        hanging_mouth = true;
+                        level[n - 1] = receiver.floor();
+                    }
+                } else {
+                    for (y, distance) in level.iter_mut().zip(&cum_blocks) {
+                        let cap = receiver + ((acc - distance) * water.grade_slope).floor();
+                        *y = y.min(cap);
+                    }
                 }
             }
         }
@@ -2410,6 +2424,7 @@ impl Generator {
             &classes,
             |i| axis[i].1 * l,
             water,
+            hanging_mouth,
         );
         Ok(WReachProfile {
             stations: if falls.is_empty() { vec![] } else { cum_blocks },
@@ -2641,7 +2656,7 @@ impl Generator {
     }
 
     /// В холодных горах (вес морфозоны 6 ≥ 0,5) низовье притока не
-    /// выравнивается: висячая долина — это будущий водопад (6.3, п. 6).
+    /// выравнивается: у подтверждённого приёмника остаётся терминальный уступ.
     fn w_cold_mountains(&self, net: &crate::drainage::RiverNet, reach: usize) -> bool {
         let channels = net.channels();
         let Some(last) = channels.reach_segments(reach).last() else {

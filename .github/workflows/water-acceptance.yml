@@ -122,3 +122,35 @@ jobs:
           if not ok:
               raise SystemExit('В проверенном диске недостаточно подтверждённых примеров.')
           PY
+  waterfalls:
+    if: inputs.all_seeds && inputs.version == 'v1-dev-w'
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo build --release -p litho-sandbox
+      - name: Профили русел и мокрые кромки, диск 24 L
+        run: |
+          set -euo pipefail
+          for seed in -123456789 -42 -1 0 1 2 7 42 123 777 1234 2024 12345 54321 99999 987654321; do
+            target/release/litho-sandbox river-profile-stats --seed "$seed" --mode gameplay \
+              --version "$VERSION" --radius-l 24 >> waterfalls.jsonl
+          done
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: waterfalls-gameplay
+          path: waterfalls.jsonl
+      - name: Проверить мокрые примеры и отсутствие равнинных водопадов
+        run: |
+          python3 - <<'PY'
+          import json
+          rows = [json.loads(line) for line in open('waterfalls.jsonl')]
+          assert len(rows) == len({r['seed'] for r in rows}) == 16
+          found = [r['seed'] for r in rows if r['wet_example'] is not None]
+          plains = {r['seed']: r['fall_valley_counts']['plain'] for r in rows if r['fall_valley_counts']['plain']}
+          print(f'::notice::Мокрая кромка и котёл: {len(found)}/16, сиды {found}; равнинные уступы: {plains}')
+          if plains or len(found) < 12:
+              raise SystemExit('Критерии ВО5 в проверенном диске не выполнены.')
+          PY
