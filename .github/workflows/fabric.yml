@@ -3,13 +3,14 @@
 name: fabric
 on:
   push:
-    paths: ["crates/litho-core/**", "crates/litho-ffi/**", "fabric/**", ".github/workflows/fabric.yml"]
+    paths: ["crates/litho-core/**", "crates/litho-ffi/**", "fabric/**", "tools/fabric_resources.py", ".github/workflows/fabric.yml"]
   pull_request:
-    paths: ["crates/litho-core/**", "crates/litho-ffi/**", "fabric/**", ".github/workflows/fabric.yml"]
+    paths: ["crates/litho-core/**", "crates/litho-ffi/**", "fabric/**", "tools/fabric_resources.py", ".github/workflows/fabric.yml"]
   workflow_dispatch:
 concurrency:
   group: fabric-${{ github.ref }}
-  cancel-in-progress: true
+  # Сохранить уже запущенный серверный замер и его jar при следующем push.
+  cancel-in-progress: false
 jobs:
   natives:
     strategy:
@@ -55,6 +56,7 @@ jobs:
       - name: Ресурсы мода из пака v1-dev и ванильного 26.3 (Ф3)
         run: |
           set -e
+          python3 tools/test_fabric_resources.py
           cargo run -q -p xtask -- pack --out out/packs
           mv=$(grep '^minecraft_version=' fabric/gradle.properties | cut -d= -f2)
           url=$(curl -fsS https://piston-meta.mojang.com/mc/game/version_manifest_v2.json | jq -r --arg v "$mv" '.versions[]|select(.id==$v).url')
@@ -62,8 +64,6 @@ jobs:
           curl -fsS -o out/server.jar "$srv"
           python3 tools/fabric_resources.py out/packs/litospherity_v1-dev_gameplay out/server.jar fabric/src/generated/resources
           find fabric/src/generated/resources -type f
-      - uses: actions/setup-java@v4
-        with: { distribution: temurin, java-version: "25" }
       - uses: actions/setup-java@v4
         with: { distribution: temurin, java-version: "25" }
       - uses: gradle/actions/setup-gradle@v4
@@ -140,7 +140,9 @@ jobs:
         run: |
           mkdir -p run
           echo "eula=true" > run/eula.txt
-          printf 'level-seed=42\nlevel-type=litospherity\\:%s\nonline-mode=false\n' "${{ matrix.mode }}" > run/server.properties
+          # Synthetic parity/window scans run synchronously on the server thread;
+          # bound them with the shell timeout rather than a 60s game tick.
+          printf 'level-seed=42\nlevel-type=litospherity\\:%s\nonline-mode=false\nmax-tick-time=600000\n' "${{ matrix.mode }}" > run/server.properties
           set +e
           mkdir -p ../out
           timeout 1500 gradle runServer --args=nogui -Dorg.gradle.jvmargs=-Xmx3G \
@@ -177,7 +179,7 @@ jobs:
           url=$(curl -fsS https://piston-meta.mojang.com/mc/game/version_manifest_v2.json | jq -r --arg v "$mv" '.versions[]|select(.id==$v).url')
           curl -fsS -o out/server.jar "$(curl -fsS "$url" | jq -r '.downloads.server.url')"
           python3 tools/fabric_resources.py out/packs/litospherity_v1-dev_gameplay out/server.jar fabric/src/generated/resources
-      - name: Места с водой выше моря (ядро, v1-dev-r2)
+      - name: Места с водой выше моря (ядро, v1-dev-w)
         run: |
           set -e
           mkdir -p fabric/run
@@ -188,7 +190,7 @@ jobs:
             *) at=-140392,32089 ;;
           esac
           cargo run -q -p litho-sandbox --release -- water-points \
-            --seed 42 --mode ${{ matrix.mode }} --version v1-dev-r2 --radius-l 32 --at "$at" \
+            --seed 42 --mode ${{ matrix.mode }} --version v1-dev-w --radius-l 32 --center "$at" \
             | tee fabric/run/water-points.txt | python3 tools/ci_annotations.py report
       - uses: actions/setup-java@v4
         with: { distribution: temurin, java-version: "25" }
@@ -200,10 +202,25 @@ jobs:
           set -e
           mkdir -p run
           echo "eula=true" > run/eula.txt
-          printf 'level-seed=42\nlevel-type=litospherity\\:%s\nonline-mode=false\n' "${{ matrix.mode }}" > run/server.properties
+          # Synthetic parity/window scans run synchronously on the server thread;
+          # bound them with the shell timeout rather than a 60s game tick.
+          printf 'level-seed=42\nlevel-type=litospherity\\:%s\nonline-mode=false\nmax-tick-time=600000\n' "${{ matrix.mode }}" > run/server.properties
+          if [ "${{ matrix.mode }}" = gameplay ]; then
+            export LITHO_CI_WATERFALL_42=true
+            export LITHO_CI_WATER_WATCH='-44867,64,7037;-44866,64,7036'
+          fi
           timeout 2400 gradle runServer --args=nogui -Dorg.gradle.jvmargs=-Xmx3G \
             -Plitospherity_ci=water-${{ matrix.mode }} || true
           cat run/litospherity-ci.txt
+          # A single annotation is truncated by GitHub before the final
+          # metrics. Keep the compact verdict separate from the spatial trace.
+          grep -E '^(протечки:|сухое русло:|calm_fit:|calm_fit без крон|накрытая вода:|стены у воды:|рост текущей воды|заделки герметизации:|водопад \(|FAIL:|RESULT:)' run/litospherity-ci.txt \
+            | python3 ../tools/ci_annotations.py report
           # Отчёт сервера тоже уходит аннотацией: сырые логи CI недоступны.
           python3 ../tools/ci_annotations.py report < run/litospherity-ci.txt
           grep -q "RESULT: PASS" run/litospherity-ci.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: water-report-${{ matrix.mode }}
+          path: fabric/run/litospherity-ci.txt

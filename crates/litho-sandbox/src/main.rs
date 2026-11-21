@@ -9,6 +9,7 @@ mod json;
 mod palette;
 mod plan_metrics;
 mod png;
+mod point_lake_cost;
 mod render;
 mod s0_node_cost;
 mod shores;
@@ -25,6 +26,7 @@ use height::{HeightModel, HeightSource};
 use litho_core::channel::{ReachEnd, ReachKind};
 use litho_core::drainage::{DepressionKind, DrainageOutlet};
 use litho_core::lake::LakeKind;
+use litho_core::water_profile::WaterBody;
 use litho_core::{Field, GenVersion, Generator, Mode, Params};
 use render::{LAYERS, RenderOptions};
 
@@ -67,6 +69,9 @@ fn parse_pair(text: &str) -> Result<(f64, f64), String> {
     let z = b
         .parse::<f64>()
         .map_err(|e| format!("координата '{b}': {e}"))?;
+    if !x.is_finite() || !z.is_finite() || parts.next().is_some() {
+        return Err("нужны две конечные координаты через запятую".into());
+    }
     Ok((x, z))
 }
 
@@ -505,7 +510,7 @@ fn cmd_water_leaks(args: &[String]) -> Result<(), String> {
     }
     if !opts.version.is_water_relief_r2() {
         return Err(format!(
-            "water-leaks считает только v1-dev-r2 (сейчас {}): в v1-dev воды выше моря нет",
+            "water-leaks считает только v1-dev-r2 и v1-dev-w (сейчас {}): в v1-dev воды выше моря нет",
             opts.version.as_str()
         ));
     }
@@ -550,11 +555,16 @@ fn cmd_water_leaks(args: &[String]) -> Result<(), String> {
         None => 96,
     };
     // П. 5 §4 сравнивает рельеф с v1-dev: там вода выше моря не ставится вовсе.
-    let reference = Generator::new(opts.seed, opts.mode, GenVersion::V1Dev)
-        .map_err(|error| error.to_string())?;
+    let dev = if opts.version.is_water_update() {
+        None
+    } else {
+        Some(Generator::new(opts.seed, opts.mode, GenVersion::V1Dev).map_err(|e| e.to_string())?)
+    };
+    // W compares to its own pre-water shape, not a different version's valley.
+    let reference = dev.as_ref().unwrap_or(&generator);
     let mut total = water::Leaks::default();
     for (x, z) in centers {
-        let coarse = water::leaks_against(&generator, Some(&reference), (x, z), size, step);
+        let coarse = water::leaks_against(&generator, Some(reference), (x, z), size, step);
         // Плотное окно — только про воду (п. 6): сравнение с эталоном на
         // каждом блоке стоило бы десятки минут на приёмочном прогоне.
         let dense_leaks = if dense > 0 {
@@ -662,22 +672,207 @@ fn explain_column(generator: &Generator, x: f64, z: f64) -> Result<(), String> {
     Ok(())
 }
 
-fn cmd_water_points(args: &[String]) -> Result<(), String> {
-    let opts = options_from(args)?;
-    let generator = generator(&opts)?;
-    if !opts.version.is_water_relief_r2() {
-        return Err(format!(
-            "water-points считает только v1-dev-r2 (сейчас {}): в v1-dev воды выше моря нет",
-            opts.version.as_str()
-        ));
-    }
+const POINT_LAKE_BODIES: [WaterBody; 6] = [
+    WaterBody::Tarn,
+    WaterBody::GlacialPond,
+    WaterBody::Thermokarst,
+    WaterBody::SagPond,
+    WaterBody::Crater,
+    WaterBody::Oxbow,
+];
+
+fn point_search_radius(args: &[String]) -> Result<f64, String> {
     let radius_l = match value(args, "--radius-l") {
         Some(text) => text
             .parse::<f64>()
             .map_err(|e| format!("--radius-l: {e}"))?,
         None => 32.0,
     };
-    let points = water::points(&generator, (opts.center_x, opts.center_z), radius_l);
+    if !radius_l.is_finite() || radius_l <= 0. {
+        return Err("--radius-l должен быть положительным конечным числом".into());
+    }
+    Ok(radius_l)
+}
+
+/// One bounded witness per family per seed. Reuse the generator so each type
+/// sees the same world without rebuilding shared plates from cold. A missing
+/// body is valid data (null), not a command failure or proof of unsuitable land.
+fn cmd_point_lake_survey(args: &[String]) -> Result<(), String> {
+    let opts = options_from(args)?;
+    if !opts.version.is_water_update() {
+        return Err("point-lake-survey требует v1-dev-w".into());
+    }
+    let radius_l = point_search_radius(args)?;
+    let g = generator(&opts)?;
+    let center = litho_core::Vec2::new(opts.center_x, opts.center_z);
+    if !center.x.is_finite() || !center.z.is_finite() {
+        return Err("центр должен быть конечной точкой".into());
+    }
+    let mut entries = Vec::new();
+    for body in POINT_LAKE_BODIES {
+        let examples = g
+            .point_lake_examples(body, center, radius_l * g.params().block.l_blocks, 1)
+            .map_err(|e| format!("{}: {e}", body.name()))?;
+        let witness = examples
+            .first()
+            .map(|(x, z, c)| {
+                format!(
+                    "{{\"x\":{x},\"z\":{z},\"level\":{},\"bed\":{}}}",
+                    c.level, c.bed
+                )
+            })
+            .unwrap_or_else(|| "null".into());
+        entries.push(format!("\"{}\":{witness}", body.name()));
+    }
+    println!(
+        "{{\"seed\":{},\"mode\":\"{}\",\"version\":\"{}\",\"center\":[{},{}],\"radius_l\":{},\"examples\":{{{}}}}}",
+        opts.seed,
+        opts.mode.as_str(),
+        opts.version.as_str(),
+        center.x,
+        center.z,
+        radius_l,
+        entries.join(",")
+    );
+    Ok(())
+}
+
+/// Count all profile events in the disk, not just reachable `water-points`
+/// examples (which are clustered and capped). Length denominators are blocks
+/// of axis, never segment counts, wet areas or number of samples.
+fn cmd_river_profile_stats(args: &[String]) -> Result<(), String> {
+    let opts = options_from(args)?;
+    if !opts.version.is_water_update() {
+        return Err("river-profile-stats требует v1-dev-w".into());
+    }
+    let radius = point_search_radius(args)?;
+    let g = generator(&opts)?;
+    let l = g.params().block.l_blocks;
+    let c = litho_core::Vec2::new(opts.center_x, opts.center_z);
+    let q = g.macro_point(c.x, c.z);
+    let mut len = [0.; 4];
+    let mut valley = [0usize; 5];
+    let mut heights = std::collections::BTreeMap::new();
+    let mut hanging = 0;
+    let mut witness = None;
+    for plate in litho_core::plates::plates_near(
+        q,
+        radius + litho_core::channel::max_query_radius_l(g.params()),
+        g.seed(),
+        g.params(),
+    ) {
+        let survey = match g.river_profile_survey(&plate, c, radius * l) {
+            Ok(v) => v,
+            Err(litho_core::drainage::RiverNetError::NoOwnedNode { .. }) => continue,
+            Err(e) => return Err(e.to_string()),
+        };
+        for (total, d) in len.iter_mut().zip(survey.slope_length) {
+            *total += d;
+        }
+        for lip in survey.lips {
+            if witness.is_none() {
+                witness = water::wet_fall_face(&g, &lip, c, radius * l);
+            }
+            valley[lip.valley.table_index()] += 1;
+            *heights.entry(lip.height).or_insert(0usize) += 1;
+            hanging += usize::from(lip.hanging);
+        }
+    }
+    let total: f64 = len.iter().sum();
+    let pct = len.map(|x| if total > 0. { 100. * x / total } else { 0. });
+    let witness = witness.map_or_else(|| "null".to_string(), |p| format!("[{},{}]", p.x, p.z));
+    let hist = heights
+        .into_iter()
+        .map(|(h, n)| format!("\"{h}\":{n}"))
+        .collect::<Vec<_>>()
+        .join(",");
+    println!(
+        "{{\"seed\":{},\"mode\":\"{}\",\"center\":[{},{}],\"radius_l\":{},\"length_blocks\":{total:.3},\"slope_length_pct\":{{\"calm\":{:.3},\"riffle\":{:.3},\"rapid\":{:.3},\"cascade\":{:.3}}},\"fall_height_counts\":{{{hist}}},\"fall_valley_counts\":{{\"plain\":{},\"upland\":{},\"mountain_v\":{},\"glacial_u\":{},\"canyon\":{}}},\"hanging_lips\":{hanging},\"wet_example\":{witness}}}",
+        opts.seed,
+        opts.mode.as_str(),
+        c.x,
+        c.z,
+        radius,
+        pct[0],
+        pct[1],
+        pct[2],
+        pct[3],
+        valley[0],
+        valley[1],
+        valley[2],
+        valley[3],
+        valley[4]
+    );
+    Ok(())
+}
+
+fn cmd_water_points(args: &[String]) -> Result<(), String> {
+    let opts = options_from(args)?;
+    let generator = generator(&opts)?;
+    if !opts.version.is_water_relief_r2() {
+        return Err(format!(
+            "water-points считает только v1-dev-r2 и v1-dev-w (сейчас {}): в v1-dev воды выше моря нет",
+            opts.version.as_str()
+        ));
+    }
+    let radius_l = point_search_radius(args)?;
+    let wanted = value(args, "--type");
+    let point_type = POINT_LAKE_BODIES
+        .into_iter()
+        .find(|b| Some(b.name()) == wanted.as_deref());
+    if let Some(kind) = wanted.as_deref() {
+        if !opts.version.is_water_update()
+            || point_type.is_none()
+                && !matches!(
+                    kind,
+                    "lake"
+                        | "ordinary"
+                        | "inland_sea"
+                        | "swamp"
+                        | "rift"
+                        | "strike_slip"
+                        | "highland"
+                        | "waterfall"
+                        | "hanging_fall"
+                        | "glacial"
+                )
+        {
+            return Err("--type для W: lake, ordinary, inland_sea, swamp, rift, strike_slip, highland, glacial, tarn, glacial_pond, thermokarst, sag_pond, crater, oxbow, waterfall, hanging_fall".into());
+        }
+    }
+    let points = if matches!(wanted.as_deref(), Some("waterfall" | "hanging_fall")) {
+        water::waterfall_points(
+            &generator,
+            (opts.center_x, opts.center_z),
+            radius_l,
+            wanted.as_deref() == Some("hanging_fall"),
+        )?
+    } else if let Some(body) = point_type {
+        generator
+            .point_lake_examples(
+                body,
+                litho_core::Vec2::new(opts.center_x, opts.center_z),
+                radius_l * generator.params().block.l_blocks,
+                10,
+            )
+            .map_err(|e| format!("сеть точечных озёр: {e:?}"))?
+            .into_iter()
+            .map(|(x, z, column)| water::WaterPoint {
+                x,
+                z,
+                level: column.level,
+                kind: body.name(),
+                note: "point_lake",
+            })
+            .collect()
+    } else {
+        water::points_filtered(
+            &generator,
+            (opts.center_x, opts.center_z),
+            radius_l,
+            wanted.as_deref(),
+        )
+    };
     println!(
         "water-points: {} мест (сид {}, режим {}, радиус {radius_l} L)",
         points.len(),
@@ -745,16 +940,24 @@ fn cmd_s0_node_cost(args: &[String]) -> Result<(), String> {
             }
             out
         }
+        None if args.iter().any(|arg| arg == "--analytic-only") => Vec::new(),
         None => vec![0.25, 0.5],
     };
     let started = Instant::now();
+    let with_levels = args.iter().any(|arg| arg == "--with-levels");
     let survey = s0_node_cost::survey(
         &generator,
         (opts.center_x, opts.center_z),
         plates_wanted,
         &spacings,
+        with_levels,
     )?;
     let seconds = started.elapsed().as_secs_f64();
+    let analytic_us = 1000.0 * survey.analytic_ms / survey.nodes as f64;
+    let analytic_p95 = s0_node_cost::percentile(&survey.analytic_errors, 95.0);
+    let analytic_p999 = s0_node_cost::percentile(&survey.analytic_errors, 99.9);
+    let route_p95 = s0_node_cost::percentile(&survey.route_errors, 95.);
+    let route_p999 = s0_node_cost::percentile(&survey.route_errors, 99.9);
     let decision = s0_node_cost::decision(&survey);
     if args.iter().any(|arg| arg == "--json") {
         let lattices: Vec<String> = survey
@@ -782,6 +985,20 @@ fn cmd_s0_node_cost(args: &[String]) -> Result<(), String> {
         fields.push(format!("\"seconds\":{seconds:.2}"));
         fields.push(format!("\"plates\":{}", survey.plates));
         fields.push(format!("\"nodes\":{}", survey.nodes));
+        fields.push(format!("\"with_levels\":{with_levels}"));
+        let stages = survey
+            .stages
+            .iter()
+            .map(|(id, network, levels)| {
+                format!(
+                    "{{\"plate\":\"{id}\",\"drainage_ms\":{network:.2},\"levels_ms\":{}}}",
+                    levels
+                        .map(|ms| format!("{ms:.2}"))
+                        .unwrap_or_else(|| "null".to_string())
+                )
+            })
+            .collect::<Vec<_>>();
+        fields.push(format!("\"plate_stages\":[{}]", stages.join(",")));
         fields.push(format!("\"net_ms_p50\":{:.1}", survey.net_pct(50.0)));
         fields.push(format!("\"net_ms_p95\":{:.1}", survey.net_p95()));
         fields.push(format!("\"net_ms_max\":{:.1}", survey.net_max()));
@@ -789,6 +1006,11 @@ fn cmd_s0_node_cost(args: &[String]) -> Result<(), String> {
             "\"exact_us_per_node\":{:.2}",
             survey.exact_us_per_node()
         ));
+        fields.push(format!("\"analytic_us_per_node\":{analytic_us:.2}"));
+        fields.push(format!("\"analytic_error_p95\":{analytic_p95:.3}"));
+        fields.push(format!("\"stored_route_error_p95\":{route_p95:.3}"));
+        fields.push(format!("\"stored_route_error_p999\":{route_p999:.3}"));
+        fields.push(format!("\"analytic_error_p999\":{analytic_p999:.3}"));
         fields.push("\"net_budget_ms\":200.0".to_string());
         fields.push(format!("\"lattices\":[{}]", lattices.join(",")));
         fields.push(format!("\"decision\":\"{decision}\""));
@@ -815,6 +1037,10 @@ fn cmd_s0_node_cost(args: &[String]) -> Result<(), String> {
         survey.exact_us_per_node(),
         survey.exact_ms
     );
+    println!(
+        "  аналитический S0: {analytic_us:.2} мкс/узел, ошибка p95 {analytic_p95:.3}, p99.9 {analytic_p999:.3} блока"
+    );
+    println!("  сохранённый маршрут против S0+τ: p95 {route_p95:.3}, p99.9 {route_p999:.3} блока");
     for lattice in &survey.lattices {
         println!(
             "  {} ({:.2} L): выборок {} ({:.3} на узел), сборка {:.1} мс, ошибка p95 {:.2}, p99.9 {:.2}, max {:.2} блока{}",
@@ -879,6 +1105,15 @@ fn cmd_water_stats(args: &[String]) -> Result<(), String> {
     let started = Instant::now();
     let grid = water_stats::Window::new(&generator, (opts.center_x, opts.center_z), window, step)?;
     let stats = grid.stats(opts.mode == Mode::Scientific);
+    let axis = if opts.version.is_water_update() {
+        Some(water_stats::river_axis(
+            &generator,
+            (opts.center_x, opts.center_z),
+            window,
+        )?)
+    } else {
+        None
+    };
     let seconds = started.elapsed().as_secs_f64();
     let json = args.iter().any(|arg| arg == "--json");
     let above_sea = if stats.river_columns == 0 {
@@ -893,8 +1128,8 @@ fn cmd_water_stats(args: &[String]) -> Result<(), String> {
             .enumerate()
             .map(|(index, name)| {
                 format!(
-                    "{{\"name\":\"{name}\",\"lakes\":{}}}",
-                    stats.zone_lakes[index]
+                    "{{\"name\":\"{name}\",\"lakes\":{},\"land\":{},\"lakes_per_100l2\":{:.3},\"lake_area_pct\":{:.3}}}",
+                    stats.zone_lakes[index], stats.zone_land[index], stats.zone_density[index], stats.zone_area_pct[index]
                 )
             })
             .collect();
@@ -906,6 +1141,10 @@ fn cmd_water_stats(args: &[String]) -> Result<(), String> {
         fields.push(format!("\"step\":{step}"));
         fields.push(format!("\"seconds\":{seconds:.2}"));
         fields.push(format!("\"land\":{}", stats.land));
+        if let Some(a) = &axis {
+            fields.push(format!("\"axis_points\":{},\"axis_above_sea\":{},\"axis_wet\":{},\"axis_gorge\":[{:.2},{:.2},{:.2}]",
+                a.points, a.above_sea, a.wet, a.gorge[0], a.gorge[1], a.gorge[2]));
+        }
         fields.push(format!("\"river_columns\":{}", stats.river_columns));
         fields.push(format!("\"river_above_sea_pct\":{above_sea:.2}"));
         fields.push(format!("\"gorge_p50\":{:.2}", stats.gorge_p50));
@@ -913,10 +1152,21 @@ fn cmd_water_stats(args: &[String]) -> Result<(), String> {
         fields.push(format!("\"gorge_p99\":{:.2}", stats.gorge_p99));
         fields.push(format!("\"lakes\":{}", stats.lakes));
         fields.push(format!("\"lakes_per_100l2\":{:.3}", stats.lakes_per_100l2));
+        let types = stats
+            .lake_types
+            .iter()
+            .map(|(k, n)| format!("\"{k}\":{n}"))
+            .collect::<Vec<_>>()
+            .join(",");
+        fields.push(format!("\"lake_types\":{{{types}}}"));
         fields.push(format!("\"lake_area_pct\":{:.3}", stats.lake_area_pct));
         fields.push(format!("\"lake_fit_pct\":{:.2}", stats.lake_fit_pct));
         fields.push(format!("\"lakes_ge_80\":{}", stats.lakes_ge_80));
         fields.push(format!("\"walls_pct\":{:.2}", stats.walls_pct));
+        fields.push(format!(
+            "\"flooded_land_pct\":{:.3}",
+            stats.flooded_land_pct
+        ));
         fields.push(format!("\"zones\":[{}]", zones.join(",")));
         println!("{{{}}}", fields.join(","));
         return Ok(());
@@ -942,10 +1192,20 @@ fn cmd_water_stats(args: &[String]) -> Result<(), String> {
         "  на 100 L² суши: {:.2} озера; стены у воды: {:.2} % колонок берега",
         stats.lakes_per_100l2, stats.walls_pct
     );
+    println!("  затоплено суши: {:.3} %", stats.flooded_land_pct);
+    if let Some(a) = &axis {
+        println!(
+            "  ось на суше: {} проб, выше моря {}, мокрых {}, врез p50/p90/p99 {:.2}/{:.2}/{:.2}",
+            a.points, a.above_sea, a.wet, a.gorge[0], a.gorge[1], a.gorge[2]
+        );
+    }
     let mut parts = Vec::new();
     for (index, name) in stats.zone_names().iter().enumerate() {
-        if stats.zone_lakes[index] > 0 {
-            parts.push(format!("{name} {}", stats.zone_lakes[index]));
+        if stats.zone_land[index] > 0 {
+            parts.push(format!(
+                "{name}: {} ({:.2}/100 L², {:.2}% площади)",
+                stats.zone_lakes[index], stats.zone_density[index], stats.zone_area_pct[index]
+            ));
         }
     }
     if !parts.is_empty() {
@@ -2368,6 +2628,9 @@ fn usage() -> &'static str {
                     --size 2048 --step 4, три центра\n\
        water-points R2: до 20 мест с водой выше моря для CI и автора (v1-dev-r2),\n\
        water-stats  ВО0-3: реки (вода выше моря, врез), озёра по водоёмам, стены (v1-dev-r2),\n\
+       river-profile-stats ВО5: длина по классам и водопады по высотам и долинам (диск --radius-l), JSON,\n\
+       point-lake-survey ВО4: один мокрый пример каждого точечного типа в диске (--radius-l R), JSON,\n\
+       point-lake-cost ВО4: парное время чанков W без/с точечными озёрами (--chunks-side N),\n\
        s0-node-cost ВО0-5: цена S0 в узлах стока и точность решётки S0 (v1-dev-w),\n\
                     --radius-l 32\n\
 vanilla-biomes биом игры (копия ванильной таблицы) против нашего, горы на холмах (Д-118);\n\
@@ -2417,6 +2680,20 @@ fn main() -> Result<(), String> {
         "water-leaks" => cmd_water_leaks(&args[1..]),
         "water-points" => cmd_water_points(&args[1..]),
         "water-stats" => cmd_water_stats(&args[1..]),
+        "river-profile-stats" => cmd_river_profile_stats(&args[1..]),
+        "point-lake-survey" => cmd_point_lake_survey(&args[1..]),
+        "point-lake-cost" => {
+            let opts = options_from(&args[1..])?;
+            if value(&args[1..], "--version").is_some() && !opts.version.is_water_update() {
+                return Err("point-lake-cost только для v1-dev-w".into());
+            }
+            let side = value(&args[1..], "--chunks-side")
+                .map(|s| s.parse::<usize>())
+                .transpose()
+                .map_err(|e| e.to_string())?
+                .unwrap_or(4);
+            point_lake_cost::run(opts.seed, opts.mode, (opts.center_x, opts.center_z), side)
+        }
         "s0-node-cost" => cmd_s0_node_cost(&args[1..]),
         "vanilla-biomes" => cmd_vanilla_biomes(&args[1..]),
         "paths" => cmd_paths(&args[1..]),

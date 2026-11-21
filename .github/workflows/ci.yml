@@ -15,11 +15,13 @@ on:
       # не нужен, замер собирает t151.yml. Иначе каждый запрос К9 (два подряд)
       # занимал бы половину параллельных заданий.
       - "tools/t151/request.json"
+      - "tools/probe/request.json"
   pull_request:
     paths-ignore:
       - "docs/**"
       - "*.md"
       - "tools/t151/request.json"
+      - "tools/probe/request.json"
   workflow_dispatch:
 
 # На ветках новый push отменяет устаревший прогон: 33 запуска за день по
@@ -76,21 +78,14 @@ jobs:
           cat /tmp/v0-hashes.txt
           grep -Fxq 'scientific = 5cdbe1d36ef8d16a' /tmp/v0-hashes.txt
           grep -Fxq 'gameplay = b48e8037c4e85977' /tmp/v0-hashes.txt
-      - name: "Ф6-В1 — хеши: v0 и v1-dev не меняются, v1-dev-r2 печатается"
+      - name: "ВО0 — хеши параметров всех четырёх замороженных версий"
         run: |
-          set -o pipefail
-          {
-            for version in v0 v1 v1-dev v1-dev-r2; do
-              echo "== $version"
-              cargo run -q -p xtask -- params-hash --version "$version"
-            done
-          } | python3 tools/ci_annotations.py report
-          cargo run -q -p xtask -- params-hash --version v0 > /tmp/h0.txt
-          grep -qx 'scientific 5cdbe1d36ef8d16a' /tmp/h0.txt
-          grep -qx 'gameplay b48e8037c4e85977' /tmp/h0.txt
-          cargo run -q -p xtask -- params-hash --version v1-dev > /tmp/h1d.txt
-          grep -qx 'scientific 0079371c3c2f7f35' /tmp/h1d.txt
-          grep -qx 'gameplay 13ca6fd2452c807c' /tmp/h1d.txt
+          set -eo pipefail
+          for version in v0 v1 v1-dev v1-dev-r2; do
+            echo "== $version"
+            cargo run -q -p xtask -- params-hash --version "$version"
+          done | tee /tmp/litho-hashes | python3 tools/ci_annotations.py report
+          diff -u golden/water-legacy-params.txt /tmp/litho-hashes
       - name: "Ф6-В1 — вода не уходит за берег (water-leaks, окно 1024 × 1024)"
         # Гейт — 0 нарушений §4. Окно меньше приёмочных 4096 × 4096: полный
         # прогон (4 центра × 2 сида × 2 режима + 16 сидов Д-084) идёт отдельной

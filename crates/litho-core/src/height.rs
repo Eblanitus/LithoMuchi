@@ -42,6 +42,15 @@ pub struct HeightSample {
     pub bed_y: f64,
     /// T145: сила выреза русла/озера, 0…1.
     pub water_strength: f64,
+    /// W: which cut supplied the water, not the biome of the surrounding shore.
+    pub point_body: Option<crate::water_profile::WaterBody>,
+    pub point_shore: Option<(crate::water_profile::BedMaterial, u16)>,
+    /// Flow of the reach that actually supplied the wet bed in W.
+    pub river_flow: crate::water_profile::FlowClass,
+    pub wet_kind: crate::hydrology::SurfaceKind,
+    /// ВО2-1 (§6.7): маска 3D-шума ванили. 1.0 — шум не трогаем (все версии,
+    /// кроме `v1-dev-w`), 0.0 — вода/пойма/озеро и их окрестность.
+    pub calm: f64,
 }
 
 impl Default for HeightSample {
@@ -54,6 +63,11 @@ impl Default for HeightSample {
             water_y: SEA_LEVEL,
             bed_y: SEA_LEVEL,
             water_strength: 0.0,
+            point_body: None,
+            point_shore: None,
+            wet_kind: crate::hydrology::SurfaceKind::Land,
+            river_flow: Default::default(),
+            calm: 1.0,
         }
     }
 }
@@ -163,6 +177,11 @@ pub fn sample_micro(
         water_y: SEA_LEVEL,
         bed_y: y,
         water_strength: 0.0,
+        point_body: None,
+        point_shore: None,
+        wet_kind: crate::hydrology::SurfaceKind::Land,
+        river_flow: Default::default(),
+        calm: 1.0,
     }
 }
 
@@ -422,35 +441,35 @@ pub fn with_water_w(
     let land_y = s0_macro.surface_y;
     let s0_full = land_y + micro_dy;
     // Собираем звенья-кандидаты: ближайшее плюс до двух из коридора 6.5.
-    let mut candidates: Vec<crate::channel::ChannelHit> = Vec::with_capacity(4);
-    if let Some(hit) = water.channels.nearest {
-        candidates.push(hit);
-    }
-    for hit in water.channels.extra.iter() {
-        candidates.push(*hit);
-    }
+    let candidates = water
+        .channels
+        .nearest
+        .iter()
+        .chain(water.channels.extra.iter());
     // Дубль ближайшего звена в `extra` допустим: min() от него не меняется.
     let (gate_lo, gate_hi) = (w.gate_blocks[0], w.gate_blocks[1]);
     let scientific = matches!(params.mode, crate::mode::Mode::Scientific);
     let depth_min = 2.0_f64;
     let depth_max = if scientific { 8.0 } else { 5.0 };
-    let mut best: Option<(f64, f64, f64, f64)> = None; // (v_y, water_y, bed_y, strength)
+    let mut best = None; // (v_y, water_y, strength)
     let mut d_floor_min = f64::INFINITY;
-    for hit in &candidates {
+    for hit in candidates {
         let Some(level) = hit.level_blocks else {
             continue;
         };
         let w_blocks = (hit.core_l * l).max(1.0);
         let half = 0.5 * w_blocks;
-        let bank_edge = half + 2.0;
+        let bend = hit.bank_bend();
+        let bank_edge = half + 2.0 + hit.bar_width(l);
         let d_abs = hit.distance_l * l;
-        let fp = w.floodplain_w[hit.valley_class.table_index()] * w_blocks;
+        let fp = w.floodplain_w[hit.valley_class.table_index()] * w_blocks * (1. + bend.min(0.));
         let dp = d_abs - bank_edge;
         let d_floor = dp - fp;
         if d_floor < d_floor_min {
             d_floor_min = d_floor;
         }
-        let s_wall = w.wall_slope[hit.valley_class.table_index()];
+        let s_wall =
+            w.wall_slope[hit.valley_class.table_index()] * (1. - 0.5 * bend.max(0.) - bend.min(0.));
         let s_eff = if hit.gp > 0.0 {
             s_wall.max((hit.gp - level - 1.0) / w.wall_reach_blocks)
         } else {
@@ -490,13 +509,36 @@ pub fn with_water_w(
                 }
                 _ => {
                     // Обычный склон: +1 + s_eff·(d' − fp).
-                    level + 1.0 + s_eff * x
+                    // A terrace is a cut into a tall wall, never a fill. The
+                    // slope resumes after the ledge and rejoins Gp by R_wall.
+                    let g = hit.gp - level;
+                    let target = if g >= w.terrace_gorge_blocks && s_eff > 0. {
+                        let start = (w.terrace_height_blocks - 1.) / s_eff;
+                        let end = start + w.terrace_width_blocks;
+                        if x < start || end >= w.wall_reach_blocks {
+                            1. + s_eff * x
+                        } else {
+                            w.terrace_height_blocks
+                                + (x - end).max(0.)
+                                    * s_eff.max(
+                                        (g - w.terrace_height_blocks) / (w.wall_reach_blocks - end),
+                                    )
+                        }
+                    } else {
+                        1. + s_eff * x
+                    };
+                    level + target
                 }
             }
         };
         // Кандидат участвует в min() безусловно: сравнение с S0 — ниже.
-        let bed = candidate;
-        let strength = if d_abs <= half {
+        let pool = hit.plunge_depth >= 0.5;
+        let candidate = if pool {
+            candidate.min(level - hit.plunge_depth.max(1.))
+        } else {
+            candidate
+        };
+        let strength = if pool || d_abs <= half {
             1.0
         } else if dp <= 0.0 {
             0.5
@@ -508,63 +550,102 @@ pub fn with_water_w(
             None => true,
         };
         if take {
-            best = Some((candidate, level, bed, strength));
+            best = Some((candidate, level, strength, hit.flow_class));
         }
     }
+    // ВО2-1 (§6.7): маска 3D-шума. Вода, берег, пойма и озеро плюс подушка
+    // гасят шум полностью; снаружи — smoothstep по расстоянию до дна долины
+    // (для озера — до контура за вычетом подушки). Числа из `params.water`.
+    let lake_edge = water
+        .lakes
+        .water_hit
+        .or(water.lakes.shore_hit)
+        .filter(|hit| hit.kind.has_water())
+        .map(|hit| {
+            if hit.inside {
+                0.0
+            } else {
+                hit.distance_l * l - w.lake_calm_pad_blocks
+            }
+        });
+    let calm_d = d_floor_min.min(lake_edge.unwrap_or(f64::INFINITY));
+    let calm = if calm_d <= 0.0 || water.water > 0.0 {
+        0.0
+    } else if calm_d.is_finite() {
+        smoothstep(w.calm_blocks[0], w.calm_blocks[1], calm_d)
+    } else {
+        1.0
+    };
     // Итоговая поверхность: S0 с гаснущими у воды микробуграми, не выше неё.
-    let gate = if d_floor_min.is_finite() {
-        smoothstep(gate_lo, gate_hi, d_floor_min)
+    let gate = if calm_d.is_finite() {
+        smoothstep(gate_lo, gate_hi, calm_d)
     } else {
         1.0
     };
     let mut surface = land_y + micro_dy * gate;
     let mut water_y = sea;
-    let mut bed_y = surface;
     let mut cut = 0.0_f64;
-    if let Some((v_y, mirror, bed, strength)) = best {
-        if v_y < surface {
-            surface = v_y;
-            bed_y = bed;
+    let mut river_flow = Default::default();
+    if let Some((v_y, mirror, strength, flow)) = best {
+        surface = surface.min(v_y);
+        // A naturally deep channel is wet too: no fill or excavation is needed.
+        // A bank, even one cut down to its target, is not a sea-level channel.
+        if v_y < mirror && strength > 0.0 {
             cut = strength;
-            // Вода стоит, где дно ниже зеркала; береговая полоса — вровень,
-            // поэтому у самой кромки воды нет.
-            if v_y < mirror {
-                water_y = mirror;
-            }
+            water_y = mirror;
+            river_flow = flow;
         }
     }
     let mut height = HeightSample {
         surface_y: surface,
         water_y,
-        bed_y,
+        bed_y: surface,
         water_strength: cut,
+        river_flow,
+        wet_kind: if cut > 0.0 {
+            crate::hydrology::SurfaceKind::River
+        } else {
+            crate::hydrology::SurfaceKind::Land
+        },
+        calm: clamp01(calm),
         ..s0_macro
     };
     height.offset = (surface - SURFACE_BASE) / OFFSET_SCALE;
-    // Озёра — правило R2 (6.4, ВО1–ВО2): плоское зеркало min(S) по контуру −1.
+    // §6.4: uncut macro surface decides islands and local lake depth.
     if let Some(hit) = water.lakes.water_hit.filter(|hit| hit.inside) {
-        if let Some(mirror) = hit.level_blocks.filter(|level| *level >= h.min_y) {
-            let lake_cut = clamp01(hit.water_strength);
-            if lake_cut > 0.0 && surface < mirror {
-                let depth = clamp(
-                    hit.max_depth_km * h.water_km_to_blocks,
-                    1.0,
-                    h.lake_depth_max_blocks,
-                );
-                let bed = (mirror - depth).max(h.min_y);
-                let carve = lerp(surface, bed, lake_cut).min(surface);
-                if carve < mirror - 0.5 {
-                    surface = carve;
-                    water_y = mirror;
-                    bed_y = bed;
-                    cut = lake_cut;
-                    height.surface_y = surface;
-                    height.water_y = water_y;
-                    height.bed_y = bed_y;
-                    height.water_strength = cut;
-                    height.offset = (surface - SURFACE_BASE) / OFFSET_SCALE;
+        if let Some(mirror) = hit.level_blocks.filter(|level| land_y < *level) {
+            let scientific = params.mode == crate::Mode::Scientific;
+            let (k, max_depth) =
+                if hit.rift || hit.body == crate::water_profile::WaterBody::RiftLake {
+                    (1.5, if scientific { 40. } else { 24. })
+                } else if hit.body == crate::water_profile::WaterBody::GlacialLake {
+                    (1.0, if scientific { 20. } else { 12. })
+                } else if hit.kind == crate::lake::LakeKind::InlandSea {
+                    (0.5, if scientific { 24. } else { 16. })
+                } else {
+                    (0.5, if scientific { 12. } else { 8. })
+                };
+            let dz = mirror - land_y;
+            let bed = if dz <= 1.0 {
+                mirror - 1.0
+            } else {
+                (land_y - k * dz).max(mirror - 1.0 - max_depth)
+            };
+            // A crossing river can already have cut a deeper channel.
+            let bed = if cut > 0.0 { bed.min(surface) } else { bed };
+            height.surface_y = bed.max(h.min_y);
+            height.bed_y = height.surface_y;
+            height.water_y = mirror;
+            height.water_strength = hit.water_strength;
+            height.wet_kind = match hit.kind {
+                crate::lake::LakeKind::InlandSea | crate::lake::LakeKind::SeaConnected => {
+                    crate::hydrology::SurfaceKind::InlandSea
                 }
-            }
+                crate::lake::LakeKind::Swamp => crate::hydrology::SurfaceKind::Swamp,
+                _ => crate::hydrology::SurfaceKind::Lake,
+            };
+            height.offset = (height.surface_y - SURFACE_BASE) / OFFSET_SCALE;
+            return height;
         }
     }
     if cut > 0.0 {
@@ -572,6 +653,39 @@ pub fn with_water_w(
     }
     // Вода не выбрала колонку: добивка берега как в R2 (≤ `bank_raise_max_blocks`).
     raise_bank(height, water, params, 0.0)
+}
+
+/// §6.4: a wet-zone beach is an exterior cut, not a ring of filled blocks.
+/// It cannot raise natural low terrain or replace an overlapping riverbed.
+pub(crate) fn lake_beach_w(
+    mut height: HeightSample,
+    water: &HydrologySample,
+    wet_zone: bool,
+    params: &Params,
+) -> HeightSample {
+    if !wet_zone || height.water_strength > 0.0 {
+        return height;
+    }
+    if let Some(hit) = water.lakes.shore_hit.filter(|h| {
+        !h.inside
+            && !h.rift
+            && h.kind == crate::lake::LakeKind::Lake
+            && h.body == crate::water_profile::WaterBody::Lake
+    }) {
+        let distance = hit.distance_l * params.block.l_blocks;
+        if let Some(level) = hit
+            .level_blocks
+            .filter(|_| distance <= params.water.beach_blocks)
+        {
+            let bank = level + (0.5 * distance).ceil();
+            if bank < height.surface_y {
+                height.surface_y = bank;
+                height.bed_y = bank;
+                height.offset = (bank - SURFACE_BASE) / OFFSET_SCALE;
+            }
+        }
+    }
+    height
 }
 
 pub fn validate(params: &Params) -> Result<(), &'static str> {
@@ -699,6 +813,12 @@ mod tests {
         assert_eq!(cut.surface_y, 70.0 - 2.0, "параболическое дно ядра");
         assert_eq!(cut.water_y, 70.0);
         assert_eq!(cut.water_strength, 1.0);
+        let deep = with_water_w(s0(65.0), 0.0, &hydro, &p);
+        assert_eq!(
+            (deep.surface_y, deep.bed_y, deep.water_y),
+            (65.0, 65.0, 70.0)
+        );
+        assert_eq!(deep.water_strength, 1.0);
         hydro.channels.nearest = Some(w_hit(
             8.0,
             2.0,
@@ -730,6 +850,61 @@ mod tests {
         assert_eq!(cut.offset, (71.0 - SURFACE_BASE) / OFFSET_SCALE);
     }
 
+    #[test]
+    fn w_calm_is_zero_in_valley_and_ramps_outside() {
+        let p = params_w(Mode::Gameplay);
+        let dry = with_water_w(s0(90.0), 0.0, &HydrologySample::default(), &p);
+        assert_eq!(dry.calm, 1.0, "вне воды 3D-шум ванили не трогаем");
+        let mut hydro = HydrologySample::default();
+        // w=8, fp=24: d=7 → d' = 7 − (4+2) = 1 → d_floor < 0 (пойма).
+        hydro.channels.nearest = Some(w_hit(
+            8.0,
+            7.0,
+            70.0,
+            crate::water_profile::ValleyClass::Plain,
+            0.0,
+        ));
+        let valley = with_water_w(s0(90.0), 0.0, &hydro, &p);
+        assert_eq!(valley.calm, 0.0, "пойма и берег гасят шум полностью");
+        // d=4+2+24+16 → d_floor=16 → конец smoothstep(4,16).
+        hydro.channels.nearest = Some(w_hit(
+            8.0,
+            4.0 + 2.0 + 24.0 + 16.0,
+            70.0,
+            crate::water_profile::ValleyClass::Plain,
+            0.0,
+        ));
+        let outer = with_water_w(s0(90.0), 0.0, &hydro, &p);
+        assert_eq!(outer.calm, 1.0, "за 16 блоками от дна долины шум полный");
+    }
+
+    #[test]
+    fn w_bend_builds_a_bar_only_on_the_inside_and_terraces_a_high_wall() {
+        use crate::water_profile::ValleyClass::Plain;
+        let p = params_w(Mode::Gameplay);
+        let mut hydro = HydrologySample::default();
+        let mut hit = w_hit(8., 9., 80., Plain, 0.);
+        hit.bend = 1.;
+        let sample = |hydro: &mut HydrologySample, hit| {
+            hydro.channels.nearest = Some(hit);
+            with_water_w(s0(150.), 0., hydro, &p).surface_y
+        };
+        let inside = sample(&mut hydro, hit);
+        hit.side = -1.;
+        let outside = sample(&mut hydro, hit);
+        assert!(inside < outside, "inside={inside}, outside={outside}");
+        hit.bend = 0.;
+        hit.gp = 120.;
+        let fp = p.water.floodplain_w[Plain.table_index()] * 8.;
+        let slope = ((hit.gp - 81.) / p.water.wall_reach_blocks)
+            .max(p.water.wall_slope[Plain.table_index()]);
+        let start = (p.water.terrace_height_blocks - 1.) / slope;
+        for extra in [0.2, 0.8] {
+            hit.distance_l =
+                (6. + fp + start + extra * p.water.terrace_width_blocks) / p.block.l_blocks;
+            assert_eq!(sample(&mut hydro, hit), 80. + p.water.terrace_height_blocks);
+        }
+    }
     #[test]
     fn w_canyon_walls_step_up() {
         let p = params_w(Mode::Gameplay);
@@ -896,6 +1071,63 @@ mod tests {
     }
 
     #[test]
+    fn w_beach_cuts_only_the_outer_wet_zone_band() {
+        let p = Params::defaults(GenVersion::V1DevW, Mode::Gameplay);
+        let mut hit = lake_level(1.0, 0.5, Some(80.0));
+        hit.inside = false;
+        let at = |mut h: crate::lake::LakeHit, d, wet| {
+            h.distance_l = d / p.block.l_blocks;
+            let mut water = HydrologySample::default();
+            water.lakes.shore_hit = Some(h);
+            lake_beach_w(base_at(90.0), &water, wet, &p).surface_y
+        };
+        assert_eq!(at(hit, 2.0, true), 81.0);
+        assert_eq!(at(hit, 3.0, true), 82.0);
+        assert_eq!(at(hit, 4.0, true), 90.0);
+        assert_eq!(at(hit, 1.0, false), 90.0);
+        hit.rift = true;
+        assert_eq!(at(hit, 1.0, true), 90.0);
+    }
+
+    #[test]
+    fn w_river_crossing_a_dry_lake_island_keeps_river_identity() {
+        use crate::hydrology::SurfaceKind;
+        let p = Params::defaults(GenVersion::V1DevW, Mode::Gameplay);
+        let mut water = HydrologySample {
+            kind: SurfaceKind::Lake,
+            ..Default::default()
+        };
+        water.channels.nearest = Some(w_hit(
+            8.0,
+            0.0,
+            SEA_LEVEL,
+            crate::water_profile::ValleyClass::Plain,
+            0.0,
+        ));
+        water.lakes.water_hit = Some(lake_level(1.0, 0.5, Some(85.0)));
+        let island = with_water_w(base_at(86.0), 0.0, &water, &p);
+        assert_eq!(island.wet_kind, SurfaceKind::River);
+        assert_eq!(island.water_y, SEA_LEVEL);
+        assert!(island.bed_y < SEA_LEVEL);
+        assert_eq!(
+            with_water_w(base_at(80.0), 0.0, &water, &p).wet_kind,
+            SurfaceKind::Lake
+        );
+    }
+
+    #[test]
+    fn w_lake_uses_local_s0_for_shallows_islands_and_depth_cap() {
+        let p = Params::defaults(GenVersion::V1DevW, Mode::Gameplay);
+        let mut water = HydrologySample::default();
+        water.lakes.water_hit = Some(lake_level(1.0, 0.5, Some(90.0)));
+        let at = |y| with_water_w(base_at(y), 4.0, &water, &p);
+        assert_eq!(at(91.0).water_strength, 0.0);
+        assert_eq!(at(89.8).bed_y, 89.0);
+        assert_eq!(at(88.0).bed_y, 87.0);
+        assert_eq!(at(60.0).bed_y, 81.0);
+    }
+
+    #[test]
     fn r2_bank_fill_is_only_a_two_block_top_up() {
         let p = params_r2(Mode::Gameplay);
         let mut hydro = HydrologySample::default();
@@ -1046,8 +1278,10 @@ mod tests {
             level_blocks: None,
             along: 0.0,
             side: 1.0,
+            bend: 0.,
             valley_class: crate::water_profile::ValleyClass::Plain,
             flow_class: crate::water_profile::FlowClass::Calm,
+            plunge_depth: 0.,
             gp: 0.0,
         }
     }
@@ -1072,6 +1306,7 @@ mod tests {
 
     fn lake_hit(level_km: f64, max_depth_km: f64) -> crate::lake::LakeHit {
         crate::lake::LakeHit {
+            body: crate::water_profile::WaterBody::Lake,
             plate_id: 1,
             lake: 0,
             depression: 0,

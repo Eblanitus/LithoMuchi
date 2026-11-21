@@ -220,17 +220,6 @@ fn dir_from_rng(rng: &mut CellRng) -> Vec2 {
     Vec2::new(d[0], d[1])
 }
 
-// Д-027: список плит в окне ячеек зависит только от (сид, ячейка, радиус,
-// конфигурация), а не от точки. Луч влаги делает 33 запроса в одном и том же
-// окне, поэтому держим последний список в потоке. Порядок кандидатов
-// сохраняется полностью — ответ побайтово равен прежнему.
-type PlateCandidateCache = Option<(u64, u64, i64, i64, i64, Rc<Vec<Plate>>)>;
-
-thread_local! {
-    static PLATE_CANDIDATES: std::cell::RefCell<PlateCandidateCache> =
-        const { std::cell::RefCell::new(None) };
-}
-
 /// Поиск плиты в точке. `radius_cells = 2` даёт окно 5×5 (рабочий вариант);
 /// большее окно нужно только тестам и отладке.
 pub fn plate_query_window(
@@ -244,33 +233,10 @@ pub fn plate_query_window(
     let ci = (q.x / p.cell_g_l).floor() as i64;
     let cj = (q.z / p.cell_g_l).floor() as i64;
 
-    let candidates: Rc<Vec<Plate>> = PLATE_CANDIDATES.with(|cell| {
-        let mut slot = cell.borrow_mut();
-        if let Some((s, key, i, j, r, plates)) = slot.as_ref() {
-            if *s == seed && *key == params.config_key && *i == ci && *j == cj && *r == radius_cells
-            {
-                return Rc::clone(plates);
-            }
-        }
-        let mut plates: Vec<Plate> = Vec::with_capacity(64);
-        for dj in -radius_cells..=radius_cells {
-            for di in -radius_cells..=radius_cells {
-                for plate in seeds_in_cell(seed, ci + di, cj + dj, params) {
-                    plates.push(plate);
-                }
-            }
-        }
-        let plates = Rc::new(plates);
-        *slot = Some((
-            seed,
-            params.config_key,
-            ci,
-            cj,
-            radius_cells,
-            Rc::clone(&plates),
-        ));
-        plates
-    });
+    // The junction query immediately following a crust query needs this
+    // very same ordered window. A nearby hotspot or a short climate ray
+    // need not evict it just because it crosses the cell boundary.
+    let candidates = near_window(seed, ci, cj, radius_cells, params);
     if candidates.is_empty() {
         return None;
     }
@@ -287,8 +253,8 @@ pub fn plate_query_window(
     let a = candidates[best];
 
     // β_k — расстояние до серединного перпендикуляра между A и k.
-    let mut first: Option<(f64, Plate, Vec2)> = None;
-    let mut second: Option<(f64, Plate, Vec2)> = None;
+    let mut first: Option<(f64, usize, f64)> = None;
+    let mut second = None;
     for (k, plate) in candidates.iter().enumerate() {
         if k == best {
             continue;
@@ -299,8 +265,7 @@ pub fn plate_query_window(
             continue;
         }
         let beta = (q.dist2(plate.seed_pos) - best_d2) / (2.0 * separation);
-        let normal = delta.scale(1.0 / separation);
-        let entry = (beta, *plate, normal);
+        let entry = (beta, k, separation);
         match first {
             None => first = Some(entry),
             Some((d0, _, _)) if beta < d0 => {
@@ -315,14 +280,19 @@ pub fn plate_query_window(
         }
     }
 
-    let (d_ab_l, b, n_ab) = match first {
-        Some((d, plate, n)) => (d.max(0.0), Some(plate), n),
+    let boundary = |entry: Option<(f64, usize, f64)>| match entry {
+        Some((d, k, sep)) => {
+            let plate = candidates[k];
+            (
+                d.max(0.),
+                Some(plate),
+                plate.seed_pos.sub(a.seed_pos).scale(1. / sep),
+            )
+        }
         None => (f64::INFINITY, None, Vec2::default()),
     };
-    let (d_ac_l, c, n_ac) = match second {
-        Some((d, plate, n)) => (d.max(0.0), Some(plate), n),
-        None => (f64::INFINITY, None, Vec2::default()),
-    };
+    let (d_ab_l, b, n_ab) = boundary(first);
+    let (d_ac_l, c, n_ac) = boundary(second);
 
     let wb = dexp(-d_ab_l / p.triple_weight_l);
     let wc = dexp(-d_ac_l / p.triple_weight_l);
@@ -549,6 +519,31 @@ mod tests {
     }
 
     #[test]
+    fn junction_matches_stable_distance_sort_across_window_changes() {
+        let p = params();
+        for seed in [42, 7] {
+            for i in -25..25 {
+                let point = Vec2::new(i as f64 * 2.17, -(i as f64) * 3.5);
+                let sample = plate_query(point, seed, &p).unwrap();
+                let j = super::junction_query(&sample, seed, &p).unwrap();
+                let q = sample.q;
+                let mut refs = super::window_seeds(
+                    seed,
+                    (q.x / p.plates.cell_g_l).floor() as i64,
+                    (q.z / p.plates.cell_g_l).floor() as i64,
+                    p.plates.query_radius_cells.max(2),
+                    &p,
+                );
+                refs.sort_by(|a, b| q.dist2(a.seed_pos).total_cmp(&q.dist2(b.seed_pos)));
+                for (k, plate) in refs[..3].iter().enumerate() {
+                    assert_eq!(j.plates[k].id, plate.id);
+                    assert_eq!(j.dist_l[k], q.dist2(plate.seed_pos).sqrt());
+                }
+                assert_eq!(j.fourth_l, q.dist2(refs[3].seed_pos).sqrt());
+            }
+        }
+    }
+    #[test]
     fn empty_cells_only_at_even_indices() {
         let p = params();
         for i in -6..6 {
@@ -771,13 +766,17 @@ pub fn junction_query(sample: &PlateSample, seed: u64, params: &Params) -> Optio
     sample.b?;
     sample.c?;
     let q = sample.q;
-    let mut near: [Option<(f64, Plate)>; 4] = [None; 4];
+    let mut near: [Option<(f64, usize)>; 4] = [None; 4];
     let g = params.plates.cell_g_l;
     let ci = (q.x / g).floor() as i64;
     let cj = (q.z / g).floor() as i64;
     let cells = params.plates.query_radius_cells.max(2);
-    for plate in near_window(seed, ci, cj, cells, params).iter() {
-        let mut entry = (q.dist2(plate.seed_pos), *plate);
+    let window = near_window(seed, ci, cj, cells, params);
+    for (index, plate) in window.iter().enumerate() {
+        let mut entry = (q.dist2(plate.seed_pos), index);
+        if near[3].is_some_and(|held| entry.0 >= held.0) {
+            continue;
+        }
         for slot in near.iter_mut() {
             match slot {
                 None => {
@@ -791,7 +790,7 @@ pub fn junction_query(sample: &PlateSample, seed: u64, params: &Params) -> Optio
     }
     let (a, b, c) = (near[0]?, near[1]?, near[2]?);
     Some(Junction {
-        plates: [a.1, b.1, c.1],
+        plates: [window[a.1], window[b.1], window[c.1]],
         dist_l: [a.0.sqrt(), b.0.sqrt(), c.0.sqrt()],
         fourth_l: near[3].map_or(f64::INFINITY, |(d2, _)| d2.sqrt()),
     })

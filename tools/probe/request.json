@@ -1,25 +1,41 @@
 {
-  "name": "water-update-vo0",
-  "note": "ВО0 (PLAN-WATER-UPDATE §9): база water-stats на v1-dev-r2 (сиды 42, 1, 7 × оба режима, окна по умолчанию 2048/4096 шаг 8/16) и числа s0-node-cost для решения «путь А / Б-лайт» на v1-dev-w (§6.2, ВО0-5).",
+  "name": "water-update-vo3-plate-windows",
+  "note": "Повтор фаз сети и уровней с общим окном кандидатов ядра и стыка. Сравнивать с water-update-vo3-plate-stages; те же плиты и команды.",
   "mode": "gameplay",
   "version": "v1-dev-w",
   "seeds": [
     42
   ],
-  "at": [
-    "0,0"
-  ],
+  "at": [],
   "step": 0,
   "commands": [
-    ["water-stats", "--seed", "42", "--mode", "gameplay", "--version", "v1-dev-r2", "--json"],
-    ["water-stats", "--seed", "1", "--mode", "gameplay", "--version", "v1-dev-r2", "--json"],
-    ["water-stats", "--seed", "7", "--mode", "gameplay", "--version", "v1-dev-r2", "--json"],
-    ["water-stats", "--seed", "42", "--mode", "scientific", "--version", "v1-dev-r2", "--json"],
-    ["water-stats", "--seed", "1", "--mode", "scientific", "--version", "v1-dev-r2", "--json"],
-    ["water-stats", "--seed", "7", "--mode", "scientific", "--version", "v1-dev-r2", "--json"],
-    ["s0-node-cost", "--seed", "42", "--mode", "gameplay", "--version", "v1-dev-w", "--json"],
-    ["s0-node-cost", "--seed", "7", "--mode", "gameplay", "--version", "v1-dev-w", "--json"],
-    ["s0-node-cost", "--seed", "42", "--mode", "scientific", "--version", "v1-dev-w", "--json"],
-    ["s0-node-cost", "--seed", "7", "--mode", "scientific", "--version", "v1-dev-w", "--json"]
+    [
+      "s0-node-cost",
+      "--version",
+      "v1-dev-w",
+      "--seed",
+      "42",
+      "--mode",
+      "gameplay",
+      "--plates",
+      "2",
+      "--analytic-only",
+      "--with-levels",
+      "--json"
+    ],
+    [
+      "s0-node-cost",
+      "--version",
+      "v1-dev-w",
+      "--seed",
+      "42",
+      "--mode",
+      "scientific",
+      "--plates",
+      "2",
+      "--analytic-only",
+      "--with-levels",
+      "--json"
+    ]
   ]
 }

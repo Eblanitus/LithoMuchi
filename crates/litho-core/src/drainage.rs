@@ -55,10 +55,13 @@ impl DrainageOutlet {
 }
 
 /// Вход топографического расчёта. `route_km` — высота стока, не игровая y.
-/// Пока потенциал рельефа A (T120) не готов, генератор подаёт сюда `e_km`.
+/// До W это `e_km`; W переводит высоту S0 с малой поправкой коры в км.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct DrainageInput {
     pub route_km: f64,
+    /// Dominant morphoclimate zone for W depression policy.
+    pub zone: usize,
+    pub lake_signals: crate::water_profile::LakeSignals,
     pub outlet: DrainageOutlet,
 }
 
@@ -165,6 +168,9 @@ pub struct TopoNode {
     /// Плита-владелец узла: у кольца — сосед, `None` — плита не найдена.
     pub owner: Option<u64>,
     pub route_km: f64,
+    /// Dominant morphoclimate zone for W depression policy.
+    pub zone: usize,
+    pub lake_signals: crate::water_profile::LakeSignals,
     pub outlet: DrainageOutlet,
     /// Уровень, с которого вода узла уходит через собственные выходы плиты
     /// (море, рифт, трансформ), не заходя в соседние плиты. `INFINITY` —
@@ -237,7 +243,7 @@ impl PlateTopo {
         };
         let mut nodes = Vec::with_capacity(cells.len());
         for ((cell, sample), (point, input)) in cells.into_iter().zip(inputs) {
-            if !input.route_km.is_finite() {
+            if !input.route_km.is_finite() || input.zone >= crate::params::MORPHO_ZONES {
                 return Err(RiverNetError::InvalidInput { cell });
             }
             if input.outlet == DrainageOutlet::Handoff {
@@ -250,6 +256,8 @@ impl PlateTopo {
                 in_plate: owner.is_some_and(|o| o.id == plate.id),
                 owner: owner.map(|o| o.id),
                 route_km: input.route_km,
+                zone: input.zone,
+                lake_signals: input.lake_signals,
                 outlet: input.outlet,
                 escape_km: f64::INFINITY,
             });
@@ -322,7 +330,7 @@ impl PlateTopo {
         &self.neighbors
     }
 
-    fn node_at(&self, cell: Cell) -> Option<&TopoNode> {
+    pub(crate) fn node_at(&self, cell: Cell) -> Option<&TopoNode> {
         self.nodes
             .binary_search_by_key(&cell, |node| node.cell)
             .ok()
@@ -441,6 +449,7 @@ impl PlateRouting {
         let timings = timings_enabled();
         let t = std::time::Instant::now();
         let mut nodes = Vec::with_capacity(topo.nodes.len());
+        let mut w_zones = params.version.is_water_update().then(Vec::new);
         for source in &topo.nodes {
             let (outlet, filled_km) = if source.in_plate || source.outlet.is_outlet() {
                 (source.outlet, source.route_km)
@@ -454,6 +463,9 @@ impl PlateRouting {
                     None => continue,
                 }
             };
+            if let Some(zones) = &mut w_zones {
+                zones.push(source.zone);
+            }
             nodes.push(DrainageNode {
                 cell: source.cell,
                 point: source.point,
@@ -473,6 +485,7 @@ impl PlateRouting {
             p.fill_epsilon_km,
             p.depression_min_depth_km,
             p.lake_area_max_fraction,
+            w_zones.as_deref().map(|zones| (zones, params)),
         );
         log_phase(timings, "заливка связанная", t);
         let routing = Self {
@@ -707,7 +720,7 @@ impl RiverNet {
         let mut t = std::time::Instant::now();
         let points: Vec<_> = nodes
             .iter()
-            .filter(|node| crate::runoff::needs_climate(node))
+            .filter(|node| crate::runoff::needs_climate(node, params))
             .map(|node| node.point)
             .collect();
         let grid = ClimateGrid::build(&points, p.climate_step_l, climate)?;
@@ -1111,6 +1124,7 @@ fn route_nodes(
     epsilon_km: f64,
     min_depth_km: f64,
     lake_area_max_fraction: f64,
+    w_policy: Option<(&[usize], &Params)>,
 ) -> Vec<Depression> {
     let route: Vec<f64> = nodes.iter().map(|node| node.route_km).collect();
     let seeds: Vec<(usize, f64)> = nodes
@@ -1148,7 +1162,11 @@ fn route_nodes(
         })
         .collect();
     add_components(nodes, neighbors, &flooded, false, &mut depressions);
-    breach_over_budget(nodes, &mut depressions, lake_area_max_fraction);
+    if let Some((zones, params)) = w_policy {
+        breach_w_basins(nodes, &mut depressions, zones, params);
+    } else {
+        breach_over_budget(nodes, &mut depressions, lake_area_max_fraction);
+    }
     depressions
 }
 
@@ -1192,6 +1210,59 @@ fn breach_over_budget(
             keep[d] = false;
         }
     }
+    retain_basins(nodes, depressions, &keep);
+}
+
+/// §6.2: vote over the basin, not just its deepest node. Breach the
+/// lowest weighted depths first until the *plate* area fits the W cap.
+fn breach_w_basins(
+    nodes: &mut [DrainageNode],
+    depressions: &mut Vec<Depression>,
+    zones: &[usize],
+    params: &Params,
+) {
+    let mut votes = vec![[0usize; crate::params::MORPHO_ZONES]; depressions.len()];
+    let mut plate_area = 0;
+    for (node, &zone) in nodes.iter().zip(zones) {
+        if node.in_plate {
+            plate_area += 1;
+            if let Some(d) = node.depression {
+                votes[d][zone] += 1;
+            }
+        }
+    }
+    let mut keep = vec![true; depressions.len()];
+    let mut ranked = Vec::new();
+    let mut used = 0;
+    for (d, basin) in depressions.iter().enumerate() {
+        if !matches!(basin.kind, DepressionKind::Filled { .. }) {
+            continue;
+        }
+        let zone = (0..votes[d].len())
+            .max_by_key(|&z| (votes[d][z], std::cmp::Reverse(z)))
+            .unwrap();
+        let depth = basin.max_depth_km * params.height.water_km_to_blocks;
+        if depth <= params.water.depression_min_depth_blocks[zone] {
+            keep[d] = false;
+        } else {
+            let weight = [3., 3., 1.5, 0.5, 0., 1., 1., 1.][zone];
+            ranked.push((depth * weight, d));
+            used += basin.plate_node_count;
+        }
+    }
+    let budget = (plate_area as f64 * params.water.lake_area_max_fraction).floor() as usize;
+    ranked.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
+    for (_, d) in ranked {
+        if used <= budget {
+            break;
+        }
+        used -= depressions[d].plate_node_count;
+        keep[d] = false;
+    }
+    retain_basins(nodes, depressions, &keep);
+}
+
+fn retain_basins(nodes: &mut [DrainageNode], depressions: &mut Vec<Depression>, keep: &[bool]) {
     if keep.iter().all(|k| *k) {
         return;
     }
@@ -1431,7 +1502,7 @@ mod tests {
             node(1, 0, 2.0, DrainageOutlet::None),
         ];
         let neighbors = prepare(&mut nodes);
-        let depressions = route_nodes(&mut nodes, &neighbors, 1e-4, 0.002, 1.0);
+        let depressions = route_nodes(&mut nodes, &neighbors, 1e-4, 0.002, 1.0, None);
         PlateRouting {
             plate: test_plate(7),
             step_l: 1.0,
@@ -1486,7 +1557,7 @@ mod tests {
                 }
             }
             let neighbors = prepare(&mut nodes);
-            let depressions = route_nodes(&mut nodes, &neighbors, 1e-4, 0.002, fraction);
+            let depressions = route_nodes(&mut nodes, &neighbors, 1e-4, 0.002, fraction, None);
             (nodes, depressions)
         };
         let deep = 2 * 7 + 2;
@@ -1514,6 +1585,46 @@ mod tests {
     }
 
     #[test]
+    fn w_majority_zone_controls_depth_and_budget_priority() {
+        let mut p = crate::Params::defaults(GenVersion::V1DevW, crate::Mode::Gameplay);
+        // Two pits, one 3-cell polar depression (deepest node arid), one
+        // deeper semiarid pit. Budget fits only the polar one.
+        let mut nodes = Vec::new();
+        let mut zones = Vec::new();
+        for i in 0..10 {
+            for j in 0..10 {
+                let (depth, zone) = match (i, j) {
+                    (3, 3) => (4., 4),
+                    (2, 3) | (3, 2) => (3., 0),
+                    (7, 7) => (8., 3),
+                    _ => (0., 2),
+                };
+                zones.push(zone);
+                nodes.push(node(
+                    i,
+                    j,
+                    1.0 - depth / p.height.water_km_to_blocks,
+                    if (i, j) == (0, 0) {
+                        DrainageOutlet::Sea
+                    } else {
+                        DrainageOutlet::None
+                    },
+                ));
+            }
+        }
+        p.water.lake_area_max_fraction = 0.03;
+        let neighbors = prepare(&mut nodes);
+        let basins = route_nodes(&mut nodes, &neighbors, 1e-6, 0.002, 1.0, Some((&zones, &p)));
+        assert_eq!(basins.len(), 1);
+        assert_eq!(basins[0].plate_node_count, 3);
+        assert!(nodes[77].depression.is_none());
+        zones.fill(4);
+        assert!(
+            route_nodes(&mut nodes, &neighbors, 1e-6, 0.002, 1.0, Some((&zones, &p))).is_empty()
+        );
+    }
+
+    #[test]
     fn priority_flood_fills_pit_and_routes_to_sea() {
         let mut nodes = Vec::new();
         for i in 0..5 {
@@ -1532,7 +1643,7 @@ mod tests {
             }
         }
         let neighbors = prepare(&mut nodes);
-        let depressions = route_nodes(&mut nodes, &neighbors, 1e-4, 0.002, 1.0);
+        let depressions = route_nodes(&mut nodes, &neighbors, 1e-4, 0.002, 1.0, None);
         let pit = 2 * 5 + 2;
         assert!(nodes[pit].filled_km > 1.0);
         assert!(nodes[pit].downstream.is_some());
@@ -1559,7 +1670,7 @@ mod tests {
             node(1, 1, 2.0, DrainageOutlet::None),
         ];
         let neighbors = prepare(&mut nodes);
-        let depressions = route_nodes(&mut nodes, &neighbors, 1e-4, 0.002, 1.0);
+        let depressions = route_nodes(&mut nodes, &neighbors, 1e-4, 0.002, 1.0, None);
         assert!(nodes.iter().all(|node| node.downstream.is_none()));
         assert!(nodes.iter().all(|node| node.outlet == DrainageOutlet::None));
         assert_eq!(depressions.len(), 1);

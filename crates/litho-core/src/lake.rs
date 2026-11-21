@@ -72,6 +72,8 @@ pub struct LakeSurface {
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct LakeHit {
+    /// Subtype set from the whole basin by the W levels pass.
+    pub body: crate::water_profile::WaterBody,
     pub plate_id: u64,
     pub lake: usize,
     pub depression: usize,
@@ -267,6 +269,7 @@ impl LakeNetwork {
             let level = level.or_else(|| {
                 if !matches!(depression.kind, DepressionKind::Closed)
                     || balance.storage_mm_l2 <= 0.0
+                    || params.version.is_water_update() // W closed ponds await the VO8 balance.
                     || !params.version.is_water_relief_r2()
                 {
                     return None;
@@ -559,6 +562,7 @@ impl LakeNetwork {
                 }
             }
             let hit = LakeHit {
+                body: crate::water_profile::WaterBody::Lake,
                 plate_id: self.plate_id,
                 lake: k,
                 depression: lake.depression,

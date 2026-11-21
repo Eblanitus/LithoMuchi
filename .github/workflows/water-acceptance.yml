@@ -9,6 +9,15 @@ name: water-acceptance
 on:
   workflow_dispatch:
     inputs:
+      version:
+        description: "Версия генератора"
+        type: choice
+        options: [v1-dev-r2, v1-dev-w]
+        default: v1-dev-r2
+      all_seeds:
+        description: "Дополнительно проверить 16 сидов Д-084"
+        type: boolean
+        default: true
       seeds:
         description: "Сиды полного окна (через запятую)"
         default: "42,7"
@@ -18,6 +27,11 @@ on:
       step:
         description: "Шаг сетки колонок, блоков"
         default: "4"
+env:
+  VERSION: ${{ inputs.version }}
+  WINDOW: ${{ inputs.window }}
+  STEP: ${{ inputs.step }}
+  SEEDS: ${{ inputs.seeds }}
 jobs:
   full:
     runs-on: ubuntu-latest
@@ -32,14 +46,19 @@ jobs:
       - name: "Окно ${{ inputs.window }}×${{ inputs.window }} шагом ${{ inputs.step }}"
         run: |
           set -o pipefail
-          for seed in $(echo "${{ inputs.seeds }}" | tr ',' ' '); do
+          IFS=',' read -ra seeds <<< "$SEEDS"
+          for seed in "${seeds[@]}"; do
             echo "== сид $seed, режим ${{ matrix.mode }}"
+            cargo run -q -p litho-sandbox --release -- water-stats \
+              --seed "$seed" --mode ${{ matrix.mode }} --version "$VERSION" \
+              --window "$WINDOW" --step "$STEP" --json | python3 tools/ci_annotations.py report
             cargo run -q -p litho-sandbox --release -- water-leaks \
-              --seed "$seed" --mode ${{ matrix.mode }} --version v1-dev-r2 \
-              --size "${{ inputs.window }}" --step "${{ inputs.step }}" \
+              --seed "$seed" --mode ${{ matrix.mode }} --version "$VERSION" \
+              --size "$WINDOW" --step "$STEP" \
               | python3 tools/ci_annotations.py report
           done
   seeds-16:
+    if: inputs.all_seeds
     # Д-084: 16 приёмочных сидов. Окно меньше полного: проверяется, что
     # инвариант держится не на одном удачном сиде.
     runs-on: ubuntu-latest
@@ -57,7 +76,81 @@ jobs:
           for seed in -123456789 -42 -1 0 1 2 7 42 123 777 1234 2024 12345 54321 99999 987654321; do
             echo "== сид $seed, режим ${{ matrix.mode }}"
             cargo run -q -p litho-sandbox --release -- water-leaks \
-              --seed "$seed" --mode ${{ matrix.mode }} --version v1-dev-r2 \
+              --seed "$seed" --mode ${{ matrix.mode }} --version "$VERSION" \
               --size 1024 --step 8 \
               | python3 tools/ci_annotations.py report
           done
+  point-lakes:
+    # One release build per mode, one generator per seed (all six families).
+    # An empty disk is not proof that the geological condition never occurs.
+    if: inputs.all_seeds && inputs.version == 'v1-dev-w'
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix:
+        mode: [gameplay, scientific]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo build --release -p litho-sandbox
+      - name: Мокрые центры точечных озёр, диск 24 L
+        env:
+          MODE: ${{ matrix.mode }}
+        run: |
+          set -euo pipefail
+          for seed in -123456789 -42 -1 0 1 2 7 42 123 777 1234 2024 12345 54321 99999 987654321; do
+            target/release/litho-sandbox point-lake-survey --seed "$seed" --mode "$MODE" \
+              --version "$VERSION" --radius-l 24 >> point-lakes.jsonl
+          done
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: point-lakes-${{ matrix.mode }}
+          path: point-lakes.jsonl
+      - name: Проверить наличие на восьми сидах
+        run: |
+          python3 - <<'PY'
+          import json
+          rows = [json.loads(line) for line in open('point-lakes.jsonl')]
+          assert len(rows) == len({r['seed'] for r in rows}) == 16
+          ok = True
+          for kind in rows[0]['examples']:
+              found = [r['seed'] for r in rows if r['examples'][kind] is not None]
+              print(f'::notice::{kind}: {len(found)}/16, сиды {found}')
+              ok &= len(found) >= 8
+          if not ok:
+              raise SystemExit('В проверенном диске недостаточно подтверждённых примеров.')
+          PY
+  waterfalls:
+    if: inputs.all_seeds && inputs.version == 'v1-dev-w'
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo build --release -p litho-sandbox
+      - name: Профили русел и мокрые кромки, диск 24 L
+        run: |
+          set -euo pipefail
+          for seed in -123456789 -42 -1 0 1 2 7 42 123 777 1234 2024 12345 54321 99999 987654321; do
+            target/release/litho-sandbox river-profile-stats --seed "$seed" --mode gameplay \
+              --version "$VERSION" --radius-l 24 >> waterfalls.jsonl
+          done
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: waterfalls-gameplay
+          path: waterfalls.jsonl
+      - name: Проверить мокрые примеры и отсутствие равнинных водопадов
+        run: |
+          python3 - <<'PY'
+          import json
+          rows = [json.loads(line) for line in open('waterfalls.jsonl')]
+          assert len(rows) == len({r['seed'] for r in rows}) == 16
+          found = [r['seed'] for r in rows if r['wet_example'] is not None]
+          plains = {r['seed']: r['fall_valley_counts']['plain'] for r in rows if r['fall_valley_counts']['plain']}
+          print(f'::notice::Мокрая кромка и котёл: {len(found)}/16, сиды {found}; равнинные уступы: {plains}')
+          if plains or len(found) < 12:
+              raise SystemExit('Критерии ВО5 в проверенном диске не выполнены.')
+          PY

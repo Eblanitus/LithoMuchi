@@ -150,13 +150,18 @@ pub fn leaks_against(
                 // километровый уровень, и его готовая поверхность в тех же
                 // колонках стоянки на 20–30 блоков ниже (баг К3), так что
                 // сравнение с ней ловило бы вырез `v1-dev`, а не насыпь.
-                if let Ok(Some(base)) = reference.dry_surface_at(x as f64, z as f64) {
+                let base = if reference.params().version.is_water_update() {
+                    reference.s0_node(x as f64, z as f64).map(|s| s.surface_y())
+                } else {
+                    reference.dry_surface_at(x as f64, z as f64).ok().flatten()
+                };
+                if let Some(base) = base {
                     if column.surface != WaterColumn::NONE
                         && column.surface as f64 > base + RAISE_LIMIT_BLOCKS
                     {
                         out.raised += 1;
                         out.example(format!(
-                            "рельеф поднят: ({x}, {z}) {} против суши {base:.1} у v1-dev",
+                            "рельеф поднят: ({x}, {z}) {} против сухой поверхности {base:.1}",
                             column.surface
                         ));
                     }
@@ -255,11 +260,27 @@ fn check_column(generator: &Generator, column: &WaterColumn, x: i64, z: i64, out
     }
     for (dx, dz) in [(1_i64, 0_i64), (-1, 0), (0, 1), (0, -1)] {
         let neighbor = generator.water_column((x + dx) as f64, (z + dz) as f64);
-        if neighbor.has_water() {
+        let w = generator.params().version.is_water_update();
+        let marked = matches!(
+            column.flow,
+            litho_core::water_profile::FlowClass::FallTop
+                | litho_core::water_profile::FlowClass::Rapid
+                | litho_core::water_profile::FlowClass::Cascade
+        );
+        if neighbor.has_water() || (w && neighbor.has_sea_river()) {
             if neighbor.level < column.level - 1 {
                 // §4, п. 3: вода-вода с перепадом больше блока — водопад.
                 // Он в метрики, а не в нарушения: вода не уходит в сушу,
                 // а падает в соседнюю воду.
+                if w && !marked {
+                    out.spill += 1;
+                    out.coord(x, z);
+                    out.example(format!(
+                        "неразмеченная ступень: ({x}, {z}) {} → {}",
+                        column.level, neighbor.level
+                    ));
+                    continue;
+                }
                 out.waterfalls += 1;
                 out.example(format!(
                     "водопад: ({x}, {z}) {} против {} у соседа",
@@ -272,7 +293,12 @@ fn check_column(generator: &Generator, column: &WaterColumn, x: i64, z: i64, out
         {
             // Сосед ниже уровня моря — это море, а не суша: игра наливает
             // там воду до 63, и ступень считается от неё.
-            if belongs_to_a_fall(generator, x + dx, z + dz, column.level) {
+            let fall_edge = if w {
+                column.flow == litho_core::water_profile::FlowClass::FallTop
+            } else {
+                belongs_to_a_fall(generator, x + dx, z + dz, column.level)
+            };
+            if fall_edge {
                 // §4, п. 3: отвесная стена на кромке водопада — не протечка.
                 out.falls += 1;
                 continue;
@@ -323,10 +349,19 @@ fn cluster(x: f64, z: f64) -> (i64, i64) {
 /// Поиск идёт кольцами от 8 L до `radius_l`: сеть стока строится по плитам,
 /// и платить за 128 L сразу незачем, если вода нашлась в 8 L.
 pub fn points(generator: &Generator, center: (f64, f64), radius_l: f64) -> Vec<WaterPoint> {
+    points_filtered(generator, center, radius_l, None)
+}
+
+pub fn points_filtered(
+    generator: &Generator,
+    center: (f64, f64),
+    radius_l: f64,
+    wanted: Option<&str>,
+) -> Vec<WaterPoint> {
     let limit = radius_l.max(8.0);
     let mut radius = 8.0_f64;
     loop {
-        let found = points_at(generator, center, radius);
+        let found = points_at(generator, center, radius, wanted);
         if !found.is_empty() || radius >= limit {
             return found;
         }
@@ -334,8 +369,99 @@ pub fn points(generator: &Generator, center: (f64, f64), radius_l: f64) -> Vec<W
     }
 }
 
+/// Require the actual upper and receiver levels of this profile event, not
+/// merely another cliff within the same five-block search stencil.
+pub fn wet_fall_face(
+    g: &Generator,
+    site: &litho_core::generator::FallSite,
+    center: litho_core::Vec2,
+    radius: f64,
+) -> Option<WaterPoint> {
+    let (cx, cz) = (site.center.x.round() as i64, site.center.z.round() as i64);
+    for z in cz - 2..=cz + 2 {
+        for x in cx - 2..=cx + 2 {
+            if center.dist2(litho_core::Vec2::new(x as f64, z as f64)) > radius * radius {
+                continue;
+            }
+            let top = g.water_column(x as f64, z as f64);
+            if top.flow != litho_core::FlowClass::FallTop
+                || !top.has_water()
+                || top.level != site.upper_level
+            {
+                continue;
+            }
+            for (dx, dz) in [(0, 1), (0, -1), (1, 0), (-1, 0)] {
+                let low = g.water_column((x + dx) as f64, (z + dz) as f64);
+                if low.flow == litho_core::FlowClass::Plunge
+                    && (low.has_water() || low.has_sea_river())
+                    && low.level == site.lower_level
+                {
+                    return Some(WaterPoint {
+                        x,
+                        z,
+                        level: top.level,
+                        kind: "river",
+                        note: if site.hanging {
+                            "hanging_fall"
+                        } else {
+                            "waterfall"
+                        },
+                    });
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Only advertise lips with two adjacent integer columns the Fabric feature
+/// can actually join. Propagate profile failures instead of reporting them as
+/// an empty search window.
+pub fn waterfall_points(
+    g: &Generator,
+    center: (f64, f64),
+    radius_l: f64,
+    hanging_only: bool,
+) -> Result<Vec<WaterPoint>, String> {
+    let q = g.macro_point(center.0, center.1);
+    let c = litho_core::Vec2::new(center.0, center.1);
+    let l = g.params().block.l_blocks;
+    let mut found = BTreeMap::new();
+    for plate in litho_core::plates::plates_near(
+        q,
+        radius_l + litho_core::channel::max_query_radius_l(g.params()),
+        g.seed(),
+        g.params(),
+    ) {
+        let survey = match g.river_profile_survey(&plate, c, radius_l * l) {
+            Ok(v) => v,
+            Err(litho_core::drainage::RiverNetError::NoOwnedNode { .. }) => continue,
+            Err(e) => return Err(e.to_string()),
+        };
+        for site in survey.lips {
+            if hanging_only && !site.hanging {
+                continue;
+            }
+            if let Some(point) = wet_fall_face(g, &site, c, radius_l * l) {
+                found
+                    .entry(cluster(point.x as f64, point.z as f64))
+                    .or_insert(point);
+            }
+        }
+        if found.len() >= STEP_LIMIT {
+            break;
+        }
+    }
+    Ok(found.into_values().take(STEP_LIMIT).collect())
+}
+
 /// Один проход по плитам в радиусе `radius_l`, без колец.
-fn points_at(generator: &Generator, center: (f64, f64), radius_l: f64) -> Vec<WaterPoint> {
+fn points_at(
+    generator: &Generator,
+    center: (f64, f64),
+    radius_l: f64,
+    wanted: Option<&str>,
+) -> Vec<WaterPoint> {
     let point = generator.macro_point(center.0, center.1);
     let shift = generator.spawn_shift();
     let params = generator.params();
@@ -351,18 +477,49 @@ fn points_at(generator: &Generator, center: (f64, f64), radius_l: f64) -> Vec<Wa
             if !lake.kind.has_water() || lake.level_km.is_none() {
                 continue;
             }
-            let x = (lake.center.x - shift.x) * l;
-            let z = (lake.center.z - shift.z) * l;
-            let column = generator.water_column(x, z);
-            if column.has_water() && column.level >= HIGH_LAKE_LEVEL {
+            // A centroid can be on an island. Also try the lowest route node
+            // and only publish columns which really contain lake water.
+            let bottom = net.nodes()[net.depressions()[lake.depression].bottom_node].point;
+            for point in [lake.center, bottom] {
+                let pos = point.sub(shift).scale(l);
+                let (x, z) = (pos.x.round(), pos.z.round());
+                let column = generator.water_column(x, z);
+                let w = generator.params().version.is_water_update();
+                let kind = if w {
+                    column.body.name()
+                } else {
+                    lake.kind.as_str()
+                };
+                if !column.has_water()
+                    || (w
+                        && !matches!(
+                            column.kind,
+                            litho_core::SurfaceKind::Lake
+                                | litho_core::SurfaceKind::InlandSea
+                                | litho_core::SurfaceKind::Swamp
+                        ))
+                {
+                    continue;
+                }
+                if wanted.map_or(column.level < HIGH_LAKE_LEVEL, |q| q != "lake" && q != kind) {
+                    continue;
+                }
                 lakes.entry(cluster(x, z)).or_insert(WaterPoint {
                     x: x as i64,
                     z: z as i64,
                     level: column.level,
-                    kind: lake.kind.as_str(),
-                    note: "high_lake",
+                    kind,
+                    note: if column.level >= HIGH_LAKE_LEVEL {
+                        "high_lake"
+                    } else {
+                        "lake"
+                    },
                 });
+                break;
             }
+        }
+        if wanted.is_some() {
+            continue;
         }
         let channels = net.channels();
         for segment in channels.segments() {

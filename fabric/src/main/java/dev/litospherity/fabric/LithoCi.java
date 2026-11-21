@@ -61,49 +61,27 @@ final class LithoCi {
                 }
             }
             report.add("parity: расхождений " + bad + " из 5000");
-            // Д-127: R2 меняет только слой воды, поэтому R2-генератор обязан
-            // совпасть с v1-dev в тех же колонках. Сверка идёт от `gen`
-            // (генератора мира), а не от отладочного v1-dev: иначе паритет
-            // полей и паритет R2 проверяли бы одно и то же и не ловили
-            // расхождение версий.
+            // Parity of the running preset is checked above. W can legitimately
+            // differ from R1; the frozen R2 contract must compare R2 itself.
+            if (LithoFields.binding(rs).version() != LithoFields.VERSION_W) {
+                ok = false;
+                report.add("FAIL: пресет Litospherity не использует v1-dev-w");
+            }
             LithoNative.Generator dev = LithoFields.generator(
                     new LithoFields.Binding(seed, m, LithoFields.VERSION_V1_DEV));
-            int badDev = 0;
+            LithoNative.Generator r2 = LithoFields.generator(
+                    new LithoFields.Binding(seed, m, LithoFields.VERSION_R2));
             int badCross = 0;
             for (int i = 0; i < 1000; i++) {
                 int x = (int) Math.floorMod(i * 7919L, 40000) - 20000;
                 int z = (int) Math.floorMod(i * 104729L, 40000) - 20000;
                 for (int f = 0; f < fns.length; f++) {
-                    double got = rs.sampleBlockValueUncached(fns[f], x, 64, z);
-                    if (Math.abs(got - dev.field(f, x, z)) > 1e-6) badDev++;
-                    if (Math.abs(gen.field(f, x, z) - dev.field(f, x, z)) > 1e-6) badCross++;
+                    if (Float.floatToRawIntBits((float) r2.field(f, x, z))
+                            != Float.floatToRawIntBits((float) dev.field(f, x, z))) badCross++;
                 }
             }
-            report.add("привязка: " + LithoFields.binding(rs) + ", мир против v1-dev "
-                    + badDev + ", R2 против v1-dev " + badCross);
-            // ВРЕМЕННО: тот же R2-генератор второй раз и свежий экземпляр R2 —
-            // отличает «состояние общего генератора» от «версия считает иначе».
-            LithoNative.Generator fresh = LithoFields.generator(
-                    new LithoFields.Binding(seed, m, LithoFields.VERSION_R2));
-            int sameInstance = 0;
-            int freshDiff = 0;
-            for (int i = 0; i < 1000; i++) {
-                int x = (int) Math.floorMod(i * 7919L, 40000) - 20000;
-                int z = (int) Math.floorMod(i * 104729L, 40000) - 20000;
-                for (int f = 0; f < fns.length; f++) {
-                    double again = gen.field(f, x, z);
-                    if (Math.abs(again - dev.field(f, x, z)) > 1e-6
-                            && Math.abs(again - gen.field(f, x, z)) > 1e-12) sameInstance++;
-                    if (Math.abs(fresh.field(f, x, z) - dev.field(f, x, z)) > 1e-6) freshDiff++;
-                }
-            }
-            report.add("диагностика2: R2 повторно против v1-dev " + sameInstance
-                    + ", свежий R2 против v1-dev " + freshDiff);
-            if (bad > 0) ok = false;
-            if (badCross > 0) {
-                ok = false;
-                report.add("FAIL: v1-dev-r2 отличается от v1-dev в полях (Д-127: только слой воды)");
-            }
+            report.add("Д-127: R2 против v1-dev: " + badCross + " / 5000");
+            if (bad > 0 || badCross > 0) ok = false;
 
             int radius = Integer.getInteger("litospherity.ci.radius", 8);
             long t0 = System.nanoTime();

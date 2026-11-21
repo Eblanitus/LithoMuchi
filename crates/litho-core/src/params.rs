@@ -1210,6 +1210,8 @@ pub struct WaterUpdateParams {
     pub beach_blocks: f64,
     /// Сколько блоков над водой чистит Java (8.2).
     pub clear_above_blocks: f64,
+    /// §6.6 point features. May be disabled for an otherwise identical A/B timing.
+    pub point_lakes: bool,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -1672,6 +1674,7 @@ impl Params {
                 lake_area_max_fraction: 0.06,
                 beach_blocks: if game { 3.0 } else { 4.0 },
                 clear_above_blocks: 6.0,
+                point_lakes: true,
             },
             boundaries: BoundaryParams {
                 // σ=6° даёт типичные ±6° и хвосты до ±18°, без тонких октав:
@@ -2495,6 +2498,7 @@ impl Params {
                 ] {
                     writeln!(w, "{name}={value:?}").unwrap();
                 }
+                writeln!(w, "water.point_lakes={}", wa.point_lakes).unwrap();
                 writeln!(w, "water.profile_budget_ms={}", wa.profile_budget_ms).unwrap();
                 writeln!(w, "water.slope_edges={:?}", wa.slope_edges).unwrap();
                 writeln!(w, "water.floodplain_w={:?}", wa.floodplain_w).unwrap();

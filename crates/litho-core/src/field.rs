@@ -24,10 +24,13 @@ pub enum Field {
     Factor,
     /// T144: острота пиков из нашей высоты.
     Jaggedness,
+    /// ВО2-1: маска коридора воды, гасящая 3D-шум ванили. 1.0 вне воды,
+    /// 0.0 в воде/пойме/озере и рядом с ними.
+    Calm,
 }
 
 impl Field {
-    pub const ALL: [Self; 10] = [
+    pub const ALL: [Self; 11] = [
         Self::Continents,
         Self::Erosion,
         Self::Ridges,
@@ -38,6 +41,7 @@ impl Field {
         Self::Pv,
         Self::Factor,
         Self::Jaggedness,
+        Self::Calm,
     ];
 
     pub const fn as_str(self) -> &'static str {
@@ -52,6 +56,7 @@ impl Field {
             Self::Pv => "pv",
             Self::Factor => "factor",
             Self::Jaggedness => "jaggedness",
+            Self::Calm => "calm",
         }
     }
 

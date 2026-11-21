@@ -1,0 +1,71 @@
+{
+  "name": "water-update-vo2-zones",
+  "note": "ВО2 / ВО3-4: предварительные окна W, не полная приёмка 16 сидов. Сравнение распределения озёр по зонам в двух режимах.",
+  "mode": "gameplay",
+  "version": "v1-dev-w",
+  "seeds": [
+    42
+  ],
+  "at": [
+    "0,0"
+  ],
+  "step": 0,
+  "commands": [
+    [
+      "water-stats",
+      "--seed",
+      "42",
+      "--mode",
+      "gameplay",
+      "--version",
+      "v1-dev-w",
+      "--window",
+      "2048",
+      "--step",
+      "8",
+      "--json"
+    ],
+    [
+      "water-stats",
+      "--seed",
+      "7",
+      "--mode",
+      "gameplay",
+      "--version",
+      "v1-dev-w",
+      "--window",
+      "2048",
+      "--step",
+      "8",
+      "--json"
+    ],
+    [
+      "water-stats",
+      "--seed",
+      "42",
+      "--mode",
+      "scientific",
+      "--version",
+      "v1-dev-w",
+      "--window",
+      "4096",
+      "--step",
+      "16",
+      "--json"
+    ],
+    [
+      "water-stats",
+      "--seed",
+      "7",
+      "--mode",
+      "scientific",
+      "--version",
+      "v1-dev-w",
+      "--window",
+      "4096",
+      "--step",
+      "16",
+      "--json"
+    ]
+  ]
+}

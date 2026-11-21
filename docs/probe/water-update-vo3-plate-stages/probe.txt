@@ -1,0 +1,23 @@
+# Проба «water-update-vo3-plate-stages»
+
+Время сети отдельно от уровней на тех же двух плитах в обоих режимах; ошибки сохранённого маршрута относительно S0. Порог 200 мс неизменен.
+
+Режим gameplay, версия v1-dev-w, обход ±0 блоков (шаг 0), точек 0, сидов 1.
+
+## sandbox s0-node-cost --version v1-dev-w --seed 42 --mode gameplay --plates 2 --analytic-only --with-levels --json
+
+```
+{"seed":42,"mode":"gameplay","version":"v1-dev-w","seconds":9.58,"plates":2,"nodes":6275,"with_levels":true,"plate_stages":[{"plate":"216878075925460450","drainage_ms":1888.99,"levels_ms":328.25},{"plate":"356150445216138105","drainage_ms":1066.97,"levels_ms":371.60}],"net_ms_p50":1827.9,"net_ms_p95":2178.3,"net_ms_max":2217.2,"exact_us_per_node":867.38,"analytic_us_per_node":72.29,"analytic_error_p95":0.000,"stored_route_error_p95":0.000,"stored_route_error_p999":0.000,"analytic_error_p999":0.000,"net_budget_ms":200.0,"lattices":[],"decision":"только аналитический путь, без сравнения решёток"}
+litho-core: сеть рек №1, плита 216878075925460450: 1499 узлов за 1889 мс
+litho-core: сеть рек №2, плита 12257214645282878660: 4341 узлов за 102 мс
+litho-core: сеть рек №3, плита 356150445216138105: 5162 узлов за 1067 мс
+```
+
+## sandbox s0-node-cost --version v1-dev-w --seed 42 --mode scientific --plates 2 --analytic-only --with-levels --json
+
+```
+{"seed":42,"mode":"scientific","version":"v1-dev-w","seconds":15.01,"plates":2,"nodes":6275,"with_levels":true,"plate_stages":[{"plate":"216878075925460450","drainage_ms":2611.93,"levels_ms":361.68},{"plate":"356150445216138105","drainage_ms":4063.17,"levels_ms":597.03}],"net_ms_p50":3816.9,"net_ms_p95":4575.9,"net_ms_max":4660.2,"exact_us_per_node":979.68,"analytic_us_per_node":191.14,"analytic_error_p95":0.000,"stored_route_error_p95":0.000,"stored_route_error_p999":0.000,"analytic_error_p999":0.000,"net_budget_ms":200.0,"lattices":[],"decision":"только аналитический путь, без сравнения решёток"}
+litho-core: сеть рек №1, плита 216878075925460450: 1499 узлов за 2612 мс
+litho-core: сеть рек №2, плита 356150445216138105: 5162 узлов за 4063 мс
+```
+
