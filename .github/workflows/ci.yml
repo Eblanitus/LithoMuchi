@@ -86,19 +86,6 @@ jobs:
             cargo run -q -p xtask -- params-hash --version "$version"
           done | tee /tmp/litho-hashes | python3 tools/ci_annotations.py report
           diff -u golden/water-legacy-params.txt /tmp/litho-hashes
-      - name: "Ф6-В1 — вода не уходит за берег (water-leaks, окно 1024 × 1024)"
-        # Гейт — 0 нарушений §4. Окно меньше приёмочных 4096 × 4096: полный
-        # прогон (4 центра × 2 сида × 2 режима + 16 сидов Д-084) идёт отдельной
-        # задачей автора, здесь дым на каждом PR.
-        run: |
-          set -o pipefail
-          for mode in gameplay scientific; do
-            for seed in 42 7; do
-              cargo run -q -p litho-sandbox --release -- water-leaks \
-                --seed "$seed" --mode "$mode" --version v1-dev-r2 --size 1024 --step 8 \
-                | python3 tools/ci_annotations.py report
-            done
-          done
       - name: "ВО3-0 — вода v1-dev-w без гейта (диагностика, Д-139)"
         # Гейт §4 выше держится на v1-dev-r2, и это осознанно: у W сеть рек ещё
         # старая (e_km), а уровни уже от S0, поэтому сухих осей ~80 % и жёсткий
@@ -111,6 +98,19 @@ jobs:
             for seed in 42 7; do
               cargo run -q -p litho-sandbox --release -- water-leaks \
                 --seed "$seed" --mode "$mode" --version v1-dev-w --size 1024 --step 8 --report-only \
+                | python3 tools/ci_annotations.py report
+            done
+          done
+      - name: "Ф6-В1 — вода не уходит за берег (water-leaks, окно 1024 × 1024)"
+        # Гейт — 0 нарушений §4. Окно меньше приёмочных 4096 × 4096: полный
+        # прогон (4 центра × 2 сида × 2 режима + 16 сидов Д-084) идёт отдельной
+        # задачей автора, здесь дым на каждом PR.
+        run: |
+          set -o pipefail
+          for mode in gameplay scientific; do
+            for seed in 42 7; do
+              cargo run -q -p litho-sandbox --release -- water-leaks \
+                --seed "$seed" --mode "$mode" --version v1-dev-r2 --size 1024 --step 8 \
                 | python3 tools/ci_annotations.py report
             done
           done
