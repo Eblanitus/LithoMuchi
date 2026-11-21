@@ -216,6 +216,16 @@ public final class LithoWaterFeature implements Feature {
         // the fluid found there NOW. Keep all non-owned and non-water marks.
         if (placed > 0 && !LIVE_STEPS) {
             var chunk = level.getChunk(x0 >> 4, z0 >> 4);
+            if (chunk instanceof StaticRiverMask.Holder holder) {
+                StaticRiverMask mask = null;
+                for (int j = 1; j <= 16; j++) for (int i = 1; i <= 16; i++) {
+                    int k = j * SIDE + i;
+                    if (lowestSource[k] == Integer.MAX_VALUE || water.kind()[k] != KIND_RIVER || water.level()[k] <= SEA_LEVEL) continue;
+                    if (mask == null) mask = new StaticRiverMask();
+                    mask.record(i - 1, j - 1, lowestSource[k], Math.max(water.level()[k] - 1, incomingTop(water, k)));
+                }
+                if (mask != null) holder.litospherity$rememberRiver(mask);
+            }
             var sections = chunk.getPostProcessing();
             int removed = 0;
             for (int section = 0; section < sections.length; section++) {

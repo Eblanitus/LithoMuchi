@@ -35,6 +35,8 @@ final class LithoCiWater {
     static void run(MinecraftServer server, String mode) {
         LithoWaterFeature.STEPS.set(0);
         LithoWaterFeature.STATIC_MARKS_REMOVED.set(0);
+        StaticRiverMask.MARKS_REMOVED.set(0);
+        StaticRiverMask.TICKS_REMOVED.set(0);
         LithoWaterFeature.COLUMNS.set(0);
         LithoWaterFeature.SEALS.set(0);
         LithoWaterFeature.CHUNKS.set(0);
@@ -68,6 +70,8 @@ final class LithoCiWater {
             report.add(String.format("вода: сгенерировано %d чанков за %.0f мс, %.1f мс/чанк",
                     generated.size(), ms, ms / Math.max(1, generated.size())));
             report.add("снято меток postProcess в статичной воде: " + LithoWaterFeature.STATIC_MARKS_REMOVED.get());
+            report.add("статичная река перед FULL: меток снято " + StaticRiverMask.MARKS_REMOVED.get()
+                    + ", отложенных тиков воды снято " + StaticRiverMask.TICKS_REMOVED.get());
             long generationSeals = LithoWaterFeature.SEALS.get();
             long chunksWithWater = LithoWaterFeature.CHUNKS.get();
             long sourcesBefore = countWater(level, true);
