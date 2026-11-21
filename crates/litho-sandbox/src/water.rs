@@ -205,22 +205,13 @@ fn river_axis(generator: &Generator, column: &WaterColumn, x: i64, z: i64, out: 
         return;
     }
     out.river_axis += 1;
-    // Д-138: в W приморское русло отдаётся с `level = 63` (`has_sea_river`), чтобы
-    // Java прорезала его по настоящим блокам. Это мокрая ось, а не сухая: раньше
-    // её отсекал только `has_water() > 63`, и на W «сухими» выходило 80 % осей.
-    if column.has_water() || column.has_sea_river() {
+    if column.has_water() {
         return;
     }
     // Ванильная вода стоит до y = 62: блок 62 воздух, если дно не выше 62.
-    // В W дно — это `bed` (дно после выреза), а `surface` у сухой колонки в W
-    // совпадает с рельефом и до воды не относится.
-    let bed = if column.bed != WaterColumn::NONE {
-        column.bed as f64
-    } else {
-        generator
-            .sample(xf, zf)
-            .map_or(f64::INFINITY, |full| full.world.height.surface_y)
-    };
+    let bed = generator
+        .sample(xf, zf)
+        .map_or(f64::INFINITY, |full| full.world.height.surface_y);
     if bed <= SEA_LEVEL - 1.0 {
         return;
     }

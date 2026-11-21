@@ -613,6 +613,14 @@ fn cmd_water_leaks(args: &[String]) -> Result<(), String> {
         total.river_dry_pct(),
         water::RIVER_DRY_MAX_PCT
     );
+    // Д-139: `--report-only` печатает те же числа, но не роняет прогон. Нужен для
+    // `v1-dev-w` до ВО3: там сеть рек ещё старая (`e_km`), а уровни уже от `S0`,
+    // поэтому сухих осей ~80 %, и жёсткий гейт держал бы `main` красным всегда.
+    // В CI такой прогон идёт аннотацией, а гейт §4 остаётся на `v1-dev-r2`.
+    if args.iter().any(|arg| arg == "--report-only") {
+        println!("water-leaks: --report-only, нарушения §4 не роняют прогон (Д-139)");
+        return Ok(());
+    }
     if total.water < water::MIN_WATER_COLUMNS {
         return Err(format!(
             "гейт пустой: колонок с водой {} меньше {} (§4, п. 6)",

@@ -23,7 +23,7 @@
 
 ## Статус
 
-Состояние на **2026-11-18** (`main` = `195af9b`). Что готово, что не
+Состояние на **2026-11-21** (`main` = `11f1ca7`). Что готово, что не
 работает и что делать дальше по порядку — в [docs/PLAN.md](docs/PLAN.md).
 
 - **v0 заморожена** (Д-026): scientific `5cdbe1d36ef8d16a`, gameplay `b48e8037c4e85977`.
@@ -38,10 +38,12 @@
   ядре — PR #51 (шаги Ф1–Ф5, [docs/PLAN-FABRIC.md](docs/PLAN-FABRIC.md)).
 - **Вода выше уровня моря.** На Horizon вынесена из v1 и ждёт правку в Horizon
   ([issue #16388](https://github.com/horizon-rust/horizon/issues/16388)). На Fabric делается
-  штатно, план принят автором 2026-11-18: [docs/PLAN-WATER-FABRIC.md](docs/PLAN-WATER-FABRIC.md).
-  Написаны шаги В1–В5 (версия ядра `v1-dev-r2`, фича `litospherity:water`, CI-job `water`);
-  В6 (перекаты) и В7 (холодные пруды) открыты. Итог сверки кода 26.3 —
-  [docs/FABRIC-WATER-NOTES.md](docs/FABRIC-WATER-NOTES.md).
+  штатно по действующему плану [docs/PLAN-WATER-UPDATE.md](docs/PLAN-WATER-UPDATE.md)
+  (ВО0–ВО9, Д-129): версия генератора `v1-dev-w`, пресеты Литосферити на Fabric переведены на неё.
+  Прежний [docs/PLAN-WATER-FABRIC.md](docs/PLAN-WATER-FABRIC.md) заменён (Д-130): его шаги В1–В5
+  вышли как `v1-dev-r2`, В6 и В7 отменены. Сделаны ВО0, ВО1 и ВО2; ВО3 (сток по `S0`, озёра
+  в котловинах) — главный открытый шаг, от него зависят места рек и озёр.
+  Итог сверки кода 26.3 — [docs/FABRIC-WATER-NOTES.md](docs/FABRIC-WATER-NOTES.md).
 
 Вливы в `main` не означают приёмку v1: «готово» наступает по критериям
 [пересмотра, раздел 10](docs/spec/PLAN-REVISION-2026-11-08.md#10-критерии-готовности-v1-новые-предложение),

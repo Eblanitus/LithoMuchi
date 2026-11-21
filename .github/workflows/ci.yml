@@ -99,6 +99,21 @@ jobs:
                 | python3 tools/ci_annotations.py report
             done
           done
+      - name: "ВО3-0 — вода v1-dev-w без гейта (диагностика, Д-139)"
+        # Гейт §4 выше держится на v1-dev-r2, и это осознанно: у W сеть рек ещё
+        # старая (e_km), а уровни уже от S0, поэтому сухих осей ~80 % и жёсткий
+        # гейт был бы красным всегда. Здесь те же числа идут аннотацией, чтобы
+        # ВО3 было видно, что он улучшает. Переключение гейта — отдельное решение
+        # после ВО3, по числам этого шага.
+        run: |
+          set -o pipefail
+          for mode in gameplay scientific; do
+            for seed in 42 7; do
+              cargo run -q -p litho-sandbox --release -- water-leaks \
+                --seed "$seed" --mode "$mode" --version v1-dev-w --size 1024 --step 8 --report-only \
+                | python3 tools/ci_annotations.py report
+            done
+          done
       - name: "К4 / шаг 6 — скорость v1-dev на колонку и на чанк"
         run: |
           target=$(python3 -c 'import json; print(json.load(open("tools/bench-targets.json"))["v1_dev_chunk_ms"])')
