@@ -163,12 +163,19 @@ public final class LithoWaterFeature implements Feature {
                 for (int[] d : SIDES) {
                     int nk = k + d[1] * SIDE + d[0];
                     if (water.level()[nk] != LithoNative.WaterColumns.NONE) continue;
+                    // Д-137: заливаем только воздух от верха соседа до его первой
+                    // твёрдой породы, а не до дна нашей колонки. Прежний цикл шёл до
+                    // `lowestSource[k]`, то есть на всю глубину воды: у глубокого озера
+                    // каждый сухой сосед получал стену из десятков блоков дёрна. Это и
+                    // давало 1,14 заделки на чанк в научном мире при пороге 1, и
+                    // торчало в мире стеной. Воздух за первой твёрдой породой соседа
+                    // не протекает: он за камнем, и это другой случай (§8.2 п. 1,
+                    // затычка пещеры под дном).
                     for (int y = top; y >= lowestSource[k]; y--) {
                         BlockPos pos = new BlockPos((int) xs[nk], y, (int) zs[nk]);
-                        if (level.getBlockState(pos).isAir()) {
-                            level.setBlock(pos, Blocks.DIRT.defaultBlockState(), 2);
-                            seals++;
-                        }
+                        if (!level.getBlockState(pos).isAir()) break;
+                        level.setBlock(pos, Blocks.DIRT.defaultBlockState(), 2);
+                        seals++;
                     }
                 }
             }

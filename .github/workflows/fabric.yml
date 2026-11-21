@@ -214,7 +214,7 @@ jobs:
           cat run/litospherity-ci.txt
           # A single annotation is truncated by GitHub before the final
           # metrics. Keep the compact verdict separate from the spatial trace.
-          grep -E '^(протечки:|сухое русло:|calm_fit по рельефу:|calm_fit по heightmap|накрытая вода:|стены у воды:|рост текущей воды|заделки герметизации:|затычек пещер|водопад \(|FAIL:|RESULT:)' run/litospherity-ci.txt \
+          grep -E '^(протечки:|сухое русло:|calm_fit по рельефу:|calm_fit по heightmap|накрытая вода:|стены у воды:|рост текущей воды|заделки герметизации|затычек пещер|вода выше моря|водопад \(|FAIL:|RESULT:)' run/litospherity-ci.txt \
             | python3 ../tools/ci_annotations.py report
           # Отчёт сервера тоже уходит аннотацией: сырые логи CI недоступны.
           python3 ../tools/ci_annotations.py report < run/litospherity-ci.txt
