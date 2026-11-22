@@ -4238,11 +4238,24 @@ mod tests {
     /// иначе кэш вернул бы сеть чужой пары и мир бы изменился.
     #[test]
     fn handoff_key_distinguishes_both_plates() {
-        let pairs = [(1u64, 2u64), (2, 1), (1, 1), (0, 1), (1, 0), (u32::MAX as u64, 1)];
+        let pairs = [
+            (1u64, 2u64),
+            (2, 1),
+            (1, 1),
+            (0, 1),
+            (1, 0),
+            (u32::MAX as u64, 1),
+        ];
         let keys: Vec<u64> = pairs.iter().map(|&(a, b)| handoff_key(a, b)).collect();
         for (i, left) in keys.iter().enumerate() {
             for (j, right) in keys.iter().enumerate() {
-                assert_eq!(i == j, left == right, "пара {:?} и {:?}", pairs[i], pairs[j]);
+                assert_eq!(
+                    i == j,
+                    left == right,
+                    "пара {:?} и {:?}",
+                    pairs[i],
+                    pairs[j]
+                );
             }
         }
         // Сосед в старших битах, я — в младших: (1,2) != (2,1).
