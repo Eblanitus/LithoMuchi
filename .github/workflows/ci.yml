@@ -63,7 +63,13 @@ jobs:
           key: linux-x86_64
           cache-workspace-crates: "true"
       - name: rustfmt
-        run: cargo fmt --all -- --check
+        run: |
+          cargo fmt --all
+          if ! git diff --quiet; then
+            git --no-pager diff --unified=2 | head -200 | sed 's/^/::error::/'
+            echo "::error::rustfmt нашёл расхождения (см. выше)"
+            exit 1
+          fi
       - name: clippy
         run: |
           set -o pipefail
