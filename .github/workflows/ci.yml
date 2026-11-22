@@ -63,18 +63,7 @@ jobs:
           key: linux-x86_64
           cache-workspace-crates: "true"
       - name: rustfmt
-        run: |
-          cargo fmt --all
-          git --no-pager diff --unified=1 > fmt.diff || true
-          python3 - <<'FMT'
-          import pathlib
-          text = pathlib.Path("fmt.diff").read_text(encoding="utf-8")
-          for i in range(0, len(text), 700):
-              chunk = text[i:i + 700].replace("\n", "%0A")
-              print(f"::error::ЧАСТЬ{i // 700}: {chunk}")
-          FMT
-          git diff --quiet
-          exit $?
+        run: cargo fmt --all -- --check
       - name: clippy
         run: |
           set -o pipefail
