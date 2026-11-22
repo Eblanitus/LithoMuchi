@@ -1,8 +1,8 @@
 {
-  "name": "water-gate-w-vs-r2-after",
-  "note": "Повтор water-gate-w-vs-r2 после Д-138: п.5 сравнивает дно с точной S0, приморское русло (level 63) считается мокрой осью.",
-  "mode": "gameplay",
-  "version": "v1-dev-w",
+  "name": "explain-r2-spill-33645-7132",
+  "note": "Разбор предсуществующего нарушения §4 п.2 в CI: берег ниже зеркала (-33645, 7132) суша 80 зеркало 84. Плюс сама мокрая колонка-источник.",
+  "mode": "scientific",
+  "version": "v1-dev-r2",
   "seeds": [],
   "at": [],
   "step": 0,
@@ -12,78 +12,11 @@
       "--seed",
       "42",
       "--mode",
-      "gameplay",
-      "--version",
-      "v1-dev-w",
-      "--size",
-      "1024",
-      "--step",
-      "8"
-    ],
-    [
-      "water-leaks",
-      "--seed",
-      "7",
-      "--mode",
-      "gameplay",
-      "--version",
-      "v1-dev-w",
-      "--size",
-      "1024",
-      "--step",
-      "8"
-    ],
-    [
-      "water-leaks",
-      "--seed",
-      "42",
-      "--mode",
       "scientific",
       "--version",
-      "v1-dev-w",
-      "--size",
-      "1024",
-      "--step",
-      "8"
-    ],
-    [
-      "water-leaks",
-      "--seed",
-      "7",
-      "--mode",
-      "scientific",
-      "--version",
-      "v1-dev-w",
-      "--size",
-      "1024",
-      "--step",
-      "8"
-    ],
-    [
-      "water-leaks",
-      "--seed",
-      "42",
-      "--mode",
-      "gameplay",
-      "--version",
       "v1-dev-r2",
-      "--size",
-      "1024",
-      "--step",
-      "8"
-    ],
-    [
-      "water-leaks",
-      "--seed",
-      "7",
-      "--mode",
-      "gameplay",
-      "--version",
-      "v1-dev-r2",
-      "--size",
-      "1024",
-      "--step",
-      "8"
+      "--explain",
+      "-33645,7132"
     ],
     [
       "water-leaks",
@@ -93,23 +26,41 @@
       "scientific",
       "--version",
       "v1-dev-r2",
-      "--size",
-      "1024",
-      "--step",
-      "8"
+      "--explain",
+      "-33644,7132"
     ],
     [
       "water-leaks",
       "--seed",
-      "7",
+      "42",
       "--mode",
       "scientific",
       "--version",
       "v1-dev-r2",
-      "--size",
-      "1024",
-      "--step",
-      "8"
+      "--explain",
+      "-33645,7131"
+    ],
+    [
+      "water-leaks",
+      "--seed",
+      "42",
+      "--mode",
+      "scientific",
+      "--version",
+      "v1-dev-r2",
+      "--explain",
+      "-33645,7133"
+    ],
+    [
+      "water-leaks",
+      "--seed",
+      "42",
+      "--mode",
+      "scientific",
+      "--version",
+      "v1-dev-r2",
+      "--explain",
+      "-33646,7132"
     ]
   ]
 }
