@@ -1419,33 +1419,32 @@ impl Generator {
             // Обе производные сети — чистые функции топографии соседа и
             // уровней ухода моей плиты, то есть пары id. Кэш по паре
             // убирает пересчёт на каждом шаге рекурсии притока.
-            let derived = self.handoff_derived.get_or_build(
-                handoff_key(neighbor.id, me),
-                || {
-                    let closed = PlateRouting::build(topo, &self.params, &|owner, cell| {
-                        (owner == me).then(|| own.escape_level_km(cell)).flatten()
-                    })?;
-                    // Без третьих плит разбор Д-094 сходится всегда —
-                    // открытая сеть не нужна и не строится.
-                    let has_third = topo.neighbors().iter().any(|plate| plate.id != me);
-                    let open = if has_third {
-                        let open = PlateRouting::build(topo, &self.params, &|owner, cell| {
-                            if owner == me {
-                                own.escape_level_km(cell)
-                            } else {
-                                Some(f64::MIN)
-                            }
+            let derived =
+                self.handoff_derived
+                    .get_or_build(handoff_key(neighbor.id, me), || {
+                        let closed = PlateRouting::build(topo, &self.params, &|owner, cell| {
+                            (owner == me).then(|| own.escape_level_km(cell)).flatten()
                         })?;
-                        Some(Arc::new(open))
-                    } else {
-                        None
-                    };
-                    Ok(HandoffDerived {
-                        closed: Arc::new(closed),
-                        open,
-                    })
-                },
-            )?;
+                        // Без третьих плит разбор Д-094 сходится всегда —
+                        // открытая сеть не нужна и не строится.
+                        let has_third = topo.neighbors().iter().any(|plate| plate.id != me);
+                        let open = if has_third {
+                            let open = PlateRouting::build(topo, &self.params, &|owner, cell| {
+                                if owner == me {
+                                    own.escape_level_km(cell)
+                                } else {
+                                    Some(f64::MIN)
+                                }
+                            })?;
+                            Some(Arc::new(open))
+                        } else {
+                            None
+                        };
+                        Ok(HandoffDerived {
+                            closed: Arc::new(closed),
+                            open,
+                        })
+                    })?;
             let closed = Arc::clone(&derived.closed);
             let Some(found) = catchment(&closed)? else {
                 return Ok(Vec::new());
