@@ -7,60 +7,60 @@
 ## sandbox s0-node-cost --seed 42 --mode gameplay --version v1-dev-w --plates 1 --analytic-only --with-levels --json --set drainage.handoff_max_hops=0
 
 ```
-{"seed":42,"mode":"gameplay","version":"v1-dev-w","seconds":2.48,"plates":1,"nodes":1356,"with_levels":true,"plate_stages":[{"plate":"216878075925460450","drainage_ms":1123.53,"levels_ms":197.66}],"net_ms_p50":1321.2,"net_ms_p95":1321.2,"net_ms_max":1321.2,"exact_us_per_node":804.15,"analytic_us_per_node":46.66,"analytic_error_p95":0.000,"stored_route_error_p95":0.000,"stored_route_error_p999":0.000,"analytic_error_p999":0.000,"net_budget_ms":200.0,"work":{"routings":1,"floods":8,"route_nodes":1499,"runoffs":1,"climate_grids":1,"climate_keys":134,"handoffs":1,"masks":0},"lattices":[],"decision":"только аналитический путь, без сравнения решёток"}
-litho-core: сеть рек №1, плита 216878075925460450: 1499 узлов за 1123 мс
+{"seed":42,"mode":"gameplay","version":"v1-dev-w","seconds":2.46,"plates":1,"nodes":1356,"with_levels":true,"plate_stages":[{"plate":"216878075925460450","drainage_ms":1116.60,"levels_ms":194.66}],"net_ms_p50":1311.3,"net_ms_p95":1311.3,"net_ms_max":1311.3,"exact_us_per_node":799.38,"analytic_us_per_node":46.04,"analytic_error_p95":0.000,"stored_route_error_p95":0.000,"stored_route_error_p999":0.000,"analytic_error_p999":0.000,"net_budget_ms":200.0,"work":{"routings":1,"floods":8,"route_nodes":1499,"runoffs":1,"climate_grids":1,"climate_keys":134,"handoffs":1,"masks":0},"lattices":[],"decision":"только аналитический путь, без сравнения решёток"}
+litho-core: сеть рек №1, плита 216878075925460450: 1499 узлов за 1117 мс
 ```
 
 ## sandbox s0-node-cost --seed 42 --mode gameplay --version v1-dev-w --plates 1 --analytic-only --with-levels --json --set drainage.handoff_max_hops=1
 
 ```
-{"seed":42,"mode":"gameplay","version":"v1-dev-w","seconds":3.15,"plates":1,"nodes":1356,"with_levels":true,"plate_stages":[{"plate":"216878075925460450","drainage_ms":1698.62,"levels_ms":294.25}],"net_ms_p50":1992.9,"net_ms_p95":1992.9,"net_ms_max":1992.9,"exact_us_per_node":802.65,"analytic_us_per_node":46.20,"analytic_error_p95":0.000,"stored_route_error_p95":0.000,"stored_route_error_p999":0.000,"analytic_error_p999":0.000,"net_budget_ms":200.0,"work":{"routings":19,"floods":29,"route_nodes":64538,"runoffs":8,"climate_grids":8,"climate_keys":537,"handoffs":8,"masks":16},"lattices":[],"decision":"только аналитический путь, без сравнения решёток"}
-litho-core: сеть рек №1, плита 216878075925460450: 1499 узлов за 1699 мс
-litho-core: сеть рек №2, плита 12257214645282878660: 4341 узлов за 90 мс
+{"seed":42,"mode":"gameplay","version":"v1-dev-w","seconds":3.13,"plates":1,"nodes":1356,"with_levels":true,"plate_stages":[{"plate":"216878075925460450","drainage_ms":1682.95,"levels_ms":290.76}],"net_ms_p50":1973.7,"net_ms_p95":1973.7,"net_ms_max":1973.7,"exact_us_per_node":802.12,"analytic_us_per_node":46.35,"analytic_error_p95":0.000,"stored_route_error_p95":0.000,"stored_route_error_p999":0.000,"analytic_error_p999":0.000,"net_budget_ms":200.0,"work":{"routings":19,"floods":29,"route_nodes":64538,"runoffs":8,"climate_grids":8,"climate_keys":537,"handoffs":8,"masks":16},"lattices":[],"decision":"только аналитический путь, без сравнения решёток"}
+litho-core: сеть рек №1, плита 216878075925460450: 1499 узлов за 1683 мс
+litho-core: сеть рек №2, плита 12257214645282878660: 4341 узлов за 88 мс
 ```
 
 ## sandbox s0-node-cost --seed 42 --mode gameplay --version v1-dev-w --plates 1 --analytic-only --with-levels --json --set drainage.handoff_max_hops=2
 
 ```
-{"seed":42,"mode":"gameplay","version":"v1-dev-w","seconds":3.23,"plates":1,"nodes":1356,"with_levels":true,"plate_stages":[{"plate":"216878075925460450","drainage_ms":1769.67,"levels_ms":298.67}],"net_ms_p50":2068.3,"net_ms_p95":2068.3,"net_ms_max":2068.3,"exact_us_per_node":806.41,"analytic_us_per_node":47.05,"analytic_error_p95":0.000,"stored_route_error_p95":0.000,"stored_route_error_p999":0.000,"analytic_error_p999":0.000,"net_budget_ms":200.0,"work":{"routings":27,"floods":37,"route_nodes":92178,"runoffs":8,"climate_grids":8,"climate_keys":537,"handoffs":8,"masks":24},"lattices":[],"decision":"только аналитический путь, без сравнения решёток"}
-litho-core: сеть рек №1, плита 216878075925460450: 1499 узлов за 1770 мс
-litho-core: сеть рек №2, плита 12257214645282878660: 4341 узлов за 95 мс
+{"seed":42,"mode":"gameplay","version":"v1-dev-w","seconds":3.16,"plates":1,"nodes":1356,"with_levels":true,"plate_stages":[{"plate":"216878075925460450","drainage_ms":1701.45,"levels_ms":299.85}],"net_ms_p50":2001.3,"net_ms_p95":2001.3,"net_ms_max":2001.3,"exact_us_per_node":804.85,"analytic_us_per_node":46.19,"analytic_error_p95":0.000,"stored_route_error_p95":0.000,"stored_route_error_p999":0.000,"analytic_error_p999":0.000,"net_budget_ms":200.0,"work":{"routings":27,"floods":37,"route_nodes":92178,"runoffs":8,"climate_grids":8,"climate_keys":537,"handoffs":8,"masks":24},"lattices":[],"decision":"только аналитический путь, без сравнения решёток"}
+litho-core: сеть рек №1, плита 216878075925460450: 1499 узлов за 1701 мс
+litho-core: сеть рек №2, плита 12257214645282878660: 4341 узлов за 97 мс
 ```
 
 ## sandbox s0-node-cost --seed 42 --mode gameplay --version v1-dev-w --plates 1 --analytic-only --with-levels --json --set drainage.handoff_max_hops=3
 
 ```
-{"seed":42,"mode":"gameplay","version":"v1-dev-w","seconds":3.13,"plates":1,"nodes":1356,"with_levels":true,"plate_stages":[{"plate":"216878075925460450","drainage_ms":1671.00,"levels_ms":298.24}],"net_ms_p50":1969.2,"net_ms_p95":1969.2,"net_ms_max":1969.2,"exact_us_per_node":802.44,"analytic_us_per_node":46.18,"analytic_error_p95":0.000,"stored_route_error_p95":0.000,"stored_route_error_p999":0.000,"analytic_error_p999":0.000,"net_budget_ms":200.0,"work":{"routings":27,"floods":37,"route_nodes":92178,"runoffs":8,"climate_grids":8,"climate_keys":537,"handoffs":8,"masks":24},"lattices":[],"decision":"только аналитический путь, без сравнения решёток"}
-litho-core: сеть рек №1, плита 216878075925460450: 1499 узлов за 1671 мс
+{"seed":42,"mode":"gameplay","version":"v1-dev-w","seconds":3.12,"plates":1,"nodes":1356,"with_levels":true,"plate_stages":[{"plate":"216878075925460450","drainage_ms":1671.53,"levels_ms":296.76}],"net_ms_p50":1968.3,"net_ms_p95":1968.3,"net_ms_max":1968.3,"exact_us_per_node":801.55,"analytic_us_per_node":46.07,"analytic_error_p95":0.000,"stored_route_error_p95":0.000,"stored_route_error_p999":0.000,"analytic_error_p999":0.000,"net_budget_ms":200.0,"work":{"routings":27,"floods":37,"route_nodes":92178,"runoffs":8,"climate_grids":8,"climate_keys":537,"handoffs":8,"masks":24},"lattices":[],"decision":"только аналитический путь, без сравнения решёток"}
+litho-core: сеть рек №1, плита 216878075925460450: 1499 узлов за 1672 мс
 litho-core: сеть рек №2, плита 12257214645282878660: 4341 узлов за 94 мс
 ```
 
 ## sandbox s0-node-cost --seed 42 --mode gameplay --version v1-dev-w --plates 1 --analytic-only --with-levels --json --set drainage.handoff_max_hops=6
 
 ```
-{"seed":42,"mode":"gameplay","version":"v1-dev-w","seconds":3.14,"plates":1,"nodes":1356,"with_levels":true,"plate_stages":[{"plate":"216878075925460450","drainage_ms":1678.44,"levels_ms":298.21}],"net_ms_p50":1976.6,"net_ms_p95":1976.6,"net_ms_max":1976.6,"exact_us_per_node":807.09,"analytic_us_per_node":46.32,"analytic_error_p95":0.000,"stored_route_error_p95":0.000,"stored_route_error_p999":0.000,"analytic_error_p999":0.000,"net_budget_ms":200.0,"work":{"routings":27,"floods":37,"route_nodes":92178,"runoffs":8,"climate_grids":8,"climate_keys":537,"handoffs":8,"masks":24},"lattices":[],"decision":"только аналитический путь, без сравнения решёток"}
-litho-core: сеть рек №1, плита 216878075925460450: 1499 узлов за 1678 мс
-litho-core: сеть рек №2, плита 12257214645282878660: 4341 узлов за 94 мс
+{"seed":42,"mode":"gameplay","version":"v1-dev-w","seconds":3.12,"plates":1,"nodes":1356,"with_levels":true,"plate_stages":[{"plate":"216878075925460450","drainage_ms":1667.37,"levels_ms":297.76}],"net_ms_p50":1965.1,"net_ms_p95":1965.1,"net_ms_max":1965.1,"exact_us_per_node":801.10,"analytic_us_per_node":45.78,"analytic_error_p95":0.000,"stored_route_error_p95":0.000,"stored_route_error_p999":0.000,"analytic_error_p999":0.000,"net_budget_ms":200.0,"work":{"routings":27,"floods":37,"route_nodes":92178,"runoffs":8,"climate_grids":8,"climate_keys":537,"handoffs":8,"masks":24},"lattices":[],"decision":"только аналитический путь, без сравнения решёток"}
+litho-core: сеть рек №1, плита 216878075925460450: 1499 узлов за 1667 мс
+litho-core: сеть рек №2, плита 12257214645282878660: 4341 узлов за 95 мс
 ```
 
 ## sandbox s0-node-cost --seed 42 --mode scientific --version v1-dev-w --plates 1 --analytic-only --with-levels --json --set drainage.handoff_max_hops=0
 
 ```
-{"seed":42,"mode":"scientific","version":"v1-dev-w","seconds":4.23,"plates":1,"nodes":1356,"with_levels":true,"plate_stages":[{"plate":"216878075925460450","drainage_ms":2336.54,"levels_ms":322.03}],"net_ms_p50":2658.6,"net_ms_p95":2658.6,"net_ms_max":2658.6,"exact_us_per_node":954.57,"analytic_us_per_node":203.60,"analytic_error_p95":0.000,"stored_route_error_p95":0.000,"stored_route_error_p999":0.000,"analytic_error_p999":0.000,"net_budget_ms":200.0,"work":{"routings":1,"floods":8,"route_nodes":1499,"runoffs":1,"climate_grids":1,"climate_keys":134,"handoffs":1,"masks":0},"lattices":[],"decision":"только аналитический путь, без сравнения решёток"}
-litho-core: сеть рек №1, плита 216878075925460450: 1499 узлов за 2337 мс
+{"seed":42,"mode":"scientific","version":"v1-dev-w","seconds":4.23,"plates":1,"nodes":1356,"with_levels":true,"plate_stages":[{"plate":"216878075925460450","drainage_ms":2332.22,"levels_ms":321.29}],"net_ms_p50":2653.5,"net_ms_p95":2653.5,"net_ms_max":2653.5,"exact_us_per_node":954.20,"analytic_us_per_node":203.30,"analytic_error_p95":0.000,"stored_route_error_p95":0.000,"stored_route_error_p999":0.000,"analytic_error_p999":0.000,"net_budget_ms":200.0,"work":{"routings":1,"floods":8,"route_nodes":1499,"runoffs":1,"climate_grids":1,"climate_keys":134,"handoffs":1,"masks":0},"lattices":[],"decision":"только аналитический путь, без сравнения решёток"}
+litho-core: сеть рек №1, плита 216878075925460450: 1499 узлов за 2332 мс
 ```
 
 ## sandbox s0-node-cost --seed 42 --mode scientific --version v1-dev-w --plates 1 --analytic-only --with-levels --json --set drainage.handoff_max_hops=2
 
 ```
-{"seed":42,"mode":"scientific","version":"v1-dev-w","seconds":4.19,"plates":1,"nodes":1356,"with_levels":true,"plate_stages":[{"plate":"216878075925460450","drainage_ms":2292.13,"levels_ms":321.29}],"net_ms_p50":2613.4,"net_ms_p95":2613.4,"net_ms_max":2613.4,"exact_us_per_node":955.73,"analytic_us_per_node":204.08,"analytic_error_p95":0.000,"stored_route_error_p95":0.000,"stored_route_error_p999":0.000,"analytic_error_p999":0.000,"net_budget_ms":200.0,"work":{"routings":12,"floods":19,"route_nodes":30847,"runoffs":4,"climate_grids":4,"climate_keys":167,"handoffs":4,"masks":11},"lattices":[],"decision":"только аналитический путь, без сравнения решёток"}
+{"seed":42,"mode":"scientific","version":"v1-dev-w","seconds":4.19,"plates":1,"nodes":1356,"with_levels":true,"plate_stages":[{"plate":"216878075925460450","drainage_ms":2292.50,"levels_ms":327.82}],"net_ms_p50":2620.3,"net_ms_p95":2620.3,"net_ms_max":2620.3,"exact_us_per_node":954.62,"analytic_us_per_node":202.38,"analytic_error_p95":0.000,"stored_route_error_p95":0.000,"stored_route_error_p999":0.000,"analytic_error_p999":0.000,"net_budget_ms":200.0,"work":{"routings":12,"floods":19,"route_nodes":30847,"runoffs":4,"climate_grids":4,"climate_keys":167,"handoffs":4,"masks":11},"lattices":[],"decision":"только аналитический путь, без сравнения решёток"}
 litho-core: сеть рек №1, плита 216878075925460450: 1499 узлов за 2292 мс
 ```
 
 ## sandbox s0-node-cost --seed 42 --mode scientific --version v1-dev-w --plates 1 --analytic-only --with-levels --json --set drainage.handoff_max_hops=6
 
 ```
-{"seed":42,"mode":"scientific","version":"v1-dev-w","seconds":4.19,"plates":1,"nodes":1356,"with_levels":true,"plate_stages":[{"plate":"216878075925460450","drainage_ms":2289.92,"levels_ms":320.21}],"net_ms_p50":2610.1,"net_ms_p95":2610.1,"net_ms_max":2610.1,"exact_us_per_node":956.34,"analytic_us_per_node":203.29,"analytic_error_p95":0.000,"stored_route_error_p95":0.000,"stored_route_error_p999":0.000,"analytic_error_p999":0.000,"net_budget_ms":200.0,"work":{"routings":12,"floods":19,"route_nodes":30847,"runoffs":4,"climate_grids":4,"climate_keys":167,"handoffs":4,"masks":11},"lattices":[],"decision":"только аналитический путь, без сравнения решёток"}
-litho-core: сеть рек №1, плита 216878075925460450: 1499 узлов за 2290 мс
+{"seed":42,"mode":"scientific","version":"v1-dev-w","seconds":4.24,"plates":1,"nodes":1356,"with_levels":true,"plate_stages":[{"plate":"216878075925460450","drainage_ms":2348.43,"levels_ms":319.48}],"net_ms_p50":2667.9,"net_ms_p95":2667.9,"net_ms_max":2667.9,"exact_us_per_node":955.45,"analytic_us_per_node":202.65,"analytic_error_p95":0.000,"stored_route_error_p95":0.000,"stored_route_error_p999":0.000,"analytic_error_p999":0.000,"net_budget_ms":200.0,"work":{"routings":12,"floods":19,"route_nodes":30847,"runoffs":4,"climate_grids":4,"climate_keys":167,"handoffs":4,"masks":11},"lattices":[],"decision":"только аналитический путь, без сравнения решёток"}
+litho-core: сеть рек №1, плита 216878075925460450: 1499 узлов за 2348 мс
 ```
 
