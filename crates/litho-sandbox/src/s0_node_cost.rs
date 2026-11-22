@@ -27,7 +27,7 @@ pub const TOL_P95: f64 = 2.0;
 pub const TOL_P999: f64 = 6.0;
 
 /// Бюджет сети плиты с уровнями, мс (p95).
-pub const NET_BUDGET_MS: f64 = 200.0;
+pub const NET_BUDGET_MS: f64 = 400.0;
 
 /// Итог одного кандидата: решётка `spacing_l` и ошибки в блоках.
 #[derive(Clone, Debug, Default, PartialEq)]
