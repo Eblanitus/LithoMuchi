@@ -13,3 +13,12 @@ resolver = "3"
 [workspace.package]
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/Eblanitus/LithoMuchi"
+
+# Тесты генерируют миры, а генерация на opt-level 0 в 10–30 раз медленнее
+# (замер main 11f1ca7: шаг tests джобы Linux — 37 мин). Профиль тестов
+# собирается с оптимизацией; ошибки и переполнения остаются включёнными.
+# См. docs/DECISIONS.md (Д-140).
+[profile.test]
+opt-level = 3
+debug-assertions = true
+overflow-checks = true

@@ -26,6 +26,13 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with: { targets: "${{ matrix.target }}" }
+      # Д-140: кэш Rust после установки тулчейна; ключ — платформа (таргет),
+      # у каждой матрицы свой. cache-workspace-crates: во workspace нет
+      # внешних зависимостей, кэшировать нечего кроме самих крейтов.
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.platform }}
+          cache-workspace-crates: "true"
       # Раннер macos-13 (Intel) снят: x86_64 собирается кросс-компиляцией на arm64.
       - if: ${{ !matrix.target }}
         run: cargo test -p litho-ffi --release
@@ -53,11 +60,15 @@ jobs:
           path: fabric/src/main/resources/natives
       - run: find fabric/src/main/resources/natives -type f
       - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: x86_64-unknown-linux-gnu
+          cache-workspace-crates: "true"
       - name: Ресурсы мода из пака v1-dev и ванильного 26.3 (Ф3)
         run: |
           set -e
           python3 tools/test_fabric_resources.py
-          cargo run -q -p xtask -- pack --out out/packs
+          cargo run -q -p xtask --release -- pack --out out/packs
           mv=$(grep '^minecraft_version=' fabric/gradle.properties | cut -d= -f2)
           url=$(curl -fsS https://piston-meta.mojang.com/mc/game/version_manifest_v2.json | jq -r --arg v "$mv" '.versions[]|select(.id==$v).url')
           srv=$(curl -fsS "$url" | jq -r '.downloads.server.url')
@@ -124,9 +135,13 @@ jobs:
           merge-multiple: true
           path: fabric/src/main/resources/natives
       - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: x86_64-unknown-linux-gnu
+          cache-workspace-crates: "true"
       - run: |
           set -e
-          cargo run -q -p xtask -- pack --out out/packs
+          cargo run -q -p xtask --release -- pack --out out/packs
           mv=$(grep '^minecraft_version=' fabric/gradle.properties | cut -d= -f2)
           url=$(curl -fsS https://piston-meta.mojang.com/mc/game/version_manifest_v2.json | jq -r --arg v "$mv" '.versions[]|select(.id==$v).url')
           curl -fsS -o out/server.jar "$(curl -fsS "$url" | jq -r '.downloads.server.url')"
@@ -171,10 +186,14 @@ jobs:
           merge-multiple: true
           path: fabric/src/main/resources/natives
       - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: x86_64-unknown-linux-gnu
+          cache-workspace-crates: "true"
       - name: Ресурсы и сервер 26.3
         run: |
           set -e
-          cargo run -q -p xtask -- pack --out out/packs
+          cargo run -q -p xtask --release -- pack --out out/packs
           mv=$(grep '^minecraft_version=' fabric/gradle.properties | cut -d= -f2)
           url=$(curl -fsS https://piston-meta.mojang.com/mc/game/version_manifest_v2.json | jq -r --arg v "$mv" '.versions[]|select(.id==$v).url')
           curl -fsS -o out/server.jar "$(curl -fsS "$url" | jq -r '.downloads.server.url')"
