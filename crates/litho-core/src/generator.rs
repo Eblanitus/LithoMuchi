@@ -1817,6 +1817,13 @@ impl Generator {
         let mut last_sample: Option<Vec2> = None;
         let started = std::time::Instant::now();
         let stride_l = RIVER_LEVEL_STRIDE_BLOCKS / l;
+        // Д-140: перепад берегов сечения, после которого это не долина, а склон
+        // (см. комментарий у пробы берегов ниже).
+        // Между берегами сечения должно влезть всё, что река вправе изменить:
+        // ущелье (`RIVER_GORGE_MAX_BLOCKS`) плюс допустимый подъём уровня над
+        // сушей (`RIVER_MAX_ABOVE_LAND_BLOCKS`). Больше — это склон.
+        let drop_allowed =
+            crate::height::RIVER_GORGE_MAX_BLOCKS + crate::height::RIVER_MAX_ABOVE_LAND_BLOCKS;
         for (offset, segment) in channels.reach_segments(reach).iter().enumerate() {
             let a = segment.a;
             let b = segment.b;
@@ -1833,12 +1840,34 @@ impl Generator {
                 // Низший из двух берегов сечения: `core/2 + 1` блок от оси.
                 let normal = direction.normalized().perp();
                 let offset_l = (0.5 * b.core_l * l + 1.0) / l;
+                // Д-140: берег сечения — низший из двух, но только если оба
+                // берега действительно берега. На склоне (`S` одного берега выше
+                // другого на много блоков) русло не режет рельеф даже на предел
+                // ущелья: пробе `profile-r2-cliff-33645-7132` (сид 42, научный,
+                // вдоль 7132) уровень шёл гладко 84 → 87, а сухая поверхность
+                // прыгала 76 → 149. Половина такой колонки под вода, половина —
+                // обрыв в 90 блоков, и в игре получается потолок воды над стеной.
+                // §4 пп. 2–3 («уровень от берега», «вырез только у реки на дне
+                // долины») требуют, чтобы берег был дном долины: если перепад
+                // между берегами больше полосы русла плюс ущелье, уровня у
+                // сегмента нет — как у створа ниже моря, вода не встаёт, а
+                // ступень считается в метрики.
+                let mut low: Option<f64> = None;
+                let mut high: Option<f64> = None;
                 let mut bank: Option<f64> = None;
                 for side in [1.0, -1.0] {
                     let probe = b.point.add(normal.scale(side * offset_l));
                     let (px, pz) = to_blocks(probe);
                     if let Some(s) = self.dry_surface_at(px, pz)? {
-                        bank = Some(bank.map_or(s, |old: f64| old.min(s)));
+                        low = Some(low.map_or(s, |old: f64| old.min(s)));
+                        high = Some(high.map_or(s, |old: f64| old.max(s)));
+                    }
+                }
+                if let (Some(low), Some(high)) = (low, high) {
+                    if high - low > drop_allowed {
+                        target = None;
+                    } else {
+                        bank = Some(low);
                     }
                 }
                 if let Some(bank) = bank {
