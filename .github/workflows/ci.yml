@@ -54,6 +54,14 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
+      # Д-142: кэш Rust после установки тулчейна. Во workspace нет внешних
+      # зависимостей, поэтому без cache-workspace-crates кэш держал бы только
+      # реестр (пустой); с ним переживают пересборку сами крейты. Ключ —
+      # таргет: у джоб под разные таргеты ключи разные.
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: linux-x86_64
+          cache-workspace-crates: "true"
       - name: rustfmt
         run: cargo fmt --all -- --check
       - name: clippy
@@ -83,7 +91,7 @@ jobs:
           set -eo pipefail
           for version in v0 v1 v1-dev v1-dev-r2; do
             echo "== $version"
-            cargo run -q -p xtask -- params-hash --version "$version"
+            cargo run -q -p xtask --release -- params-hash --version "$version"
           done | tee /tmp/litho-hashes | python3 tools/ci_annotations.py report
           diff -u golden/water-legacy-params.txt /tmp/litho-hashes
       - name: "ВО3-0 — вода v1-dev-w без гейта (диагностика, Д-139)"
@@ -147,7 +155,7 @@ jobs:
           set -o pipefail
           cargo run -q -p litho-sandbox --release -- stats --seed 42 --mode gameplay --version v1-dev --synthetic-height --span-l 16 --size 32 --relief-size 16 | python3 tools/ci_annotations.py report
           cargo run -q -p litho-sandbox --release -- render --seed 42 --mode gameplay --version v1-dev --layers vanilla-height --size 32 --bpp 32 --synthetic-height --out out/v1-dev-smoke
-          cargo run -q -p xtask -- params-hash --version v1-dev | python3 tools/ci_annotations.py report
+          cargo run -q -p xtask --release -- params-hash --version v1-dev | python3 tools/ci_annotations.py report
           for version in v0 v1-dev; do
             for mode in gameplay scientific; do
               # T115: до T160 широкий случайный скан v1-dev строит слишком
@@ -235,15 +243,21 @@ jobs:
         run: cargo run -p litho-sandbox --release -- render --seed 42 --mode gameplay --layers plates,boundaries,jacobian --size 64 --out out/ci-smoke
       - name: "Э2 — шаблоны паков и бандла (без Windows-сборки)"
         run: |
-          cargo run -q -p xtask -- pack --out /tmp/litho-packs
-          cargo run -q -p xtask -- bundle --out /tmp/litho-bundle
-          cargo run -q -p xtask -- bundle-check --out /tmp/litho-bundle
+          # Д-142: xtask идёт в --release — единая release-сборка песочницы и
+          # xtask на всю джобу, а не третья (dev) сборка после [profile.test].
+          cargo run -q -p xtask --release -- pack --out /tmp/litho-packs
+          cargo run -q -p xtask --release -- bundle --out /tmp/litho-bundle
+          cargo run -q -p xtask --release -- bundle-check --out /tmp/litho-bundle
 
   vanilla-biomes:
     name: "Д-118 · копия ванильной таблицы биомов против datagen 26.3"
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: linux-x86_64
+          cache-workspace-crates: "true"
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -274,16 +288,30 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@1.85.0
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: linux-x86_64-msrv-1.85
+          cache-workspace-crates: "true"
       # +1.85.0 явно перекрывает rust-toolchain.toml (там канал stable).
       - name: litho-core на минимальной версии Rust
         run: cargo +1.85.0 check -p litho-core
 
   windows-msvc:
     name: Windows msvc · tests
+    # Д-142: эталоны побитовые на всех трёх целях, но гоняются они только в
+    # main и в PR на main: прогон рабочей ветки Windows не проверяет, а стоит
+    # 50 мин (замер 11f1ca7). На push в ветку и на PR не в main джобы нет.
+    if: >-
+      (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+      (github.event_name == 'pull_request' && github.base_ref == 'main')
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: x86_64-pc-windows-msvc
+          cache-workspace-crates: "true"
       - name: tests
         shell: bash
         run: |
@@ -293,6 +321,10 @@ jobs:
 
   windows-gnu:
     name: Windows gnu (MinGW) · tests
+    # Д-142: как windows-msvc — только main и PR на main (32 мин на прогон).
+    if: >-
+      (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+      (github.event_name == 'pull_request' && github.base_ref == 'main')
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -303,6 +335,10 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: x86_64-pc-windows-gnu
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: x86_64-pc-windows-gnu
+          cache-workspace-crates: "true"
       - name: tests
         shell: bash
         run: |
@@ -329,6 +365,10 @@ jobs:
           path: .external/compiler-builtins
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: linux-x86_64-horizon-core
+          cache-workspace-crates: "true"
       - name: "К1 — единые закрепления"
         run: python3 tools/check_horizon_pins.py
       - name: Собрать и проверить реальные типы Horizon (не launcher)
@@ -360,6 +400,10 @@ jobs:
           sparse-checkout: data/minecraft/worldgen/density_function/overworld
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: linux-x86_64-horizon-mixins
+          cache-workspace-crates: "true"
       - name: "К1 — единые закрепления"
         run: python3 tools/check_horizon_pins.py
       - name: Получить закреплённые зависимости и собрать transformer
@@ -369,8 +413,8 @@ jobs:
           cargo build --locked --manifest-path .external/horizon-mixins/Cargo.toml -p horizon-mixins-cli
       - name: Собрать настоящий hnmod и все паки
         run: |
-          cargo run -q -p xtask -- bundle --out out/bundle
-          cargo run -q -p xtask -- bundle-check --out out/bundle
+          cargo run -q -p xtask --release -- bundle --out out/bundle
+          cargo run -q -p xtask --release -- bundle-check --out out/bundle
           python3 tools/package_mod.py --bundle out/bundle --out out/release
           rm -rf out/native-check
           python3 -m zipfile -e out/release/litospherity.hnmod out/native-check
@@ -481,12 +525,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: linux-x86_64
+          cache-workspace-crates: "true"
       - name: "К1 — единые закрепления"
         run: python3 tools/check_horizon_pins.py
       - name: Собрать бандл и проверить состав паков
         run: |
-          cargo run -q -p xtask -- bundle --out out/bundle
-          cargo run -q -p xtask -- bundle-check --out out/bundle
+          cargo run -q -p xtask --release -- bundle --out out/bundle
+          cargo run -q -p xtask --release -- bundle-check --out out/bundle
       - name: Упаковать клиентские хуки, ядро и все паки внутрь .hnmod (К6)
         run: python3 tools/package_mod.py --bundle out/bundle --out out/release
       - uses: actions/checkout@v4
