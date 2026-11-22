@@ -665,6 +665,63 @@ pub fn with_water_w(
     raise_bank(height, water, params, 0.0)
 }
 
+/// ВО7-1 (§7.4): болото выше моря — кочки вровень с водой `min(S0, L)` и
+/// окна воды по 2D-шуму (λ 12 / 16 блоков) глубиной `D = 1..2` (`min(S0, L - 1 - D)`).
+/// Поверхность внутри контура только опускается; доля воды — 35–55 %.
+pub(crate) fn swamp_hummocks_w(
+    mut height: HeightSample,
+    s0_macro_y: f64,
+    x: f64,
+    z: f64,
+    seed: u64,
+    water: &HydrologySample,
+    params: &Params,
+) -> HeightSample {
+    let Some(hit) = water
+        .lakes
+        .water_hit
+        .filter(|h| h.inside && h.kind == crate::lake::LakeKind::Swamp)
+    else {
+        return height;
+    };
+    let Some(level) = hit
+        .level_blocks
+        .filter(|level| *level > SEA_LEVEL && s0_macro_y < *level)
+    else {
+        return height;
+    };
+    let scientific = params.mode == crate::Mode::Scientific;
+    let lambda = if scientific { 16.0 } else { 12.0 };
+    let noise = crate::noise::fbm2_unit(
+        crate::seed::subseed(seed, "water.swamp.pool"),
+        x / lambda,
+        z / lambda,
+        1.0,
+        2,
+        0.5,
+    );
+    // Симметричный fbm2_unit около 0; порог -0.10 даёт ~45 % окон воды (цель 35–55 %).
+    const POOL_THRESHOLD: f64 = -0.10;
+    if noise < POOL_THRESHOLD {
+        let depth = 1.0 + ((POOL_THRESHOLD - noise) / 0.90).clamp(0.0, 1.0);
+        let bed = s0_macro_y.min(level - 1.0 - depth).max(params.height.min_y);
+        height.surface_y = bed;
+        height.bed_y = bed;
+        height.water_y = level;
+        height.water_strength = hit.water_strength;
+        height.wet_kind = crate::hydrology::SurfaceKind::Swamp;
+    } else {
+        let hummock = s0_macro_y.min(level).max(params.height.min_y);
+        height.surface_y = hummock;
+        height.bed_y = hummock;
+        height.water_y = SEA_LEVEL;
+        height.water_strength = 0.0;
+        height.wet_kind = crate::hydrology::SurfaceKind::Land;
+    }
+    height.offset = (height.surface_y - SURFACE_BASE) / OFFSET_SCALE;
+    height
+}
+
 /// §6.4: a wet-zone beach is an exterior cut, not a ring of filled blocks.
 /// It cannot raise natural low terrain or replace an overlapping riverbed.
 pub(crate) fn lake_beach_w(
@@ -1424,5 +1481,66 @@ mod tests {
         let shore = sample_micro(c, -0.6, 0.0, 0.1, 0.0, 0.0, 0.0, 0.0, 2.0, &p);
         assert_eq!(far.surface_y, shore.surface_y);
         assert!(shore.surface_y > SEA_LEVEL + 10.0);
+    }
+
+    #[test]
+    fn w_swamp_splits_into_hummocks_and_pools_with_35_to_55_pct_water() {
+        for mode in [crate::Mode::Gameplay, crate::Mode::Scientific] {
+            let p = Params::defaults(GenVersion::V1DevW, mode);
+            let mut water = HydrologySample::default();
+            water.lakes.water_hit = Some(crate::lake::LakeHit {
+                plate_id: 1,
+                lake: 1,
+                depression: 0,
+                max_depth_km: 0.05,
+                kind: crate::lake::LakeKind::Swamp,
+                body: crate::water_profile::WaterBody::Swamp,
+                inside: true,
+                distance_l: 0.0,
+                level_km: Some(0.2),
+                level_blocks: Some(80.0),
+                water_strength: 1.0,
+                shore_strength: 0.0,
+                frozen: false,
+                high: true,
+                rift: false,
+            });
+            let s0_y = 78.5;
+            let base = HeightSample {
+                surface_y: s0_y,
+                bed_y: s0_y,
+                water_y: SEA_LEVEL,
+                calm: 0.0,
+                ..HeightSample::default()
+            };
+            let mut wet = 0usize;
+            let total = 64 * 64;
+            for gx in 0..64 {
+                for gz in 0..64 {
+                    let x = gx as f64 * 4.0;
+                    let z = gz as f64 * 4.0;
+                    let cut = with_water_w(base, 0.0, &water, &p);
+                    let out = swamp_hummocks_w(cut, s0_y, x, z, 42, &water, &p);
+                    assert!(
+                        out.surface_y <= s0_y + 1e-9,
+                        "болото не должно поднимать рельеф"
+                    );
+                    if out.water_strength > 0.0 {
+                        wet += 1;
+                        assert_eq!(out.wet_kind, crate::hydrology::SurfaceKind::Swamp);
+                        assert_eq!(out.water_y, 80.0);
+                        assert!(out.bed_y <= 78.0 + 1e-9, "окно воды глубже L-2");
+                    } else {
+                        assert_eq!(out.wet_kind, crate::hydrology::SurfaceKind::Land);
+                        assert!(out.surface_y <= 80.0 + 1e-9);
+                    }
+                }
+            }
+            let share = wet as f64 / total as f64;
+            assert!(
+                (0.35..=0.55).contains(&share),
+                "доля воды болота {share:.3} вне 0.35..=0.55 для {mode:?}"
+            );
+        }
     }
 }
