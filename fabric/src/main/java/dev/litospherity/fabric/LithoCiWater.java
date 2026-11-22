@@ -39,6 +39,7 @@ final class LithoCiWater {
         StaticRiverMask.TICKS_REMOVED.set(0);
         LithoWaterFeature.COLUMNS.set(0);
         LithoWaterFeature.SEALS.set(0);
+        LithoWaterFeature.AQUIFER_PLUGS.set(0);
         LithoWaterFeature.CHUNKS.set(0);
         List<String> report = new ArrayList<>();
         try {
@@ -304,20 +305,30 @@ final class LithoCiWater {
             report.add(String.format("сухое русло: %d из %d, %.2f %% (порог 1 %%)", dry, wet + dry, dryPct));
             report.add("вместо воды на зеркале: " + dryBlocks);
             long[] vo2 = measureVo2(level, gen, report);
-            long corridor = vo2[0], fit = vo2[1];
+            // Д-137: vo2[1] — совпадение по heightmap (диагностика), vo2[6] — по
+            // рельефу под кронами. Гейт §8.3 стоит на втором.
+            long corridor = vo2[0], rawFit = vo2[1];
+            double rawFitPct = corridor == 0 ? 100.0 : 100.0 * rawFit / (double) corridor;
+            long fit = vo2[6];
             double fitPct = corridor == 0 ? 100.0 : 100.0 * fit / (double) corridor;
             long waterColumns = vo2[4];
             double coveredPct = 100.0 * vo2[5] / Math.max(1, waterColumns);
             long shoreColumns = vo2[2];
             double wallPct = shoreColumns == 0 ? 0.0 : 100.0 * vo2[3] / (double) shoreColumns;
-            report.add(String.format("calm_fit: %d из %d, %.2f %% (порог 95 %%)", fit, corridor, fitPct));
+            report.add(String.format("calm_fit по heightmap (диагностика, не гейт): %.2f %%", rawFitPct));
             report.add(String.format("накрытая вода: %d из %d колонок, %.2f %% (порог 0,5 %%)",
                     vo2[5], waterColumns, coveredPct));
             report.add(String.format("стены у воды: %d из %d колонок, %.2f %% (порог 2 %%)", vo2[3], shoreColumns, wallPct));
             report.add(String.format("рост текущей воды за %d тиков: %d, %.2f %% источников (порог 5 %%); всего %d, из них чужой (родники, склоны) %d",
                     TICKS, growth, growthPct, growthAll, foreign));
-            report.add(String.format("заделки герметизации: %d на %d чанков, %.2f на чанк (порог 1)",
-                    seals, chunksWithWater, sealsPerChunk)); report.add(String.format(java.util.Locale.ROOT, "steps: %d, liveSteps=%s, avgTick=%.2f ms, maxTick=%.2f ms", LithoWaterFeature.STEPS.get(), LithoWaterFeature.LIVE_STEPS, avgTickMs, maxTickMs));
+            // Д-137: гейт берега — только герметизация (SEALS). Затычки пещер под
+            // дном считаются отдельно и в этот порог не входят: это не берег.
+            report.add(String.format("заделки герметизации берега: %d на %d чанков, %.2f на чанк (порог 1)",
+                    seals, chunksWithWater, sealsPerChunk));
+            report.add(String.format("затычек пещер под дном: %d, %.2f на чанк (метрика, не гейт)",
+                    LithoWaterFeature.AQUIFER_PLUGS.get(),
+                    chunksWithWater == 0 ? 0.0 : LithoWaterFeature.AQUIFER_PLUGS.get() / (double) chunksWithWater));
+            report.add(String.format(java.util.Locale.ROOT, "steps: %d, liveSteps=%s, avgTick=%.2f ms, maxTick=%.2f ms", LithoWaterFeature.STEPS.get(), LithoWaterFeature.LIVE_STEPS, avgTickMs, maxTickMs));
             report.add(String.format("время генерации: %.1f мс/чанк (замер Ф5 — в отчёте job'а)", msPerChunk));
             report.add(String.format("вода выше моря: колонок с водой %d, источников %d, текущей %d",
                     wet, sourcesAfter, flowingAfter));
@@ -367,7 +378,7 @@ final class LithoCiWater {
     private static long[] measureVo2(ServerLevel level, LithoNative.Generator gen, List<String> report) {
         final int side = 20;
         long corridor = 0, fit = 0, shore = 0, walls = 0, wet = 0, covered = 0;
-        long groundFit = 0;
+        long groundFit = 0, crowns = 0;
         var highLand = new java.util.TreeMap<String, Integer>();
         var roofBlocks = new java.util.TreeMap<String, Integer>();
         long[] misses = new long[4]; // dry low/high, wet low/high
@@ -404,20 +415,25 @@ final class LithoCiWater {
                             (int) xs[k], (int) zs[k]) - 1;
                     if (expected != Integer.MIN_VALUE) {
                         corridor++;
-                        // Diagnostic alongside the unchanged raw-height gate. Dry
-                        // foliage at VEGETAL_DECORATION is not a density surface.
+                        // Д-137: §8.3 defines `calm_fit` as `верхний твёрдый блок −
+                        // поверхность ядра`. A tree crown is not terrain: it is placed
+                        // at VEGETAL_DECORATION on top of whatever the density built,
+                        // so OCEAN_FLOOR reports canopy, not ground. The gate therefore
+                        // measures the ground under the crown; the raw height is still
+                        // printed as a diagnostic, so the two numbers never mix.
                         int ground = top;
-                        if (dry && top > expected + 2 && level.getBlockState(new BlockPos((int) xs[k], top, (int) zs[k]))
+                        if (level.getBlockState(new BlockPos((int) xs[k], top, (int) zs[k]))
                                 .is(net.minecraft.tags.BlockTags.LEAVES)) {
                             while (ground >= level.getMinY() && !level.getBlockState(new BlockPos((int) xs[k], ground, (int) zs[k]))
                                     .is(net.minecraft.tags.BlockTags.BLOCKS_MOTION_IN_HEIGHTMAP_NO_LEAVES)) ground--;
                         }
-                        if (Math.abs(ground - expected) <= 2) groundFit++;
                         if (Math.abs(top - expected) <= 2) fit++;
-                        else {
-                            misses[(dry ? 0 : 2) + (top > expected ? 1 : 0)]++;
-                            if (dry && top > expected) highLand.merge(level.getBlockState(
-                                    new BlockPos((int) xs[k], top, (int) zs[k])).getBlock().toString(), 1, Integer::sum);
+                        if (Math.abs(ground - expected) <= 2) groundFit++;
+                        if (ground < top) crowns++;
+                        if (Math.abs(ground - expected) > 2) {
+                            misses[(dry ? 0 : 2) + (ground > expected ? 1 : 0)]++;
+                            if (dry && ground > expected) highLand.merge(level.getBlockState(
+                                    new BlockPos((int) xs[k], ground, (int) zs[k])).getBlock().toString(), 1, Integer::sum);
                         }
                     }
                     if (!dry) {
@@ -434,11 +450,15 @@ final class LithoCiWater {
                 }
             }
         }
-        report.add(String.format("calm_fit промахи: суша ниже/выше %d/%d, вода ниже/выше %d/%d", misses[0], misses[1], misses[2], misses[3]));
-        report.add(String.format("calm_fit без крон (диагностика): %d из %d, %.2f %%", groundFit, corridor, 100.0 * groundFit / Math.max(1, corridor)));
+        report.add(String.format("calm_fit промахи (по рельефу): суша ниже/выше %d/%d, вода ниже/выше %d/%d", misses[0], misses[1], misses[2], misses[3]));
+        report.add(String.format("calm_fit по рельефу: %d из %d, %.2f %% (гейт §8.3, порог 95 %%)", groundFit, corridor, 100.0 * groundFit / Math.max(1, corridor)));
+        report.add(String.format("calm_fit по heightmap без правки крон (диагностика): %d из %d, %.2f %%; колонок под кронами %d",
+                fit, corridor, 100.0 * fit / Math.max(1, corridor), crowns));
         report.add("верх сухих колонок выше прогноза: " + highLand);
         report.add("верх накрытых колонок: " + roofBlocks);
-        return new long[] {corridor, fit, shore, walls, wet, covered};
+        // [0] коридор, [1] совпадение по heightmap (диагностика), [2] берег,
+        // [3] стены, [4] колонок с водой, [5] накрытых, [6] совпадение по рельефу.
+        return new long[] {corridor, fit, shore, walls, wet, covered, groundFit};
     }
 
     // Vegetation runs after RAW_GENERATION. Seagrass and bubble columns

@@ -43,8 +43,15 @@ public final class LithoWaterFeature implements Feature {
     private static final int CLEAR_ABOVE = 6;
     private static final int[][] SIDES = {{1, 0}, {-1, 0}, {0, 1}, {0, -1}};
 
-    /** Заделок герметизации (метрика В5: ≤ 2 на чанк с водой выше моря). */
+    /**
+     * Заделок герметизации берега (метрика В5: ≤ 1 на чанк с водой выше моря).
+     * Д-137: только заливка воздушной ячейки за берегом. Затычка пещеры под
+     * дном — другая операция (§8.2 п. 1) и считается отдельно, иначе метрика
+     * берега тонет в подземных полостях.
+     */
     public static final AtomicLong SEALS = new AtomicLong();
+    /** Затычек пещеры под дном водой (§8.2 п. 1, «пещера под дном — камень»). */
+    public static final AtomicLong AQUIFER_PLUGS = new AtomicLong();
     /** Чанков, где заливалась вода выше моря. */
     public static final AtomicLong CHUNKS = new AtomicLong();
     /** Колонок, где вода выше моря поставлена. */
@@ -136,7 +143,7 @@ public final class LithoWaterFeature implements Feature {
                 BlockState old = level.getBlockState(under);
                 if (old.isAir()) {
                     level.setBlock(under, Blocks.STONE.defaultBlockState(), 2);
-                    seals++;
+                    AQUIFER_PLUGS.incrementAndGet();
                 } else if (!old.is(Blocks.BEDROCK)) {
                     BlockState bedMat = material(LithoNative.WaterColumns.bedMat(water.info()[k]));
                     if (bedMat != null) level.setBlock(under, bedMat, 2);
@@ -156,12 +163,19 @@ public final class LithoWaterFeature implements Feature {
                 for (int[] d : SIDES) {
                     int nk = k + d[1] * SIDE + d[0];
                     if (water.level()[nk] != LithoNative.WaterColumns.NONE) continue;
+                    // Д-137: заливаем только воздух от верха соседа до его первой
+                    // твёрдой породы, а не до дна нашей колонки. Прежний цикл шёл до
+                    // `lowestSource[k]`, то есть на всю глубину воды: у глубокого озера
+                    // каждый сухой сосед получал стену из десятков блоков дёрна. Это и
+                    // давало 1,14 заделки на чанк в научном мире при пороге 1, и
+                    // торчало в мире стеной. Воздух за первой твёрдой породой соседа
+                    // не протекает: он за камнем, и это другой случай (§8.2 п. 1,
+                    // затычка пещеры под дном).
                     for (int y = top; y >= lowestSource[k]; y--) {
                         BlockPos pos = new BlockPos((int) xs[nk], y, (int) zs[nk]);
-                        if (level.getBlockState(pos).isAir()) {
-                            level.setBlock(pos, Blocks.DIRT.defaultBlockState(), 2);
-                            seals++;
-                        }
+                        if (!level.getBlockState(pos).isAir()) break;
+                        level.setBlock(pos, Blocks.DIRT.defaultBlockState(), 2);
+                        seals++;
                     }
                 }
             }
