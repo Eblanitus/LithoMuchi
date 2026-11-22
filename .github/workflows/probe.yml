@@ -39,7 +39,7 @@ jobs:
       - name: Проба
         run: |
           python3 - <<'PY' > probe.txt
-          import json, re, subprocess
+          import json, os, re, subprocess
 
           request = json.load(open("tools/probe/request.json", encoding="utf-8"))
           mode = request.get("mode", "gameplay")
@@ -98,11 +98,18 @@ jobs:
                   print()
           for argv in commands:
               argv = [str(a) for a in argv]
+              # `env` в запросе включает диагностику, не меняющую мир
+              # (`LITHO_DRAINAGE_TIMINGS=1` печатает фазы сборки сети).
+              env = dict(os.environ)
+              env.update({str(k): str(v) for k, v in (request.get("env") or {}).items()})
+              label = " ".join(f"{k}={v}" for k, v in (request.get("env") or {}).items())
               print(f"## sandbox {argv[0]} {' '.join(argv[1:])}")
+              if label:
+                  print(f"окружение: `{label}`")
               print()
               print("```")
               run = subprocess.run(["./target/release/litho-sandbox"] + argv,
-                                   capture_output=True, text=True)
+                                   capture_output=True, text=True, env=env)
               print((run.stdout + run.stderr).rstrip())
               print("```")
               print()

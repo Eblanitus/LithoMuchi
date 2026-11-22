@@ -1334,6 +1334,7 @@ impl Generator {
         wanted: Option<&[bool]>,
     ) -> Result<Vec<f64>, RiverNetError> {
         let mut inflow = vec![0.0; routing.nodes().len()];
+        crate::drainage::count_handoff();
         if hops <= 0 || routing.neighbors().is_empty() {
             return Ok(inflow);
         }
@@ -1381,6 +1382,7 @@ impl Generator {
             if targets.is_empty() {
                 return Ok(None);
             }
+            crate::drainage::count_mask();
             let mask =
                 crate::runoff::upstream_mask(source.nodes(), source.depressions(), &targets)?;
             // Кроме самих узлов-передач в маске должен быть хоть один узел.
@@ -1441,6 +1443,7 @@ impl Generator {
                     self.params.drainage.climate_step_l,
                     |point| self.runoff_climate_at(point),
                 )?;
+                crate::drainage::count_climate_grid(grid.len());
                 let runoff = crate::runoff::Runoff::calculate_with(
                     source.nodes(),
                     source.depressions(),
@@ -1449,6 +1452,7 @@ impl Generator {
                     Some(&upstream),
                     Some(&mask),
                 )?;
+                crate::drainage::count_runoff();
                 Ok(targets
                     .iter()
                     .zip(&receivers)

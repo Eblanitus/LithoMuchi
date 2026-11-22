@@ -1,0 +1,57 @@
+{
+  "name": "vo3-speed-stages",
+  "note": "ВО3, скорость: фазы сборки сети (LITHO_DRAINAGE_TIMINGS=1) и счётчики работы для двух плит сида 42 в обоих режимах. Разделяет «дорого на узел» и «одна фаза строится много раз».",
+  "mode": "gameplay",
+  "version": "v1-dev-w",
+  "seeds": [],
+  "at": [],
+  "step": 0,
+  "env": {
+    "LITHO_DRAINAGE_TIMINGS": "1"
+  },
+  "commands": [
+    [
+      "s0-node-cost",
+      "--seed",
+      "42",
+      "--mode",
+      "gameplay",
+      "--version",
+      "v1-dev-w",
+      "--plates",
+      "2",
+      "--analytic-only",
+      "--with-levels",
+      "--json"
+    ],
+    [
+      "s0-node-cost",
+      "--seed",
+      "42",
+      "--mode",
+      "scientific",
+      "--version",
+      "v1-dev-w",
+      "--plates",
+      "2",
+      "--analytic-only",
+      "--with-levels",
+      "--json"
+    ],
+    [
+      "s0-node-cost",
+      "--seed",
+      "42",
+      "--mode",
+      "gameplay",
+      "--version",
+      "v1-dev-w",
+      "--plates",
+      "2",
+      "--analytic-only",
+      "--json",
+      "--set",
+      "drainage.handoff_max_hops=0"
+    ]
+  ]
+}
