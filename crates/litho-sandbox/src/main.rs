@@ -953,6 +953,7 @@ fn cmd_s0_node_cost(args: &[String]) -> Result<(), String> {
     };
     let started = Instant::now();
     let with_levels = args.iter().any(|arg| arg == "--with-levels");
+    litho_core::reset_drainage_stats();
     let survey = s0_node_cost::survey(
         &generator,
         (opts.center_x, opts.center_z),
@@ -961,6 +962,7 @@ fn cmd_s0_node_cost(args: &[String]) -> Result<(), String> {
         with_levels,
     )?;
     let seconds = started.elapsed().as_secs_f64();
+    let stats = litho_core::drainage_stats();
     let analytic_us = 1000.0 * survey.analytic_ms / survey.nodes as f64;
     let analytic_p95 = s0_node_cost::percentile(&survey.analytic_errors, 95.0);
     let analytic_p999 = s0_node_cost::percentile(&survey.analytic_errors, 99.9);
@@ -1020,6 +1022,17 @@ fn cmd_s0_node_cost(args: &[String]) -> Result<(), String> {
         fields.push(format!("\"stored_route_error_p999\":{route_p999:.3}"));
         fields.push(format!("\"analytic_error_p999\":{analytic_p999:.3}"));
         fields.push("\"net_budget_ms\":200.0".to_string());
+        fields.push(format!(
+            "\"work\":{{\"routings\":{},\"floods\":{},\"route_nodes\":{},\"runoffs\":{},\"climate_grids\":{},\"climate_keys\":{},\"handoffs\":{},\"masks\":{}}}",
+            stats.routings,
+            stats.floods,
+            stats.route_nodes,
+            stats.runoffs,
+            stats.climate_grids,
+            stats.climate_keys,
+            stats.handoffs,
+            stats.masks
+        ));
         fields.push(format!("\"lattices\":[{}]", lattices.join(",")));
         fields.push(format!("\"decision\":\"{decision}\""));
         println!("{{{}}}", fields.join(","));
@@ -1033,6 +1046,7 @@ fn cmd_s0_node_cost(args: &[String]) -> Result<(), String> {
         survey.plates,
         survey.nodes
     );
+    println!("  работа: {}", stats.summary());
     println!(
         "  сеть плиты: p50 {:.1}, p95 {:.1}, max {:.1} мс (бюджет {} мс)",
         survey.net_pct(50.0),

@@ -52,6 +52,7 @@ pub mod water_profile;
 pub use classify::{ClassSample, LifeZone, VanillaCell};
 pub use climate::{ClimateSample, PoleSample, PrecipSample, TemperatureSample};
 pub use crust::CrustSample;
+pub use drainage::{DrainageStats, drainage_stats, reset_drainage_stats};
 pub use field::{Field, FullSample, to_f32};
 pub use generator::{
     GenError, Generator, S0Sample, WaterColumn, WorldSample, field_error_log_count, net_build_count,

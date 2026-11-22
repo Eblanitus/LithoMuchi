@@ -479,6 +479,8 @@ impl PlateRouting {
         }
         let cells: Vec<Cell> = nodes.iter().map(|node| node.cell).collect();
         let neighbor_lists = cell_neighbors(&cells);
+        count_routing();
+        count_route_nodes(nodes.len());
         let depressions = route_nodes(
             &mut nodes,
             &neighbor_lists,
@@ -686,6 +688,111 @@ pub(crate) fn timings_enabled() -> bool {
     std::env::var_os("LITHO_DRAINAGE_TIMINGS").is_some()
 }
 
+/// Счётчики работы сборки сетей: сколько раз на самом деле построена каждая
+/// фаза. Нужны, чтобы отделить «дорого на узел» от «дорого потому, что одна и
+/// та же фаза строится много раз». На математику не влияют: только числа.
+static STATS_ROUTINGS: AtomicU64 = AtomicU64::new(0);
+static STATS_FLOODS: AtomicU64 = AtomicU64::new(0);
+static STATS_ROUTE_NODES: AtomicU64 = AtomicU64::new(0);
+static STATS_RUNOFFS: AtomicU64 = AtomicU64::new(0);
+static STATS_CLIMATE_GRIDS: AtomicU64 = AtomicU64::new(0);
+static STATS_CLIMATE_KEYS: AtomicU64 = AtomicU64::new(0);
+static STATS_HANDOFFS: AtomicU64 = AtomicU64::new(0);
+static STATS_MASKS: AtomicU64 = AtomicU64::new(0);
+
+/// Снимок счётчиков сборки сетей (T-скорость, §6.2 ВО3).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct DrainageStats {
+    /// Сколько раз построен `PlateRouting` (связанная заливка плиты).
+    pub routings: u64,
+    /// Сколько раз выполнен `priority_flood`.
+    pub floods: u64,
+    /// Суммарное число узлов, прошедших через `route_nodes`.
+    pub route_nodes: u64,
+    /// Сколько раз посчитан полный годовой расход `Runoff::calculate_with`.
+    pub runoffs: u64,
+    /// Сколько раз построена решётка климата стока.
+    pub climate_grids: u64,
+    /// Сколько узлов решётки климата пробами (суммарно по всем сборкам).
+    pub climate_keys: u64,
+    /// Сколько раз вызван межплитовый приток `handoff_inflow`.
+    pub handoffs: u64,
+    /// Сколько раз посчитана маска водосбора `upstream_mask`.
+    pub masks: u64,
+}
+
+impl DrainageStats {
+    /// Доля повторных построек: сколько раз в среднем каждая фаза собиралась
+    /// заново на один узел сети. Пусто — счётчики не снимались.
+    pub fn summary(&self) -> String {
+        format!(
+            "routings={} floods={} runoffs={} climate_grids={} climate_keys={} handoffs={} masks={}",
+            self.routings,
+            self.floods,
+            self.runoffs,
+            self.climate_grids,
+            self.climate_keys,
+            self.handoffs,
+            self.masks
+        )
+    }
+}
+
+/// Текущий снимок счётчиков.
+pub fn drainage_stats() -> DrainageStats {
+    DrainageStats {
+        routings: STATS_ROUTINGS.load(AtomicOrdering::Relaxed),
+        floods: STATS_FLOODS.load(AtomicOrdering::Relaxed),
+        route_nodes: STATS_ROUTE_NODES.load(AtomicOrdering::Relaxed),
+        runoffs: STATS_RUNOFFS.load(AtomicOrdering::Relaxed),
+        climate_grids: STATS_CLIMATE_GRIDS.load(AtomicOrdering::Relaxed),
+        climate_keys: STATS_CLIMATE_KEYS.load(AtomicOrdering::Relaxed),
+        handoffs: STATS_HANDOFFS.load(AtomicOrdering::Relaxed),
+        masks: STATS_MASKS.load(AtomicOrdering::Relaxed),
+    }
+}
+
+/// Обнулить счётчики перед замером.
+pub fn reset_drainage_stats() {
+    for counter in [
+        &STATS_ROUTINGS,
+        &STATS_FLOODS,
+        &STATS_ROUTE_NODES,
+        &STATS_RUNOFFS,
+        &STATS_CLIMATE_GRIDS,
+        &STATS_CLIMATE_KEYS,
+        &STATS_HANDOFFS,
+        &STATS_MASKS,
+    ] {
+        counter.store(0, AtomicOrdering::Relaxed);
+    }
+}
+
+pub(crate) fn count_routing() {
+    STATS_ROUTINGS.fetch_add(1, AtomicOrdering::Relaxed);
+}
+
+pub(crate) fn count_route_nodes(nodes: usize) {
+    STATS_ROUTE_NODES.fetch_add(nodes as u64, AtomicOrdering::Relaxed);
+}
+
+pub(crate) fn count_runoff() {
+    STATS_RUNOFFS.fetch_add(1, AtomicOrdering::Relaxed);
+}
+
+pub(crate) fn count_climate_grid(keys: usize) {
+    STATS_CLIMATE_GRIDS.fetch_add(1, AtomicOrdering::Relaxed);
+    STATS_CLIMATE_KEYS.fetch_add(keys as u64, AtomicOrdering::Relaxed);
+}
+
+pub(crate) fn count_handoff() {
+    STATS_HANDOFFS.fetch_add(1, AtomicOrdering::Relaxed);
+}
+
+pub(crate) fn count_mask() {
+    STATS_MASKS.fetch_add(1, AtomicOrdering::Relaxed);
+}
+
 /// Env-gated фаза-замер сборки сети (T79 вторая часть): печатает в stdout
 /// строку `drainage-фазы: <имя> <мс>` только при `LITHO_DRAINAGE_TIMINGS=1`.
 /// Математика не меняется; без переменной окружения — роспуск незаметен.
@@ -724,10 +831,12 @@ impl RiverNet {
             .map(|node| node.point)
             .collect();
         let grid = ClimateGrid::build(&points, p.climate_step_l, climate)?;
+        count_climate_grid(grid.len());
         log_phase(timings, "климат", t);
         t = std::time::Instant::now();
         let inflow = (!inflow.is_empty()).then_some(inflow);
         let runoff = Runoff::calculate_with(nodes, depressions, &grid, params, inflow, None)?;
+        count_runoff();
         log_phase(timings, "сток", t);
         t = std::time::Instant::now();
         let channels = ChannelNetwork::build(routing.plate_id(), seed, nodes, &runoff, params)?;
@@ -1084,6 +1193,7 @@ fn priority_flood(
     epsilon_km: f64,
 ) -> Flood {
     let n = route_km.len();
+    STATS_FLOODS.fetch_add(1, AtomicOrdering::Relaxed);
     let mut flood = Flood {
         level: route_km.to_vec(),
         parent: vec![None; n],
@@ -1455,6 +1565,30 @@ mod tests {
     use std::collections::HashMap;
     use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering};
+
+    /// Счётчики работы — только диагностика: обнуление и накопление не
+    /// трогают математику. Параллельные тесты могут делить процесс, поэтому
+    /// проверяем монотонность прибавки, а не абсолютное значение.
+    #[test]
+    fn work_counters_accumulate() {
+        let before = super::drainage_stats();
+        super::count_routing();
+        super::count_runoff();
+        super::count_handoff();
+        super::count_mask();
+        super::count_climate_grid(7);
+        super::count_route_nodes(11);
+        let after = super::drainage_stats();
+        assert!(after.routings > before.routings);
+        assert!(after.runoffs > before.runoffs);
+        assert!(after.handoffs > before.handoffs);
+        assert!(after.masks > before.masks);
+        assert!(after.climate_grids > before.climate_grids);
+        assert!(after.climate_keys >= before.climate_keys + 7);
+        assert!(after.route_nodes >= before.route_nodes + 11);
+        // `priority_flood` считается в своей точке, не здесь.
+        assert!(after.summary().contains("routings="));
+    }
 
     fn node(i: i64, j: i64, route_km: f64, outlet: DrainageOutlet) -> DrainageNode {
         DrainageNode {
