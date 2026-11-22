@@ -1406,8 +1406,9 @@ impl Generator {
             }
             Ok(Some((targets, receivers, mask)))
         };
-        let contribution =
-            |neighbor: &Plate, topo: &PlateTopo| -> Result<Vec<(usize, f64)>, RiverNetError> {
+        let contribution = |neighbor: &Plate,
+                            topo: &PlateTopo|
+         -> Result<Vec<(usize, f64)>, RiverNetError> {
             // Д-094. Настоящей связанной сети соседа нужны топографии всех
             // его соседей. Чаще всего они не нужны: строим две сети соседа,
             // связанные только с этой плитой. В первой третьи плиты воду не
