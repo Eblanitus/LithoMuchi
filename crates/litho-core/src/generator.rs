@@ -27,8 +27,8 @@ use crate::classify::{ClassSample, classify};
 use crate::climate::{ClimateSample, PrecipSample, SurfaceSample, TemperatureSample, dryness};
 use crate::crust::{CrustSample, crust_from_sample};
 use crate::drainage::{
-    DrainageInput, DrainageOutlet, PlateCache, PlateRouting, PlateTopo, RiverNet, RiverNetCache,
-    RiverNetError,
+    DrainageInput, DrainageOutlet, HandoffDerived, PlateCache, PlateRouting, PlateTopo, RiverNet,
+    RiverNetCache, RiverNetError,
 };
 use crate::field::{Field, FullSample, to_f32};
 use crate::hydrology::{self, HydrologySample};
@@ -148,6 +148,14 @@ const RUNOFF_CLIMATE_CACHE_CAPACITY: usize = 65536;
 type RunoffClimateCache = ShardedCache<(u64, u64), Option<crate::runoff::RunoffClimate>>;
 /// Сколько топографий соседних плит строится одновременно.
 const TOPO_PREFETCH_THREADS: usize = 8;
+
+/// ВО3-скорость: ключ кэша производных сетей притока по паре
+/// `(сосед, я)`. Оба id — `u64`, поэтому старшие и младшие 32 бита пары
+/// упаковываются без потерь (id плит и так укладываются в 32 бита).
+fn handoff_key(neighbor: u64, me: u64) -> u64 {
+    debug_assert!(neighbor <= u32::MAX as u64 && me <= u32::MAX as u64);
+    (neighbor << 32) | me
+}
 
 fn worker_threads() -> usize {
     std::thread::available_parallelism()
@@ -372,6 +380,12 @@ pub struct Generator {
     drainage_topo: Arc<PlateCache<PlateTopo>>,
     /// Шаг 2 плана (T113): вторая фаза — топография, связанная с соседями.
     drainage_routing: Arc<PlateCache<PlateRouting>>,
+    /// ВО3-скорость: производные сети соседа «только с этой плитой» (закрытая
+    /// и открытая), которые строит `handoff_inflow`. Ключ — пара (сосед, я):
+    /// обе сети зависят только от топографии соседа и уровней ухода моей
+    /// плиты, то есть от пары id. Без кэша одна и та же пара пересчитывалась
+    /// на каждом шаге рекурсии притока и на каждой вложенной маске.
+    handoff_derived: Arc<PlateCache<HandoffDerived>>,
     /// Климат в узлах глобальной решётки стока. Чистая функция точки: приток
     /// от соседа читает те же узлы, что и его собственная сеть.
     runoff_climate: Arc<RunoffClimateCache>,
@@ -773,6 +787,10 @@ impl Generator {
             hydrology_levels: Arc::new(crate::cache::ShardedCache::new(shards, 4096)),
             drainage_topo: Arc::new(PlateCache::new(shards, crate::drainage::NET_CACHE_CAPACITY)),
             drainage_routing: Arc::new(PlateCache::new(
+                shards,
+                crate::drainage::NET_CACHE_CAPACITY,
+            )),
+            handoff_derived: Arc::new(PlateCache::new(
                 shards,
                 crate::drainage::NET_CACHE_CAPACITY,
             )),
@@ -1401,28 +1419,52 @@ impl Generator {
                 // Если в первой сюда ничего не течёт, не течёт и в настоящей.
                 // Если водосбор в обеих один и тот же, он такой же и в настоящей.
                 // Иначе строим настоящую сеть.
-                let closed = PlateRouting::build(topo, &self.params, &|owner, cell| {
-                    (owner == me).then(|| own.escape_level_km(cell)).flatten()
-                })?;
+                // Обе производные сети — чистые функции топографии соседа и
+                // уровней ухода моей плиты, то есть пары id. Кэш по паре
+                // убирает пересчёт на каждом шаге рекурсии притока.
+                let derived = self.handoff_derived.get_or_build(
+                    handoff_key(neighbor.id, me),
+                    || {
+                        let closed = PlateRouting::build(topo, &self.params, &|owner, cell| {
+                            (owner == me).then(|| own.escape_level_km(cell)).flatten()
+                        })?;
+                        // Без третьих плит разбор Д-094 сходится всегда —
+                        // открытая сеть не нужна и не строится.
+                        let has_third = topo.neighbors().iter().any(|plate| plate.id != me);
+                        let open = if has_third {
+                            Some(Arc::new(PlateRouting::build(topo, &self.params, &|owner, cell| {
+                                if owner == me {
+                                    own.escape_level_km(cell)
+                                } else {
+                                    Some(f64::MIN)
+                                }
+                            })?))
+                        } else {
+                            None
+                        };
+                        Ok(HandoffDerived {
+                            closed: Arc::new(closed),
+                            open,
+                        })
+                    },
+                )?;
+                let closed = Arc::clone(&derived.closed);
                 let Some(found) = catchment(&closed)? else {
                     return Ok(Vec::new());
                 };
-                let settled = topo.neighbors().iter().all(|plate| plate.id == me) || {
-                    let open = PlateRouting::build(topo, &self.params, &|owner, cell| {
-                        if owner == me {
-                            own.escape_level_km(cell)
-                        } else {
-                            Some(f64::MIN)
-                        }
-                    })?;
-                    closed.same_on(&found.2, &open)
-                        && catchment(&open)?.is_some_and(|other| {
-                            other.2.iter().filter(|m| **m).count()
-                                == found.2.iter().filter(|m| **m).count()
-                        })
+                let settled = match &derived.open {
+                    // Все соседи соседа — я: разбор сходится без открытой сети.
+                    None => true,
+                    Some(open) => {
+                        closed.same_on(&found.2, open)
+                            && catchment(open)?.is_some_and(|other| {
+                                other.2.iter().filter(|m| **m).count()
+                                    == found.2.iter().filter(|m| **m).count()
+                            })
+                    }
                 };
                 let (source, (targets, receivers, mask)) = if settled {
-                    (Arc::new(closed), found)
+                    (closed, found)
                 } else {
                     let full = self.drainage_routing(neighbor)?;
                     let Some(found) = catchment(&full)? else {
@@ -4187,9 +4229,24 @@ impl Generator {
 
 #[cfg(test)]
 mod tests {
-    use super::{GenError, Generator};
+    use super::{GenError, Generator, handoff_key};
     use crate::mode::Mode;
     use crate::version::GenVersion;
+
+    /// Ключ кэша производных сетей не должен склеивать разные пары плит:
+    /// иначе кэш вернул бы сеть чужой пары и мир бы изменился.
+    #[test]
+    fn handoff_key_distinguishes_both_plates() {
+        let pairs = [(1u64, 2u64), (2, 1), (1, 1), (0, 1), (1, 0), (u32::MAX as u64, 1)];
+        let keys: Vec<u64> = pairs.iter().map(|&(a, b)| handoff_key(a, b)).collect();
+        for (i, left) in keys.iter().enumerate() {
+            for (j, right) in keys.iter().enumerate() {
+                assert_eq!(i == j, left == right, "пара {:?} и {:?}", pairs[i], pairs[j]);
+            }
+        }
+        // Сосед в старших битах, я — в младших: (1,2) != (2,1).
+        assert_ne!(handoff_key(1, 2), handoff_key(2, 1));
+    }
 
     #[test]
     fn w_profile_lookup_respects_internal_knots_and_segment_seams() {
