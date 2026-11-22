@@ -1408,97 +1408,97 @@ impl Generator {
         };
         let contribution =
             |neighbor: &Plate, topo: &PlateTopo| -> Result<Vec<(usize, f64)>, RiverNetError> {
-                // Д-094. Настоящей связанной сети соседа нужны топографии всех
-                // его соседей. Чаще всего они не нужны: строим две сети соседа,
-                // связанные только с этой плитой. В первой третьи плиты воду не
-                // принимают совсем, во второй принимают на самом низком возможном
-                // уровне — высоте своего узла. Настоящая сеть лежит между ними.
-                // Если в первой сюда ничего не течёт, не течёт и в настоящей.
-                // Если водосбор в обеих один и тот же, он такой же и в настоящей.
-                // Иначе строим настоящую сеть.
-                // Обе производные сети — чистые функции топографии соседа и
-                // уровней ухода моей плиты, то есть пары id. Кэш по паре
-                // убирает пересчёт на каждом шаге рекурсии притока.
-                let derived = self.handoff_derived.get_or_build(
-                    handoff_key(neighbor.id, me),
-                    || {
-                        let closed = PlateRouting::build(topo, &self.params, &|owner, cell| {
-                            (owner == me).then(|| own.escape_level_km(cell)).flatten()
+            // Д-094. Настоящей связанной сети соседа нужны топографии всех
+            // его соседей. Чаще всего они не нужны: строим две сети соседа,
+            // связанные только с этой плитой. В первой третьи плиты воду не
+            // принимают совсем, во второй принимают на самом низком возможном
+            // уровне — высоте своего узла. Настоящая сеть лежит между ними.
+            // Если в первой сюда ничего не течёт, не течёт и в настоящей.
+            // Если водосбор в обеих один и тот же, он такой же и в настоящей.
+            // Иначе строим настоящую сеть.
+            // Обе производные сети — чистые функции топографии соседа и
+            // уровней ухода моей плиты, то есть пары id. Кэш по паре
+            // убирает пересчёт на каждом шаге рекурсии притока.
+            let derived = self.handoff_derived.get_or_build(
+                handoff_key(neighbor.id, me),
+                || {
+                    let closed = PlateRouting::build(topo, &self.params, &|owner, cell| {
+                        (owner == me).then(|| own.escape_level_km(cell)).flatten()
+                    })?;
+                    // Без третьих плит разбор Д-094 сходится всегда —
+                    // открытая сеть не нужна и не строится.
+                    let has_third = topo.neighbors().iter().any(|plate| plate.id != me);
+                    let open = if has_third {
+                        let open = PlateRouting::build(topo, &self.params, &|owner, cell| {
+                            if owner == me {
+                                own.escape_level_km(cell)
+                            } else {
+                                Some(f64::MIN)
+                            }
                         })?;
-                        // Без третьих плит разбор Д-094 сходится всегда —
-                        // открытая сеть не нужна и не строится.
-                        let has_third = topo.neighbors().iter().any(|plate| plate.id != me);
-                        let open = if has_third {
-                            let open = PlateRouting::build(topo, &self.params, &|owner, cell| {
-                                if owner == me {
-                                    own.escape_level_km(cell)
-                                } else {
-                                    Some(f64::MIN)
-                                }
-                            })?;
-                            Some(Arc::new(open))
-                        } else {
-                            None
-                        };
-                        Ok(HandoffDerived {
-                            closed: Arc::new(closed),
-                            open,
+                        Some(Arc::new(open))
+                    } else {
+                        None
+                    };
+                    Ok(HandoffDerived {
+                        closed: Arc::new(closed),
+                        open,
+                    })
+                },
+            )?;
+            let closed = Arc::clone(&derived.closed);
+            let Some(found) = catchment(&closed)? else {
+                return Ok(Vec::new());
+            };
+            let settled = match &derived.open {
+                // Все соседи соседа — я: разбор сходится без открытой сети.
+                None => true,
+                Some(open) => {
+                    closed.same_on(&found.2, open)
+                        && catchment(open)?.is_some_and(|other| {
+                            other.2.iter().filter(|m| **m).count()
+                                == found.2.iter().filter(|m| **m).count()
                         })
-                    },
-                )?;
-                let closed = Arc::clone(&derived.closed);
-                let Some(found) = catchment(&closed)? else {
+                }
+            };
+            let (source, (targets, receivers, mask)) = if settled {
+                (closed, found)
+            } else {
+                let full = self.drainage_routing(neighbor)?;
+                let Some(found) = catchment(&full)? else {
                     return Ok(Vec::new());
                 };
-                let settled = match &derived.open {
-                    // Все соседи соседа — я: разбор сходится без открытой сети.
-                    None => true,
-                    Some(open) => {
-                        closed.same_on(&found.2, open)
-                            && catchment(open)?.is_some_and(|other| {
-                                other.2.iter().filter(|m| **m).count()
-                                    == found.2.iter().filter(|m| **m).count()
-                            })
-                    }
-                };
-                let (source, (targets, receivers, mask)) = if settled {
-                    (closed, found)
-                } else {
-                    let full = self.drainage_routing(neighbor)?;
-                    let Some(found) = catchment(&full)? else {
-                        return Ok(Vec::new());
-                    };
-                    (full, found)
-                };
-                let upstream = self.handoff_inflow(&source, hops - 1, Some(&mask))?;
-                let points: Vec<Vec2> = source
-                    .nodes()
-                    .iter()
-                    .zip(&mask)
-                    .filter(|(node, m)| **m && crate::runoff::needs_climate(node, &self.params))
-                    .map(|(node, _)| node.point)
-                    .collect();
-                let grid = crate::runoff::ClimateGrid::build(
-                    &points,
-                    self.params.drainage.climate_step_l,
-                    |point| self.runoff_climate_at(point),
-                )?;
-                crate::drainage::count_climate_grid(grid.len());
-                let runoff = crate::runoff::Runoff::calculate_with(
-                    source.nodes(),
-                    source.depressions(),
-                    &grid,
-                    &self.params,
-                    Some(&upstream),
-                    Some(&mask),
-                )?;
-                crate::drainage::count_runoff();
-                Ok(targets
-                    .iter()
-                    .zip(&receivers)
-                    .map(|(&target, &here)| (here, runoff.nodes()[target].discharge_mm_l2))
-                    .collect())
+                (full, found)
             };
+            let upstream = self.handoff_inflow(&source, hops - 1, Some(&mask))?;
+            let points: Vec<Vec2> = source
+                .nodes()
+                .iter()
+                .zip(&mask)
+                .filter(|(node, m)| **m && crate::runoff::needs_climate(node, &self.params))
+                .map(|(node, _)| node.point)
+                .collect();
+            let grid = crate::runoff::ClimateGrid::build(
+                &points,
+                self.params.drainage.climate_step_l,
+                |point| self.runoff_climate_at(point),
+            )?;
+            crate::drainage::count_climate_grid(grid.len());
+            let runoff = crate::runoff::Runoff::calculate_with(
+                source.nodes(),
+                source.depressions(),
+                &grid,
+                &self.params,
+                Some(&upstream),
+                Some(&mask),
+            )?;
+            crate::drainage::count_runoff();
+            Ok(targets
+                .iter()
+                .zip(&receivers)
+                .map(|(&target, &here)| (here, runoff.nodes()[target].discharge_mm_l2))
+                .collect())
+        };
         // Верхний уровень считает соседей одновременно; вложенные вызовы —
         // по очереди, чтобы число потоков не росло с глубиной. Вклады
         // складываются в порядке id соседей, от потоков сумма не зависит.
