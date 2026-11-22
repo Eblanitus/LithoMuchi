@@ -1,6 +1,6 @@
 {
-  "name": "explain-r2-spill-33645-7132",
-  "note": "Разбор предсуществующего нарушения §4 п.2 в CI: берег ниже зеркала (-33645, 7132) суша 80 зеркало 84. Плюс сама мокрая колонка-источник.",
+  "name": "profile-r2-cliff-33645-7132",
+  "note": "Профиль поперёк русла у нарушения §4 п.2: суша 80 против зеркала 84. Ищем, где ось и насколько уровень выше берега.",
   "mode": "scientific",
   "version": "v1-dev-r2",
   "seeds": [],
@@ -16,7 +16,73 @@
       "--version",
       "v1-dev-r2",
       "--explain",
-      "-33645,7132"
+      "-33658,7132"
+    ],
+    [
+      "water-leaks",
+      "--seed",
+      "42",
+      "--mode",
+      "scientific",
+      "--version",
+      "v1-dev-r2",
+      "--explain",
+      "-33656,7132"
+    ],
+    [
+      "water-leaks",
+      "--seed",
+      "42",
+      "--mode",
+      "scientific",
+      "--version",
+      "v1-dev-r2",
+      "--explain",
+      "-33654,7132"
+    ],
+    [
+      "water-leaks",
+      "--seed",
+      "42",
+      "--mode",
+      "scientific",
+      "--version",
+      "v1-dev-r2",
+      "--explain",
+      "-33652,7132"
+    ],
+    [
+      "water-leaks",
+      "--seed",
+      "42",
+      "--mode",
+      "scientific",
+      "--version",
+      "v1-dev-r2",
+      "--explain",
+      "-33650,7132"
+    ],
+    [
+      "water-leaks",
+      "--seed",
+      "42",
+      "--mode",
+      "scientific",
+      "--version",
+      "v1-dev-r2",
+      "--explain",
+      "-33648,7132"
+    ],
+    [
+      "water-leaks",
+      "--seed",
+      "42",
+      "--mode",
+      "scientific",
+      "--version",
+      "v1-dev-r2",
+      "--explain",
+      "-33646,7132"
     ],
     [
       "water-leaks",
@@ -38,7 +104,7 @@
       "--version",
       "v1-dev-r2",
       "--explain",
-      "-33645,7131"
+      "-33642,7132"
     ],
     [
       "water-leaks",
@@ -49,7 +115,7 @@
       "--version",
       "v1-dev-r2",
       "--explain",
-      "-33645,7133"
+      "-33640,7132"
     ],
     [
       "water-leaks",
@@ -60,7 +126,62 @@
       "--version",
       "v1-dev-r2",
       "--explain",
-      "-33646,7132"
+      "-33638,7132"
+    ],
+    [
+      "water-leaks",
+      "--seed",
+      "42",
+      "--mode",
+      "scientific",
+      "--version",
+      "v1-dev-r2",
+      "--explain",
+      "-33636,7132"
+    ],
+    [
+      "water-leaks",
+      "--seed",
+      "42",
+      "--mode",
+      "scientific",
+      "--version",
+      "v1-dev-r2",
+      "--explain",
+      "-33634,7132"
+    ],
+    [
+      "water-leaks",
+      "--seed",
+      "42",
+      "--mode",
+      "scientific",
+      "--version",
+      "v1-dev-r2",
+      "--explain",
+      "-33632,7132"
+    ],
+    [
+      "water-leaks",
+      "--seed",
+      "42",
+      "--mode",
+      "scientific",
+      "--version",
+      "v1-dev-r2",
+      "--explain",
+      "-33630,7132"
+    ],
+    [
+      "water-leaks",
+      "--seed",
+      "42",
+      "--mode",
+      "scientific",
+      "--version",
+      "v1-dev-r2",
+      "--explain",
+      "-33628,7132"
     ]
   ]
 }
