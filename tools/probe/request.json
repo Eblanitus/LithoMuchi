@@ -1,74 +1,19 @@
 {
-  "name": "vo3-speed-isolate",
-  "note": "ВО3, скорость: одна плита вместо двух и приток выключен/включён. Отделяет цену одной плиты (пол) от цены повторов притока.",
+  "name": "vo3-speed-hops",
+  "note": "ВО3, скорость: цена как функция глубины межплитового притока. Если время падает примерно линейно с hops — это и есть ручка; иначе дело в одной постройке.",
   "mode": "gameplay",
   "version": "v1-dev-w",
   "seeds": [],
   "at": [],
   "step": 0,
-  "env": {
-    "LITHO_DRAINAGE_TIMINGS": "1"
-  },
   "commands": [
-    [
-      "s0-node-cost",
-      "--seed",
-      "42",
-      "--mode",
-      "gameplay",
-      "--version",
-      "v1-dev-w",
-      "--plates",
-      "1",
-      "--analytic-only",
-      "--with-levels",
-      "--json"
-    ],
-    [
-      "s0-node-cost",
-      "--seed",
-      "42",
-      "--mode",
-      "gameplay",
-      "--version",
-      "v1-dev-w",
-      "--plates",
-      "1",
-      "--analytic-only",
-      "--with-levels",
-      "--json",
-      "--set",
-      "drainage.handoff_max_hops=0"
-    ],
-    [
-      "s0-node-cost",
-      "--seed",
-      "42",
-      "--mode",
-      "scientific",
-      "--version",
-      "v1-dev-w",
-      "--plates",
-      "1",
-      "--analytic-only",
-      "--with-levels",
-      "--json"
-    ],
-    [
-      "s0-node-cost",
-      "--seed",
-      "42",
-      "--mode",
-      "scientific",
-      "--version",
-      "v1-dev-w",
-      "--plates",
-      "1",
-      "--analytic-only",
-      "--with-levels",
-      "--json",
-      "--set",
-      "drainage.handoff_max_hops=0"
-    ]
+    ["s0-node-cost", "--seed", "42", "--mode", "gameplay", "--version", "v1-dev-w", "--plates", "1", "--analytic-only", "--with-levels", "--json", "--set", "drainage.handoff_max_hops=0"],
+    ["s0-node-cost", "--seed", "42", "--mode", "gameplay", "--version", "v1-dev-w", "--plates", "1", "--analytic-only", "--with-levels", "--json", "--set", "drainage.handoff_max_hops=1"],
+    ["s0-node-cost", "--seed", "42", "--mode", "gameplay", "--version", "v1-dev-w", "--plates", "1", "--analytic-only", "--with-levels", "--json", "--set", "drainage.handoff_max_hops=2"],
+    ["s0-node-cost", "--seed", "42", "--mode", "gameplay", "--version", "v1-dev-w", "--plates", "1", "--analytic-only", "--with-levels", "--json", "--set", "drainage.handoff_max_hops=3"],
+    ["s0-node-cost", "--seed", "42", "--mode", "gameplay", "--version", "v1-dev-w", "--plates", "1", "--analytic-only", "--with-levels", "--json", "--set", "drainage.handoff_max_hops=6"],
+    ["s0-node-cost", "--seed", "42", "--mode", "scientific", "--version", "v1-dev-w", "--plates", "1", "--analytic-only", "--with-levels", "--json", "--set", "drainage.handoff_max_hops=0"],
+    ["s0-node-cost", "--seed", "42", "--mode", "scientific", "--version", "v1-dev-w", "--plates", "1", "--analytic-only", "--with-levels", "--json", "--set", "drainage.handoff_max_hops=2"],
+    ["s0-node-cost", "--seed", "42", "--mode", "scientific", "--version", "v1-dev-w", "--plates", "1", "--analytic-only", "--with-levels", "--json", "--set", "drainage.handoff_max_hops=6"]
   ]
 }
