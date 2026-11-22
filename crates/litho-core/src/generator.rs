@@ -790,10 +790,7 @@ impl Generator {
                 shards,
                 crate::drainage::NET_CACHE_CAPACITY,
             )),
-            handoff_derived: Arc::new(PlateCache::new(
-                shards,
-                crate::drainage::NET_CACHE_CAPACITY,
-            )),
+            handoff_derived: Arc::new(PlateCache::new(shards, crate::drainage::NET_CACHE_CAPACITY)),
             w_route: Arc::new(ShardedCache::new(shards, 32768)),
             runoff_climate: Arc::new(ShardedCache::new(shards, RUNOFF_CLIMATE_CACHE_CAPACITY)),
             net_owners: Arc::new(crate::cache::ShardedCache::new(
