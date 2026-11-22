@@ -1432,13 +1432,14 @@ impl Generator {
                         // открытая сеть не нужна и не строится.
                         let has_third = topo.neighbors().iter().any(|plate| plate.id != me);
                         let open = if has_third {
-                            Some(Arc::new(PlateRouting::build(topo, &self.params, &|owner, cell| {
+                            let open = PlateRouting::build(topo, &self.params, &|owner, cell| {
                                 if owner == me {
                                     own.escape_level_km(cell)
                                 } else {
                                     Some(f64::MIN)
                                 }
-                            })?))
+                            })?;
+                            Some(Arc::new(open))
                         } else {
                             None
                         };
