@@ -1,0 +1,244 @@
+# Проба «vo3-speed-isolate»
+
+ВО3, скорость: одна плита вместо двух и приток выключен/включён. Отделяет цену одной плиты (пол) от цены повторов притока.
+
+Режим gameplay, версия v1-dev-w, обход ±0 блоков (шаг 0), точек 0, сидов 0.
+
+## sandbox s0-node-cost --seed 42 --mode gameplay --version v1-dev-w --plates 1 --analytic-only --with-levels --json
+окружение: `LITHO_DRAINAGE_TIMINGS=1`
+
+```
+drainage-фазы: якорь 0.024 мс
+drainage-фазы: клетки 1.878 мс
+drainage-фазы: узлы 120.988 мс
+drainage-фазы: заливка своя 0.604 мс
+drainage-фазы: этап-своя 123.611 мс
+drainage-фазы: якорь 0.035 мс
+drainage-фазы: якорь 0.041 мс
+drainage-фазы: якорь 0.038 мс
+drainage-фазы: якорь 0.029 мс
+drainage-фазы: клетки 13.118 мс
+drainage-фазы: клетки 13.589 мс
+drainage-фазы: клетки 13.472 мс
+drainage-фазы: клетки 21.375 мс
+drainage-фазы: узлы 454.128 мс
+drainage-фазы: заливка своя 1.747 мс
+drainage-фазы: якорь 0.033 мс
+drainage-фазы: узлы 463.581 мс
+drainage-фазы: клетки 8.586 мс
+drainage-фазы: заливка своя 1.623 мс
+drainage-фазы: якорь 0.025 мс
+drainage-фазы: клетки 2.318 мс
+drainage-фазы: узлы 633.895 мс
+drainage-фазы: заливка своя 2.274 мс
+drainage-фазы: узлы 236.780 мс
+drainage-фазы: заливка своя 0.684 мс
+drainage-фазы: узлы 797.071 мс
+drainage-фазы: заливка своя 2.476 мс
+drainage-фазы: узлы 535.142 мс
+drainage-фазы: заливка своя 1.986 мс
+drainage-фазы: заливка связанная 0.809 мс
+drainage-фазы: этап-связь 1018.247 мс
+drainage-фазы: заливка связанная 1.665 мс
+drainage-фазы: заливка связанная 2.418 мс
+drainage-фазы: заливка связанная 1.188 мс
+drainage-фазы: заливка связанная 3.292 мс
+drainage-фазы: заливка связанная 1.701 мс
+drainage-фазы: якорь 0.036 мс
+drainage-фазы: заливка связанная 4.743 мс
+drainage-фазы: заливка связанная 2.749 мс
+drainage-фазы: якорь 0.034 мс
+drainage-фазы: якорь 0.033 мс
+drainage-фазы: клетки 14.159 мс
+drainage-фазы: клетки 8.742 мс
+drainage-фазы: клетки 18.214 мс
+drainage-фазы: узлы 509.796 мс
+drainage-фазы: заливка своя 3.216 мс
+drainage-фазы: узлы 523.181 мс
+drainage-фазы: заливка своя 3.230 мс
+drainage-фазы: заливка связанная 1.664 мс
+drainage-фазы: заливка связанная 0.678 мс
+drainage-фазы: узлы 589.343 мс
+drainage-фазы: заливка своя 1.949 мс
+drainage-фазы: заливка связанная 2.205 мс
+drainage-фазы: заливка связанная 0.614 мс
+drainage-фазы: этап-приток 616.442 мс
+drainage-фазы: климат 0.366 мс
+drainage-фазы: сток 0.437 мс
+drainage-фазы: русла 0.306 мс
+drainage-фазы: озёра 0.096 мс
+drainage-фазы: этап-сборка 1.244 мс
+drainage-фазы: этап-своя 0.035 мс
+drainage-фазы: этап-связь 0.076 мс
+drainage-фазы: заливка связанная 0.888 мс
+drainage-фазы: заливка связанная 0.946 мс
+drainage-фазы: заливка связанная 3.639 мс
+drainage-фазы: заливка связанная 5.130 мс
+drainage-фазы: заливка связанная 4.044 мс
+drainage-фазы: заливка связанная 6.444 мс
+drainage-фазы: заливка связанная 5.045 мс
+drainage-фазы: заливка связанная 4.095 мс
+drainage-фазы: заливка связанная 3.854 мс
+drainage-фазы: заливка связанная 2.964 мс
+drainage-фазы: заливка связанная 9.305 мс
+drainage-фазы: заливка связанная 4.939 мс
+drainage-фазы: заливка связанная 6.409 мс
+drainage-фазы: заливка связанная 6.010 мс
+drainage-фазы: заливка связанная 5.854 мс
+drainage-фазы: этап-приток 34.390 мс
+drainage-фазы: климат 0.626 мс
+drainage-фазы: сток 1.398 мс
+drainage-фазы: русла 1.591 мс
+drainage-фазы: озёра 0.279 мс
+drainage-фазы: этап-сборка 3.922 мс
+{"seed":42,"mode":"gameplay","version":"v1-dev-w","seconds":3.26,"plates":1,"nodes":1356,"with_levels":true,"plate_stages":[{"plate":"216878075925460450","drainage_ms":1759.58,"levels_ms":306.20}],"net_ms_p50":2065.8,"net_ms_p95":2065.8,"net_ms_max":2065.8,"exact_us_per_node":825.36,"analytic_us_per_node":51.33,"analytic_error_p95":0.000,"stored_route_error_p95":0.000,"stored_route_error_p999":0.000,"analytic_error_p999":0.000,"net_budget_ms":200.0,"work":{"routings":27,"floods":37,"route_nodes":92178,"runoffs":8,"climate_grids":8,"climate_keys":537,"handoffs":8,"masks":24},"lattices":[],"decision":"только аналитический путь, без сравнения решёток"}
+litho-core: сеть рек №1, плита 216878075925460450: 1499 узлов за 1760 мс
+litho-core: сеть рек №2, плита 12257214645282878660: 4341 узлов за 96 мс
+```
+
+## sandbox s0-node-cost --seed 42 --mode gameplay --version v1-dev-w --plates 1 --analytic-only --with-levels --json --set drainage.handoff_max_hops=0
+окружение: `LITHO_DRAINAGE_TIMINGS=1`
+
+```
+drainage-фазы: якорь 0.024 мс
+drainage-фазы: клетки 1.881 мс
+drainage-фазы: узлы 119.971 мс
+drainage-фазы: заливка своя 0.613 мс
+drainage-фазы: этап-своя 122.607 мс
+drainage-фазы: якорь 0.035 мс
+drainage-фазы: якорь 0.041 мс
+drainage-фазы: якорь 0.038 мс
+drainage-фазы: якорь 0.037 мс
+drainage-фазы: клетки 9.616 мс
+drainage-фазы: клетки 11.713 мс
+drainage-фазы: клетки 14.025 мс
+drainage-фазы: клетки 17.488 мс
+drainage-фазы: узлы 451.170 мс
+drainage-фазы: узлы 457.155 мс
+drainage-фазы: заливка своя 1.638 мс
+drainage-фазы: якорь 0.033 мс
+drainage-фазы: заливка своя 1.770 мс
+drainage-фазы: якорь 0.025 мс
+drainage-фазы: клетки 2.362 мс
+drainage-фазы: клетки 8.394 мс
+drainage-фазы: узлы 614.106 мс
+drainage-фазы: заливка своя 2.257 мс
+drainage-фазы: узлы 269.542 мс
+drainage-фазы: заливка своя 1.005 мс
+drainage-фазы: узлы 773.979 мс
+drainage-фазы: заливка своя 2.471 мс
+drainage-фазы: узлы 518.441 мс
+drainage-фазы: заливка своя 1.967 мс
+drainage-фазы: заливка связанная 0.784 мс
+drainage-фазы: этап-связь 1000.869 мс
+drainage-фазы: этап-приток 0.001 мс
+drainage-фазы: климат 0.356 мс
+drainage-фазы: сток 0.413 мс
+drainage-фазы: русла 0.291 мс
+drainage-фазы: озёра 0.089 мс
+drainage-фазы: этап-сборка 1.173 мс
+{"seed":42,"mode":"gameplay","version":"v1-dev-w","seconds":2.52,"plates":1,"nodes":1356,"with_levels":true,"plate_stages":[{"plate":"216878075925460450","drainage_ms":1124.67,"levels_ms":203.59}],"net_ms_p50":1328.3,"net_ms_p95":1328.3,"net_ms_max":1328.3,"exact_us_per_node":825.99,"analytic_us_per_node":48.97,"analytic_error_p95":0.000,"stored_route_error_p95":0.000,"stored_route_error_p999":0.000,"analytic_error_p999":0.000,"net_budget_ms":200.0,"work":{"routings":1,"floods":8,"route_nodes":1499,"runoffs":1,"climate_grids":1,"climate_keys":134,"handoffs":1,"masks":0},"lattices":[],"decision":"только аналитический путь, без сравнения решёток"}
+litho-core: сеть рек №1, плита 216878075925460450: 1499 узлов за 1125 мс
+```
+
+## sandbox s0-node-cost --seed 42 --mode scientific --version v1-dev-w --plates 1 --analytic-only --with-levels --json
+окружение: `LITHO_DRAINAGE_TIMINGS=1`
+
+```
+drainage-фазы: якорь 0.024 мс
+drainage-фазы: клетки 1.893 мс
+drainage-фазы: узлы 230.348 мс
+drainage-фазы: заливка своя 0.635 мс
+drainage-фазы: этап-своя 233.016 мс
+drainage-фазы: якорь 0.040 мс
+drainage-фазы: якорь 0.031 мс
+drainage-фазы: якорь 0.039 мс
+drainage-фазы: якорь 0.038 мс
+drainage-фазы: клетки 7.035 мс
+drainage-фазы: клетки 6.942 мс
+drainage-фазы: клетки 19.873 мс
+drainage-фазы: клетки 34.706 мс
+drainage-фазы: узлы 760.235 мс
+drainage-фазы: заливка своя 1.595 мс
+drainage-фазы: якорь 0.033 мс
+drainage-фазы: клетки 8.483 мс
+drainage-фазы: узлы 981.284 мс
+drainage-фазы: заливка своя 2.195 мс
+drainage-фазы: якорь 0.025 мс
+drainage-фазы: клетки 2.605 мс
+drainage-фазы: узлы 1131.477 мс
+drainage-фазы: заливка своя 1.765 мс
+drainage-фазы: узлы 362.573 мс
+drainage-фазы: заливка своя 1.008 мс
+drainage-фазы: узлы 1444.600 мс
+drainage-фазы: заливка своя 2.514 мс
+drainage-фазы: узлы 1292.787 мс
+drainage-фазы: заливка своя 1.993 мс
+drainage-фазы: заливка связанная 0.901 мс
+drainage-фазы: этап-связь 2074.184 мс
+drainage-фазы: заливка связанная 1.651 мс
+drainage-фазы: заливка связанная 1.926 мс
+drainage-фазы: заливка связанная 1.160 мс
+drainage-фазы: заливка связанная 3.115 мс
+drainage-фазы: заливка связанная 1.698 мс
+drainage-фазы: заливка связанная 4.965 мс
+drainage-фазы: заливка связанная 0.917 мс
+drainage-фазы: заливка связанная 4.009 мс
+drainage-фазы: заливка связанная 0.876 мс
+drainage-фазы: заливка связанная 2.974 мс
+drainage-фазы: заливка связанная 0.638 мс
+drainage-фазы: этап-приток 11.425 мс
+drainage-фазы: климат 0.346 мс
+drainage-фазы: сток 0.400 мс
+drainage-фазы: русла 0.421 мс
+drainage-фазы: озёра 0.070 мс
+drainage-фазы: этап-сборка 1.261 мс
+{"seed":42,"mode":"scientific","version":"v1-dev-w","seconds":4.29,"plates":1,"nodes":1356,"with_levels":true,"plate_stages":[{"plate":"216878075925460450","drainage_ms":2319.92,"levels_ms":336.11}],"net_ms_p50":2656.0,"net_ms_p95":2656.0,"net_ms_max":2656.0,"exact_us_per_node":984.35,"analytic_us_per_node":217.95,"analytic_error_p95":0.000,"stored_route_error_p95":0.000,"stored_route_error_p999":0.000,"analytic_error_p999":0.000,"net_budget_ms":200.0,"work":{"routings":12,"floods":19,"route_nodes":30847,"runoffs":4,"climate_grids":4,"climate_keys":167,"handoffs":4,"masks":11},"lattices":[],"decision":"только аналитический путь, без сравнения решёток"}
+litho-core: сеть рек №1, плита 216878075925460450: 1499 узлов за 2320 мс
+```
+
+## sandbox s0-node-cost --seed 42 --mode scientific --version v1-dev-w --plates 1 --analytic-only --with-levels --json --set drainage.handoff_max_hops=0
+окружение: `LITHO_DRAINAGE_TIMINGS=1`
+
+```
+drainage-фазы: якорь 0.024 мс
+drainage-фазы: клетки 1.927 мс
+drainage-фазы: узлы 231.056 мс
+drainage-фазы: заливка своя 0.643 мс
+drainage-фазы: этап-своя 233.778 мс
+drainage-фазы: якорь 0.037 мс
+drainage-фазы: якорь 0.050 мс
+drainage-фазы: якорь 0.039 мс
+drainage-фазы: якорь 0.038 мс
+drainage-фазы: клетки 9.710 мс
+drainage-фазы: клетки 11.432 мс
+drainage-фазы: клетки 11.952 мс
+drainage-фазы: клетки 12.049 мс
+drainage-фазы: узлы 780.768 мс
+drainage-фазы: заливка своя 1.548 мс
+drainage-фазы: якорь 0.034 мс
+drainage-фазы: клетки 8.400 мс
+drainage-фазы: узлы 998.281 мс
+drainage-фазы: заливка своя 2.208 мс
+drainage-фазы: якорь 0.025 мс
+drainage-фазы: клетки 2.628 мс
+drainage-фазы: узлы 1150.276 мс
+drainage-фазы: заливка своя 1.759 мс
+drainage-фазы: узлы 362.474 мс
+drainage-фазы: заливка своя 0.998 мс
+drainage-фазы: узлы 1450.657 мс
+drainage-фазы: заливка своя 2.461 мс
+drainage-фазы: узлы 1288.175 мс
+drainage-фазы: заливка своя 2.011 мс
+drainage-фазы: заливка связанная 0.820 мс
+drainage-фазы: этап-связь 2094.129 мс
+drainage-фазы: этап-приток 0.001 мс
+drainage-фазы: климат 0.380 мс
+drainage-фазы: сток 0.425 мс
+drainage-фазы: русла 0.419 мс
+drainage-фазы: озёра 0.079 мс
+drainage-фазы: этап-сборка 1.361 мс
+{"seed":42,"mode":"scientific","version":"v1-dev-w","seconds":4.30,"plates":1,"nodes":1356,"with_levels":true,"plate_stages":[{"plate":"216878075925460450","drainage_ms":2329.30,"levels_ms":334.67}],"net_ms_p50":2664.0,"net_ms_p95":2664.0,"net_ms_max":2664.0,"exact_us_per_node":988.43,"analytic_us_per_node":217.05,"analytic_error_p95":0.000,"stored_route_error_p95":0.000,"stored_route_error_p999":0.000,"analytic_error_p999":0.000,"net_budget_ms":200.0,"work":{"routings":1,"floods":8,"route_nodes":1499,"runoffs":1,"climate_grids":1,"climate_keys":134,"handoffs":1,"masks":0},"lattices":[],"decision":"только аналитический путь, без сравнения решёток"}
+litho-core: сеть рек №1, плита 216878075925460450: 1499 узлов за 2329 мс
+```
+
