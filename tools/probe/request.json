@@ -1,6 +1,6 @@
 {
-  "name": "after-d140-r2-gate",
-  "note": "Д-140: уровень русла не берётся с берега-склона. Проверяем гейт §4 на v1-dev-r2 (те же окна, что в CI).",
+  "name": "after-d140b-gates",
+  "note": "Д-140: зеркало R2 не выше сухой S колонки. Гейт §4 на R2 (4 окна) и диагностика W.",
   "mode": "scientific",
   "version": "v1-dev-r2",
   "seeds": [],
@@ -23,6 +23,20 @@
     [
       "water-leaks",
       "--seed",
+      "42",
+      "--mode",
+      "gameplay",
+      "--version",
+      "v1-dev-w",
+      "--size",
+      "1024",
+      "--step",
+      "8",
+      "--report-only"
+    ],
+    [
+      "water-leaks",
+      "--seed",
       "7",
       "--mode",
       "gameplay",
@@ -32,6 +46,20 @@
       "1024",
       "--step",
       "8"
+    ],
+    [
+      "water-leaks",
+      "--seed",
+      "7",
+      "--mode",
+      "gameplay",
+      "--version",
+      "v1-dev-w",
+      "--size",
+      "1024",
+      "--step",
+      "8",
+      "--report-only"
     ],
     [
       "water-leaks",
@@ -49,6 +77,20 @@
     [
       "water-leaks",
       "--seed",
+      "42",
+      "--mode",
+      "scientific",
+      "--version",
+      "v1-dev-w",
+      "--size",
+      "1024",
+      "--step",
+      "8",
+      "--report-only"
+    ],
+    [
+      "water-leaks",
+      "--seed",
       "7",
       "--mode",
       "scientific",
@@ -58,6 +100,20 @@
       "1024",
       "--step",
       "8"
+    ],
+    [
+      "water-leaks",
+      "--seed",
+      "7",
+      "--mode",
+      "scientific",
+      "--version",
+      "v1-dev-w",
+      "--size",
+      "1024",
+      "--step",
+      "8",
+      "--report-only"
     ]
   ]
 }
