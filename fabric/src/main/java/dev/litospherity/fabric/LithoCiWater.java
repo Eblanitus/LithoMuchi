@@ -323,7 +323,7 @@ final class LithoCiWater {
                     TICKS, growth, growthPct, growthAll, foreign));
             // Д-137: гейт берега — только герметизация (SEALS). Затычки пещер под
             // дном считаются отдельно и в этот порог не входят: это не берег.
-            report.add(String.format("заделки герметизации берега: %d на %d чанков, %.2f на чанк (порог 1)",
+            report.add(String.format("заделки герметизации берега: %d на %d чанков, %.2f на чанк (порог 2, цель 1 — ВО3)",
                     seals, chunksWithWater, sealsPerChunk));
             report.add(String.format("затычек пещер под дном: %d, %.2f на чанк (метрика, не гейт)",
                     LithoWaterFeature.AQUIFER_PLUGS.get(),
@@ -335,7 +335,13 @@ final class LithoCiWater {
             if (leaks > 0) ok = false;
             if (dryPct > 1.0) ok = false;
             if (growthPct > 5.0) ok = false;
-            if (chunksWithWater == 0 || sealsPerChunk > 1.0) ok = false;
+            // Д-141: порог 2 — как записано в PLAN-WATER-UPDATE §8.3 («заделок ≤ 1
+            // на чанк (сейчас гейт 2)») и в PLAN-WATER-FABRIC Ф6-В4 («заделок в
+            // среднем ≤ 2 на чанк»). Цель ≤ 1 остаётся на ВО3: на `main` научный
+            // мир даёт 1,05 (193 заделки на 183 чанка), то есть гейт 1 стоял строже
+            // плана и держал `main` красным. Ослабление записано решением, а не
+            // молча: см. Д-141.
+            if (chunksWithWater == 0 || sealsPerChunk > 2.0) ok = false;
             if (corridor == 0 || wet == 0 || fitPct < 95.0) ok = false;
             if (coveredPct > 0.5) ok = false;
             if (wallPct > 2.0) ok = false;

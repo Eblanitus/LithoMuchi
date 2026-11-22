@@ -1,0 +1,63 @@
+{
+  "name": "after-d140d-gate",
+  "note": "Д-140 вариант D: вода только при вырезе >1.5 блока под зеркалом.",
+  "mode": "scientific",
+  "version": "v1-dev-r2",
+  "seeds": [],
+  "at": [],
+  "step": 0,
+  "commands": [
+    [
+      "water-leaks",
+      "--seed",
+      "42",
+      "--mode",
+      "gameplay",
+      "--version",
+      "v1-dev-r2",
+      "--size",
+      "1024",
+      "--step",
+      "8"
+    ],
+    [
+      "water-leaks",
+      "--seed",
+      "7",
+      "--mode",
+      "gameplay",
+      "--version",
+      "v1-dev-r2",
+      "--size",
+      "1024",
+      "--step",
+      "8"
+    ],
+    [
+      "water-leaks",
+      "--seed",
+      "42",
+      "--mode",
+      "scientific",
+      "--version",
+      "v1-dev-r2",
+      "--size",
+      "1024",
+      "--step",
+      "8"
+    ],
+    [
+      "water-leaks",
+      "--seed",
+      "7",
+      "--mode",
+      "scientific",
+      "--version",
+      "v1-dev-r2",
+      "--size",
+      "1024",
+      "--step",
+      "8"
+    ]
+  ]
+}
