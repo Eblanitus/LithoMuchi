@@ -3198,6 +3198,15 @@ impl Generator {
                 );
                 let micro_dy = dry.surface_y - macro_h.surface_y;
                 let cut = crate::height::with_water_w(macro_h, micro_dy, &water, &self.params);
+                let cut = crate::height::swamp_hummocks_w(
+                    cut,
+                    macro_h.surface_y,
+                    x,
+                    z,
+                    self.seed,
+                    &water,
+                    &self.params,
+                );
                 crate::height::lake_beach_w(cut, &water, climate.precip.ratio <= 1.0, &self.params)
             } else {
                 crate::height::with_water(dry, &water, &self.params)
