@@ -43,8 +43,10 @@ pub struct Stats {
     pub lakes_per_100l2: f64,
     /// Площадь воды озёр от площади суши, %.
     pub lake_area_pct: f64,
-    /// Доля площади озёр, где сухая поверхность ниже уровня («в котловине»), %.
+    /// Доля площади всех озёр (включая точечные ВО4), где сухая поверхность ниже уровня, %.
     pub lake_fit_pct: f64,
+    /// ВО3: доля площади сетевых (котловинных) озёр, где сухая поверхность ниже уровня, %.
+    pub basin_lake_fit_pct: f64,
     /// Озёр с уровнем ≥ 80.
     pub lakes_ge_80: u64,
     /// Доля колонок суши в 2 блоках от воды со стеной `surface − level ≥ 4`.
@@ -137,6 +139,8 @@ impl Window {
         let step_area = (self.step * self.step) as f64;
         let mut lake_area = 0.0f64;
         let mut lake_fit_area = 0.0f64;
+        let mut basin_lake_area = 0.0f64;
+        let mut basin_lake_fit_area = 0.0f64;
         let mut zone_water = [0_u64; MORPHO_ZONES];
         let mut flooded = 0;
         let mut gorge: Vec<f64> = Vec::new();
@@ -178,6 +182,8 @@ impl Window {
                 }
                 let mut count = 0u64;
                 let mut fit_cells = 0u64;
+                let mut basin_cells = 0u64;
+                let mut basin_fit_cells = 0u64;
                 let mut level_max = i32::MIN;
                 let mut body = Vec::new();
                 let (mut sum_i, mut sum_j) = (0.0, 0.0);
@@ -186,8 +192,15 @@ impl Window {
                 while let Some((ci, cj)) = queue.pop_front() {
                     let cell = self.at(ci, cj);
                     count += 1;
-                    if (cell.dry as f64) < cell.level as f64 {
+                    let in_basin = (cell.dry as f64) < cell.level as f64;
+                    if in_basin {
                         fit_cells += 1;
+                    }
+                    if !cell.body.is_point_lake() {
+                        basin_cells += 1;
+                        if in_basin {
+                            basin_fit_cells += 1;
+                        }
                     }
                     level_max = level_max.max(cell.level);
                     body.push((ci, cj));
@@ -218,6 +231,8 @@ impl Window {
                 out.lakes += 1;
                 lake_area += area;
                 lake_fit_area += fit_cells as f64 * step_area;
+                basin_lake_area += basin_cells as f64 * step_area;
+                basin_lake_fit_area += basin_fit_cells as f64 * step_area;
                 if level_max >= 80 {
                     out.lakes_ge_80 += 1;
                 }
@@ -312,6 +327,11 @@ impl Window {
         };
         out.lake_fit_pct = if lake_area > 0.0 {
             100.0 * lake_fit_area / lake_area
+        } else {
+            0.0
+        };
+        out.basin_lake_fit_pct = if basin_lake_area > 0.0 {
+            100.0 * basin_lake_fit_area / basin_lake_area
         } else {
             0.0
         };
