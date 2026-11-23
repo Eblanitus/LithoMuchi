@@ -1021,7 +1021,10 @@ fn cmd_s0_node_cost(args: &[String]) -> Result<(), String> {
         fields.push(format!("\"stored_route_error_p95\":{route_p95:.3}"));
         fields.push(format!("\"stored_route_error_p999\":{route_p999:.3}"));
         fields.push(format!("\"analytic_error_p999\":{analytic_p999:.3}"));
-        fields.push("\"net_budget_ms\":200.0".to_string());
+        fields.push(format!(
+            "\"net_budget_ms\":{:.1}",
+            s0_node_cost::NET_BUDGET_MS
+        ));
         fields.push(format!(
             "\"work\":{{\"routings\":{},\"floods\":{},\"route_nodes\":{},\"runoffs\":{},\"climate_grids\":{},\"climate_keys\":{},\"handoffs\":{},\"masks\":{}}}",
             stats.routings,

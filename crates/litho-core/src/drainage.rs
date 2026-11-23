@@ -312,6 +312,172 @@ impl PlateTopo {
         })
     }
 
+    /// Д-143 (ВО3-скорость): полоса вдоль общей границы с соседней плитой
+    /// вместо полной топографии соседа. Возвращает отсортированный список
+    /// `(клетка, escape_km)` для `seed_cells` — клеток кольца, принадлежащих
+    /// `plate`. Каждый путь внутри полосы допустим и в целой плите, поэтому
+    /// `strip_escape_km >= full_escape_km >= final_filled_km`: циклы между
+    /// плитами по-прежнему невозможны, а ответ детерминирован и не зависит от
+    /// кэша.
+    pub fn build_border_strip(
+        plate: &Plate,
+        seed_cells: &[Cell],
+        max_depth: usize,
+        seed: u64,
+        params: &Params,
+        input: &(impl Fn(Vec2, Option<&PlateSample>) -> DrainageInput + Sync),
+        threads: usize,
+    ) -> Result<Vec<(Cell, f64)>, RiverNetError> {
+        if !params.version.is_water_relief_dev() {
+            return Err(RiverNetError::UnsupportedVersion(params.version));
+        }
+        validate_params(params)?;
+        if seed_cells.is_empty() {
+            return Ok(Vec::new());
+        }
+        let p = &params.drainage;
+        let query = |cell: Cell| plate_query(jittered_point(cell, seed, params), seed, params);
+        let mut seen = HashSet::<Cell>::new();
+        let mut cells: Vec<(Cell, Option<PlateSample>)> = Vec::new();
+        let mut front: Vec<Cell> = Vec::new();
+        for &cell in seed_cells {
+            if seen.insert(cell) {
+                front.push(cell);
+            }
+        }
+        let initial_samples: Vec<Option<PlateSample>> =
+            front.iter().map(|&cell| query(cell)).collect();
+        let mut next_front = Vec::new();
+        for (&cell, sample) in front.iter().zip(initial_samples) {
+            if sample.is_some_and(|s| s.a.id == plate.id) {
+                next_front.push(cell);
+            }
+            cells.push((cell, sample));
+        }
+        front = next_front;
+        let mut wave = Vec::new();
+        for depth in 0..=max_depth {
+            if front.is_empty() {
+                break;
+            }
+            wave.clear();
+            for &cell in &front {
+                for (di, dj) in [(1, 0), (-1, 0), (0, 1), (0, -1)] {
+                    if let Some(next) = neighbor_cell(cell, di, dj) {
+                        if seen.insert(next) {
+                            wave.push(next);
+                        }
+                    }
+                }
+            }
+            if wave.is_empty() {
+                break;
+            }
+            let workers = threads.clamp(1, (wave.len() / CELLS_PARALLEL_MIN_CHUNK).max(1));
+            let samples: Vec<Option<PlateSample>> = if workers >= 2 {
+                let size = wave.len().div_ceil(workers);
+                std::thread::scope(|scope| {
+                    let handles: Vec<_> = wave
+                        .chunks(size)
+                        .map(|chunk| {
+                            scope
+                                .spawn(|| chunk.iter().map(|&cell| query(cell)).collect::<Vec<_>>())
+                        })
+                        .collect();
+                    handles
+                        .into_iter()
+                        .flat_map(|h| h.join().expect("поток полосы не паникует"))
+                        .collect()
+                })
+            } else {
+                wave.iter().map(|&cell| query(cell)).collect()
+            };
+            front.clear();
+            for (&cell, sample) in wave.iter().zip(samples) {
+                if depth < max_depth && sample.is_some_and(|s| s.a.id == plate.id) {
+                    front.push(cell);
+                }
+                cells.push((cell, sample));
+            }
+        }
+        cells.sort_unstable_by_key(|(cell, _)| *cell);
+        let sample_chunk = |chunk: &[(Cell, Option<PlateSample>)]| -> Vec<DrainageInput> {
+            chunk
+                .iter()
+                .map(|(cell, sample)| {
+                    let point = jittered_point(*cell, seed, params);
+                    input(point, sample.as_ref())
+                })
+                .collect()
+        };
+        let workers = threads.clamp(1, (cells.len() / TOPO_PARALLEL_MIN_CHUNK).max(1));
+        let inputs: Vec<DrainageInput> = if workers >= 2 {
+            let size = cells.len().div_ceil(workers);
+            std::thread::scope(|scope| {
+                let handles: Vec<_> = cells
+                    .chunks(size)
+                    .map(|chunk| scope.spawn(|| sample_chunk(chunk)))
+                    .collect();
+                handles
+                    .into_iter()
+                    .flat_map(|h| h.join().expect("поток высот полосы не паникует"))
+                    .collect()
+            })
+        } else {
+            sample_chunk(&cells)
+        };
+        let mut cell_list = Vec::with_capacity(cells.len());
+        let mut route = Vec::with_capacity(cells.len());
+        let mut passable = Vec::with_capacity(cells.len());
+        let mut seeds = Vec::new();
+        let mut in_plate_flags = Vec::with_capacity(cells.len());
+        let mut is_outlet_flags = Vec::with_capacity(cells.len());
+        for (k, ((cell, sample), inp)) in cells.into_iter().zip(inputs).enumerate() {
+            if !inp.route_km.is_finite() || inp.zone >= crate::params::MORPHO_ZONES {
+                return Err(RiverNetError::InvalidInput { cell });
+            }
+            if inp.outlet == DrainageOutlet::Handoff {
+                return Err(RiverNetError::InvalidInput { cell });
+            }
+            let in_plate = sample.is_some_and(|s| s.a.id == plate.id);
+            let is_out = inp.outlet.is_outlet();
+            cell_list.push(cell);
+            route.push(inp.route_km);
+            passable.push(in_plate || is_out);
+            in_plate_flags.push(in_plate);
+            is_outlet_flags.push(is_out);
+            if is_out {
+                seeds.push((k, inp.route_km));
+            }
+        }
+        if seeds.is_empty() {
+            return Ok(Vec::new());
+        }
+        let neighbor_lists = cell_neighbors(&cell_list);
+        let flood = priority_flood(
+            &route,
+            &seeds,
+            &passable,
+            &neighbor_lists,
+            p.fill_epsilon_km,
+        );
+        let mut out = Vec::new();
+        for &seed_cell in seed_cells {
+            if let Ok(k) = cell_list.binary_search(&seed_cell) {
+                if in_plate_flags[k]
+                    && !is_outlet_flags[k]
+                    && flood.visited[k]
+                    && flood.level[k].is_finite()
+                {
+                    out.push((seed_cell, flood.level[k]));
+                }
+            }
+        }
+        out.sort_unstable_by_key(|(c, _)| *c);
+        out.dedup_by_key(|(c, _)| *c);
+        Ok(out)
+    }
+
     pub const fn plate_id(&self) -> u64 {
         self.plate.id
     }
@@ -1899,5 +2065,56 @@ mod tests {
         assert_eq!(cache.len(), 4);
         let again = cache.get_or_build(0, || Ok(tiny_net())).unwrap();
         assert!(Arc::ptr_eq(&first.unwrap(), &again));
+    }
+
+    #[test]
+    fn border_strip_is_upper_bound_on_full_escape_and_deterministic() {
+        use super::*;
+        use crate::Mode;
+        let params = Params::defaults(GenVersion::V1DevW, Mode::Gameplay);
+        let seed = 42u64;
+        let sample = plate_query(Vec2::new(0.0, 0.0), seed, &params).expect("плита у начала");
+        let plate = sample.a;
+        let input = |point: Vec2, s: Option<&PlateSample>| -> DrainageInput {
+            let e_km = s.map_or(0.0, |ps| {
+                crate::crust::crust_from_sample(point, ps, seed, &params).e_km
+            });
+            DrainageInput {
+                route_km: e_km,
+                zone: 0,
+                lake_signals: Default::default(),
+                outlet: if e_km < 0.0 {
+                    DrainageOutlet::Sea
+                } else {
+                    DrainageOutlet::None
+                },
+            }
+        };
+        let own = PlateTopo::build(&plate, seed, &params, &input, 1).expect("своя топография");
+        let neighbor = own.neighbors().first().expect("у плиты есть сосед");
+        let seeds: Vec<Cell> = own
+            .nodes()
+            .iter()
+            .filter(|n| !n.in_plate && !n.outlet.is_outlet() && n.owner == Some(neighbor.id))
+            .map(|n| n.cell)
+            .collect();
+        assert!(!seeds.is_empty());
+        let full = PlateTopo::build(neighbor, seed, &params, &input, 1).expect("полная соседа");
+        let strip1 = PlateTopo::build_border_strip(neighbor, &seeds, 6, seed, &params, &input, 1)
+            .expect("полоса 1 поток");
+        let mut rev = seeds.clone();
+        rev.reverse();
+        let strip4 = PlateTopo::build_border_strip(neighbor, &rev, 6, seed, &params, &input, 4)
+            .expect("полоса 4 потока");
+        assert_eq!(strip1, strip4, "полоса должна быть детерминирована");
+        for (cell, strip_km) in &strip1 {
+            let full_km = full
+                .escape_level_km(*cell)
+                .expect("если есть выход в полосе, он есть и в целой плите");
+            assert!(
+                *strip_km + 1e-12 >= full_km,
+                "полоса не должна занижать escape_km: {strip_km} < {full_km}"
+            );
+        }
     }
 }

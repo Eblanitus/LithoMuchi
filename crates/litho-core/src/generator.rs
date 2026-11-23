@@ -146,6 +146,8 @@ fn log_field_error_with(counter: &AtomicU64, message: impl FnOnce() -> String) {
 /// четырёхсот; ёмкость на ответ не влияет.
 const RUNOFF_CLIMATE_CACHE_CAPACITY: usize = 65536;
 type RunoffClimateCache = ShardedCache<(u64, u64), Option<crate::runoff::RunoffClimate>>;
+type NeighborStrip = (u64, Vec<((i64, i64), f64)>);
+type NeighborStrips = Vec<NeighborStrip>;
 /// Сколько топографий соседних плит строится одновременно.
 const TOPO_PREFETCH_THREADS: usize = 8;
 
@@ -372,6 +374,8 @@ pub struct Generator {
     drainage_topo: Arc<PlateCache<PlateTopo>>,
     /// Шаг 2 плана (T113): вторая фаза — топография, связанная с соседями.
     drainage_routing: Arc<PlateCache<PlateRouting>>,
+    /// Д-143 (ВО3-скорость): полосы соседей вдоль общей границы для W.
+    drainage_strips: Arc<PlateCache<NeighborStrips>>,
     /// Климат в узлах глобальной решётки стока. Чистая функция точки: приток
     /// от соседа читает те же узлы, что и его собственная сеть.
     runoff_climate: Arc<RunoffClimateCache>,
@@ -776,6 +780,7 @@ impl Generator {
                 shards,
                 crate::drainage::NET_CACHE_CAPACITY,
             )),
+            drainage_strips: Arc::new(PlateCache::new(shards, crate::drainage::NET_CACHE_CAPACITY)),
             w_route: Arc::new(ShardedCache::new(shards, 32768)),
             runoff_climate: Arc::new(ShardedCache::new(shards, RUNOFF_CLIMATE_CACHE_CAPACITY)),
             net_owners: Arc::new(crate::cache::ShardedCache::new(
@@ -1291,6 +1296,121 @@ impl Generator {
             .collect()
     }
 
+    /// Д-143 (ВО3-скорость): уровень ухода воды для клеток кольца `topo` по
+    /// полосе шириной `NEIGHBOR_STRIP_DEPTH` клеток вдоль общей границы каждого
+    /// соседа (вместо сборки полной `PlateTopo` соседа).
+    fn drainage_neighbor_strips(
+        &self,
+        topo: &PlateTopo,
+    ) -> Result<Arc<NeighborStrips>, RiverNetError> {
+        self.drainage_strips.get_or_build(topo.plate_id(), || {
+            const NEIGHBOR_STRIP_DEPTH: usize = 6;
+            let neighbors = topo.neighbors();
+            if neighbors.is_empty() {
+                return Ok(Vec::new());
+            }
+            let mut by_owner: Vec<(&Plate, Vec<(i64, i64)>)> =
+                neighbors.iter().map(|n| (n, Vec::new())).collect();
+            for node in topo.nodes() {
+                if node.in_plate || node.outlet.is_outlet() {
+                    continue;
+                }
+                let Some(owner) = node.owner else {
+                    continue;
+                };
+                if let Ok(k) = by_owner.binary_search_by_key(&owner, |(p, _)| p.id) {
+                    by_owner[k].1.push(node.cell);
+                }
+            }
+            let input_fn = |point: Vec2, sample: Option<&PlateSample>| -> DrainageInput {
+                self.w_route
+                    .get_or_insert((point.x.to_bits(), point.z.to_bits()), || {
+                        let invalid = DrainageInput {
+                            route_km: f64::NAN,
+                            outlet: DrainageOutlet::None,
+                            zone: 0,
+                            lake_signals: Default::default(),
+                        };
+                        let Some(sample) = sample else {
+                            return invalid;
+                        };
+                        let crust = crust_from_sample(point, sample, self.seed, &self.params);
+                        let blocks = point
+                            .sub(self.spawn_shift)
+                            .scale(self.params.block.l_blocks);
+                        let Some(probe) =
+                            self.w_probe_known(blocks, sample, &crust, ProbeClimate::HeightOnly)
+                        else {
+                            return invalid;
+                        };
+                        let tie =
+                            self.params.water.route_tau_blocks_per_km * crust.e_km.clamp(0.0, 0.8);
+                        DrainageInput {
+                            route_km: (probe.macro_y + tie - crate::height::SEA_LEVEL)
+                                / self.params.height.water_km_to_blocks,
+                            outlet: if crust.e_km < 0.0 {
+                                DrainageOutlet::Sea
+                            } else {
+                                DrainageOutlet::None
+                            },
+                            zone: probe.zone,
+                            lake_signals: probe.lake_signals,
+                        }
+                    })
+            };
+            let workers = worker_threads();
+            let threads = workers.min(TOPO_PREFETCH_THREADS).min(by_owner.len());
+            let inner = (workers / threads.max(1)).max(1);
+            let results: Vec<Result<NeighborStrip, RiverNetError>> = if threads >= 2 {
+                std::thread::scope(|scope| {
+                    let handles: Vec<_> = by_owner
+                        .iter()
+                        .map(|(neighbor, seeds)| {
+                            scope.spawn(|| {
+                                let escapes = PlateTopo::build_border_strip(
+                                    neighbor,
+                                    seeds,
+                                    NEIGHBOR_STRIP_DEPTH,
+                                    self.seed,
+                                    &self.params,
+                                    &input_fn,
+                                    inner,
+                                )?;
+                                Ok((neighbor.id, escapes))
+                            })
+                        })
+                        .collect();
+                    handles
+                        .into_iter()
+                        .map(|h| h.join().expect("поток полосы соседа не паникует"))
+                        .collect()
+                })
+            } else {
+                by_owner
+                    .iter()
+                    .map(|(neighbor, seeds)| {
+                        let escapes = PlateTopo::build_border_strip(
+                            neighbor,
+                            seeds,
+                            NEIGHBOR_STRIP_DEPTH,
+                            self.seed,
+                            &self.params,
+                            &input_fn,
+                            inner,
+                        )?;
+                        Ok((neighbor.id, escapes))
+                    })
+                    .collect()
+            };
+            let mut out = Vec::with_capacity(results.len());
+            for res in results {
+                out.push(res?);
+            }
+            out.sort_unstable_by_key(|(id, _)| *id);
+            Ok(out)
+        })
+    }
+
     /// Вторая фаза: топография плиты, связанная с уровнями соседей.
     pub fn drainage_routing(&self, plate: &Plate) -> Result<Arc<PlateRouting>, RiverNetError> {
         if !self.params.version.is_water_relief_dev() {
@@ -1298,11 +1418,21 @@ impl Generator {
         }
         self.drainage_routing.get_or_build(plate.id, || {
             let topo = self.drainage_topo(plate)?;
-            let around = self.drainage_topos(topo.neighbors())?;
-            PlateRouting::build(&topo, &self.params, &|owner, cell| {
-                let k = around.binary_search_by_key(&owner, |t| t.plate_id()).ok()?;
-                around[k].escape_level_km(cell)
-            })
+            if self.params.version.is_water_update() {
+                let strips = self.drainage_neighbor_strips(&topo)?;
+                PlateRouting::build(&topo, &self.params, &|owner, cell| {
+                    let k = strips.binary_search_by_key(&owner, |(id, _)| *id).ok()?;
+                    let cells = &strips[k].1;
+                    let idx = cells.binary_search_by_key(&cell, |(c, _)| *c).ok()?;
+                    Some(cells[idx].1)
+                })
+            } else {
+                let around = self.drainage_topos(topo.neighbors())?;
+                PlateRouting::build(&topo, &self.params, &|owner, cell| {
+                    let k = around.binary_search_by_key(&owner, |t| t.plate_id()).ok()?;
+                    around[k].escape_level_km(cell)
+                })
+            }
         })
     }
 
@@ -1352,6 +1482,56 @@ impl Generator {
             routing.neighbors().to_vec()
         } else {
             own.neighbors_touching(&is_wanted)
+        };
+        // Д-143: в W проверяем по полосе соседа, может ли он вообще передать
+        // воду в `own`: так как `full_escape_km <= strip_escape_km`, если на
+        // всех касающихся клетках полосы уровень не выше нашего `escape_km`,
+        // сосед точно ничего не передаёт и полную `PlateTopo` строить не нужно.
+        let candidates = if self.params.version.is_water_update() && !candidates.is_empty() {
+            let strips = self.drainage_neighbor_strips(&own)?;
+            candidates
+                .into_iter()
+                .filter(|neighbor| {
+                    let Ok(k) = strips.binary_search_by_key(&neighbor.id, |(id, _)| *id) else {
+                        return true;
+                    };
+                    let cells = &strips[k].1;
+                    // Если у соседа в полосе вообще нет выхода к морю, оставляем
+                    // консервативно (его полный escape_km может быть конечным).
+                    if cells.is_empty() {
+                        return true;
+                    }
+                    // Проверяем, есть ли хоть одна клетка полосы с escape > own_level
+                    // рядом с нужной клеткой `own`.
+                    own.nodes().iter().any(|node| {
+                        if !node.in_plate || node.outlet.is_outlet() || !is_wanted(node.cell) {
+                            return false;
+                        }
+                        let Some(own_level) = own.escape_level_km(node.cell) else {
+                            return false;
+                        };
+                        (-1..=1).any(|di| {
+                            (-1..=1).any(|dj| {
+                                if di == 0 && dj == 0 {
+                                    return false;
+                                }
+                                let Some((nx, nz)) =
+                                    node.cell.0.checked_add(di).zip(node.cell.1.checked_add(dj))
+                                else {
+                                    return false;
+                                };
+                                let Ok(idx) = cells.binary_search_by_key(&(nx, nz), |(c, _)| *c)
+                                else {
+                                    return false;
+                                };
+                                cells[idx].1 > own_level
+                            })
+                        })
+                    })
+                })
+                .collect()
+        } else {
+            candidates
         };
         let around = self.drainage_topos(&candidates)?;
         let sources: Vec<(&Plate, &Arc<PlateTopo>)> = candidates
