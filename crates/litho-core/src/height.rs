@@ -491,11 +491,14 @@ pub fn with_water_w(
             let shape = (1.0 - (2.0 * d_abs / w_blocks).powi(2)).max(0.35);
             level - depth * shape
         } else if d_abs <= bank_edge {
-            // Береговая полоса 2 блока: вровень; у равнинной реки при w ≥ 8 —
-            // прирусловый вал +1, если `S0` выше.
-            let mut y = level;
+            // Береговая полоса 2 блока: +1 над зеркалом (как пойма), чтобы на
+            // шаге уровня вниз на 1 блок берег нижней колонки не оказывался ниже
+            // зеркала верхней (п. 2 §4); у равнинной реки при w ≥ 8 — вал +1,
+            // если `S0` выше. `min(S0, v_y)` ниже не даёт береговой полосе
+            // поднимать естественную низкую сушу.
+            let mut y = level + 1.0;
             let plain = hit.valley_class == crate::water_profile::ValleyClass::Plain;
-            if plain && w_blocks >= 8.0 && s0_full > level + 1.0 {
+            if plain && w_blocks >= 8.0 && s0_full > level + 2.0 {
                 y += 1.0;
             }
             y
@@ -637,9 +640,9 @@ pub fn with_water_w(
                 };
             let dz = mirror - land_y;
             let bed = if dz <= 1.0 {
-                mirror - 1.0
+                (mirror - 1.0).min(s0_full)
             } else {
-                (land_y - k * dz).max(mirror - 1.0 - max_depth)
+                (land_y - k * dz).max(mirror - 1.0 - max_depth).min(s0_full)
             };
             // A crossing river can already have cut a deeper channel.
             let bed = if cut > 0.0 { bed.min(surface) } else { bed };
@@ -838,6 +841,31 @@ mod tests {
         ));
         let cut = with_water_w(s0(90.0), 0.0, &hydro, &p);
         assert_eq!(cut.surface_y, 70.0 - 2.0 * 0.75, "(2d/w)² = 0,25");
+    }
+
+    #[test]
+    fn w_river_bank_strip_stays_one_block_above_level_to_prevent_step_spills() {
+        let p = params_w(Mode::Gameplay);
+        let mut hydro = HydrologySample::default();
+        // Река w=4 (half=2, bank_edge=4): d=2.5 — береговая полоса.
+        // При естественной суше S0=70 берег режется до level+1=68, а не 67,
+        // чтобы соседняя вода на ступень выше (68) не проливалась на берег (п. 2 §4).
+        hydro.channels.nearest = Some(w_hit(
+            4.0,
+            2.5,
+            67.0,
+            crate::water_profile::ValleyClass::Upland,
+            0.0,
+        ));
+        let cut = with_water_w(s0(70.0), 0.0, &hydro, &p);
+        assert_eq!(cut.surface_y, 68.0);
+        assert_eq!(cut.water_strength, 0.0);
+        // Нехватку в 1 блок добивает raise_bank (до 67), а глубокую низину
+        // (> 2 блоков ниже зеркала) береговая полоса не поднимает.
+        let near_low = with_water_w(s0(66.0), 0.0, &hydro, &p);
+        assert_eq!(near_low.surface_y, 67.0);
+        let far_low = with_water_w(s0(64.0), 0.0, &hydro, &p);
+        assert_eq!(far_low.surface_y, 64.0);
     }
 
     #[test]
@@ -1134,7 +1162,12 @@ mod tests {
         assert_eq!(at(91.0).water_strength, 0.0);
         assert_eq!(at(89.8).bed_y, 89.0);
         assert_eq!(at(88.0).bed_y, 87.0);
-        assert_eq!(at(60.0).bed_y, 81.0);
+        // Дополнительный вырез ограничен глубиной D_max (90 − 1 − 8 = 81)...
+        assert_eq!(at(82.0).bed_y, 81.0);
+        // ...но дно озера никогда не засыпает естественную котловину выше S0 (§4 п. 5).
+        assert_eq!(at(60.0).bed_y, 64.0);
+        let neg_micro = with_water_w(base_at(89.5), -4.0, &water, &p);
+        assert_eq!(neg_micro.bed_y, 85.5);
     }
 
     #[test]

@@ -195,7 +195,16 @@ fn river_axis(generator: &Generator, column: &WaterColumn, x: i64, z: i64, out: 
     let Ok(hydrology) = generator.hydrology_at(xf, zf) else {
         return;
     };
-    if hydrology.channels.core <= RIVER_AXIS_CORE {
+    let on_axis = if generator.params().version.is_water_update() {
+        let l = generator.params().block.l_blocks;
+        hydrology.channels.nearest.is_some_and(|hit| {
+            let half = 0.5 * (hit.core_l * l).max(1.0);
+            hit.distance_l * l <= half
+        })
+    } else {
+        hydrology.channels.core > RIVER_AXIS_CORE
+    };
+    if !on_axis {
         return;
     }
     let Ok(Some(dry)) = generator.dry_surface_at(xf, zf) else {
