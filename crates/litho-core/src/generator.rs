@@ -649,11 +649,42 @@ impl Generator {
                 base,
             )
         };
-        let shore_dist = self.shore_distance_blocks(x, z, crust_c);
+        let thr = self.params.climate.ocean_c_threshold;
+        let is_ocean_node = kind == ProbeClimate::HeightOnly && crust_c <= thr;
+        let shore_dist = if is_ocean_node {
+            0.0
+        } else if kind == ProbeClimate::HeightOnly && crust_c > thr + 0.30 {
+            let reach = self
+                .params
+                .height
+                .shore_width_blocks
+                .max(self.params.relief.land_fade_blocks);
+            if self.shore_c_at(x - reach, z - reach) >= thr
+                && self.shore_c_at(x + reach, z - reach) >= thr
+                && self.shore_c_at(x - reach, z + reach) >= thr
+                && self.shore_c_at(x + reach, z + reach) >= thr
+                && self.shore_c_at(x - reach, z) >= thr
+                && self.shore_c_at(x + reach, z) >= thr
+                && self.shore_c_at(x, z - reach) >= thr
+                && self.shore_c_at(x, z + reach) >= thr
+            {
+                reach
+            } else {
+                self.shore_distance_blocks(x, z, crust_c)
+            }
+        } else {
+            self.shore_distance_blocks(x, z, crust_c)
+        };
         let shore_fade = self.shore_fade_from(shore_dist);
         let relief_sample =
             relief::sample_near_shore(plate, crust, 0.0, shore_fade, self.seed, &self.params);
-        let morpho = self.morpho_weights(x, z)?;
+        // На океанских узлах (c <= порога) берег и суша нулевые: морфовеса не влияют на S0_macro,
+        // поэтому пропускаем дорогие лучи влаги `morpho_weights`.
+        let morpho = if is_ocean_node {
+            MorphoWeights::default()
+        } else {
+            self.morpho_weights(x, z)?
+        };
         let (base, pv_relief) = crate::relief_fields::apply_with_pv(
             base,
             &climate,
@@ -2402,17 +2433,18 @@ impl Generator {
         // п. 1–2: берег `B`, проба долины `Gp` и входы классов в пробах оси.
         // Между пробами уровень держится прежним, поэтому ступень не больше
         // блока на блок.
-        let mut banks: Vec<Option<f64>> = vec![None; n];
-        let mut targets: Vec<Option<f64>> = vec![None; n];
-        let mut gp: Vec<Option<f64>> = vec![None; n];
-        let mut inputs: Vec<Option<crate::water_profile::ValleyClassInput>> = vec![None; n];
+        let mut sampled_indices = Vec::with_capacity(n);
         let mut last_sample = f64::NEG_INFINITY;
-        for (index, &(point, core_l, normal, interior_probe)) in axis.iter().enumerate() {
+        for (index, &(_, _, _, interior_probe)) in axis.iter().enumerate() {
             let distance = cum_blocks[index];
             if !interior_probe && distance - last_sample < step && index != n - 1 {
                 continue;
             }
             last_sample = distance;
+            sampled_indices.push(index);
+        }
+        let sample_station = |index: usize| {
+            let (point, core_l, normal, _) = axis[index];
             let edge_l = 0.5 * core_l + water.bank_probe_blocks / l;
             let mut bank: Option<f64> = None;
             let mut center: Option<WProbe> = None;
@@ -2442,6 +2474,37 @@ impl Generator {
                     gp_max = Some(gp_max.map_or(probe.macro_y, |old: f64| old.max(probe.macro_y)));
                 }
             }
+            (index, bank, gp_max, center)
+        };
+        let threads = worker_threads().min(sampled_indices.len() / 4);
+        let station_results = if threads >= 2 {
+            let chunk_size = sampled_indices.len().div_ceil(threads);
+            std::thread::scope(|scope| {
+                let handles: Vec<_> = sampled_indices
+                    .chunks(chunk_size)
+                    .map(|chunk| {
+                        scope.spawn(move || {
+                            chunk
+                                .iter()
+                                .map(|&idx| sample_station(idx))
+                                .collect::<Vec<_>>()
+                        })
+                    })
+                    .collect();
+                let mut all = Vec::with_capacity(sampled_indices.len());
+                for handle in handles {
+                    all.extend(handle.join().expect("поток профиля W не паникует"));
+                }
+                all
+            })
+        } else {
+            sampled_indices.iter().map(|&idx| sample_station(idx)).collect()
+        };
+        let mut banks: Vec<Option<f64>> = vec![None; n];
+        let mut targets: Vec<Option<f64>> = vec![None; n];
+        let mut gp: Vec<Option<f64>> = vec![None; n];
+        let mut inputs: Vec<Option<crate::water_profile::ValleyClassInput>> = vec![None; n];
+        for (index, bank, gp_max, center) in station_results {
             gp[index] = gp_max;
             if let Some(bank) = bank {
                 banks[index] = Some(bank);
@@ -3265,7 +3328,6 @@ impl Generator {
             let (x0, z0) = (bx as f64 * SHORE_BLOCK, bz as f64 * SHORE_BLOCK);
             let ocean = |x: f64, z: f64| self.shore_c_at(x, z) < threshold;
             let probes = [
-                (0.0, 0.0),
                 (SHORE_BLOCK, 0.0),
                 (0.0, SHORE_BLOCK),
                 (SHORE_BLOCK, SHORE_BLOCK),
@@ -3278,24 +3340,25 @@ impl Generator {
             {
                 return Arc::new(Vec::new());
             }
-            let n = (SHORE_BLOCK / SHORE_CELL) as i64;
-            let centre = |i: i64, j: i64| {
-                (
-                    x0 + (i as f64 + 0.5) * SHORE_CELL,
-                    z0 + (j as f64 + 0.5) * SHORE_CELL,
-                )
-            };
+            let n = (SHORE_BLOCK / SHORE_CELL) as usize;
+            let side = n + 2;
+            let mut grid = vec![false; side * side];
+            for gj in 0..side {
+                let pz = z0 + (gj as f64 - 0.5) * SHORE_CELL;
+                for gi in 0..side {
+                    let px = x0 + (gi as f64 - 0.5) * SHORE_CELL;
+                    grid[gj * side + gi] = ocean(px, pz);
+                }
+            }
             let mut cells = Vec::new();
             for j in 0..n {
                 for i in 0..n {
-                    let (px, pz) = centre(i, j);
-                    if !ocean(px, pz) {
+                    if !grid[(j + 1) * side + (i + 1)] {
                         continue;
                     }
-                    let edge = (-1..=1).any(|dj| {
-                        (-1..=1).any(|di| {
-                            let (qx, qz) = centre(i + di, j + dj);
-                            (di != 0 || dj != 0) && !ocean(qx, qz)
+                    let edge = (0..=2).any(|dj| {
+                        (0..=2).any(|di| {
+                            (di != 1 || dj != 1) && !grid[(j + dj) * side + (i + di)]
                         })
                     });
                     if edge {
