@@ -1186,6 +1186,7 @@ fn cmd_water_stats(args: &[String]) -> Result<(), String> {
         fields.push(format!("\"lake_types\":{{{types}}}"));
         fields.push(format!("\"lake_area_pct\":{:.3}", stats.lake_area_pct));
         fields.push(format!("\"lake_fit_pct\":{:.2}", stats.lake_fit_pct));
+        fields.push(format!("\"basin_lake_fit_pct\":{:.2}", stats.basin_lake_fit_pct));
         fields.push(format!("\"lakes_ge_80\":{}", stats.lakes_ge_80));
         fields.push(format!("\"walls_pct\":{:.2}", stats.walls_pct));
         fields.push(format!(
@@ -1210,8 +1211,8 @@ fn cmd_water_stats(args: &[String]) -> Result<(), String> {
         stats.gorge_p50, stats.gorge_p90, stats.gorge_p99
     );
     println!(
-        "  озёра: {} водоёмов, {:.2} % площади суши, в котловине {:.2} % площади, ≥ 80 блоков — {}",
-        stats.lakes, stats.lake_area_pct, stats.lake_fit_pct, stats.lakes_ge_80
+        "  озёра: {} водоёмов, {:.2} % площади суши, в котловине {:.2} % (сетевых {:.2} %), ≥ 80 блоков — {}",
+        stats.lakes, stats.lake_area_pct, stats.lake_fit_pct, stats.basin_lake_fit_pct, stats.lakes_ge_80
     );
     println!(
         "  на 100 L² суши: {:.2} озера; стены у воды: {:.2} % колонок берега",

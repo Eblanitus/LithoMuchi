@@ -256,7 +256,7 @@ mod tests {
     #[test]
     fn oxbow_reaches_chunk_query_with_clay_and_a_distinct_abi_type() {
         let g = Generator::new(42, Mode::Gameplay, GenVersion::V1DevW).unwrap();
-        let col = g.water_column(103., -1437.);
+        let col = g.water_column(99., -1440.);
         assert_eq!(
             (col.body, col.level, col.bed_mat),
             (WaterBody::Oxbow, 70, BedMaterial::Clay)

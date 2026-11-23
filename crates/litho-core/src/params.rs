@@ -1887,6 +1887,21 @@ impl Params {
             // Тесты T113/T115 ищут отрезки и дельты по сети, а не по точкам.
             p.channels.meander_plain = 2.2;
             p.channels.meander_mountain = 0.5;
+            // ВО3-3 (§6.2, §9): в v1-dev-w уклон считается по видимому рельефу S0
+            // (`(S0 − 63) / water_km_to_blocks`), который круче гладкой коры `e_km`.
+            // Пороги равнинных меандров и дельт настроены под S0 только для W;
+            // замороженные версии v0, v1, v1-dev и v1-dev-r2 не меняются.
+            if version.is_water_update() {
+                p.channels.meander_plain = 2.8;
+                p.channels.plain_slope_max = match mode {
+                    Mode::Gameplay => 0.08,
+                    Mode::Scientific => 0.18,
+                };
+                p.channels.delta_slope_max = match mode {
+                    Mode::Gameplay => 0.025,
+                    Mode::Scientific => 0.06,
+                };
+            }
             // Д-057: русла. Переход C/E/W у русла 56 блоков в обоих режимах
             // (порог шва 0.02 на блок держит |W| до 2/3), вода — только в
             // узком берегу. Порог Q выше: сеть реже, ширина растёт к устью.
