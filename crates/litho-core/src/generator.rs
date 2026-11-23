@@ -4203,7 +4203,18 @@ impl Generator {
         let dry = full.climate.precip.ratio >= 2.0;
         let cold = full.climate.temperature.t_bio < 0.0;
         let (bed, shore) = match kind {
-            SurfaceKind::Swamp => (BedMaterial::Mud, BedMaterial::Mud),
+            // ВО7-2 (§7.4–7.5): дно болота — грязь; берег/кочки в бореальной и
+            // холодной зоне — мох, во влажной умеренной/тропической — глина.
+            SurfaceKind::Swamp => {
+                let shore = if full.climate.temperature.t_bio < 6.0 {
+                    BedMaterial::Moss
+                } else if full.climate.precip.ratio < 1.0 {
+                    BedMaterial::Clay
+                } else {
+                    BedMaterial::Mud
+                };
+                (BedMaterial::Mud, shore)
+            }
             SurfaceKind::DryBasin | SurfaceKind::DeferredWater => {
                 (BedMaterial::Salt, BedMaterial::Salt)
             }
@@ -4260,6 +4271,7 @@ impl Generator {
             }
             let kind = match hit.kind {
                 crate::lake::LakeKind::Lake => SurfaceKind::Lake,
+                crate::lake::LakeKind::Swamp => SurfaceKind::Swamp,
                 _ => SurfaceKind::InlandSea,
             };
             Some((hit.distance_l * l, hit.level_blocks?, kind, FlowClass::Calm))
@@ -5475,5 +5487,45 @@ mod net_owner_tests {
         b.reverse();
         assert_eq!(a, b);
         assert!(a.iter().all(|owners| !owners.is_empty()));
+    }
+
+    #[test]
+    fn swamp_materials_use_moss_in_boreal_and_clay_or_mud_in_warm() {
+        use super::*;
+        let g = Generator::new(42, Mode::Gameplay, GenVersion::V1DevW).unwrap();
+        let base = g.try_sample(0.0, 0.0).unwrap().unwrap();
+        let mut boreal = base.clone();
+        boreal.climate.temperature.t_bio = 3.0;
+        boreal.climate.precip.ratio = 0.7;
+        assert_eq!(
+            g.water_materials(
+                &boreal,
+                crate::hydrology::SurfaceKind::Swamp,
+                FlowClass::Calm
+            ),
+            (BedMaterial::Mud, BedMaterial::Moss)
+        );
+        let mut humid_warm = base.clone();
+        humid_warm.climate.temperature.t_bio = 14.0;
+        humid_warm.climate.precip.ratio = 0.8;
+        assert_eq!(
+            g.water_materials(
+                &humid_warm,
+                crate::hydrology::SurfaceKind::Swamp,
+                FlowClass::Calm
+            ),
+            (BedMaterial::Mud, BedMaterial::Clay)
+        );
+        let mut drier_warm = base;
+        drier_warm.climate.temperature.t_bio = 14.0;
+        drier_warm.climate.precip.ratio = 1.2;
+        assert_eq!(
+            g.water_materials(
+                &drier_warm,
+                crate::hydrology::SurfaceKind::Swamp,
+                FlowClass::Calm
+            ),
+            (BedMaterial::Mud, BedMaterial::Mud)
+        );
     }
 }
